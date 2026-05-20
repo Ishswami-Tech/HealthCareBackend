@@ -4,6 +4,8 @@
  * @description All authentication-related types and interfaces for the healthcare system
  */
 
+import type { Role } from './enums.types';
+
 // ============================================================================
 // AUTHENTICATION RESPONSE TYPES
 // ============================================================================
@@ -114,16 +116,38 @@ export interface UserProfile {
   readonly email: string;
   /** User name */
   readonly name: string;
+  /** Optional first name */
+  readonly firstName?: string;
+  /** Optional last name */
+  readonly lastName?: string;
   /** Optional user role */
-  readonly role?: string;
+  readonly role?: Role;
   /** Optional clinic ID */
   readonly clinicId?: string;
+  /** Optional primary clinic ID */
+  readonly primaryClinicId?: string;
+  /** Optional current clinic ID */
+  readonly currentClinicId?: string;
   /** Optional clinic display name */
   readonly clinicName?: string;
   /** Optional phone number */
   readonly phone?: string;
+  /** Optional verification state */
+  readonly isVerified?: boolean;
+  /** Whether the phone number has been verified */
+  readonly phoneVerified?: boolean;
+  /** Timestamp when the phone number was verified */
+  readonly phoneVerifiedAt?: string;
+  /** Login method used for the session */
+  readonly loginMethod?: 'password' | 'otp' | 'google_oauth' | 'facebook_oauth' | 'apple_oauth';
+  /** Whether the profile is complete */
+  readonly profileComplete?: boolean;
+  /** Whether the user still needs profile completion */
+  readonly requiresProfileCompletion?: boolean;
   /** Optional avatar URL */
   readonly avatar?: string;
+  /** Optional profile picture URL */
+  readonly profilePicture?: string;
   /** Optional last login timestamp */
   readonly lastLogin?: Date;
   /** Optional creation timestamp */

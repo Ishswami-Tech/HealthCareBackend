@@ -38,6 +38,8 @@ export interface UserBase {
   firstName?: string | null;
   lastName?: string | null;
   phone?: string | null;
+  phoneVerified?: boolean;
+  phoneVerifiedAt?: Date | null;
   role: string;
   profilePicture?: string | null;
   gender?: string | null;
@@ -119,6 +121,10 @@ export interface UserResponse {
   lastName: string;
   /** User's phone number */
   phone?: string | null;
+  /** Whether the user's phone has been verified */
+  phoneVerified?: boolean;
+  /** Timestamp when the phone was verified */
+  phoneVerifiedAt?: Date | null;
   /** User's date of birth */
   dateOfBirth?: string | null;
   /** User's gender */
@@ -199,6 +205,10 @@ export interface UserCreateData {
   lastName: string;
   /** User's phone number */
   phone?: string;
+  /** Whether the phone number has been verified */
+  phoneVerified?: boolean;
+  /** Timestamp when the phone number was verified */
+  phoneVerifiedAt?: Date | null;
   /** User's role in the system */
   role?: Role;
   /** User's gender */

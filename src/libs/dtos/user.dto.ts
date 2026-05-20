@@ -657,6 +657,23 @@ export class UserResponseDto extends OmitType(CreateUserDto, ['password'] as con
 
   @ApiPropertyOptional({
     example: true,
+    description: 'Whether the user phone number is verified',
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Phone verified must be a boolean' })
+  phoneVerified?: boolean;
+
+  @ApiPropertyOptional({
+    example: '2026-05-20T10:00:00.000Z',
+    description: 'Timestamp when the phone number was verified',
+  })
+  @IsOptional()
+  @IsDate()
+  @Type(() => Date)
+  phoneVerifiedAt?: Date;
+
+  @ApiPropertyOptional({
+    example: true,
     description: 'Whether the user profile is complete (alias for profileComplete)',
   })
   @IsOptional()

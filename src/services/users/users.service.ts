@@ -55,51 +55,51 @@ export class UsersService {
    */
   private readonly ROLE_REQUIREMENTS: Record<Role, RoleBasedRequirements> = {
     PATIENT: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone'],
       conditionalFields: {},
     },
     DOCTOR: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone'],
       conditionalFields: {},
     },
     ASSISTANT_DOCTOR: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone'],
       conditionalFields: {},
     },
     RECEPTIONIST: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone'],
       conditionalFields: {},
     },
     PHARMACIST: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone'],
       conditionalFields: {},
     },
     THERAPIST: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone'],
       conditionalFields: {},
     },
     LAB_TECHNICIAN: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone'],
       conditionalFields: {},
     },
     FINANCE_BILLING: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone'],
       conditionalFields: {},
     },
     SUPPORT_STAFF: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone'],
       conditionalFields: {},
     },
     NURSE: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone'],
       conditionalFields: {},
     },
     COUNSELOR: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone'],
       conditionalFields: {},
     },
     CLINIC_LOCATION_HEAD: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone'],
       conditionalFields: {},
     },
     CLINIC_ADMIN: {
@@ -107,7 +107,6 @@ export class UsersService {
         'firstName',
         'lastName',
         'phone',
-        'address',
         // Note: clinicName and clinicAddress are NOT required here
         // Clinic is already configured in the Clinic table and associated with the user via clinicId
         // These should only be managed in clinic settings, not during user profile completion
@@ -115,7 +114,7 @@ export class UsersService {
       conditionalFields: {},
     },
     SUPER_ADMIN: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone'],
       conditionalFields: {},
     },
   };
@@ -207,6 +206,10 @@ export class UsersService {
               createdAt: user.createdAt,
               updatedAt: user.updatedAt,
               phone: user.phone ?? '',
+              ...(typeof user.phoneVerified === 'boolean'
+                ? { phoneVerified: user.phoneVerified }
+                : {}),
+              ...(user.phoneVerifiedAt ? { phoneVerifiedAt: user.phoneVerifiedAt } : {}),
             };
 
             if (user.dateOfBirth) {
@@ -255,6 +258,10 @@ export class UsersService {
           createdAt: result.createdAt,
           updatedAt: result.updatedAt,
           phone: result.phone ?? '',
+          ...(typeof result.phoneVerified === 'boolean'
+            ? { phoneVerified: result.phoneVerified }
+            : {}),
+          ...(result.phoneVerifiedAt ? { phoneVerifiedAt: result.phoneVerifiedAt } : {}),
         };
         let patientRecord = result.patient as { id?: string } | null | undefined;
         if (String(result.role).toUpperCase() === 'PATIENT') {
@@ -353,6 +360,8 @@ export class UsersService {
       updatedAt: Date;
       dateOfBirth?: Date | string | null;
       phone?: string | null;
+      phoneVerified?: boolean | null;
+      phoneVerifiedAt?: Date | null;
       password?: string;
     };
     const { password: _password, ...result } = userRecord;
@@ -370,6 +379,8 @@ export class UsersService {
         dateOfBirth: this.formatDateToString(result.dateOfBirth),
       }),
       phone: result.phone ?? '',
+      ...(typeof result.phoneVerified === 'boolean' ? { phoneVerified: result.phoneVerified } : {}),
+      ...(result.phoneVerifiedAt ? { phoneVerifiedAt: result.phoneVerifiedAt } : {}),
     };
     return userResponse;
   }
@@ -618,6 +629,8 @@ export class UsersService {
         updatedAt: Date;
         dateOfBirth?: Date | string | null;
         phone?: string | null;
+        phoneVerified?: boolean | null;
+        phoneVerifiedAt?: Date | null;
         password?: string;
       };
 
@@ -632,6 +645,10 @@ export class UsersService {
         createdAt: userRecord.createdAt,
         updatedAt: userRecord.updatedAt,
         phone: userRecord.phone ?? '',
+        ...(typeof userRecord.phoneVerified === 'boolean'
+          ? { phoneVerified: userRecord.phoneVerified }
+          : {}),
+        ...(userRecord.phoneVerifiedAt ? { phoneVerifiedAt: userRecord.phoneVerifiedAt } : {}),
       };
 
       if (userRecord.dateOfBirth) {
@@ -807,6 +824,22 @@ export class UsersService {
 
       // Update the user record using updateUserSafe or executeHealthcareWrite
       // Map UpdateUserProfileDto to UserUpdateInput, converting Gender enum to string and filtering undefined
+      if (typeof cleanedData.phone === 'string' && cleanedData.phone.trim()) {
+        const normalizedPhone = cleanedData.phone.trim();
+        const existingPhoneUser = await this.databaseService.findUserByPhoneSafe(normalizedPhone);
+        if (existingPhoneUser && existingPhoneUser.id !== id) {
+          throw this.errors.validationError(
+            'phone',
+            'Phone number already registered',
+            'UsersService.update'
+          );
+        }
+
+        cleanedData.phone = normalizedPhone as never;
+        (cleanedData as Record<string, unknown>)['phoneVerified'] = false;
+        (cleanedData as Record<string, unknown>)['phoneVerifiedAt'] = null;
+      }
+
       const userUpdateData = Object.fromEntries(
         Object.entries({
           firstName: cleanedData.firstName,
@@ -881,6 +914,8 @@ export class UsersService {
         updatedAt: Date;
         dateOfBirth?: Date | string | null;
         phone?: string | null;
+        phoneVerified?: boolean | null;
+        phoneVerifiedAt?: Date | null;
         password?: string;
       };
       const { password: _password, ...result } = userRecord;
@@ -898,6 +933,10 @@ export class UsersService {
           dateOfBirth: this.formatDateToString(result.dateOfBirth),
         }),
         phone: result.phone ?? '',
+        ...(typeof result.phoneVerified === 'boolean'
+          ? { phoneVerified: result.phoneVerified }
+          : {}),
+        ...(result.phoneVerifiedAt ? { phoneVerifiedAt: result.phoneVerifiedAt } : {}),
       };
       return userResponse;
     } catch (error: unknown) {
@@ -1397,6 +1436,8 @@ export class UsersService {
       updatedAt: Date;
       dateOfBirth?: Date | string | null;
       phone?: string | null;
+      phoneVerified?: boolean | null;
+      phoneVerifiedAt?: Date | null;
       password?: string;
     };
     const { password: _password, ...result } = userRecord;
@@ -2342,6 +2383,14 @@ export class UsersService {
 
     // Validate field formats
     this.validateFieldFormats(profile, role, errors);
+
+    const phone = profile['phone'] as string | undefined;
+    if (phone && phone.trim() && profile['phoneVerified'] !== true) {
+      errors.push({
+        field: 'phoneVerified',
+        message: 'Phone number must be verified before completing the profile',
+      });
+    }
 
     const isComplete = missingFields.length === 0 && errors.length === 0;
 

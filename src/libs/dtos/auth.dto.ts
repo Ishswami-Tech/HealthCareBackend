@@ -102,6 +102,30 @@ export class UserProfileDto {
   phone?: string | undefined;
 
   @ApiPropertyOptional({
+    description: 'Whether the user phone is verified',
+    example: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  phoneVerified?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Timestamp when phone was verified',
+    example: '2026-05-20T10:00:00.000Z',
+  })
+  @IsOptional()
+  @IsString()
+  phoneVerifiedAt?: string;
+
+  @ApiPropertyOptional({
+    description: 'Login method used for the current session',
+    example: 'otp',
+  })
+  @IsOptional()
+  @IsString()
+  loginMethod?: string;
+
+  @ApiPropertyOptional({
     description: 'Is profile complete',
     example: true,
   })
@@ -844,6 +868,30 @@ export class AuthResponse {
   @IsOptional()
   @IsBoolean()
   requiresProfileCompletion?: boolean;
+}
+
+/**
+ * Data Transfer Object for verifying a phone number on an authenticated session
+ */
+export class VerifyPhoneDto {
+  @ApiProperty({
+    description: 'Phone number to verify',
+    example: '+919876543210',
+    required: true,
+  })
+  @IsString({ message: 'Phone number must be a string' })
+  @IsNotEmpty({ message: 'Phone number is required' })
+  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  phone!: string;
+
+  @ApiProperty({
+    description: 'OTP code sent to the phone number',
+    example: '123456',
+    required: true,
+  })
+  @IsString({ message: 'OTP must be a string' })
+  @IsNotEmpty({ message: 'OTP is required' })
+  otp!: string;
 }
 
 /**

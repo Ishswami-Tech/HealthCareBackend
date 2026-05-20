@@ -38,6 +38,8 @@ export interface User {
   firstName: string | null;
   lastName: string | null;
   phone: string | null;
+  phoneVerified?: boolean;
+  phoneVerifiedAt?: Date | null;
   password: string;
   role: string;
   dateOfBirth: Date | null;
