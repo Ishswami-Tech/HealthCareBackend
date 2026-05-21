@@ -79,18 +79,23 @@ export class OtpService {
     const normalizedIdentifier = this.normalizeIdentifier(identifier);
     const otpKey = `otp:${normalizedIdentifier}`;
     const storedOtp = await this.cacheService.get<string>(otpKey);
+    const cacheExists = await this.cacheService.exists(otpKey);
+    const cacheTtl = await this.cacheService.ttl(otpKey);
+    const hasValidOtp = typeof storedOtp === 'string' && storedOtp.length > 0;
 
     this.logOtp('OTP peek before request', {
       identifier: normalizedIdentifier,
       otpKey,
-      hasStoredOtp: storedOtp !== null,
-      storedOtpLength: storedOtp?.length || 0,
-      storedOtp: storedOtp?.length
+      cacheExists,
+      cacheTtl,
+      hasStoredOtp: hasValidOtp,
+      storedOtpLength: hasValidOtp ? storedOtp.length : 0,
+      storedOtp: hasValidOtp
         ? `${storedOtp.slice(0, 1)}${'*'.repeat(Math.max(storedOtp.length - 2, 0))}${storedOtp.slice(-1)}`
         : null,
     });
 
-    return storedOtp;
+    return hasValidOtp ? storedOtp : null;
   }
 
   // ... (generateOtp and sendOtpEmail remain unchanged) ...
@@ -388,23 +393,28 @@ export class OtpService {
       const normalizedIdentifier = this.normalizeIdentifier(identifier);
       const otpKey = `otp:${normalizedIdentifier}`;
       const storedOtp = await this.cacheService.get<string>(otpKey);
+      const cacheExists = await this.cacheService.exists(otpKey);
+      const cacheTtl = await this.cacheService.ttl(otpKey);
+      const hasValidStoredOtp = typeof storedOtp === 'string' && storedOtp.length > 0;
 
       this.logOtp('OTP verification lookup', {
         identifier: normalizedIdentifier,
         otpKey,
-        hasStoredOtp: storedOtp !== null,
+        cacheExists,
+        cacheTtl,
+        hasStoredOtp: hasValidStoredOtp,
         providedOtpLength: otp.length,
-        storedOtpLength: storedOtp?.length || 0,
+        storedOtpLength: hasValidStoredOtp ? storedOtp.length : 0,
         providedOtp: otp.length
           ? `${otp.slice(0, 1)}${'*'.repeat(Math.max(otp.length - 2, 0))}${otp.slice(-1)}`
           : null,
-        storedOtp: storedOtp?.length
+        storedOtp: hasValidStoredOtp
           ? `${storedOtp.slice(0, 1)}${'*'.repeat(Math.max(storedOtp.length - 2, 0))}${storedOtp.slice(-1)}`
           : null,
-        otpMatches: storedOtp === otp,
+        otpMatches: hasValidStoredOtp && storedOtp === otp,
       });
 
-      if (!storedOtp) {
+      if (!hasValidStoredOtp) {
         return {
           success: false,
           message: 'OTP not found or expired',
@@ -486,8 +496,10 @@ export class OtpService {
         this.cacheService.get<string>(attemptsKey),
         this.cacheService.get<string>(cooldownKey),
       ]);
+      const cacheExists = await this.cacheService.exists(otpKey);
+      const cacheTtl = await this.cacheService.ttl(otpKey);
 
-      const otpExists = otpData !== null;
+      const otpExists = cacheExists && typeof otpData === 'string' && otpData.length > 0;
       const cooldown = cooldownData !== null;
 
       const attemptCount = attempts ? parseInt(attempts) : 0;
@@ -495,6 +507,7 @@ export class OtpService {
 
       return {
         exists: otpExists,
+        ...(cacheTtl > 0 ? { expiresIn: cacheTtl } : {}),
         attemptsRemaining: cooldown ? 0 : attemptsRemaining,
       };
     } catch (_error) {
