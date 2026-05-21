@@ -118,9 +118,34 @@ export class OtpService {
         purpose,
         otpKey,
         otpLength: otp.length,
+        otp: otp.length
+          ? `${otp.slice(0, 1)}${'*'.repeat(Math.max(otp.length - 2, 0))}${otp.slice(-1)}`
+          : null,
+      });
+
+      const previousOtp = await this.cacheService.get<string>(otpKey);
+      this.debugOtp('Email OTP cache snapshot before write', {
+        normalizedEmail,
+        otpKey,
+        previousOtpExists: Boolean(previousOtp),
+        previousOtp: previousOtp?.length
+          ? `${previousOtp.slice(0, 1)}${'*'.repeat(Math.max(previousOtp.length - 2, 0))}${previousOtp.slice(-1)}`
+          : null,
+        replacingExistingOtp: Boolean(previousOtp),
       });
 
       await this.cacheService.set(otpKey, otp, expirySeconds);
+      const storedOtp = await this.cacheService.get<string>(otpKey);
+      this.debugOtp('Email OTP stored in cache', {
+        normalizedEmail,
+        otpKey,
+        expirySeconds,
+        otpLength: otp.length,
+        storedOtp: storedOtp?.length
+          ? `${storedOtp.slice(0, 1)}${'*'.repeat(Math.max(storedOtp.length - 2, 0))}${storedOtp.slice(-1)}`
+          : null,
+        storedOtpMatches: storedOtp === otp,
+      });
       await this.cacheService.set(attemptsKey, (attemptCount + 1).toString(), 60 * 60); // 1 hour
       await this.cacheService.set(cooldownKey, '1', this.config.cooldownMinutes * 60);
 
@@ -219,9 +244,34 @@ export class OtpService {
         purpose,
         otpKey,
         otpLength: otp.length,
+        otp: otp.length
+          ? `${otp.slice(0, 1)}${'*'.repeat(Math.max(otp.length - 2, 0))}${otp.slice(-1)}`
+          : null,
+      });
+
+      const previousOtp = await this.cacheService.get<string>(otpKey);
+      this.debugOtp('WhatsApp OTP cache snapshot before write', {
+        normalizedPhone,
+        otpKey,
+        previousOtpExists: Boolean(previousOtp),
+        previousOtp: previousOtp?.length
+          ? `${previousOtp.slice(0, 1)}${'*'.repeat(Math.max(previousOtp.length - 2, 0))}${previousOtp.slice(-1)}`
+          : null,
+        replacingExistingOtp: Boolean(previousOtp),
       });
 
       await this.cacheService.set(otpKey, otp, expirySeconds);
+      const storedOtp = await this.cacheService.get<string>(otpKey);
+      this.debugOtp('WhatsApp OTP stored in cache', {
+        normalizedPhone,
+        otpKey,
+        expirySeconds,
+        otpLength: otp.length,
+        storedOtp: storedOtp?.length
+          ? `${storedOtp.slice(0, 1)}${'*'.repeat(Math.max(storedOtp.length - 2, 0))}${storedOtp.slice(-1)}`
+          : null,
+        storedOtpMatches: storedOtp === otp,
+      });
       await this.cacheService.set(attemptsKey, (attemptCount + 1).toString(), 60 * 60); // 1 hour
       await this.cacheService.set(cooldownKey, '1', this.config.cooldownMinutes * 60);
 
@@ -314,6 +364,13 @@ export class OtpService {
         hasStoredOtp: storedOtp !== null,
         providedOtpLength: otp.length,
         storedOtpLength: storedOtp?.length || 0,
+        providedOtp: otp.length
+          ? `${otp.slice(0, 1)}${'*'.repeat(Math.max(otp.length - 2, 0))}${otp.slice(-1)}`
+          : null,
+        storedOtp: storedOtp?.length
+          ? `${storedOtp.slice(0, 1)}${'*'.repeat(Math.max(storedOtp.length - 2, 0))}${storedOtp.slice(-1)}`
+          : null,
+        otpMatches: storedOtp === otp,
       });
 
       if (!storedOtp) {
@@ -324,6 +381,16 @@ export class OtpService {
       }
 
       if (storedOtp !== otp) {
+        this.debugOtp('OTP verification mismatch', {
+          identifier: normalizedIdentifier,
+          otpKey,
+          providedOtp: otp.length
+            ? `${otp.slice(0, 1)}${'*'.repeat(Math.max(otp.length - 2, 0))}${otp.slice(-1)}`
+            : null,
+          storedOtp: storedOtp.length
+            ? `${storedOtp.slice(0, 1)}${'*'.repeat(Math.max(storedOtp.length - 2, 0))}${storedOtp.slice(-1)}`
+            : null,
+        });
         return {
           success: false,
           message: 'Invalid OTP',

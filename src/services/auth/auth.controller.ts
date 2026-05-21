@@ -1259,6 +1259,13 @@ export class AuthController {
       throw this.errors.invalidCredentials('AuthController.verifyPhone');
     }
 
+    console.warn('[AuthController][verify-phone] request received', {
+      userId,
+      phone: verifyPhoneDto.phone,
+      otpLength: verifyPhoneDto.otp?.length,
+      otpTail: verifyPhoneDto.otp ? `***${String(verifyPhoneDto.otp).slice(-2)}` : null,
+    });
+
     const result = await this.authService.verifyPhone(
       userId,
       verifyPhoneDto.phone,
