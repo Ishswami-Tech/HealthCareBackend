@@ -225,6 +225,7 @@ export class HttpService {
         const isExpectedFailure = isHealthCheck || isConnectionError || isLoggerCheck;
         const logLevel = isExpectedFailure ? LogLevel.WARN : LogLevel.ERROR;
         const logType = isExpectedFailure ? LogType.SYSTEM : LogType.ERROR;
+        const responseData = axiosError.response?.data;
 
         if (!options?.suppressErrorLogging && this.loggingService) {
           void this.loggingService.log(
@@ -246,6 +247,9 @@ export class HttpService {
               port: axiosError.port,
               responseStatus: axiosError.response?.status,
               responseStatusText: axiosError.response?.statusText,
+              responseData,
+              responseDataKeys:
+                responseData && typeof responseData === 'object' ? Object.keys(responseData) : [],
               isHealthCheck,
               isLoggerCheck,
               isConnectionError,

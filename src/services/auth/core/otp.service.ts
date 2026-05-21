@@ -75,6 +75,24 @@ export class OtpService {
     });
   }
 
+  async peekOtp(identifier: string): Promise<string | null> {
+    const normalizedIdentifier = this.normalizeIdentifier(identifier);
+    const otpKey = `otp:${normalizedIdentifier}`;
+    const storedOtp = await this.cacheService.get<string>(otpKey);
+
+    this.logOtp('OTP peek before request', {
+      identifier: normalizedIdentifier,
+      otpKey,
+      hasStoredOtp: storedOtp !== null,
+      storedOtpLength: storedOtp?.length || 0,
+      storedOtp: storedOtp?.length
+        ? `${storedOtp.slice(0, 1)}${'*'.repeat(Math.max(storedOtp.length - 2, 0))}${storedOtp.slice(-1)}`
+        : null,
+    });
+
+    return storedOtp;
+  }
+
   // ... (generateOtp and sendOtpEmail remain unchanged) ...
 
   /**

@@ -1172,16 +1172,23 @@ export class AuthService {
       const userName = user
         ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User'
         : 'Future User';
-      const otpCode = this.otpService.generateOtp();
-      this.logOtp('Generated OTP for requestOtp', {
-        identifier: requestDto.identifier,
-        normalizedIdentifier: isEmail
-          ? requestDto.identifier.trim().toLowerCase()
-          : this.normalizePhoneNumber(requestDto.identifier),
-        flow: isEmail ? 'email' : 'phone',
-        otpLength: otpCode.length,
-        otp: this.maskOtp(otpCode),
-      });
+      const normalizedIdentifier = isEmail
+        ? requestDto.identifier.trim().toLowerCase()
+        : this.normalizePhoneNumber(requestDto.identifier);
+      const existingOtp = await this.otpService.peekOtp(normalizedIdentifier);
+      const otpCode = existingOtp || this.otpService.generateOtp();
+
+      this.logOtp(
+        existingOtp ? 'Reusing existing OTP for requestOtp' : 'Generated OTP for requestOtp',
+        {
+          identifier: requestDto.identifier,
+          normalizedIdentifier,
+          flow: isEmail ? 'email' : 'phone',
+          otpLength: otpCode.length,
+          otp: this.maskOtp(otpCode),
+          reusedExistingOtp: Boolean(existingOtp),
+        }
+      );
 
       let result;
       if (isEmail) {
@@ -1311,6 +1318,9 @@ export class AuthService {
       await this.eventService.emit('user.otp_requested', {
         userId: user?.id || 'new-user',
         identifier: requestDto.identifier,
+        normalizedIdentifier,
+        otpKey: `otp:${normalizedIdentifier}`,
+        reusedExistingOtp: Boolean(existingOtp),
         ...(clinicId && { clinicId }),
         isRegistration: !!requestDto.isRegistration,
         otp: otpCode,
