@@ -23,7 +23,8 @@ export function formatOTPTemplateParams(
   targetLabel: string,
   merchantName: string,
   otp: string,
-  supportLabel: string = 'Support'
+  supportLabel: string = 'Support',
+  buttonUrlSuffix?: string
 ): WhatsAppTemplateComponent[] {
   const components: WhatsAppTemplateComponent[] = [
     {
@@ -41,6 +42,7 @@ export function formatOTPTemplateParams(
     },
   ];
 
+  components.push(...buildDetailsButton(buttonUrlSuffix));
   return components;
 }
 
