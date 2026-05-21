@@ -29,7 +29,10 @@ export function formatOTPTemplateParams(
       parameters: [
         { type: 'text', text: normalizeTemplateText(purpose, 'verifying') },
         { type: 'text', text: normalizeTemplateText(appName, 'Healthcare App') },
-        { type: 'text', text: normalizeTemplateText(merchantName, appName) },
+        {
+          type: 'text',
+          text: limitTemplateText(normalizeTemplateText(merchantName, appName), 15),
+        },
         { type: 'text', text: normalizeTemplateText(otp, '000000') },
         { type: 'text', text: normalizeTemplateText(appName, 'Healthcare App') },
       ],
@@ -55,6 +58,14 @@ function normalizeTemplateText(value: unknown, fallback: string): string {
   }
 
   return fallback;
+}
+
+function limitTemplateText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return value.slice(0, maxLength).trimEnd();
 }
 
 function normalizeUrlButtonValue(detailsUrl?: string): string | undefined {
