@@ -258,11 +258,18 @@ export class MetaWhatsAppAdapter extends BaseWhatsAppAdapter {
       // Detailed error logging for debugging
       const errorResponse = errorObject.response?.data;
       const errorDetails = errorResponse?.error;
+      const errorSummary = [
+        `status=${errorObject.response?.status ?? 'unknown'}`,
+        `message=${errorDetails?.message ?? errorObject.message ?? 'unknown'}`,
+        `code=${errorDetails?.code ?? 'unknown'}`,
+        `subcode=${errorDetails?.subcode ?? 'unknown'}`,
+        `fbtrace=${errorDetails?.fbtrace_id ?? 'unknown'}`,
+      ].join(', ');
 
       void this.logger.log(
         LogType.NOTIFICATION,
         LogLevel.ERROR,
-        `Meta WhatsApp API Error Details`,
+        `Meta WhatsApp API Error Details: ${errorSummary}`,
         'MetaWhatsAppAdapter',
         {
           httpStatus: errorObject.response?.status,
