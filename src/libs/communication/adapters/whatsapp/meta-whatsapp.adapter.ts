@@ -273,6 +273,8 @@ export class MetaWhatsAppAdapter extends BaseWhatsAppAdapter {
           apiErrorSubcode: errorDetails?.subcode,
           fbTraceId: errorDetails?.fbtrace_id,
           apiErrorData: errorDetails?.error_data,
+          rawErrorBody: errorObject.response?.data,
+          rawErrorKeys: errorObject.response?.data ? Object.keys(errorObject.response.data) : [],
           fullResponseBody: JSON.stringify(errorResponse),
           sentPayload: JSON.stringify(payload),
           to: options.to,

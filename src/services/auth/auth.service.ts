@@ -91,6 +91,23 @@ export class AuthService {
     void this.logging.log(LogType.AUTH, LogLevel.DEBUG, message, 'AuthService', context);
   }
 
+  private maskOtp(value?: string | null): string | null {
+    if (!value) {
+      return null;
+    }
+
+    const text = String(value).trim();
+    if (!text) {
+      return null;
+    }
+
+    if (text.length <= 2) {
+      return '*'.repeat(text.length);
+    }
+
+    return `${text.slice(0, 1)}${'*'.repeat(text.length - 2)}${text.slice(-1)}`;
+  }
+
   // Comprehensive type-safe database operations
   async findUserByIdSafe(id: string) {
     return this.databaseService.findUserByIdSafe(id);
@@ -1153,7 +1170,7 @@ export class AuthService {
           : this.normalizePhoneNumber(requestDto.identifier),
         flow: isEmail ? 'email' : 'phone',
         otpLength: otpCode.length,
-        otp: otpCode,
+        otp: this.maskOtp(otpCode),
       });
 
       let result;
@@ -1184,6 +1201,15 @@ export class AuthService {
             'AuthService.requestOtp'
           );
         }
+
+        this.debugOtp('Sending phone OTP', {
+          identifier: requestDto.identifier,
+          normalizedPhone: phoneTarget,
+          otpKey: `otp:${phoneTarget}`,
+          otp: this.maskOtp(otpCode),
+          otpLength: otpCode.length,
+          clinicId,
+        });
 
         const promises: Promise<{ success: boolean; message: string }>[] = [
           this.otpService.sendOtpSms(
@@ -1226,6 +1252,22 @@ export class AuthService {
             r.status === 'fulfilled'
         );
 
+        this.debugOtp('OTP request channel results', {
+          identifier: requestDto.identifier,
+          normalizedPhone: phoneTarget,
+          otpKey: `otp:${phoneTarget}`,
+          otp: this.maskOtp(otpCode),
+          otpLength: otpCode.length,
+          clinicId,
+          results: results.map((r, index) => ({
+            channel: index === 0 ? 'whatsapp' : 'email',
+            status: r.status,
+            ...(r.status === 'fulfilled'
+              ? { success: r.value.success, message: r.value.message }
+              : { reason: String(r.reason) }),
+          })),
+        });
+
         // ✅ At least one channel must succeed
         if (successful.length === 0) {
           throw this.errors.otpSendFailed(
@@ -1239,6 +1281,16 @@ export class AuthService {
           successful.length > 0 && successful[0]?.status === 'fulfilled'
             ? (successful[0] as PromiseFulfilledResult<{ success: boolean; message: string }>).value
             : { success: true, message: 'OTP sent via multiple channels' };
+
+        this.debugOtp('OTP request completed', {
+          identifier: requestDto.identifier,
+          normalizedPhone: phoneTarget,
+          otpKey: `otp:${phoneTarget}`,
+          otp: this.maskOtp(otpCode),
+          otpLength: otpCode.length,
+          clinicId,
+          result,
+        });
       }
 
       if (!result.success) {
@@ -1336,6 +1388,7 @@ export class AuthService {
           : this.normalizePhoneNumber(verifyDto.identifier),
         flow: isEmail ? 'email' : 'phone',
         otpLength: verifyDto.otp?.length,
+        otp: this.maskOtp(verifyDto.otp),
         verificationSuccess: verificationResult.success,
         verificationMessage: verificationResult.message,
       });
@@ -1550,12 +1603,23 @@ export class AuthService {
     }
 
     const verificationResult = await this.otpService.verifyOtp(normalizedInputPhone, otp);
+    this.debugOtp('verifyPhone lookup result', {
+      userId,
+      identifier: phone,
+      normalizedIdentifier: normalizedInputPhone,
+      expectedPhone,
+      otpLength: otp?.length,
+      otp: this.maskOtp(otp),
+      verificationSuccess: verificationResult.success,
+      verificationMessage: verificationResult.message,
+    });
     this.debugOtp('verifyPhone OTP verification attempted', {
       userId,
       identifier: phone,
       normalizedIdentifier: normalizedInputPhone,
       expectedPhone,
       otpLength: otp?.length,
+      otp: this.maskOtp(otp),
       verificationSuccess: verificationResult.success,
       verificationMessage: verificationResult.message,
     });
