@@ -66,7 +66,7 @@ export class WhatsAppService {
     phoneNumber: string,
     otp: string,
     _expiryMinutes: number = 10,
-    maxRetries: number = 2,
+    _maxRetries: number = 2,
     clinicId?: string,
     purpose: string = 'verification'
   ): Promise<boolean> {
@@ -80,69 +80,88 @@ export class WhatsAppService {
       return true;
     }
 
-    let retries = 0;
-    let success = false;
+    const appName =
+      this.configService.getEnv('APP_NAME') ||
+      this.configService.getEnv('DEFAULT_FROM_NAME') ||
+      'Healthcare App';
+    let clinicName = appName;
+    let templateId = this.whatsAppConfig.otpTemplateId;
 
-    while (retries <= maxRetries && !success) {
-      try {
-        const formattedPhone = this.formatPhoneNumber(phoneNumber);
-
-        // Get clinic name and template ID if clinicId provided
-        const appName =
-          this.configService.getEnv('APP_NAME') ||
-          this.configService.getEnv('DEFAULT_FROM_NAME') ||
-          'Healthcare App';
-        let clinicName = appName;
-        let templateId = this.whatsAppConfig.otpTemplateId;
-
-        if (clinicId) {
-          const clinicData = await this.clinicTemplateService.getClinicTemplateData(clinicId);
-          if (clinicData) {
-            clinicName = clinicData.clinicName;
-            templateId = clinicData.templateIds.otp || this.whatsAppConfig.otpTemplateId;
-          }
-        }
-
-        await this.sendTemplateMessage(
-          formattedPhone,
-          templateId,
-          formatOTPTemplateParams(
-            this.resolveOtpPurposeLabel(purpose),
-            appName,
-            clinicName || appName,
-            otp
-          ),
-          clinicId
-        );
-
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.INFO,
-          `OTP sent to ${phoneNumber} via WhatsApp${retries > 0 ? ` (after ${retries} retries)` : ''}`,
-          'WhatsAppService'
-        );
-        success = true;
-        return true;
-      } catch (error) {
-        retries++;
-        const retryMsg = retries <= maxRetries ? `, retrying (${retries}/${maxRetries})...` : '';
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.ERROR,
-          `Failed to send OTP via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}${retryMsg}`,
-          'WhatsAppService',
-          { stack: (error as Error)?.stack }
-        );
-
-        if (retries <= maxRetries) {
-          // Exponential backoff: wait longer between each retry
-          const backoffMs = 1000 * Math.pow(2, retries - 1); // 1s, 2s, 4s, etc.
-          await new Promise(resolve => setTimeout(resolve, backoffMs));
-        }
+    if (clinicId) {
+      const clinicData = await this.clinicTemplateService.getClinicTemplateData(clinicId);
+      if (clinicData) {
+        clinicName = clinicData.clinicName;
+        templateId = clinicData.templateIds.otp || this.whatsAppConfig.otpTemplateId;
       }
     }
 
-    return false;
+    try {
+      const formattedPhone = this.formatPhoneNumber(phoneNumber);
+
+      await this.sendTemplateMessage(
+        formattedPhone,
+        templateId,
+        formatOTPTemplateParams(
+          this.resolveOtpPurposeLabel(purpose),
+          this.resolveOtpTargetLabel(purpose),
+          clinicName || appName,
+          otp,
+          'WhatsApp Support'
+        ),
+        clinicId
+      );
+
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `OTP sent to ${phoneNumber} via WhatsApp`,
+        'WhatsAppService'
+      );
+      return true;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Template OTP send failed for ${phoneNumber}; attempting direct WhatsApp text fallback: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+        'WhatsAppService',
+        { stack: (error as Error)?.stack, clinicId, purpose }
+      );
+
+      try {
+        const formattedPhone = this.formatPhoneNumber(phoneNumber);
+        const fallbackBody = this.buildOtpFallbackText(
+          this.resolveOtpPurposeLabel(purpose),
+          this.resolveOtpTargetLabel(purpose),
+          clinicName || appName,
+          otp
+        );
+
+        await this.sendDirectTextMessage(formattedPhone, fallbackBody);
+
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `OTP delivered via direct WhatsApp text fallback for ${phoneNumber}`,
+          'WhatsAppService',
+          { clinicId, purpose }
+        );
+
+        return true;
+      } catch (fallbackError) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          `Direct WhatsApp text fallback failed for ${phoneNumber}: ${
+            fallbackError instanceof Error ? fallbackError.message : 'Unknown error'
+          }`,
+          'WhatsAppService',
+          { stack: (fallbackError as Error)?.stack, clinicId, purpose }
+        );
+        return false;
+      }
+    }
   }
 
   /**
@@ -601,6 +620,40 @@ export class WhatsAppService {
     }
   }
 
+  private async sendDirectTextMessage(to: string, body: string): Promise<unknown> {
+    try {
+      const response = await this.httpService.post(
+        `${this.whatsAppConfig.apiUrl}/${this.whatsAppConfig.phoneNumberId}/messages`,
+        {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to,
+          type: 'text',
+          text: {
+            body,
+          },
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${this.whatsAppConfig.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      return response.data;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `WhatsApp direct text message error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'WhatsAppService',
+        { stack: (error as Error)?.stack }
+      );
+      throw error;
+    }
+  }
+
   /**
    * Sends receipt notification via WhatsApp
    * @param phoneNumber - Recipient phone number (with country code)
@@ -801,5 +854,36 @@ export class WhatsAppService {
     }
 
     return normalizedPurpose || 'verifying';
+  }
+
+  private resolveOtpTargetLabel(purpose: string): string {
+    const normalizedPurpose = purpose.trim().toLowerCase();
+
+    if (
+      normalizedPurpose.includes('password') ||
+      normalizedPurpose.includes('reset') ||
+      normalizedPurpose.includes('forgot')
+    ) {
+      return 'password';
+    }
+
+    if (normalizedPurpose.includes('account')) {
+      return 'account';
+    }
+
+    if (normalizedPurpose.includes('email')) {
+      return 'email';
+    }
+
+    return 'phone no';
+  }
+
+  private buildOtpFallbackText(
+    purposeLabel: string,
+    targetLabel: string,
+    clinicName: string,
+    otp: string
+  ): string {
+    return `This OTP code is for ${purposeLabel} your ${targetLabel} account and linking it to ${clinicName}. OTP: ${otp} Do not share it with anyone, even to WhatsApp Support, or they'll be able to access your account. For your security, do not share this code.`;
   }
 }
