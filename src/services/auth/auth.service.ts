@@ -91,6 +91,16 @@ export class AuthService {
     void this.logging.log(LogType.AUTH, LogLevel.DEBUG, message, 'AuthService', context);
   }
 
+  private logOtp(message: string, context: Record<string, unknown> = {}): void {
+    void this.logging.log(LogType.AUTH, LogLevel.WARN, message, 'AuthService', context);
+    void this.eventService.emit('auth.otp.diagnostic', {
+      source: 'AuthService',
+      message,
+      context,
+      timestamp: nowIso(),
+    });
+  }
+
   private maskOtp(value?: string | null): string | null {
     if (!value) {
       return null;
@@ -1163,7 +1173,7 @@ export class AuthService {
         ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User'
         : 'Future User';
       const otpCode = this.otpService.generateOtp();
-      this.debugOtp('Generated OTP for requestOtp', {
+      this.logOtp('Generated OTP for requestOtp', {
         identifier: requestDto.identifier,
         normalizedIdentifier: isEmail
           ? requestDto.identifier.trim().toLowerCase()
@@ -1202,7 +1212,7 @@ export class AuthService {
           );
         }
 
-        this.debugOtp('Sending phone OTP', {
+        this.logOtp('Sending phone OTP', {
           identifier: requestDto.identifier,
           normalizedPhone: phoneTarget,
           otpKey: `otp:${phoneTarget}`,
@@ -1252,7 +1262,7 @@ export class AuthService {
             r.status === 'fulfilled'
         );
 
-        this.debugOtp('OTP request channel results', {
+        this.logOtp('OTP request channel results', {
           identifier: requestDto.identifier,
           normalizedPhone: phoneTarget,
           otpKey: `otp:${phoneTarget}`,
@@ -1282,7 +1292,7 @@ export class AuthService {
             ? (successful[0] as PromiseFulfilledResult<{ success: boolean; message: string }>).value
             : { success: true, message: 'OTP sent via multiple channels' };
 
-        this.debugOtp('OTP request completed', {
+        this.logOtp('OTP request completed', {
           identifier: requestDto.identifier,
           normalizedPhone: phoneTarget,
           otpKey: `otp:${phoneTarget}`,
@@ -1381,7 +1391,7 @@ export class AuthService {
         isEmail ? verifyDto.identifier : this.normalizePhoneNumber(verifyDto.identifier),
         verifyDto.otp
       );
-      this.debugOtp('OTP verification attempted', {
+      this.logOtp('OTP verification attempted', {
         identifier: verifyDto.identifier,
         normalizedIdentifier: isEmail
           ? verifyDto.identifier.trim().toLowerCase()
@@ -1603,7 +1613,7 @@ export class AuthService {
     }
 
     const verificationResult = await this.otpService.verifyOtp(normalizedInputPhone, otp);
-    this.debugOtp('verifyPhone lookup result', {
+    this.logOtp('verifyPhone lookup result', {
       userId,
       identifier: phone,
       normalizedIdentifier: normalizedInputPhone,
@@ -1613,7 +1623,7 @@ export class AuthService {
       verificationSuccess: verificationResult.success,
       verificationMessage: verificationResult.message,
     });
-    this.debugOtp('verifyPhone OTP verification attempted', {
+    this.logOtp('verifyPhone OTP verification attempted', {
       userId,
       identifier: phone,
       normalizedIdentifier: normalizedInputPhone,
