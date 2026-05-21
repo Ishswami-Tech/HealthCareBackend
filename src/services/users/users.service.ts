@@ -2384,6 +2384,7 @@ export class UsersService {
     // Validate field formats
     this.validateFieldFormats(profile, role, errors);
 
+    // phoneVerified IS required before completing profile
     const phone = profile['phone'] as string | undefined;
     if (phone && phone.trim() && profile['phoneVerified'] !== true) {
       errors.push({

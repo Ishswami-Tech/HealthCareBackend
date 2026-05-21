@@ -29,6 +29,7 @@ import { PatientsModule } from './services/patients/patients.module';
 import { DoctorsModule } from './services/doctors/doctors.module';
 import { StaffModule } from './services/staff/staff.module';
 import { AnalyticsModule } from './services/analytics/analytics.module';
+import { ProfileCompletionModule } from './services/profile-completion/profile-completion.module';
 // import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.middleware';
 
 @Module({
@@ -86,6 +87,7 @@ import { AnalyticsModule } from './services/analytics/analytics.module';
     DoctorsModule,
     StaffModule,
     AnalyticsModule,
+    ProfileCompletionModule,
   ],
   controllers: [AppController],
   providers: [AppService],
