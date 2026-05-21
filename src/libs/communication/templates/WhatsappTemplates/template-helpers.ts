@@ -9,32 +9,34 @@
 
 /**
  * Formats OTP template parameters for WhatsApp
- * Matches the approved `verify_account` authentication template:
- * "This OTP code is for {{1}} your {{2}} account and linking it to {{3}}. OTP: {{4}} ..."
- * @param purpose - OTP purpose label, such as verifying or creating
- * @param appName - Application name
+ * Matches the approved 5-parameter authentication template:
+ * "This OTP code is for {{1}} {{2}} at {{3}}. OTP: {{4}}. Do not share it with anyone, even to {{5}}."
+ * @param purpose - OTP purpose label, such as verifying, resetting, or creating
+ * @param targetLabel - Target being verified, such as phone no, account, or password
  * @param merchantName - Clinic or merchant name
  * @param otp - OTP code
+ * @param supportLabel - Support label used in the warning sentence
  * @returns Template components array
  */
 export function formatOTPTemplateParams(
   purpose: string,
-  appName: string,
+  targetLabel: string,
   merchantName: string,
-  otp: string
+  otp: string,
+  supportLabel: string = 'WhatsApp Support'
 ): WhatsAppTemplateComponent[] {
   const components: WhatsAppTemplateComponent[] = [
     {
       type: 'body',
       parameters: [
         { type: 'text', text: normalizeTemplateText(purpose, 'verifying') },
-        { type: 'text', text: normalizeTemplateText(appName, 'Healthcare App') },
+        { type: 'text', text: normalizeTemplateText(targetLabel, 'phone no') },
         {
           type: 'text',
-          text: limitTemplateText(normalizeTemplateText(merchantName, appName), 15),
+          text: limitTemplateText(normalizeTemplateText(merchantName, 'Clinic'), 15),
         },
         { type: 'text', text: normalizeTemplateText(otp, '000000') },
-        { type: 'text', text: normalizeTemplateText(appName, 'Healthcare App') },
+        { type: 'text', text: normalizeTemplateText(supportLabel, 'WhatsApp Support') },
       ],
     },
   ];
@@ -212,7 +214,7 @@ export function formatPaymentReceiptTemplateParams(
  *
  * OTP Template Example:
  * Template Name: verify_account
- * Template Body: "This OTP code is for {{1}} your {{2}} account and linking it to {{3}}. OTP: {{4}} Do not share it with anyone, even to {{5}}, or they'll be able to access your account."
+ * Template Body: "This OTP code is for {{1}} {{2}} at {{3}}. OTP: {{4}}. Do not share it with anyone, even to {{5}}, or they'll be able to access your account."
  *
  * Appointment Confirmation Template Example:
  * Template Name: appointment_confirmation
