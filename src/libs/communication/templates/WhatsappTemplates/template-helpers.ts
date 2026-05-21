@@ -23,7 +23,7 @@ export function formatOTPTemplateParams(
   targetLabel: string,
   merchantName: string,
   otp: string,
-  supportLabel: string = 'WhatsApp Support'
+  supportLabel: string = 'Support'
 ): WhatsAppTemplateComponent[] {
   const components: WhatsAppTemplateComponent[] = [
     {
@@ -36,7 +36,7 @@ export function formatOTPTemplateParams(
           text: limitTemplateText(normalizeTemplateText(merchantName, 'Clinic'), 15),
         },
         { type: 'text', text: normalizeTemplateText(otp, '000000') },
-        { type: 'text', text: normalizeTemplateText(supportLabel, 'WhatsApp Support') },
+        { type: 'text', text: normalizeTemplateText(supportLabel, 'Support') },
       ],
     },
   ];
