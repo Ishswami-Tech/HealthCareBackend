@@ -97,57 +97,27 @@ export class WhatsAppService {
 
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
-      const templateCandidates = this.resolveOtpTemplateCandidates(templateId);
-
-      for (const candidateTemplateId of templateCandidates) {
-        const otpButtonSuffix =
-          candidateTemplateId === 'verify_account'
-            ? this.resolveOtpButtonSuffix(purpose)
-            : undefined;
-
-        try {
-          await this.sendTemplateMessage(
-            formattedPhone,
-            candidateTemplateId,
-            formatOTPTemplateParams(
-              this.resolveOtpPurposeLabel(purpose),
-              this.resolveOtpTargetLabel(purpose),
-              clinicName || appName,
-              otp,
-              'Support',
-              otpButtonSuffix
-            ),
-            clinicId
-          );
-
-          void this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.INFO,
-            `OTP sent to ${phoneNumber} via WhatsApp template ${candidateTemplateId}`,
-            'WhatsAppService'
-          );
-          return true;
-        } catch (templateError) {
-          void this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.WARN,
-            `OTP template ${candidateTemplateId} failed for ${phoneNumber}; trying next template if available: ${
-              templateError instanceof Error ? templateError.message : 'Unknown error'
-            }`,
-            'WhatsAppService',
-            {
-              stack: (templateError as Error)?.stack,
-              clinicId,
-              purpose,
-              templateId: candidateTemplateId,
-            }
-          );
-        }
-      }
-
-      throw new Error(
-        `All WhatsApp OTP templates failed for ${phoneNumber}: ${templateCandidates.join(', ')}`
+      await this.sendTemplateMessage(
+        formattedPhone,
+        templateId,
+        formatOTPTemplateParams(
+          this.resolveOtpPurposeLabel(purpose),
+          this.resolveOtpTargetLabel(purpose),
+          clinicName || appName,
+          otp,
+          'Support',
+          templateId === 'verify_account' ? this.resolveOtpButtonSuffix(purpose) : undefined
+        ),
+        clinicId
       );
+
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `OTP sent to ${phoneNumber} via WhatsApp template ${templateId}`,
+        'WhatsAppService'
+      );
+      return true;
     } catch (error) {
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -929,13 +899,6 @@ export class WhatsAppService {
     }
 
     return 'login';
-  }
-
-  private resolveOtpTemplateCandidates(templateId: string): string[] {
-    const candidates = [templateId, 'verify', 'verify_account'];
-    return candidates.filter(
-      (candidate, index) => candidate && candidates.indexOf(candidate) === index
-    );
   }
 
   private buildOtpFallbackText(

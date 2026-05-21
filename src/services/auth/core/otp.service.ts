@@ -13,6 +13,11 @@ import { QueueService, JobPriority } from '@infrastructure/queue';
 
 import type { OtpConfig, OtpResult } from '@core/types/auth.types';
 
+type OtpCacheEntry = {
+  otp: string;
+  createdAt: string;
+};
+
 @Injectable()
 export class OtpService {
   private readonly config: OtpConfig;
@@ -75,10 +80,51 @@ export class OtpService {
     });
   }
 
+  private buildOtpCacheEntry(otp: string): OtpCacheEntry {
+    return {
+      otp,
+      createdAt: nowIso(),
+    };
+  }
+
+  private extractOtpValue(value: unknown): string | null {
+    if (typeof value === 'string') {
+      return value.length > 0 ? value : null;
+    }
+
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+
+    if (value && typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      const otpValue = record['otp'] ?? record['value'] ?? record['code'];
+      if (typeof otpValue === 'string') {
+        const trimmed = otpValue.trim();
+        return trimmed.length > 0 ? trimmed : null;
+      }
+      if (typeof otpValue === 'number' && Number.isFinite(otpValue)) {
+        return String(otpValue);
+      }
+    }
+
+    return null;
+  }
+
+  private maskOtpValue(otp: string | null): string | null {
+    if (!otp) {
+      return null;
+    }
+
+    return otp.length > 1
+      ? `${otp.slice(0, 1)}${'*'.repeat(Math.max(otp.length - 2, 0))}${otp.slice(-1)}`
+      : otp;
+  }
+
   async peekOtp(identifier: string): Promise<string | null> {
     const normalizedIdentifier = this.normalizeIdentifier(identifier);
     const otpKey = `otp:${normalizedIdentifier}`;
-    const storedOtp = await this.cacheService.get<string>(otpKey);
+    const storedOtp = this.extractOtpValue(await this.cacheService.get<unknown>(otpKey));
     const cacheExists = await this.cacheService.exists(otpKey);
     const cacheTtl = await this.cacheService.ttl(otpKey);
     const hasValidOtp = typeof storedOtp === 'string' && storedOtp.length > 0;
@@ -90,9 +136,7 @@ export class OtpService {
       cacheTtl,
       hasStoredOtp: hasValidOtp,
       storedOtpLength: hasValidOtp ? storedOtp.length : 0,
-      storedOtp: hasValidOtp
-        ? `${storedOtp.slice(0, 1)}${'*'.repeat(Math.max(storedOtp.length - 2, 0))}${storedOtp.slice(-1)}`
-        : null,
+      storedOtp: this.maskOtpValue(storedOtp),
     });
 
     return hasValidOtp ? storedOtp : null;
@@ -148,6 +192,7 @@ export class OtpService {
       const otp = providedOtp || this.generateOtp();
       const otpKey = `otp:${normalizedEmail}`;
       const expirySeconds = this.config.expiryMinutes * 60;
+      const otpEntry = this.buildOtpCacheEntry(otp);
 
       this.logOtp('Email OTP generated and cached', {
         normalizedEmail,
@@ -170,16 +215,14 @@ export class OtpService {
         replacingExistingOtp: Boolean(previousOtp),
       });
 
-      await this.cacheService.set(otpKey, otp, expirySeconds);
-      const storedOtp = await this.cacheService.get<string>(otpKey);
+      await this.cacheService.set(otpKey, otpEntry, expirySeconds);
+      const storedOtp = this.extractOtpValue(await this.cacheService.get<unknown>(otpKey));
       this.logOtp('Email OTP stored in cache', {
         normalizedEmail,
         otpKey,
         expirySeconds,
         otpLength: otp.length,
-        storedOtp: storedOtp?.length
-          ? `${storedOtp.slice(0, 1)}${'*'.repeat(Math.max(storedOtp.length - 2, 0))}${storedOtp.slice(-1)}`
-          : null,
+        storedOtp: this.maskOtpValue(storedOtp),
         storedOtpMatches: storedOtp === otp,
       });
       await this.cacheService.set(attemptsKey, (attemptCount + 1).toString(), 60 * 60); // 1 hour
@@ -274,6 +317,7 @@ export class OtpService {
       const otp = providedOtp || this.generateOtp();
       const otpKey = `otp:${normalizedPhone}`;
       const expirySeconds = this.config.expiryMinutes * 60;
+      const otpEntry = this.buildOtpCacheEntry(otp);
 
       this.logOtp('WhatsApp OTP generated and cached', {
         normalizedPhone,
@@ -296,16 +340,14 @@ export class OtpService {
         replacingExistingOtp: Boolean(previousOtp),
       });
 
-      await this.cacheService.set(otpKey, otp, expirySeconds);
-      const storedOtp = await this.cacheService.get<string>(otpKey);
+      await this.cacheService.set(otpKey, otpEntry, expirySeconds);
+      const storedOtp = this.extractOtpValue(await this.cacheService.get<unknown>(otpKey));
       this.logOtp('WhatsApp OTP stored in cache', {
         normalizedPhone,
         otpKey,
         expirySeconds,
         otpLength: otp.length,
-        storedOtp: storedOtp?.length
-          ? `${storedOtp.slice(0, 1)}${'*'.repeat(Math.max(storedOtp.length - 2, 0))}${storedOtp.slice(-1)}`
-          : null,
+        storedOtp: this.maskOtpValue(storedOtp),
         storedOtpMatches: storedOtp === otp,
       });
       await this.cacheService.set(attemptsKey, (attemptCount + 1).toString(), 60 * 60); // 1 hour
@@ -392,7 +434,7 @@ export class OtpService {
     try {
       const normalizedIdentifier = this.normalizeIdentifier(identifier);
       const otpKey = `otp:${normalizedIdentifier}`;
-      const storedOtp = await this.cacheService.get<string>(otpKey);
+      const storedOtp = this.extractOtpValue(await this.cacheService.get<unknown>(otpKey));
       const cacheExists = await this.cacheService.exists(otpKey);
       const cacheTtl = await this.cacheService.ttl(otpKey);
       const hasValidStoredOtp = typeof storedOtp === 'string' && storedOtp.length > 0;
@@ -405,12 +447,8 @@ export class OtpService {
         hasStoredOtp: hasValidStoredOtp,
         providedOtpLength: otp.length,
         storedOtpLength: hasValidStoredOtp ? storedOtp.length : 0,
-        providedOtp: otp.length
-          ? `${otp.slice(0, 1)}${'*'.repeat(Math.max(otp.length - 2, 0))}${otp.slice(-1)}`
-          : null,
-        storedOtp: hasValidStoredOtp
-          ? `${storedOtp.slice(0, 1)}${'*'.repeat(Math.max(storedOtp.length - 2, 0))}${storedOtp.slice(-1)}`
-          : null,
+        providedOtp: this.maskOtpValue(otp),
+        storedOtp: this.maskOtpValue(storedOtp),
         otpMatches: hasValidStoredOtp && storedOtp === otp,
       });
 
@@ -425,12 +463,8 @@ export class OtpService {
         this.logOtp('OTP verification mismatch', {
           identifier: normalizedIdentifier,
           otpKey,
-          providedOtp: otp.length
-            ? `${otp.slice(0, 1)}${'*'.repeat(Math.max(otp.length - 2, 0))}${otp.slice(-1)}`
-            : null,
-          storedOtp: storedOtp.length
-            ? `${storedOtp.slice(0, 1)}${'*'.repeat(Math.max(storedOtp.length - 2, 0))}${storedOtp.slice(-1)}`
-            : null,
+          providedOtp: this.maskOtpValue(otp),
+          storedOtp: this.maskOtpValue(storedOtp),
         });
         return {
           success: false,
@@ -492,14 +526,15 @@ export class OtpService {
       const cooldownKey = `otp_cooldown:${normalizedIdentifier}`;
 
       const [otpData, attempts, cooldownData] = await Promise.all([
-        this.cacheService.get<string>(otpKey),
+        this.cacheService.get<unknown>(otpKey),
         this.cacheService.get<string>(attemptsKey),
         this.cacheService.get<string>(cooldownKey),
       ]);
       const cacheExists = await this.cacheService.exists(otpKey);
       const cacheTtl = await this.cacheService.ttl(otpKey);
 
-      const otpExists = cacheExists && typeof otpData === 'string' && otpData.length > 0;
+      const storedOtp = this.extractOtpValue(otpData);
+      const otpExists = cacheExists && typeof storedOtp === 'string' && storedOtp.length > 0;
       const cooldown = cooldownData !== null;
 
       const attemptCount = attempts ? parseInt(attempts) : 0;
