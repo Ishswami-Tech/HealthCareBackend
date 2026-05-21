@@ -1,9 +1,11 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
+import { nowIso } from '@utils/date-time.util';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { EmailService } from '@communication/channels/email/email.service';
 import { ConfigService } from '@config/config.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
+import { EventService } from '@infrastructure/events/event.service';
 import { LogType, LogLevel } from '@core/types';
 import { EmailTemplate } from '@core/types/common.types';
 import { JobType } from '@core/types/queue.types';
@@ -23,6 +25,7 @@ export class OtpService {
     private readonly queueService: QueueService,
     private readonly whatsAppService: WhatsAppService,
     private readonly configService: ConfigService,
+    private readonly eventService: EventService,
     private readonly loggingService: LoggingService
   ) {
     // Use ConfigService (which uses dotenv) for all environment variable access
@@ -60,6 +63,16 @@ export class OtpService {
 
     console.warn(`[OtpService][OTP] ${message}`, context);
     void this.loggingService.log(LogType.AUTH, LogLevel.DEBUG, message, 'OtpService', context);
+  }
+
+  private logOtp(message: string, context: Record<string, unknown> = {}): void {
+    void this.loggingService.log(LogType.AUTH, LogLevel.WARN, message, 'OtpService', context);
+    void this.eventService.emit('auth.otp.diagnostic', {
+      source: 'OtpService',
+      message,
+      context,
+      timestamp: nowIso(),
+    });
   }
 
   // ... (generateOtp and sendOtpEmail remain unchanged) ...
@@ -113,7 +126,7 @@ export class OtpService {
       const otpKey = `otp:${normalizedEmail}`;
       const expirySeconds = this.config.expiryMinutes * 60;
 
-      this.debugOtp('Email OTP generated and cached', {
+      this.logOtp('Email OTP generated and cached', {
         normalizedEmail,
         purpose,
         otpKey,
@@ -124,7 +137,7 @@ export class OtpService {
       });
 
       const previousOtp = await this.cacheService.get<string>(otpKey);
-      this.debugOtp('Email OTP cache snapshot before write', {
+      this.logOtp('Email OTP cache snapshot before write', {
         normalizedEmail,
         otpKey,
         previousOtpExists: Boolean(previousOtp),
@@ -136,7 +149,7 @@ export class OtpService {
 
       await this.cacheService.set(otpKey, otp, expirySeconds);
       const storedOtp = await this.cacheService.get<string>(otpKey);
-      this.debugOtp('Email OTP stored in cache', {
+      this.logOtp('Email OTP stored in cache', {
         normalizedEmail,
         otpKey,
         expirySeconds,
@@ -239,7 +252,7 @@ export class OtpService {
       const otpKey = `otp:${normalizedPhone}`;
       const expirySeconds = this.config.expiryMinutes * 60;
 
-      this.debugOtp('WhatsApp OTP generated and cached', {
+      this.logOtp('WhatsApp OTP generated and cached', {
         normalizedPhone,
         purpose,
         otpKey,
@@ -250,7 +263,7 @@ export class OtpService {
       });
 
       const previousOtp = await this.cacheService.get<string>(otpKey);
-      this.debugOtp('WhatsApp OTP cache snapshot before write', {
+      this.logOtp('WhatsApp OTP cache snapshot before write', {
         normalizedPhone,
         otpKey,
         previousOtpExists: Boolean(previousOtp),
@@ -262,7 +275,7 @@ export class OtpService {
 
       await this.cacheService.set(otpKey, otp, expirySeconds);
       const storedOtp = await this.cacheService.get<string>(otpKey);
-      this.debugOtp('WhatsApp OTP stored in cache', {
+      this.logOtp('WhatsApp OTP stored in cache', {
         normalizedPhone,
         otpKey,
         expirySeconds,
@@ -358,7 +371,7 @@ export class OtpService {
       const otpKey = `otp:${normalizedIdentifier}`;
       const storedOtp = await this.cacheService.get<string>(otpKey);
 
-      this.debugOtp('OTP verification lookup', {
+      this.logOtp('OTP verification lookup', {
         identifier: normalizedIdentifier,
         otpKey,
         hasStoredOtp: storedOtp !== null,
@@ -381,7 +394,7 @@ export class OtpService {
       }
 
       if (storedOtp !== otp) {
-        this.debugOtp('OTP verification mismatch', {
+        this.logOtp('OTP verification mismatch', {
           identifier: normalizedIdentifier,
           otpKey,
           providedOtp: otp.length
@@ -400,7 +413,7 @@ export class OtpService {
       // Remove OTP after successful verification
       await this.cacheService.del(otpKey);
 
-      this.debugOtp('OTP verification succeeded', {
+      this.logOtp('OTP verification succeeded', {
         identifier: normalizedIdentifier,
         otpKey,
       });
