@@ -48,7 +48,7 @@ export class WhatsAppConfig {
   }
 
   get otpTemplateId(): string {
-    return this.getConfig<string>('WHATSAPP_OTP_TEMPLATE_ID', 'verify');
+    return this.getConfig<string>('WHATSAPP_OTP_TEMPLATE_ID', 'verify_account');
   }
 
   get appointmentConfirmationTemplateId(): string {
