@@ -385,8 +385,24 @@ export class RbacService {
       const cacheKey = this.getCacheKey('user_roles', userId, clinicId);
       const cached = await this.cacheService.get<RoleAssignment[]>(cacheKey);
 
-      if (cached) {
+      if (Array.isArray(cached)) {
         return cached;
+      }
+
+      if (cached) {
+        await this.cacheService.invalidateCache(cacheKey);
+        void this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.WARN,
+          'Invalid cached user roles detected; cache entry cleared',
+          'RbacService',
+          {
+            userId,
+            clinicId,
+            cacheKey,
+            cachedType: typeof cached,
+          }
+        );
       }
 
       const assignments = (await this.databaseService.findUserRolesSafe(
@@ -407,6 +423,21 @@ export class RbacService {
         updatedAt: Date;
         role: { name: string };
       }>;
+
+      if (!Array.isArray(assignments)) {
+        void this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.WARN,
+          'Unexpected user roles result shape received from database layer',
+          'RbacService',
+          {
+            userId,
+            clinicId,
+            resultType: typeof assignments,
+          }
+        );
+        return [];
+      }
 
       const roles: RoleAssignment[] = assignments.map(assignment => ({
         userId: assignment.userId,
@@ -451,8 +482,23 @@ export class RbacService {
       const cacheKey = this.getCacheKey('role_permissions', ...roleIds);
       const cached = await this.cacheService.get<string[]>(cacheKey);
 
-      if (cached) {
+      if (Array.isArray(cached)) {
         return cached;
+      }
+
+      if (cached) {
+        await this.cacheService.invalidateCache(cacheKey);
+        void this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.WARN,
+          'Invalid cached role permissions detected; cache entry cleared',
+          'RbacService',
+          {
+            roleIds,
+            cacheKey,
+            cachedType: typeof cached,
+          }
+        );
       }
 
       const rolePermissions = (await this.databaseService.findRolePermissionsSafe(
@@ -467,6 +513,21 @@ export class RbacService {
         updatedAt: Date;
         permission: { resource: string; action: string };
       }>;
+
+      if (!Array.isArray(rolePermissions)) {
+        void this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.WARN,
+          'Unexpected role permissions result shape received from database layer',
+          'RbacService',
+          {
+            roleIds,
+            cacheKey,
+            resultType: typeof rolePermissions,
+          }
+        );
+        return await this.getFallbackRolePermissions(roleIds);
+      }
 
       const permissions = rolePermissions.map((rp): string => {
         const resource = rp.permission.resource;

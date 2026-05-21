@@ -1612,6 +1612,18 @@ export class AuthService {
       );
     }
 
+    const otpStatus = await this.otpService.checkOtpStatus(normalizedInputPhone);
+    this.logOtp('verifyPhone OTP status preflight', {
+      userId,
+      identifier: phone,
+      normalizedIdentifier: normalizedInputPhone,
+      expectedPhone,
+      otpKey: `otp:${normalizedInputPhone}`,
+      otpLength: otp?.length,
+      otp: this.maskOtp(otp),
+      ...otpStatus,
+    });
+
     const verificationResult = await this.otpService.verifyOtp(normalizedInputPhone, otp);
     this.logOtp('verifyPhone lookup result', {
       userId,
