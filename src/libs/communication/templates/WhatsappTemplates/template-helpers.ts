@@ -34,7 +34,7 @@ export function formatOTPTemplateParams(
         { type: 'text', text: normalizeTemplateText(targetLabel, 'phone no') },
         {
           type: 'text',
-          text: limitTemplateText(sanitizeTemplateText(merchantName, 'Clinic'), 15),
+          text: sanitizeTemplateText(merchantName, 'Clinic'),
         },
         { type: 'text', text: normalizeTemplateText(otp, '000000') },
         { type: 'text', text: normalizeTemplateText(supportLabel, 'Support') },
@@ -64,19 +64,12 @@ function normalizeTemplateText(value: unknown, fallback: string): string {
   return fallback;
 }
 
-function limitTemplateText(value: string, maxLength: number): string {
-  if (value.length <= maxLength) {
-    return value;
-  }
-
-  return value.slice(0, maxLength).trimEnd();
-}
-
 function sanitizeTemplateText(value: unknown, fallback: string): string {
   const normalized = normalizeTemplateText(value, fallback);
   const withoutUrlLikeCharacters = normalized
     .replace(/[./\\?%#:]+/g, ' ')
     .replace(/@/g, ' ')
+    .replace(/\bhttps?\b/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
