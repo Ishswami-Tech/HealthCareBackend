@@ -106,7 +106,7 @@ export class WhatsAppService {
           this.resolveOtpTargetLabel(purpose),
           clinicName || appName,
           otp,
-          'WhatsApp Support'
+          'Support'
         ),
         clinicId
       );
