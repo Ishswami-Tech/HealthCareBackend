@@ -53,10 +53,10 @@ export interface RateLimitOptions {
  *     return this.authService.login(loginDto);
  *   }
  *
- *   @Post('register')
+ *   @Post('request-otp')
  *   @RateLimit({ max: 3, windowMs: 300000 }) // 3 requests per 5 minutes
- *   async register(@Body() registerDto: RegisterDto) {
- *     return this.authService.register(registerDto);
+ *   async requestOtp(@Body() requestOtpDto: RequestOtpDto) {
+ *     return this.authService.requestOtp(requestOtpDto);
  *   }
  * }
  * ```

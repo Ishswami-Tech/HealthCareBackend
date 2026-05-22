@@ -33,7 +33,6 @@ import { JwtAuthService } from './core/jwt.service';
 import type { FastifyRequestWithUser } from '@core/types/guard.types';
 import {
   LoginDto,
-  RegisterDto,
   AuthResponse,
   PasswordResetRequestDto,
   PasswordResetDto,
@@ -47,6 +46,8 @@ import {
   ResendVerificationDto,
   VerifyEmailDto,
 } from '@dtos/auth.dto';
+import { LoggingService } from '@infrastructure/logging/logging.service';
+import { LogType, LogLevel } from '@core/types';
 import { DataResponseDto, SuccessResponseDto } from '@dtos/common-response.dto';
 import { AuthTokens } from '@core/types';
 import { Cache, InvalidateCache, PatientCache } from '@core/decorators';
@@ -60,7 +61,6 @@ import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 @ApiProduces('application/json')
 @ApiExtraModels(
   LoginDto,
-  RegisterDto,
   AuthResponse,
   PasswordResetRequestDto,
   PasswordResetDto,
@@ -78,166 +78,9 @@ export class AuthController {
     private readonly rbacService: RbacService,
     private readonly errors: HealthcareErrorsService,
     private readonly sessionService: SessionManagementService,
-    private readonly jwtAuthService: JwtAuthService
+    private readonly jwtAuthService: JwtAuthService,
+    private readonly loggingService: LoggingService
   ) {}
-
-  @Public()
-  @Post('register')
-  @HttpCode(HttpStatus.CREATED)
-  @Cache({
-    keyTemplate: 'auth:register_attempt:{email}:rate_limit',
-    ttl: 1800, // 30 minutes rate limiting for registration
-    tags: ['auth', 'registration_attempts'],
-    priority: 'normal',
-    enableSWR: false,
-  })
-  @InvalidateCache({
-    patterns: ['user_profiles', 'auth:login_attempt:*'],
-    tags: ['user_profiles', 'login_attempts'],
-  })
-  @ApiOperation({
-    summary: 'Register a new user',
-    description:
-      'Create a new user account with email and password. Supports multi-tenant registration with clinic/studio context.',
-    operationId: 'registerUser',
-  })
-  @ApiBody({
-    type: RegisterDto,
-    description:
-      'User registration data including personal information and optional clinic/studio context',
-    examples: {
-      patient: {
-        summary: 'Patient Registration',
-        description: 'Register a new patient with clinic ID (REQUIRED)',
-        value: {
-          email: 'patient@example.com',
-          password: 'SecurePassword123!',
-          firstName: 'John',
-          lastName: 'Doe',
-          phone: '+1234567890',
-          clinicId: 'CL0001', // REQUIRED - Sets primaryClinicId automatically
-          role: 'PATIENT',
-          gender: 'MALE',
-          dateOfBirth: '1990-01-01',
-          address: '123 Main St, City, State 12345',
-        },
-      },
-      doctor: {
-        summary: 'Doctor Registration',
-        description: 'Register a new doctor with clinic context',
-        value: {
-          email: 'doctor@example.com',
-          password: 'SecurePassword123!',
-          firstName: 'Jane',
-          lastName: 'Smith',
-          phone: '+1234567890',
-          role: 'DOCTOR',
-          clinicId: 'clinic-uuid-123',
-        },
-      },
-    },
-  })
-  @ApiResponse({
-    status: 201,
-    description: 'User registered successfully',
-    type: DataResponseDto<AuthResponse>,
-    schema: {
-      example: {
-        status: 'success',
-        message: 'User registered successfully',
-        timestamp: '2024-01-01T00:00:00.000Z',
-        data: {
-          accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
-          refreshToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
-          user: {
-            id: 'user-123',
-            email: 'user@example.com',
-            firstName: 'John',
-            lastName: 'Doe',
-            role: 'PATIENT',
-            isVerified: false,
-          },
-        },
-      },
-    },
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'Bad request - validation failed',
-    schema: {
-      example: {
-        status: 'error',
-        message: 'Validation failed',
-        timestamp: '2024-01-01T00:00:00.000Z',
-        errorCode: 'VALIDATION_ERROR',
-        details: {
-          email: ['Please provide a valid email address'],
-          password: ['Password must be at least 8 characters long'],
-        },
-      },
-    },
-  })
-  @ApiResponse({
-    status: 409,
-    description: 'User already exists',
-    schema: {
-      example: {
-        status: 'error',
-        message: 'User with this email already exists',
-        timestamp: '2024-01-01T00:00:00.000Z',
-        errorCode: 'USER_EXISTS',
-      },
-    },
-  })
-  async register(
-    @Body() registerDto: RegisterDto,
-    @Request() req: FastifyRequestWithUser
-  ): Promise<DataResponseDto<AuthResponse>> {
-    try {
-      // Extract clinic ID from request (set by ClinicGuard from headers)
-      // Extract clinic ID from request (set by ClinicGuard from headers)
-      const clinicId =
-        (req as unknown as { clinicId?: string }).clinicId ||
-        (Array.isArray(req.headers['x-clinic-id'])
-          ? req.headers['x-clinic-id'][0]
-          : (req.headers['x-clinic-id'] as string));
-
-      const result = await this.authService.register(
-        registerDto,
-        {
-          userAgent: (req.headers['user-agent'] as string) || 'unknown',
-          ipAddress: req.ip || '127.0.0.1',
-        },
-        clinicId
-      );
-
-      // Sync session to Fastify session if available
-      if (req.session && result.user) {
-        const decodedToken = result.accessToken
-          ? this.jwtAuthService.decodeToken(result.accessToken)
-          : null;
-        const sessionId =
-          decodedToken && typeof decodedToken === 'object' && decodedToken !== null
-            ? (decodedToken as { sessionId?: string }).sessionId
-            : undefined;
-
-        if (sessionId) {
-          const sessionData = await this.sessionService.getSession(sessionId);
-          if (sessionData) {
-            this.sessionService.syncToFastifySession(sessionData, req.session);
-          }
-        }
-      }
-
-      return new DataResponseDto(result, 'User registered successfully');
-    } catch (_error) {
-      if (_error instanceof HealthcareError) {
-        this.errors.handleError(_error, 'AuthController');
-        throw _error;
-      }
-      throw _error;
-    }
-  }
 
   @Public()
   @Post('login')
@@ -956,6 +799,7 @@ export class AuthController {
   @Public()
   @Post('request-otp')
   @HttpCode(HttpStatus.OK)
+  @RateLimitAPI({ points: 3, duration: 900 }) // 3 requests per 15 minutes
   @Cache({
     keyTemplate: 'auth:otp_request:{contact}:rate_limit',
     ttl: 1800, // 30 minutes rate limiting
@@ -1049,6 +893,7 @@ export class AuthController {
   @Public()
   @Post('verify-otp')
   @HttpCode(HttpStatus.OK)
+  @RateLimitAPI({ points: 5, duration: 900 }) // 5 attempts per 15 minutes
   @Cache({
     keyTemplate: 'auth:otp_verify:{contact}:attempts',
     ttl: 900, // 15 minutes for attempt tracking
@@ -1156,49 +1001,16 @@ export class AuthController {
           ? req.headers['x-clinic-id'][0]
           : (req.headers['x-clinic-id'] as string));
 
-      let result: AuthResponse;
-
-      if (verifyDto.isRegistration) {
-        // Handle registration flow
-        const isEmail = verifyDto.identifier.includes('@');
-
-        if (isEmail) {
-          result = await this.authService.registerWithEmailOtp(
-            verifyDto.identifier,
-            verifyDto.otp,
-            verifyDto.firstName || '',
-            verifyDto.lastName || '',
-            clinicId,
-            {
-              userAgent: (req.headers['user-agent'] as string) || 'unknown',
-              ipAddress: req.ip || '127.0.0.1',
-            }
-          );
-        } else {
-          result = await this.authService.registerWithPhoneOtp(
-            verifyDto.identifier,
-            verifyDto.otp,
-            verifyDto.firstName || '',
-            verifyDto.lastName || '',
-            undefined, // Email optional for phone registration
-            clinicId,
-            {
-              userAgent: (req.headers['user-agent'] as string) || 'unknown',
-              ipAddress: req.ip || '127.0.0.1',
-            }
-          );
-        }
-      } else {
-        // Handle login flow (existing)
-        result = await this.authService.verifyOtp(
-          verifyDto,
-          {
-            userAgent: (req.headers['user-agent'] as string) || 'unknown',
-            ipAddress: req.ip || '127.0.0.1',
-          },
-          clinicId
-        );
-      }
+      // Auto-registration is handled within verifyOtp service method
+      // If user doesn't exist, it will be auto-created with OTP verification
+      const result = await this.authService.verifyOtp(
+        verifyDto,
+        {
+          userAgent: (req.headers['user-agent'] as string) || 'unknown',
+          ipAddress: req.ip || '127.0.0.1',
+        },
+        clinicId
+      );
 
       // Sync session to Fastify session if available
       if (req.session && result.user) {
@@ -1259,12 +1071,14 @@ export class AuthController {
       throw this.errors.invalidCredentials('AuthController.verifyPhone');
     }
 
-    console.warn('[AuthController][verify-phone] request received', {
-      userId,
-      phone: verifyPhoneDto.phone,
-      otpLength: verifyPhoneDto.otp?.length,
-      otpTail: verifyPhoneDto.otp ? `***${String(verifyPhoneDto.otp).slice(-2)}` : null,
-    });
+    // Log phone verification request without sensitive data
+    await this.loggingService.log(
+      LogType.AUTH,
+      LogLevel.INFO,
+      'Phone verification requested',
+      'AuthController.verifyPhone',
+      { userId, phoneLength: verifyPhoneDto.phone?.length }
+    );
 
     const result = await this.authService.verifyPhone(
       userId,

@@ -25,6 +25,8 @@ import { RolesGuard } from '@core/guards/roles.guard';
 import { ClinicGuard } from '@core/guards/clinic.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
+import { ProfileCompletionGuard } from '@core/guards/profile-completion.guard';
+import { RequiresProfileCompletion } from '@core/decorators/profile-completion.decorator';
 import { Roles } from '@core/decorators/roles.decorator';
 import { Role } from '@core/types/enums.types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
@@ -92,7 +94,8 @@ export const FastifyFile = createParamDecorator(
 );
 
 @Controller('patients')
-@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard, ProfileCompletionGuard)
+@RequiresProfileCompletion()
 @ApiBearerAuth()
 export class PatientsController {
   constructor(private readonly patientsService: PatientsService) {}

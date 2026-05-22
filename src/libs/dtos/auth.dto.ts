@@ -649,15 +649,6 @@ export class RequestOtpDto {
   @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   @IsOptional()
   clinicId?: string;
-
-  @ApiProperty({
-    description: 'Is this for new user registration?',
-    example: true,
-    required: false,
-  })
-  @IsOptional()
-  @IsBoolean()
-  isRegistration?: boolean;
 }
 
 /**
@@ -723,15 +714,6 @@ export class VerifyOtpRequestDto {
   clinicId?: string;
 
   @ApiProperty({
-    description: 'Is this for new user registration?',
-    example: true,
-    required: false,
-  })
-  @IsOptional()
-  @IsBoolean()
-  isRegistration?: boolean;
-
-  @ApiProperty({
     description: 'Remember me option for extended session',
     example: false,
     required: false,
@@ -742,7 +724,7 @@ export class VerifyOtpRequestDto {
   rememberMe?: boolean = false;
 
   @ApiProperty({
-    description: 'First Name (required for registration)',
+    description: 'First Name (optional, for auto-registration)',
     example: 'John',
     required: false,
   })
@@ -751,7 +733,7 @@ export class VerifyOtpRequestDto {
   firstName?: string;
 
   @ApiProperty({
-    description: 'Last Name (required for registration)',
+    description: 'Last Name (optional, for auto-registration)',
     example: 'Doe',
     required: false,
   })

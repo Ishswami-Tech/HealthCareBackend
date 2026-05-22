@@ -1,8 +1,7 @@
 # Auth Service
 
 **Purpose:** Authentication & authorization with JWT, OTP, and social auth
-**Location:** `src/services/auth`
-**Status:** ✅ Production-ready
+**Location:** `src/services/auth` **Status:** ✅ Production-ready
 
 ---
 
@@ -39,19 +38,18 @@ export class MyService {
 
 ## API Endpoints
 
-| Endpoint | Method | Role | Description |
-|----------|--------|------|-------------|
-| `/auth/register` | POST | Public | User registration |
-| `/auth/login` | POST | Public | User login |
-| `/auth/refresh` | POST | Public | Refresh access token |
-| `/auth/logout` | POST | Authenticated | User logout |
-| `/auth/forgot-password` | POST | Public | Request password reset |
-| `/auth/reset-password` | POST | Public | Reset password with token |
-| `/auth/change-password` | POST | Authenticated | Change password |
-| `/auth/request-otp` | POST | Public | Request OTP |
-| `/auth/verify-otp` | POST | Public | Verify OTP |
-| `/auth/google` | POST | Public | Google OAuth login |
-| `/auth/sessions` | GET | Authenticated | Get active sessions |
+| Endpoint                | Method | Role          | Description               |
+| ----------------------- | ------ | ------------- | ------------------------- |
+| `/auth/login`           | POST   | Public        | User login                |
+| `/auth/refresh`         | POST   | Public        | Refresh access token      |
+| `/auth/logout`          | POST   | Authenticated | User logout               |
+| `/auth/forgot-password` | POST   | Public        | Request password reset    |
+| `/auth/reset-password`  | POST   | Public        | Reset password with token |
+| `/auth/change-password` | POST   | Authenticated | Change password           |
+| `/auth/request-otp`     | POST   | Public        | Request OTP               |
+| `/auth/verify-otp`      | POST   | Public        | Verify OTP                |
+| `/auth/google`          | POST   | Public        | Google OAuth login        |
+| `/auth/sessions`        | GET    | Authenticated | Get active sessions       |
 
 [Full API documentation](../../docs/api/README.md)
 [API Integration Analysis](../../docs/API_INTEGRATION_ANALYSIS.md)
@@ -60,16 +58,11 @@ export class MyService {
 
 ## Usage Examples
 
-### Example 1: User Registration
+### Example 1: Internal onboarding helper
 
 ```typescript
-const result = await this.authService.register({
-  email: 'user@example.com',
-  password: 'SecurePass123!',
-  name: 'John Doe',
-  role: 'PATIENT',
-});
-// Returns: { user, accessToken, refreshToken }
+// Manual registration is no longer exposed as a public auth endpoint.
+// OTP/Google auto-registration remains the supported user onboarding path.
 ```
 
 ### Example 2: Login with OTP
@@ -104,6 +97,7 @@ await this.authService.logoutAll(userId);
 ## Security Features
 
 ### Progressive Lockout
+
 - 1st lockout: 10 minutes
 - 2nd lockout: 25 minutes
 - 3rd lockout: 45 minutes
@@ -111,12 +105,14 @@ await this.authService.logoutAll(userId);
 - 5th+ lockout: 6 hours
 
 ### Session Management
+
 - Maximum 5 concurrent sessions per user
 - Automatic cleanup of oldest session when limit exceeded
 - Device fingerprinting for session tracking
 - Suspicious session detection every 30 minutes
 
 ### Rate Limiting
+
 - Login: 10 attempts per 30 minutes
 - OTP: 5 requests per 15 minutes
 - Password reset: 3 requests per hour
@@ -167,12 +163,15 @@ pnpm test auth
 ## Troubleshooting
 
 **Issue 1: Token Expired**
+
 - **Solution:** Use refresh token endpoint to get new access token
 
 **Issue 2: Account Locked**
+
 - **Solution:** Wait for lockout period to expire or contact admin
 
 **Issue 3: OTP Not Received**
+
 - **Solution:** Check email spam folder or request new OTP
 
 ---
