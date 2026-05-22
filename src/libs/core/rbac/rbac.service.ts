@@ -501,9 +501,25 @@ export class RbacService {
         );
       }
 
-      const rolePermissions = (await this.databaseService.findRolePermissionsSafe(
-        roleIds
-      )) as Array<{
+      const rolePermissionsRaw = await this.databaseService.findRolePermissionsSafe(roleIds);
+      const rolePermissions = this.normalizeRolePermissionsResult(rolePermissionsRaw);
+
+      if (rolePermissions.length === 0 && !Array.isArray(rolePermissionsRaw)) {
+        void this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.WARN,
+          'Unexpected role permissions result shape received from database layer',
+          'RbacService',
+          {
+            roleIds,
+            cacheKey,
+            resultType: typeof rolePermissionsRaw,
+          }
+        );
+        return await this.getFallbackRolePermissions(roleIds);
+      }
+
+      const typedRolePermissions = rolePermissions as Array<{
         id: string;
         roleId: string;
         permissionId: string;
@@ -514,22 +530,7 @@ export class RbacService {
         permission: { resource: string; action: string };
       }>;
 
-      if (!Array.isArray(rolePermissions)) {
-        void this.loggingService.log(
-          LogType.ERROR,
-          LogLevel.WARN,
-          'Unexpected role permissions result shape received from database layer',
-          'RbacService',
-          {
-            roleIds,
-            cacheKey,
-            resultType: typeof rolePermissions,
-          }
-        );
-        return await this.getFallbackRolePermissions(roleIds);
-      }
-
-      const permissions = rolePermissions.map((rp): string => {
+      const permissions = typedRolePermissions.map((rp): string => {
         const resource = rp.permission.resource;
         const action = rp.permission.action;
         return `${resource}:${action}`;
@@ -1319,5 +1320,28 @@ export class RbacService {
     };
 
     return rolePermissions[roleName] || [];
+  }
+
+  /**
+   * Normalize role-permission results from database/cache wrappers.
+   */
+  private normalizeRolePermissionsResult(
+    value: unknown
+  ): Array<{ permission: { resource: string; action: string } }> {
+    if (Array.isArray(value)) {
+      return value as Array<{ permission: { resource: string; action: string } }>;
+    }
+
+    if (value && typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      for (const key of ['data', 'items', 'results', 'permissions']) {
+        const candidate = record[key];
+        if (Array.isArray(candidate)) {
+          return candidate as Array<{ permission: { resource: string; action: string } }>;
+        }
+      }
+    }
+
+    return [];
   }
 }

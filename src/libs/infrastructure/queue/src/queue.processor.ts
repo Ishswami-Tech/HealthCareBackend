@@ -3,6 +3,7 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { EHRService } from '../../../../services/ehr/ehr.service';
 import { AppointmentQueueService } from './services/appointment-queue.service';
+import { EmailService } from '@communication/channels/email/email.service';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
@@ -19,8 +20,10 @@ import {
   type JobData,
   type JobMetadata,
 } from '@core/types/queue.types';
+import { EmailTemplate } from '@core/types/common.types';
 import type { NotificationData } from '@core/types/appointment.types';
 import type { InvoicePDFData } from '@core/types/billing.types';
+import type { EmailContext } from '@core/types';
 import { getVideoConsultationDelegate } from '@core/types/video-database.types';
 import { formatDateInIST, nowIso } from '../../../utils/date-time.util';
 
@@ -29,6 +32,23 @@ import { formatDateInIST, nowIso } from '../../../utils/date-time.util';
 type InvoicePDFServiceType = {
   generateInvoicePDF: (data: InvoicePDFData) => Promise<{ filePath: string; fileName: string }>;
   getPublicInvoiceUrl: (fileName: string) => string;
+};
+
+type EmailJobPayload = {
+  to?: string | string[];
+  subject?: string;
+  body?: string;
+  html?: string;
+  text?: string;
+  isHtml?: boolean;
+  replyTo?: string;
+  cc?: string[];
+  bcc?: string[];
+  template?: string;
+  context?: Record<string, unknown>;
+  clinicId?: string;
+  userId?: string;
+  [key: string]: unknown;
 };
 
 // NOTE: In BullMQ, job processing is handled by Worker instances, not decorators.
@@ -68,6 +88,18 @@ export class QueueProcessor {
     private readonly invoicePDFService?: InvoicePDFServiceType,
     private readonly moduleRef?: ModuleRef
   ) {}
+
+  private getEmailService(): EmailService | null {
+    if (!this.moduleRef) {
+      return null;
+    }
+
+    try {
+      return this.moduleRef.get(EmailService, { strict: false });
+    } catch {
+      return null;
+    }
+  }
 
   // Central job processing method
   async processJob(job: Job<CanonicalJobEnvelope>): Promise<unknown> {
@@ -506,7 +538,7 @@ export class QueueProcessor {
 
   // ============ Communication & Payment Workers ============
 
-  processEmail(job: Job<JobData>): void {
+  async processEmail(job: Job<JobData>): Promise<{ success: boolean; messageId?: string }> {
     void this.loggingService.log(
       LogType.QUEUE,
       LogLevel.INFO,
@@ -514,7 +546,91 @@ export class QueueProcessor {
       'QueueProcessor',
       { jobId: safeStringify(job.id) }
     );
-    // Implementation logic using ModuleRef for EmailService
+
+    const payload = this.extractCanonicalPayload(job.data) as EmailJobPayload;
+    const emailPayload = (payload['emailPayload'] as EmailJobPayload | undefined) || payload;
+    const emailService = this.getEmailService();
+
+    if (!emailService) {
+      throw new Error('EmailService not available in QueueProcessor');
+    }
+
+    void this.loggingService.log(
+      LogType.QUEUE,
+      LogLevel.INFO,
+      `Email job payload received: ${safeStringify(emailPayload)}`,
+      'QueueProcessor',
+      { jobId: safeStringify(job.id), payload: emailPayload }
+    );
+
+    const to = emailPayload['to'];
+    const subject = typeof emailPayload.subject === 'string' ? emailPayload.subject : '';
+    const clinicId = typeof emailPayload.clinicId === 'string' ? emailPayload.clinicId : undefined;
+    const recipient = Array.isArray(to) ? to[0] : to;
+
+    if (!recipient || !subject) {
+      throw new Error('Email job is missing required recipient or subject fields');
+    }
+
+    if (typeof emailPayload.template === 'string' && emailPayload.context) {
+      const context =
+        emailPayload.context && typeof emailPayload.context === 'object'
+          ? (emailPayload.context as EmailContext)
+          : {};
+
+      const sent = await emailService.sendEmail({
+        to: recipient,
+        subject,
+        template: emailPayload.template as EmailTemplate,
+        context,
+        ...(clinicId ? { clinicId } : {}),
+        ...(typeof emailPayload.replyTo === 'string' ? { replyTo: emailPayload.replyTo } : {}),
+      });
+
+      if (!sent) {
+        throw new Error(`EmailService failed to send templated email job ${safeStringify(job.id)}`);
+      }
+
+      return { success: true, messageId: `email:${safeStringify(job.id)}` };
+    }
+
+    const body =
+      typeof emailPayload.body === 'string'
+        ? emailPayload.body
+        : typeof emailPayload.html === 'string'
+          ? emailPayload.html
+          : typeof emailPayload.text === 'string'
+            ? emailPayload.text
+            : '';
+
+    if (!body) {
+      throw new Error('Email job is missing body/html/text content');
+    }
+
+    const result = await emailService.sendSimpleEmail(
+      {
+        to: recipient,
+        subject,
+        body,
+        isHtml: emailPayload.isHtml !== false,
+        ...(typeof emailPayload.replyTo === 'string' ? { replyTo: emailPayload.replyTo } : {}),
+        ...(Array.isArray(emailPayload.cc) ? { cc: emailPayload.cc } : {}),
+        ...(Array.isArray(emailPayload.bcc) ? { bcc: emailPayload.bcc } : {}),
+        ...(typeof emailPayload.userId === 'string' ? { userId: emailPayload.userId } : {}),
+      },
+      clinicId
+    );
+
+    if (!result.success) {
+      throw new Error(
+        result.error || `EmailService failed to send email job ${safeStringify(job.id)}`
+      );
+    }
+
+    return {
+      success: true,
+      ...(result.messageId ? { messageId: result.messageId } : {}),
+    };
   }
 
   processNotification(job: Job<JobData>): void {

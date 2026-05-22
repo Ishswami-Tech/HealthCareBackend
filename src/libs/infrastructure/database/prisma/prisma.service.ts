@@ -2642,9 +2642,33 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         permission: { select: { resource: true, action: true } },
       },
     } as PrismaDelegateArgs);
-    return result as Array<
-      RolePermissionEntity & { permission: Pick<PermissionEntity, 'resource' | 'action'> }
-    >;
+    return this.normalizeRolePermissionsResult(result);
+  }
+
+  private normalizeRolePermissionsResult(
+    value: unknown
+  ): Array<RolePermissionEntity & { permission: Pick<PermissionEntity, 'resource' | 'action'> }> {
+    if (Array.isArray(value)) {
+      return value as Array<
+        RolePermissionEntity & { permission: Pick<PermissionEntity, 'resource' | 'action'> }
+      >;
+    }
+
+    if (value && typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      const candidateKeys = ['data', 'items', 'results', 'permissions'];
+
+      for (const key of candidateKeys) {
+        const candidate = record[key];
+        if (Array.isArray(candidate)) {
+          return candidate as Array<
+            RolePermissionEntity & { permission: Pick<PermissionEntity, 'resource' | 'action'> }
+          >;
+        }
+      }
+    }
+
+    return [];
   }
 
   /**

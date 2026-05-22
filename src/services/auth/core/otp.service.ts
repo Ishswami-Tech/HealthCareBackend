@@ -234,22 +234,43 @@ export class OtpService {
       await this.cacheService.set(attemptsKey, (attemptCount + 1).toString(), 60 * 60); // 1 hour
       await this.cacheService.set(cooldownKey, '1', this.config.cooldownMinutes * 60);
 
-      // Send email via queue
-      await this.queueService.addJob(
-        JobType.EMAIL,
-        'send_otp',
-        {
-          to: email,
-          subject: 'Your OTP Code',
-          template: EmailTemplate.OTP_LOGIN,
-          context: {
-            name,
-            otp,
-          },
-          ...(clinicId && { clinicId }),
+      const emailJobData = {
+        to: email,
+        subject: 'Your OTP Code',
+        template: EmailTemplate.OTP_LOGIN,
+        context: {
+          name,
+          otp,
         },
-        { priority: JobPriority.HIGH as unknown as number, attempts: 3 }
-      );
+        ...(clinicId && { clinicId }),
+      };
+
+      try {
+        await this.queueService.addJob(JobType.EMAIL, 'send_otp', emailJobData, {
+          priority: JobPriority.HIGH as unknown as number,
+          attempts: 3,
+          removeOnComplete: 25,
+          removeOnFail: 50,
+        });
+      } catch (queueError) {
+        void this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.WARN,
+          `Failed to enqueue email OTP for ${email}, attempting direct send`,
+          'OtpService',
+          {
+            email: normalizedEmail,
+            error: queueError instanceof Error ? queueError.message : String(queueError),
+          }
+        );
+
+        const sent = await this.emailService.sendEmail(emailJobData);
+        if (!sent) {
+          throw queueError instanceof Error
+            ? queueError
+            : new Error(`Failed to enqueue and send email OTP for ${email}`);
+        }
+      }
 
       void this.loggingService.log(
         LogType.AUTH,

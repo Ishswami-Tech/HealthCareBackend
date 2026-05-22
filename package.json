@@ -23,7 +23,8 @@
     "brace-expansion": "5.0.6",
     "ws": "8.20.1",
     "postcss": "8.5.10",
-    "uuid": "14.0.0"
+    "uuid": "14.0.0",
+    "qs": "6.15.2"
   },
   "scripts": {
     "build": "node scripts/build.js",
