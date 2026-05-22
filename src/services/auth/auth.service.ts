@@ -1151,11 +1151,8 @@ export class AuthService {
       }
 
       // Unified OTP flow: allow OTP for both login and registration
-      // Email: user must exist (login), Phone: allow any phone (login + auto-registration)
-      if (!user && isEmail) {
-        throw this.errors.userNotFound(undefined, 'AuthService.requestOtp');
-      }
-
+      // User existence check is done in verifyOtp, not here
+      // This allows new users to request OTP and auto-register during verification
       const clinicId = requestDto.clinicId || clinicIdFromHeader;
       if (!clinicId) {
         throw this.errors.validationError(
