@@ -1063,7 +1063,7 @@ export class ClinicService {
           return this.fetchClinicById(id, includeInactive, userId, role, clinicId);
         },
         {
-          ttl: 3600, // 1 hour
+          ttl: 300, // 5 minutes (mutable user-dependent data)
           tags: ['clinics', `clinic:${id}`],
           enableSwr: true,
         }

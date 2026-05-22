@@ -2184,7 +2184,7 @@ export class AuthService {
         timestamp: nowIso(),
       });
 
-      // Invalidate user cache
+      // Invalidate user cache after profile update
       await this.invalidateUserCache(userId, user.primaryClinicId || undefined);
 
       return true;

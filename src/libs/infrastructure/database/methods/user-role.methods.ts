@@ -212,11 +212,9 @@ export class UserRoleMethods extends DatabaseMethodsBase {
   async findRolePermissionsSafe(
     roleIds: string[]
   ): Promise<Array<RolePermissionEntity & { permission: { resource: string; action: string } }>> {
-    return await this.executeRead<
-      Array<RolePermissionEntity & { permission: { resource: string; action: string } }>
-    >(
+    const results = await this.executeRead<unknown>(
       async prisma => {
-        const results = await prisma.rolePermission.findMany({
+        return await prisma.rolePermission.findMany({
           where: {
             roleId: { in: roleIds },
           },
@@ -229,9 +227,6 @@ export class UserRoleMethods extends DatabaseMethodsBase {
             },
           },
         });
-        return results as Array<
-          RolePermissionEntity & { permission: { resource: string; action: string } }
-        >;
       },
       this.queryOptionsBuilder
         .where({ roleId: { in: roleIds } })
@@ -243,5 +238,34 @@ export class UserRoleMethods extends DatabaseMethodsBase {
         .rowLevelSecurity(false)
         .build()
     );
+
+    const normalizedResults = this.normalizeRolePermissionsResult(results);
+    return normalizedResults;
+  }
+
+  private normalizeRolePermissionsResult(
+    value: unknown
+  ): Array<RolePermissionEntity & { permission: { resource: string; action: string } }> {
+    if (Array.isArray(value)) {
+      return value as Array<
+        RolePermissionEntity & { permission: { resource: string; action: string } }
+      >;
+    }
+
+    if (value && typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      const candidateKeys = ['data', 'items', 'results', 'permissions'];
+
+      for (const key of candidateKeys) {
+        const candidate = record[key];
+        if (Array.isArray(candidate)) {
+          return candidate as Array<
+            RolePermissionEntity & { permission: { resource: string; action: string } }
+          >;
+        }
+      }
+    }
+
+    return [];
   }
 }
