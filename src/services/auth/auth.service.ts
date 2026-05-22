@@ -87,8 +87,14 @@ export class AuthService {
       return;
     }
 
-    console.warn(`[AuthService][OTP] ${message}`, context);
-    void this.logging.log(LogType.AUTH, LogLevel.DEBUG, message, 'AuthService', context);
+    // Use structured logging instead of console.warn for HIPAA compliance
+    void this.logging.log(
+      LogType.AUTH,
+      LogLevel.DEBUG,
+      `[OTP DEBUG] ${message}`,
+      'AuthService',
+      context
+    );
   }
 
   private logOtp(message: string, context: Record<string, unknown> = {}): void {
@@ -308,7 +314,7 @@ export class AuthService {
   }
 
   /**
-   * User registration
+   * Internal account creation helper used by privileged onboarding flows.
    */
   /**
    * Public registration endpoint for patients.
@@ -1144,21 +1150,10 @@ export class AuthService {
         user = users[0] || null;
       }
 
-      // Handle Registration vs Login logic
-      if (requestDto.isRegistration) {
-        if (user) {
-          throw this.errors.emailAlreadyExists(requestDto.identifier, 'AuthService.requestOtp');
-        }
-      } else {
-        // For existing user login - user MUST exist
-        // But for profile completion phone verification, user might not have this phone yet
-        // In that case, we still try to send OTP (SMS provider will handle invalid numbers)
-        // Only throw if it's an email (which requires existing user for login)
-        if (!user && isEmail) {
-          throw this.errors.userNotFound(undefined, 'AuthService.requestOtp');
-        }
-        // For phone, allow OTP even if user doesn't have this phone registered
-        // This enables phone verification for profile completion
+      // Unified OTP flow: allow OTP for both login and registration
+      // Email: user must exist (login), Phone: allow any phone (login + auto-registration)
+      if (!user && isEmail) {
+        throw this.errors.userNotFound(undefined, 'AuthService.requestOtp');
       }
 
       const clinicId = requestDto.clinicId || clinicIdFromHeader;
@@ -1204,7 +1199,7 @@ export class AuthService {
         result = await this.otpService.sendOtpEmail(
           emailTarget,
           userName,
-          requestDto.isRegistration ? 'verification' : 'login',
+          'login',
           clinicId,
           otpCode
         );
@@ -1229,25 +1224,14 @@ export class AuthService {
         });
 
         const promises: Promise<{ success: boolean; message: string }>[] = [
-          this.otpService.sendOtpSms(
-            phoneTarget,
-            requestDto.isRegistration ? 'verification' : 'login',
-            clinicId,
-            otpCode
-          ),
+          this.otpService.sendOtpSms(phoneTarget, 'login', clinicId, otpCode),
         ];
 
         // Also send to email if user has one (increases delivery success rate)
         if (user?.email) {
           promises.push(
             this.otpService
-              .sendOtpEmail(
-                user.email,
-                userName,
-                requestDto.isRegistration ? 'verification' : 'login',
-                clinicId,
-                otpCode
-              )
+              .sendOtpEmail(user.email, userName, 'login', clinicId, otpCode)
               .catch((err: Error) => {
                 // Log but don't fail if email send fails (WhatsApp is primary)
                 void this.logging.log(
@@ -1322,7 +1306,7 @@ export class AuthService {
         otpKey: `otp:${normalizedIdentifier}`,
         reusedExistingOtp: Boolean(existingOtp),
         ...(clinicId && { clinicId }),
-        isRegistration: !!requestDto.isRegistration,
+        isNewUser: !user,
         otp: otpCode,
       });
 
@@ -1391,8 +1375,177 @@ export class AuthService {
       }
 
       if (!user) {
-        // Return proper 400 error instead of 500
-        throw this.errors.userNotFound(undefined, 'AuthService.verifyOtp');
+        // Auto-register new users via OTP login
+        const clinicId = verifyDto.clinicId || clinicIdFromHeader;
+        if (!clinicId) {
+          throw this.errors.validationError(
+            'clinicId',
+            'Clinic ID is required for OTP verification',
+            'AuthService.verifyOtp'
+          );
+        }
+
+        const { resolveClinicUUID } = await import('@utils/clinic.utils');
+        const clinicUUID = await resolveClinicUUID(this.databaseService, clinicId);
+
+        // First verify OTP (before creating user)
+        const verificationResult = await this.otpService.verifyOtp(
+          isEmail ? verifyDto.identifier : this.normalizePhoneNumber(verifyDto.identifier),
+          verifyDto.otp
+        );
+
+        if (!verificationResult.success) {
+          await this.logging.log(
+            LogType.SECURITY,
+            LogLevel.WARN,
+            `Failed OTP verification for new user registration: ${verifyDto.identifier}`,
+            'AuthService.verifyOtp',
+            {
+              identifier: verifyDto.identifier,
+              reason: verificationResult.message,
+              timestamp: nowIso(),
+            }
+          );
+          throw this.errors.otpInvalid('AuthService.verifyOtp');
+        }
+
+        // Auto-register the new user
+        await this.logging.log(
+          LogType.AUTH,
+          LogLevel.INFO,
+          `Auto-registering new user via OTP: ${verifyDto.identifier}`,
+          'AuthService.verifyOtp',
+          { identifier: verifyDto.identifier }
+        );
+
+        const normalizedIdentifier = isEmail
+          ? verifyDto.identifier.trim().toLowerCase()
+          : this.normalizePhoneNumber(verifyDto.identifier);
+
+        user = await this.databaseService.createUserSafe({
+          email: isEmail ? normalizedIdentifier : `${normalizedIdentifier}@temp.com`,
+          password: await bcrypt.hash(uuidv4(), 12),
+          firstName: verifyDto.firstName || '',
+          lastName: verifyDto.lastName || '',
+          name:
+            `${verifyDto.firstName || ''} ${verifyDto.lastName || ''}`.trim() ||
+            normalizedIdentifier,
+          isVerified: true,
+          phoneVerified: !isEmail,
+          role: 'PATIENT',
+          primaryClinicId: clinicUUID,
+          userid: uuidv4(),
+          ...(!isEmail ? { phone: normalizedIdentifier } : {}),
+        });
+
+        // Ensure patient record
+        await this.ensurePatientRecordForAuth(user.id, clinicUUID, 'verifyOtp');
+
+        // Emit registration event
+        await this.eventService.emit('user.registered', {
+          userId: user.id,
+          identifier: normalizedIdentifier,
+          role: user.role,
+          clinicId: clinicUUID,
+          registrationMethod: 'otp',
+        });
+
+        await this.logging.log(
+          LogType.AUDIT,
+          LogLevel.INFO,
+          `New user registered via OTP: ${normalizedIdentifier}`,
+          'AuthService.verifyOtp',
+          { userId: user.id }
+        );
+
+        // Skip to session creation - OTP already verified above
+        // Validate clinic access
+        const validatedClinicUUID = await this.validateClinicAccessForAuth(
+          user.id,
+          clinicUUID,
+          'verifyOtp'
+        );
+
+        const otpUserRole = user.role as Role;
+        if (otpUserRole === Role.PATIENT) {
+          await this.ensurePatientRecordForAuth(user.id, validatedClinicUUID, 'verifyOtp');
+        }
+
+        // Create session
+        const session = await this.sessionService.createSession({
+          userId: user.id,
+          userAgent: sessionMetadata?.userAgent || 'OTP Login',
+          ipAddress: sessionMetadata?.ipAddress || '127.0.0.1',
+          metadata: { otpLogin: true, isNewUser: true },
+          ...(validatedClinicUUID && { clinicId: validatedClinicUUID }),
+        });
+
+        // Generate tokens
+        const userForTokens: UserProfile = {
+          id: user.id,
+          email: user.email || '',
+          name: user.name || normalizedIdentifier,
+          role: user.role as Role,
+          ...(user.phone && { phone: user.phone }),
+          ...(validatedClinicUUID && { clinicId: validatedClinicUUID }),
+          ...(user.primaryClinicId && { primaryClinicId: user.primaryClinicId }),
+        };
+        const tokens = await this.generateTokens(
+          userForTokens,
+          session.sessionId,
+          undefined,
+          sessionMetadata?.userAgent,
+          sessionMetadata?.ipAddress
+        );
+
+        // Update last login
+        await this.databaseService.updateUserSafe(user.id, {
+          lastLogin: new Date(),
+        });
+
+        // Emit OTP login event
+        const appName = this.configService.getEnv('APP_NAME') || 'Healthcare App';
+        const clinicName = await this.resolveClinicDisplayName(validatedClinicUUID);
+        await this.eventService.emit('user.otp_logged_in', {
+          userId: user.id,
+          email: user.email || '',
+          role: user.role as Role,
+          clinicId: validatedClinicUUID,
+          ...(clinicName && { clinicName }),
+          sessionId: session.sessionId,
+          appName,
+          isFirstLogin: true,
+          metadata: {
+            loginMethod: 'otp',
+            isNewUser: true,
+            userAgent: sessionMetadata?.userAgent,
+            ipAddress: sessionMetadata?.ipAddress,
+          },
+        });
+
+        await this.logging.log(
+          LogType.AUDIT,
+          LogLevel.INFO,
+          `OTP login successful for new user: ${normalizedIdentifier}`,
+          'AuthService.verifyOtp',
+          {
+            userId: user.id,
+            email: user.email,
+            role: user.role,
+            clinicId: validatedClinicUUID,
+          }
+        );
+
+        return {
+          accessToken: tokens.accessToken,
+          refreshToken: tokens.refreshToken,
+          user: this.buildAuthUserPayload(user, {
+            clinicId: validatedClinicUUID || undefined,
+            profileComplete: false,
+            requiresProfileCompletion: true,
+            loginMethod: 'otp',
+          }),
+        };
       }
 
       // Verify OTP using dedicated service
@@ -2051,249 +2204,6 @@ export class AuthService {
   }
 
   /**
-   * Register user with Email OTP
-   */
-  async registerWithEmailOtp(
-    email: string,
-    otp: string,
-    firstName: string,
-    lastName: string,
-    clinicIdFromHeader?: string,
-    sessionMetadata?: { userAgent?: string; ipAddress?: string }
-  ): Promise<AuthResponse> {
-    try {
-      // 1. Verify OTP
-      const verificationResult = await this.otpService.verifyOtp(email, otp);
-      if (!verificationResult.success) {
-        throw this.errors.validationError(
-          'otp',
-          verificationResult.message || 'Invalid OTP',
-          'AuthService.registerWithEmailOtp'
-        );
-      }
-
-      // 2. Check if user already exists
-      const existingUser = await this.databaseService.findUserByEmailSafe(email);
-      if (existingUser) {
-        throw this.errors.emailAlreadyExists(email, 'AuthService.registerWithEmailOtp');
-      }
-
-      // 3. Validate clinic
-      const clinicId = clinicIdFromHeader;
-      if (!clinicId) {
-        throw this.errors.validationError(
-          'clinicId',
-          'Clinic ID is required for registration',
-          'AuthService.registerWithEmailOtp'
-        );
-      }
-
-      const { resolveClinicUUID } = await import('@utils/clinic.utils');
-      const clinicUUID = await resolveClinicUUID(this.databaseService, clinicId);
-
-      // 4. Create user
-      const user = await this.databaseService.createUserSafe({
-        email,
-        firstName,
-        lastName,
-        primaryClinicId: clinicUUID,
-        isVerified: true, // Email verified via OTP
-        role: 'PATIENT',
-        password: '', // No password for OTP registration
-        userid: uuidv4(),
-        name: `${firstName} ${lastName}`,
-        age: 12, // Default age, will be updated in profile completion
-      });
-
-      await this.ensurePatientRecordForAuth(user.id, clinicUUID, 'registerWithEmailOtp');
-
-      // 5. Create session
-      const session = await this.sessionService.createSession({
-        userId: user.id,
-        userAgent: sessionMetadata?.userAgent || 'OTP Registration',
-        ipAddress: sessionMetadata?.ipAddress || '127.0.0.1',
-        metadata: { registrationMethod: 'email-otp' },
-        clinicId: clinicUUID,
-      });
-
-      // 6. Generate tokens
-      const userForTokens: UserProfile = {
-        id: user.id,
-        email: user.email || email,
-        name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim(),
-        role: user.role as Role,
-        ...(user.primaryClinicId && { primaryClinicId: user.primaryClinicId }),
-      };
-      const tokens = await this.generateTokens(
-        userForTokens,
-        session.sessionId,
-        undefined,
-        sessionMetadata?.userAgent,
-        sessionMetadata?.ipAddress
-      );
-
-      // 7. Emit registration event
-      await this.eventService.emit('user.registered', {
-        userId: user.id,
-        email: user.email || email,
-        role: user.role as Role,
-        clinicId: clinicUUID,
-        registrationMethod: 'email-otp',
-      });
-
-      const clinicName = await this.resolveClinicDisplayName(clinicUUID);
-
-      return {
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        user: this.buildAuthUserPayload(user, {
-          clinicId: clinicUUID,
-          clinicName,
-          profileComplete: false,
-          requiresProfileCompletion: true,
-          loginMethod: 'otp',
-        }),
-      };
-    } catch (error) {
-      await this.logging.log(
-        LogType.AUTH,
-        LogLevel.ERROR,
-        'Email OTP registration failed',
-        'AuthService.registerWithEmailOtp',
-        { email, error: error instanceof Error ? error.message : String(error) }
-      );
-      throw error;
-    }
-  }
-
-  /**
-   * Register user with Phone OTP
-   */
-  async registerWithPhoneOtp(
-    phone: string,
-    otp: string,
-    firstName: string,
-    lastName: string,
-    email?: string,
-    clinicIdFromHeader?: string,
-    sessionMetadata?: { userAgent?: string; ipAddress?: string }
-  ): Promise<AuthResponse> {
-    try {
-      const normalizedPhone = this.normalizePhoneNumber(phone);
-
-      // 1. Verify OTP
-      const verificationResult = await this.otpService.verifyOtp(normalizedPhone, otp);
-      if (!verificationResult.success) {
-        throw this.errors.validationError(
-          'otp',
-          verificationResult.message || 'Invalid OTP',
-          'AuthService.registerWithPhoneOtp'
-        );
-      }
-
-      // 2. Check if phone already exists
-      const existingUser = await this.databaseService.findUserByPhoneSafe(normalizedPhone);
-      if (existingUser) {
-        throw this.errors.validationError(
-          'phone',
-          'Phone number already registered',
-          'AuthService.registerWithPhoneOtp'
-        );
-      }
-
-      // 3. Validate clinic
-      const clinicId = clinicIdFromHeader;
-      if (!clinicId) {
-        throw this.errors.validationError(
-          'clinicId',
-          'Clinic ID is required for registration',
-          'AuthService.registerWithPhoneOtp'
-        );
-      }
-
-      const { resolveClinicUUID } = await import('@utils/clinic.utils');
-      const clinicUUID = await resolveClinicUUID(this.databaseService, clinicId);
-
-      // 4. Create user
-      const user = await this.databaseService.createUserSafe({
-        phone: normalizedPhone,
-        email: email || `${normalizedPhone}@temp.com`, // Temporary email if not provided
-        firstName,
-        lastName,
-        primaryClinicId: clinicUUID,
-        isVerified: true, // Phone verified via OTP
-        phoneVerified: true,
-        phoneVerifiedAt: new Date(),
-        role: 'PATIENT',
-        password: '', // No password for OTP registration
-        userid: uuidv4(),
-        name: `${firstName} ${lastName}`,
-        age: 12, // Default age, will be updated in profile completion
-      });
-
-      await this.ensurePatientRecordForAuth(user.id, clinicUUID, 'registerWithPhoneOtp');
-
-      // 5. Create session
-      const session = await this.sessionService.createSession({
-        userId: user.id,
-        userAgent: sessionMetadata?.userAgent || 'OTP Registration',
-        ipAddress: sessionMetadata?.ipAddress || '127.0.0.1',
-        metadata: { registrationMethod: 'phone-otp' },
-        clinicId: clinicUUID,
-      });
-
-      // 6. Generate tokens
-      const userForTokens: UserProfile = {
-        id: user.id,
-        email: user.email || '',
-        name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim(),
-        role: user.role as Role,
-        ...(user.phone && { phone: user.phone }),
-        ...(user.primaryClinicId && { primaryClinicId: user.primaryClinicId }),
-      };
-      const tokens = await this.generateTokens(
-        userForTokens,
-        session.sessionId,
-        undefined,
-        sessionMetadata?.userAgent,
-        sessionMetadata?.ipAddress
-      );
-
-      // 7. Emit registration event
-      const clinicName = await this.resolveClinicDisplayName(clinicUUID);
-
-      await this.eventService.emit('user.registered', {
-        userId: user.id,
-        phone: user.phone || normalizedPhone,
-        role: user.role,
-        clinicId: clinicUUID,
-        registrationMethod: 'phone-otp',
-      });
-
-      return {
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        user: this.buildAuthUserPayload(user, {
-          clinicId: clinicUUID,
-          clinicName,
-          profileComplete: false,
-          requiresProfileCompletion: true,
-          loginMethod: 'otp',
-        }),
-      };
-    } catch (error) {
-      await this.logging.log(
-        LogType.AUTH,
-        LogLevel.ERROR,
-        'Phone OTP registration failed',
-        'AuthService.registerWithPhoneOtp',
-        { phone, error: error instanceof Error ? error.message : String(error) }
-      );
-      throw error;
-    }
-  }
-
-  /**
    * Generate JWT tokens with enhanced security features
    */
   public async generateTokens(
@@ -2421,22 +2331,63 @@ export class AuthService {
       const userEmail: string = socialUser.email;
       const userId: string = socialUser.id;
 
-      // Find the full user record
-      const fullUser = await this.databaseService.findUserByEmailSafe(userEmail);
-      if (!fullUser) {
-        throw this.errors.userNotFound(userId, 'AuthService.authenticateWithGoogle');
-      }
+      // Find the full user record - auto-register if not found (NEW USERS)
+      let fullUser = await this.databaseService.findUserByEmailSafe(userEmail);
+      let finalClinicId: string | undefined;
 
-      // Determine clinic ID
-      const { resolveClinicUUID } = await import('@utils/clinic.utils');
-      if (!clinicId) {
-        throw this.errors.validationError(
-          'clinicId',
-          'Clinic ID is required for Google authentication',
-          'AuthService.authenticateWithGoogle'
+      if (!fullUser) {
+        // Auto-register new Google OAuth users
+        await this.logging.log(
+          LogType.AUTH,
+          LogLevel.INFO,
+          `Auto-registering new user via Google OAuth: ${userEmail}`,
+          'AuthService.authenticateWithGoogle',
+          { email: userEmail }
+        );
+
+        // Determine clinic ID
+        const { resolveClinicUUID } = await import('@utils/clinic.utils');
+        if (!clinicId) {
+          throw this.errors.validationError(
+            'clinicId',
+            'Clinic ID is required for Google authentication',
+            'AuthService.authenticateWithGoogle'
+          );
+        }
+        finalClinicId = await resolveClinicUUID(this.databaseService, clinicId);
+
+        // Create new user with Google info
+        fullUser = await this.databaseService.createUserSafe({
+          email: userEmail,
+          password: await bcrypt.hash(uuidv4(), 12),
+          firstName: socialUser.firstName || '',
+          lastName: socialUser.lastName || '',
+          name: `${socialUser.firstName || ''} ${socialUser.lastName || ''}`.trim() || userEmail,
+          googleId: userId,
+          isVerified: true,
+          role: 'PATIENT',
+          primaryClinicId: finalClinicId,
+          userid: uuidv4(),
+          ...(socialUser.profilePicture ? { profilePicture: socialUser.profilePicture } : {}),
+        });
+
+        // Emit registration event
+        await this.eventService.emit('user.registered', {
+          userId: fullUser.id,
+          email: fullUser.email,
+          role: fullUser.role,
+          clinicId: finalClinicId,
+          registrationMethod: 'google_oauth',
+        });
+
+        await this.logging.log(
+          LogType.AUDIT,
+          LogLevel.INFO,
+          `New user registered via Google OAuth: ${fullUser.email}`,
+          'AuthService.authenticateWithGoogle',
+          { userId: fullUser.id, email: fullUser.email }
         );
       }
-      const finalClinicId = await resolveClinicUUID(this.databaseService, clinicId);
 
       // Persist the clinic association for Google users so subsequent guarded
       // requests can resolve clinic access from the database, not just the JWT.
@@ -2474,12 +2425,15 @@ export class AuthService {
         await this.ensurePatientRecordForAuth(fullUser.id, finalClinicId, 'googleOAuth');
       }
 
+      // Determine if this was a new registration (we auto-registered above)
+      const isNewUser = !socialAuthResult.isNewUser || !userEmail; // Will be true for auto-registered users
+
       // Create session
       const session = await this.sessionService.createSession({
         userId: fullUser.id,
         userAgent: sessionMetadata?.userAgent || 'Google OAuth',
         ipAddress: sessionMetadata?.ipAddress || '127.0.0.1',
-        metadata: { googleOAuth: true, isNewUser: socialAuthResult.isNewUser },
+        metadata: { googleOAuth: true, isNewUser },
         ...(finalClinicId && { clinicId: finalClinicId }),
       });
 

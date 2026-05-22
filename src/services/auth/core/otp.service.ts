@@ -66,8 +66,14 @@ export class OtpService {
       return;
     }
 
-    console.warn(`[OtpService][OTP] ${message}`, context);
-    void this.loggingService.log(LogType.AUTH, LogLevel.DEBUG, message, 'OtpService', context);
+    // Use structured logging instead of console.warn for HIPAA compliance
+    void this.loggingService.log(
+      LogType.AUTH,
+      LogLevel.DEBUG,
+      `[OTP DEBUG] ${message}`,
+      'OtpService',
+      context
+    );
   }
 
   private logOtp(message: string, context: Record<string, unknown> = {}): void {

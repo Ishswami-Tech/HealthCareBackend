@@ -144,7 +144,6 @@ export class JwtAuthGuard implements CanActivate {
     '/api/v1/health/metrics',
     '/api/v1/health/summary',
     '/api/v1/auth/login',
-    '/api/v1/auth/register',
     '/api/v1/auth/forgot-password',
     '/api/v1/auth/reset-password',
     '/api/v1/auth/request-otp',
@@ -171,7 +170,7 @@ export class JwtAuthGuard implements CanActivate {
    */
   private readonly profileCompletionBypassPrefixPaths = [
     '/api/v1/auth/',
-    '/api/v1/profile-completion',
+    '/api/v1/profile/completion', // Fixed: was 'profile-completion' (hyphen)
     '/api/v1/user/',
     '/api/v1/users/profile',
   ];
@@ -181,7 +180,7 @@ export class JwtAuthGuard implements CanActivate {
    * These are required for profile completion and session recovery.
    */
   private readonly lockoutBypassPrefixPaths = [
-    '/api/v1/profile-completion',
+    '/api/v1/profile/completion', // Fixed: was 'profile-completion' (hyphen)
     '/api/v1/user/',
     '/api/v1/users/profile',
     '/api/v1/clinics/',

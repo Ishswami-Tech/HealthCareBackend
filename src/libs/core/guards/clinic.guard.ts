@@ -155,7 +155,7 @@ export class ClinicGuard implements CanActivate {
       throw new ForbiddenException('Clinic ID is required. Please provide via X-Clinic-ID header.');
     }
 
-    // STRATEGY 1: Public endpoints WITH clinic ID (register, login, OTP) - validate clinic exists
+    // STRATEGY 1: Public endpoints WITH clinic ID (login, OTP) - validate clinic exists
     if (isPublic || !user) {
       return await this.validatePublicEndpoint(request, headerClinicId);
     }
@@ -165,7 +165,7 @@ export class ClinicGuard implements CanActivate {
   }
 
   /**
-   * Validate public endpoints (register, login, OTP)
+   * Validate public endpoints (login, OTP)
    * Only checks if clinic exists and is active
    */
   private async validatePublicEndpoint(
