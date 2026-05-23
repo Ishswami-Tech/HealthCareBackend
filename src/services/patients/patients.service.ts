@@ -30,14 +30,27 @@ export class PatientsService {
 
   /**
    * Helper to ensure Patient record exists for a user
+   * @param userId - The user ID
+   * @param clinicId - Optional clinic ID for isolation; uses user's primaryClinicId if not provided
    */
-  async ensurePatientProfile(userId: string) {
+  async ensurePatientProfile(userId: string, clinicId?: string) {
+    // Get user's primaryClinicId for proper clinic isolation
+    const user = await this.databaseService.findUserByIdSafe(userId);
+    const effectiveClinicId = clinicId || user?.primaryClinicId;
+
     const existing = await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-        patient: { findUnique: (args: PrismaDelegateArgs) => Promise<unknown> };
+        patient: { findFirst: (args: PrismaDelegateArgs) => Promise<unknown> };
       };
-      return await typedClient.patient.findUnique({
-        where: { userId } as PrismaDelegateArgs,
+      return await typedClient.patient.findFirst({
+        where: {
+          userId,
+          ...(effectiveClinicId
+            ? {
+                user: { primaryClinicId: effectiveClinicId },
+              }
+            : {}),
+        } as PrismaDelegateArgs,
       } as PrismaDelegateArgs);
     });
 
@@ -53,12 +66,12 @@ export class PatientsService {
         },
         {
           userId: userId,
-          clinicId: '',
+          clinicId: effectiveClinicId || '',
           resourceType: 'PATIENT',
           operation: 'CREATE',
           resourceId: 'new',
           userRole: 'system',
-          details: { action: 'ensure_patient_profile' },
+          details: { action: 'ensure_patient_profile', clinicId: effectiveClinicId },
         }
       );
 
@@ -98,8 +111,20 @@ export class PatientsService {
   }) {
     const { userId } = data;
 
+    // Validate clinic association when clinicId is provided
+    if (data.clinicId) {
+      const user = await this.databaseService.findUserByIdSafe(userId);
+      if (!user) {
+        throw new ForbiddenException('User not found');
+      }
+      const userClinicId = user.primaryClinicId;
+      if (userClinicId && userClinicId !== data.clinicId) {
+        throw new ForbiddenException('User does not belong to this clinic');
+      }
+    }
+
     // 1. Ensure Patient Record Exists
-    await this.ensurePatientProfile(userId);
+    await this.ensurePatientProfile(userId, data.clinicId);
 
     // 2. Update User Profile (Gender, DOB)
     if (data.gender || data.dateOfBirth) {
@@ -135,6 +160,9 @@ export class PatientsService {
     // 4. Handle Insurance (Upsert Logic)
     if (data.insurance) {
       const insuranceData = data.insurance;
+      const user = await this.databaseService.findUserByIdSafe(userId);
+      const effectiveClinicId = data.clinicId || user?.primaryClinicId;
+
       await this.databaseService.executeHealthcareWrite(
         async client => {
           const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
@@ -146,7 +174,10 @@ export class PatientsService {
           };
 
           const existingInsurance = (await typedClient.insurance.findFirst({
-            where: { userId: userId } as PrismaDelegateArgs,
+            where: {
+              userId: userId,
+              ...(effectiveClinicId ? { clinicId: effectiveClinicId } : {}),
+            } as PrismaDelegateArgs,
           })) as { id: string } | null;
 
           if (existingInsurance) {
@@ -162,6 +193,7 @@ export class PatientsService {
                   ? new Date(insuranceData.coverageEndDate)
                   : null,
                 coverageType: insuranceData.coverageType,
+                ...(effectiveClinicId ? { clinicId: effectiveClinicId } : {}),
               } as PrismaDelegateArgs,
             });
           } else {
@@ -177,13 +209,14 @@ export class PatientsService {
                   ? new Date(insuranceData.coverageEndDate)
                   : null,
                 coverageType: insuranceData.coverageType,
+                ...(effectiveClinicId ? { clinicId: effectiveClinicId } : {}),
               } as PrismaDelegateArgs,
             });
           }
         },
         {
           userId,
-          clinicId: data.clinicId || '',
+          clinicId: effectiveClinicId || '',
           resourceType: 'INSURANCE',
           operation: 'UPSERT',
           resourceId: userId,
@@ -196,6 +229,9 @@ export class PatientsService {
     // 5. Handle Emergency Contact (Upsert Logic)
     if (data.emergencyContact) {
       const contactData = data.emergencyContact;
+      const user = await this.databaseService.findUserByIdSafe(userId);
+      const effectiveClinicId = data.clinicId || user?.primaryClinicId;
+
       await this.databaseService.executeHealthcareWrite(
         async client => {
           const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
@@ -207,7 +243,10 @@ export class PatientsService {
           };
 
           const existingContact = (await typedClient.emergencyContact.findFirst({
-            where: { userId: userId } as PrismaDelegateArgs,
+            where: {
+              userId: userId,
+              ...(effectiveClinicId ? { clinicId: effectiveClinicId } : {}),
+            } as PrismaDelegateArgs,
           })) as { id: string } | null;
 
           if (existingContact) {
@@ -226,13 +265,14 @@ export class PatientsService {
                 name: contactData.name,
                 relationship: contactData.relationship,
                 phone: contactData.phone,
+                ...(effectiveClinicId ? { clinicId: effectiveClinicId } : {}),
               } as PrismaDelegateArgs,
             });
           }
         },
         {
           userId,
-          clinicId: data.clinicId || '',
+          clinicId: effectiveClinicId || '',
           resourceType: 'EMERGENCY_CONTACT',
           operation: 'UPSERT',
           resourceId: userId,
@@ -281,7 +321,11 @@ export class PatientsService {
     });
   }
 
-  async deletePatient(userId: string) {
+  async deletePatient(userId: string, clinicId?: string) {
+    // Get user's primaryClinicId for proper clinic isolation
+    const user = await this.databaseService.findUserByIdSafe(userId);
+    const effectiveClinicId = clinicId || user?.primaryClinicId;
+
     // Soft delete logic usually involves setting isActive: false on the User, effectively disabling the patient profile
     // Or if we need strict deletion of Patient record:
     return await this.databaseService.executeHealthcareWrite(
@@ -298,12 +342,12 @@ export class PatientsService {
       },
       {
         userId,
-        clinicId: '',
+        clinicId: effectiveClinicId || '',
         resourceType: 'PATIENT',
         operation: 'DELETE',
         resourceId: userId,
         userRole: 'system',
-        details: { action: 'soft_delete_patient' },
+        details: { action: 'soft_delete_patient', clinicId: effectiveClinicId },
       }
     );
   }
@@ -592,15 +636,22 @@ export class PatientsService {
   }
 
   /**
-   * Get patient insurance details
+   * Get patient insurance details with optional clinic scope
    */
-  async getInsurance(patientId: string) {
+  async getInsurance(patientId: string, clinicId?: string) {
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
         insurance: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
       };
+
+      // Filter by clinicId if provided for multi-tenant isolation
+      const whereClause: Record<string, unknown> = { userId: patientId };
+      if (clinicId) {
+        whereClause['clinicId'] = clinicId;
+      }
+
       return await typedClient.insurance.findMany({
-        where: { userId: patientId } as PrismaDelegateArgs,
+        where: whereClause as PrismaDelegateArgs,
         orderBy: { createdAt: 'desc' } as PrismaDelegateArgs,
       } as PrismaDelegateArgs);
     });

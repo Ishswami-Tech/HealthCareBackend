@@ -542,6 +542,15 @@ export class RefreshTokenDto {
   @IsString()
   @IsOptional()
   ipAddress?: string;
+
+  @ApiProperty({
+    description: 'Clinic ID for multi-tenant token validation',
+    example: 'clinic-uuid-123',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  clinicId?: string;
 }
 
 /**

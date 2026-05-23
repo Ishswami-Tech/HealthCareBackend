@@ -2026,8 +2026,8 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   // ============================================================================
 
   // ===== User Methods =====
-  async findUserByIdSafe(id: string): Promise<UserWithRelations | null> {
-    return this.userMethods.findUserByIdSafe(id);
+  async findUserByIdSafe(id: string, clinicId?: string): Promise<UserWithRelations | null> {
+    return this.userMethods.findUserByIdSafe(id, clinicId);
   }
 
   async findUserByEmailSafe(
@@ -2045,9 +2045,10 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
       supportStaff: true;
       nurse: true;
       counselor: true;
-    }>
+    }>,
+    clinicId?: string
   ): Promise<UserWithRelations | null> {
-    return this.userMethods.findUserByEmailSafe(email, includeRelations);
+    return this.userMethods.findUserByEmailSafe(email, includeRelations, clinicId);
   }
 
   async findUserByPhoneSafe(
@@ -2066,9 +2067,10 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
       nurse: true;
       counselor: true;
       clinics: true;
-    }>
+    }>,
+    clinicId?: string
   ): Promise<UserWithRelations | null> {
-    return this.userMethods.findUserByPhoneSafe(phone, includeRelations);
+    return this.userMethods.findUserByPhoneSafe(phone, includeRelations, clinicId);
   }
 
   async findUserByEmailForAuth(

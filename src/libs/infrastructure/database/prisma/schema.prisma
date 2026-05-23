@@ -267,10 +267,10 @@ model ClinicAdmin {
 model Pharmacist {
   id         String          @id @default(uuid())
   userId     String          @unique
-  clinicId   String?
+  clinicId   String // Required for clinic isolation
   locationId String?
   createdAt  DateTime        @default(now())
-  clinic     Clinic?         @relation(fields: [clinicId], references: [id])
+  clinic     Clinic          @relation(fields: [clinicId], references: [id])
   location   ClinicLocation? @relation(fields: [locationId], references: [id])
   user       User            @relation(fields: [userId], references: [id])
 
@@ -281,10 +281,10 @@ model Pharmacist {
 model Therapist {
   id         String          @id @default(uuid())
   userId     String          @unique
-  clinicId   String?
+  clinicId   String // Required for clinic isolation
   locationId String?
   createdAt  DateTime        @default(now())
-  clinic     Clinic?         @relation(fields: [clinicId], references: [id])
+  clinic     Clinic          @relation(fields: [clinicId], references: [id])
   location   ClinicLocation? @relation(fields: [locationId], references: [id])
   user       User            @relation(fields: [userId], references: [id])
 
@@ -295,10 +295,10 @@ model Therapist {
 model LabTechnician {
   id         String          @id @default(uuid())
   userId     String          @unique
-  clinicId   String?
+  clinicId   String // Required for clinic isolation
   locationId String?
   createdAt  DateTime        @default(now())
-  clinic     Clinic?         @relation(fields: [clinicId], references: [id])
+  clinic     Clinic          @relation(fields: [clinicId], references: [id])
   location   ClinicLocation? @relation(fields: [locationId], references: [id])
   user       User            @relation(fields: [userId], references: [id])
 
@@ -309,10 +309,10 @@ model LabTechnician {
 model FinanceBilling {
   id         String          @id @default(uuid())
   userId     String          @unique
-  clinicId   String?
+  clinicId   String // Required for clinic isolation
   locationId String?
   createdAt  DateTime        @default(now())
-  clinic     Clinic?         @relation(fields: [clinicId], references: [id])
+  clinic     Clinic          @relation(fields: [clinicId], references: [id])
   location   ClinicLocation? @relation(fields: [locationId], references: [id])
   user       User            @relation(fields: [userId], references: [id])
 
@@ -323,10 +323,10 @@ model FinanceBilling {
 model SupportStaff {
   id         String          @id @default(uuid())
   userId     String          @unique
-  clinicId   String?
+  clinicId   String // Required for clinic isolation
   locationId String?
   createdAt  DateTime        @default(now())
-  clinic     Clinic?         @relation(fields: [clinicId], references: [id])
+  clinic     Clinic          @relation(fields: [clinicId], references: [id])
   location   ClinicLocation? @relation(fields: [locationId], references: [id])
   user       User            @relation(fields: [userId], references: [id])
 
@@ -337,10 +337,10 @@ model SupportStaff {
 model Nurse {
   id         String          @id @default(uuid())
   userId     String          @unique
-  clinicId   String?
+  clinicId   String // Required for clinic isolation
   locationId String?
   createdAt  DateTime        @default(now())
-  clinic     Clinic?         @relation(fields: [clinicId], references: [id])
+  clinic     Clinic          @relation(fields: [clinicId], references: [id])
   location   ClinicLocation? @relation(fields: [locationId], references: [id])
   user       User            @relation(fields: [userId], references: [id])
 
@@ -351,10 +351,10 @@ model Nurse {
 model Counselor {
   id         String          @id @default(uuid())
   userId     String          @unique
-  clinicId   String?
+  clinicId   String // Required for clinic isolation
   locationId String?
   createdAt  DateTime        @default(now())
-  clinic     Clinic?         @relation(fields: [clinicId], references: [id])
+  clinic     Clinic          @relation(fields: [clinicId], references: [id])
   location   ClinicLocation? @relation(fields: [locationId], references: [id])
   user       User            @relation(fields: [userId], references: [id])
 
@@ -411,6 +411,7 @@ model Doctor {
 model Patient {
   id                 String                       @id @default(uuid())
   userId             String                       @unique
+  clinicId           String? // Optional: for direct filtering
   prakriti           Prakriti?
   dosha              Dosha?
   createdAt          DateTime                     @default(now())
@@ -430,6 +431,8 @@ model Patient {
   videoConsultations VideoConsultation[]
   insuranceClaims    InsuranceClaim[]
   familyMembers      FamilyMember[]               @relation("PatientFamilyMembers")
+
+  @@index([clinicId])
 }
 
 model FamilyMember {
@@ -579,6 +582,7 @@ model Prescription {
 
   @@index([clinicId])
   @@index([locationId])
+  @@index([clinicId, doctorId])
 }
 
 model PrescriptionItem {
@@ -843,6 +847,7 @@ model Queue {
   clinicLocationId  String?
 
   @@index([clinicId])
+  @@index([clinicId, status, queueNumber])
 }
 
 model Notification {
@@ -989,6 +994,7 @@ model HealthRecord {
   patient    Patient          @relation(fields: [patientId], references: [id])
 
   @@index([clinicId])
+  @@index([clinicId, patientId, createdAt])
 }
 
 model AuditLog {
@@ -1027,6 +1033,7 @@ model Review {
   patient   Patient  @relation(fields: [patientId], references: [id])
 
   @@index([clinicId])
+  @@index([clinicId, patientId])
 }
 
 model Product {
@@ -1629,6 +1636,7 @@ model WaitlistEntry {
   @@index([doctorId])
   @@index([clinicId])
   @@index([status, priority])
+  @@index([clinicId, status, priority, requestedDate])
 }
 
 model Resource {

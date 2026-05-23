@@ -30,13 +30,25 @@ export class UserMethods extends DatabaseMethodsBase {
   /**
    * Find user by ID with full relations
    */
-  async findUserByIdSafe(id: string): Promise<UserWithRelations | null> {
-    return await this.executeRead<UserWithRelations | null>(async prisma => {
-      return await prisma.user.findUnique({
-        where: { id },
-        include: this.userInclude,
-      });
-    }, this.queryOptionsBuilder.where({ id }).include(this.userInclude).useCache(true).cacheStrategy('long').priority('high').hipaaCompliant(true).rowLevelSecurity(true).build());
+  async findUserByIdSafe(id: string, clinicId?: string): Promise<UserWithRelations | null> {
+    return await this.executeRead<UserWithRelations | null>(
+      async prisma => {
+        return await prisma.user.findUnique({
+          where: { id },
+          include: this.userInclude,
+        });
+      },
+      this.queryOptionsBuilder
+        .where({ id })
+        .clinicId(clinicId || '')
+        .include(this.userInclude)
+        .useCache(true)
+        .cacheStrategy('long')
+        .priority('high')
+        .hipaaCompliant(true)
+        .rowLevelSecurity(!!clinicId)
+        .build()
+    );
   }
 
   /**
@@ -49,6 +61,7 @@ export class UserMethods extends DatabaseMethodsBase {
    *
    * @param email - User email address
    * @param includeRelations - Optional relations to include (default: { doctor: true, patient: true })
+   * @param clinicId - Optional clinic ID for RLS filtering
    * @returns User with requested relations or null if not found
    *
    * @example
@@ -59,13 +72,14 @@ export class UserMethods extends DatabaseMethodsBase {
    * // Custom: Only doctor
    * const user = await findUserByEmailSafe('user@example.com', { doctor: true });
    *
-   * // All relations (use sparingly)
-   * const user = await findUserByEmailSafe('user@example.com', this.userInclude);
+   * // With clinic context for RLS
+   * const user = await findUserByEmailSafe('user@example.com', undefined, 'clinic-123');
    * ```
    */
   async findUserByEmailSafe(
     email: string,
-    includeRelations?: Partial<typeof this.userInclude>
+    includeRelations?: Partial<typeof this.userInclude>,
+    clinicId?: string
   ): Promise<UserWithRelations | null> {
     // Default to only loading doctor and patient (most common use case)
     const defaultInclude = {
@@ -76,12 +90,24 @@ export class UserMethods extends DatabaseMethodsBase {
     // Use provided relations or default
     const include = includeRelations || defaultInclude;
 
-    return await this.executeRead<UserWithRelations | null>(async prisma => {
-      return await prisma.user.findUnique({
-        where: { email },
-        include,
-      });
-    }, this.queryOptionsBuilder.where({ email }).include(include).useCache(true).cacheStrategy('long').priority('high').hipaaCompliant(true).rowLevelSecurity(true).build());
+    return await this.executeRead<UserWithRelations | null>(
+      async prisma => {
+        return await prisma.user.findUnique({
+          where: { email },
+          include,
+        });
+      },
+      this.queryOptionsBuilder
+        .where({ email })
+        .clinicId(clinicId || '')
+        .include(include)
+        .useCache(true)
+        .cacheStrategy('long')
+        .priority('high')
+        .hipaaCompliant(true)
+        .rowLevelSecurity(!!clinicId)
+        .build()
+    );
   }
 
   /**
@@ -91,11 +117,13 @@ export class UserMethods extends DatabaseMethodsBase {
    *
    * @param phone - User phone number
    * @param includeRelations - Optional relations to include (default: { doctor: true, patient: true })
+   * @param clinicId - Optional clinic ID for RLS filtering
    * @returns User with requested relations or null if not found
    */
   async findUserByPhoneSafe(
     phone: string,
-    includeRelations?: Partial<typeof this.userInclude>
+    includeRelations?: Partial<typeof this.userInclude>,
+    clinicId?: string
   ): Promise<UserWithRelations | null> {
     // Default to only loading doctor and patient (most common use case)
     const defaultInclude = {
@@ -106,12 +134,24 @@ export class UserMethods extends DatabaseMethodsBase {
     // Use provided relations or default
     const include = includeRelations || defaultInclude;
 
-    return await this.executeRead<UserWithRelations | null>(async prisma => {
-      return await prisma.user.findFirst({
-        where: { phone },
-        include,
-      });
-    }, this.queryOptionsBuilder.where({ phone }).include(include).useCache(true).cacheStrategy('long').priority('high').hipaaCompliant(true).rowLevelSecurity(true).build());
+    return await this.executeRead<UserWithRelations | null>(
+      async prisma => {
+        return await prisma.user.findFirst({
+          where: { phone },
+          include,
+        });
+      },
+      this.queryOptionsBuilder
+        .where({ phone })
+        .clinicId(clinicId || '')
+        .include(include)
+        .useCache(true)
+        .cacheStrategy('long')
+        .priority('high')
+        .hipaaCompliant(true)
+        .rowLevelSecurity(!!clinicId)
+        .build()
+    );
   }
 
   /**
