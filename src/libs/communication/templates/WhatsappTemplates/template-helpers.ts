@@ -73,7 +73,11 @@ function sanitizeTemplateText(value: unknown, fallback: string): string {
     .replace(/\s+/g, ' ')
     .trim();
 
-  return withoutUrlLikeCharacters || fallback;
+  // WhatsApp template text parameters have a 15 character limit
+  // Truncate if necessary to prevent API errors
+  const truncated = withoutUrlLikeCharacters.slice(0, 15);
+
+  return truncated || fallback;
 }
 
 function normalizeUrlButtonValue(detailsUrl?: string): string | undefined {

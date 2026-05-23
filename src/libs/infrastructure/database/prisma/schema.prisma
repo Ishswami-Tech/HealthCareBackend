@@ -135,6 +135,7 @@ model Clinic {
   phone                        String
   email                        String                              @unique
   app_name                     String                              @unique
+  whatsappName                 String? // Short name for WhatsApp templates (max 15 chars)
   db_connection_string         String
   databaseName                 String?
   databaseStatus               DatabaseStatus                      @default(CREATING)
