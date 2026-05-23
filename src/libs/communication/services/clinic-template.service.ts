@@ -74,7 +74,7 @@ export class ClinicTemplateService {
           clinic: {
             findUnique: (args: {
               where: { id: string };
-              select: { id: true; name: true; logo: true; phone: true };
+              select: { id: true; name: true; logo: true; phone: true; whatsappName: true };
             }) => Promise<{
               id: string;
               name: string;
