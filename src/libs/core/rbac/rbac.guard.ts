@@ -15,6 +15,7 @@ import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import type { RequestWithAuth } from '@core/types/guard.types';
 import { DatabaseService } from '@infrastructure/database/database.service';
+import { ClinicIsolationService } from '@infrastructure/database/internal/clinic-isolation.service';
 
 @Injectable()
 export class RbacGuard implements CanActivate {
@@ -23,7 +24,9 @@ export class RbacGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => DatabaseService))
-    private readonly databaseService: DatabaseService
+    private readonly databaseService: DatabaseService,
+    @Inject(forwardRef(() => ClinicIsolationService))
+    private readonly clinicIsolationService: ClinicIsolationService
   ) {}
 
   canActivate(context: ExecutionContext): boolean | Promise<boolean> | Observable<boolean> {
@@ -56,8 +59,8 @@ export class RbacGuard implements CanActivate {
         throw new ForbiddenException('Authentication required');
       }
 
-      // Extract context information
-      const clinicId = this.extractClinicId(request, rbacRequirements);
+      // Extract and validate context information
+      const clinicId = await this.extractClinicId(request, rbacRequirements);
       const userId = user.id;
 
       // Check each requirement
@@ -161,12 +164,12 @@ export class RbacGuard implements CanActivate {
   }
 
   /**
-   * Extract clinic ID from request
+   * Extract and validate clinic ID from request against user's actual access
    */
-  private extractClinicId(
+  private async extractClinicId(
     request: RequestWithAuth,
     requirements: RbacRequirement[]
-  ): string | undefined {
+  ): Promise<string | undefined> {
     // Try to get clinic ID from various sources
     const sources = [
       request.params?.['clinicId'] as string | undefined,
@@ -179,10 +182,52 @@ export class RbacGuard implements CanActivate {
     // Check if any requirement specifies a clinic ID
     const requirementClinicId = requirements.find(req => req.clinicId)?.clinicId;
     if (requirementClinicId) {
+      // Validate requirement clinic ID against user's access
+      const userId = request.user?.id;
+      if (userId) {
+        const accessResult = await this.clinicIsolationService.validateClinicAccess(
+          userId,
+          requirementClinicId
+        );
+        if (!accessResult.success || !accessResult.data) {
+          void this.loggingService.log(
+            LogType.SECURITY,
+            LogLevel.WARN,
+            `Clinic access validation failed for requirement: ${requirementClinicId}`,
+            'RbacGuard',
+            { userId, clinicId: requirementClinicId, reason: accessResult.error }
+          );
+          return undefined;
+        }
+      }
       return requirementClinicId;
     }
 
-    return sources.find(id => id && typeof id === 'string');
+    // Find first available clinic ID from sources
+    const extractedClinicId = sources.find(id => id && typeof id === 'string');
+
+    // If we have a clinic ID, validate it against user's actual access
+    if (extractedClinicId && typeof extractedClinicId === 'string') {
+      const userId = request.user?.id;
+      if (userId) {
+        const accessResult = await this.clinicIsolationService.validateClinicAccess(
+          userId,
+          extractedClinicId
+        );
+        if (!accessResult.success || !accessResult.data) {
+          void this.loggingService.log(
+            LogType.SECURITY,
+            LogLevel.WARN,
+            `Clinic access validation failed: ${extractedClinicId}`,
+            'RbacGuard',
+            { userId, clinicId: extractedClinicId, reason: accessResult.error }
+          );
+          return undefined;
+        }
+      }
+    }
+
+    return extractedClinicId;
   }
 
   /**

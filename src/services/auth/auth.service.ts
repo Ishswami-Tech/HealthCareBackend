@@ -615,26 +615,6 @@ export class AuthService {
         );
       }
 
-      if (loginDto.clinicId && clinicIdFromHeader && loginDto.clinicId !== clinicIdFromHeader) {
-        await this.logging.log(
-          LogType.SECURITY,
-          LogLevel.ERROR,
-          `Login attempt with mismatched clinicId: header=${clinicIdFromHeader}, body=${loginDto.clinicId}`,
-          'AuthService.login',
-          {
-            email: loginDto.email,
-            userId: user.id,
-            headerClinicId: clinicIdFromHeader,
-            bodyClinicId: loginDto.clinicId,
-          }
-        );
-        throw this.errors.validationError(
-          'clinicId',
-          'Clinic ID mismatch detected. Please login through the correct clinic portal.',
-          'AuthService.login'
-        );
-      }
-
       const clinicId = clinicIdFromHeader || loginDto.clinicId;
       if (!clinicId) {
         throw this.errors.validationError(
@@ -1659,9 +1639,7 @@ export class AuthService {
         role: verifiedUser.role as Role,
         ...(verifiedUser.phone && { phone: verifiedUser.phone }),
         ...(clinicUUID && { clinicId: clinicUUID }),
-        // Include clinicId: from verifyDto, or user's primaryClinicId
         ...(verifiedUser.primaryClinicId && { primaryClinicId: verifiedUser.primaryClinicId }),
-        ...(clinicIdFromHeader && { currentClinicId: clinicIdFromHeader }),
       };
       const tokens = await this.generateTokens(
         userForTokens,
@@ -2221,12 +2199,14 @@ export class AuthService {
       throw new Error('Cannot generate token: user missing clinic association');
     }
 
+    // For SUPER_ADMIN: include clinicId if available, otherwise omit
+    // For other roles: always include clinicId
     const payload: TokenPayload = {
       sub: user.id,
       email: user.email,
       role: user.role || '',
       sessionId: sessionId,
-      ...(clinicId && { clinicId }), // Include clinic ID only when present
+      ...(clinicId || isSuperAdmin ? { clinicId: clinicId || '' } : {}),
     };
 
     // Use enhanced JWT service for advanced features

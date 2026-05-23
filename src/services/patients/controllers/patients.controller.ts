@@ -213,7 +213,7 @@ export class PatientsController {
       }
     }
 
-    return await this.patientsService.getInsurance(patientId);
+    return await this.patientsService.getInsurance(patientId, clinicId);
   }
 
   @Get()

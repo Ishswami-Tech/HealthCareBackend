@@ -82,6 +82,22 @@ export class AuthController {
     private readonly loggingService: LoggingService
   ) {}
 
+  /**
+   * Extract clinic ID from request consistently
+   * Handles X-Clinic-ID header and ClinicGuard-set context
+   */
+  private extractClinicId(req: FastifyRequestWithUser): string | undefined {
+    const clinicIdFromContext = (req as unknown as { clinicId?: string }).clinicId;
+    if (clinicIdFromContext) {
+      return clinicIdFromContext;
+    }
+    const headerClinicId = req.headers['x-clinic-id'];
+    if (Array.isArray(headerClinicId)) {
+      return headerClinicId[0] as string;
+    }
+    return headerClinicId;
+  }
+
   @Public()
   @Post('login')
   @HttpCode(HttpStatus.OK)
@@ -190,13 +206,7 @@ export class AuthController {
     @Request() req: FastifyRequestWithUser
   ): Promise<DataResponseDto<AuthResponse>> {
     try {
-      // Extract clinic ID from request (set by ClinicGuard from headers)
-      // Extract clinic ID from request (set by ClinicGuard from headers)
-      const clinicId =
-        (req as unknown as { clinicId?: string }).clinicId ||
-        (Array.isArray(req.headers['x-clinic-id'])
-          ? req.headers['x-clinic-id'][0]
-          : (req.headers['x-clinic-id'] as string));
+      const clinicId = this.extractClinicId(req);
 
       const result = await this.authService.login(
         loginDto,
@@ -315,6 +325,22 @@ export class AuthController {
     @Res({ passthrough: true }) reply: FastifyReply
   ): Promise<DataResponseDto<AuthTokens>> {
     try {
+      // Extract and validate clinicId for multi-tenant security
+      const clinicId = this.extractClinicId(req);
+
+      // Verify clinic access if clinicId is provided
+      if (clinicId && req.user?.id) {
+        // ClinicId from header is validated against user's access
+        // This prevents cross-tenant token refresh attacks
+        const userClinicId = (req.user as { clinicId?: string }).clinicId;
+        if (userClinicId && userClinicId !== clinicId) {
+          throw this.errors.authenticationError(
+            'Clinic access mismatch during token refresh',
+            'AuthController.refreshToken'
+          );
+        }
+      }
+
       const cookieRefreshToken = (
         req as FastifyRequestWithUser & {
           cookies?: Record<string, string | undefined>;
@@ -864,13 +890,7 @@ export class AuthController {
     @Request() req: FastifyRequestWithUser
   ): Promise<SuccessResponseDto> {
     try {
-      // Extract clinic ID from request (set by ClinicGuard from headers)
-      // Extract clinic ID from request (set by ClinicGuard from headers)
-      const clinicId =
-        (req as unknown as { clinicId?: string }).clinicId ||
-        (Array.isArray(req.headers['x-clinic-id'])
-          ? req.headers['x-clinic-id'][0]
-          : (req.headers['x-clinic-id'] as string));
+      const clinicId = this.extractClinicId(req);
 
       const result = await this.authService.requestOtp(
         requestDto,
@@ -993,13 +1013,7 @@ export class AuthController {
     @Request() req: FastifyRequestWithUser
   ): Promise<DataResponseDto<AuthResponse>> {
     try {
-      // Extract clinic ID from request (set by ClinicGuard from headers)
-      // Extract clinic ID from request (set by ClinicGuard from headers)
-      const clinicId =
-        (req as unknown as { clinicId?: string }).clinicId ||
-        (Array.isArray(req.headers['x-clinic-id'])
-          ? req.headers['x-clinic-id'][0]
-          : (req.headers['x-clinic-id'] as string));
+      const clinicId = this.extractClinicId(req);
 
       // Auto-registration is handled within verifyOtp service method
       // If user doesn't exist, it will be auto-created with OTP verification
