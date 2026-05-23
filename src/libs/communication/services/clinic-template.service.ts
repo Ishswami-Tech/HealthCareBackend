@@ -23,6 +23,7 @@ export interface ClinicTemplateData {
   clinicName: string;
   clinicLogo?: string;
   clinicPhone?: string;
+  whatsappName?: string;
   templateIds: {
     otp?: string;
     appointment?: string;
@@ -79,6 +80,7 @@ export class ClinicTemplateService {
               name: string;
               logo: string | null;
               phone: string | null;
+              whatsappName: string | null;
             } | null>;
           };
         };
@@ -89,6 +91,7 @@ export class ClinicTemplateService {
             name: true,
             logo: true,
             phone: true,
+            whatsappName: true,
           },
         });
       });
@@ -117,6 +120,7 @@ export class ClinicTemplateService {
         clinicName: clinic.name || 'Healthcare Clinic',
         ...(clinic.logo && { clinicLogo: clinic.logo }),
         ...(clinic.phone && { clinicPhone: clinic.phone }),
+        ...(clinic.whatsappName && { whatsappName: clinic.whatsappName }),
         templateIds: {
           ...(whatsappTemplates?.['otp'] && { otp: whatsappTemplates['otp'] }),
           ...(whatsappTemplates?.['appointment'] && {

@@ -90,7 +90,7 @@ export class WhatsAppService {
     if (clinicId) {
       const clinicData = await this.clinicTemplateService.getClinicTemplateData(clinicId);
       if (clinicData) {
-        clinicName = clinicData.clinicName;
+        clinicName = clinicData.whatsappName || clinicData.clinicName;
         templateId = clinicData.templateIds.otp || this.whatsAppConfig.otpTemplateId;
       }
     }
