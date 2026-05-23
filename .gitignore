@@ -131,3 +131,4 @@ force-seed.js
 run-seed.js
 
 .pnpm-store/*
+.env.local-prod
