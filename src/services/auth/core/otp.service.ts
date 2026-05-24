@@ -9,6 +9,7 @@ import { EventService } from '@infrastructure/events/event.service';
 import { LogType, LogLevel } from '@core/types';
 import { EmailTemplate } from '@core/types/common.types';
 import { QueueService } from '@infrastructure/queue';
+import { normalizeAuthPhoneNumber } from './phone-normalizer.util';
 
 import type { OtpConfig, OtpResult } from '@core/types/auth.types';
 
@@ -52,12 +53,11 @@ export class OtpService {
       return trimmed.toLowerCase();
     }
 
-    const cleaned = trimmed.replace(/[^\d+]/g, '');
-    if (!cleaned.startsWith('+')) {
-      return `+${cleaned}`;
-    }
+    return normalizeAuthPhoneNumber(trimmed);
+  }
 
-    return cleaned;
+  private normalizeOtpValue(otp: string): string {
+    return otp.trim().replace(/\D/g, '');
   }
 
   private debugOtp(message: string, context: Record<string, unknown> = {}): void {
@@ -465,6 +465,7 @@ export class OtpService {
   async verifyOtp(identifier: string, otp: string): Promise<OtpResult> {
     try {
       const normalizedIdentifier = this.normalizeIdentifier(identifier);
+      const normalizedOtp = this.normalizeOtpValue(otp);
       const otpKey = `otp:${normalizedIdentifier}`;
       const storedOtp = this.extractOtpValue(await this.cacheService.get<unknown>(otpKey));
       const cacheExists = await this.cacheService.exists(otpKey);
@@ -477,11 +478,11 @@ export class OtpService {
         cacheExists,
         cacheTtl,
         hasStoredOtp: hasValidStoredOtp,
-        providedOtpLength: otp.length,
+        providedOtpLength: normalizedOtp.length,
         storedOtpLength: hasValidStoredOtp ? storedOtp.length : 0,
-        providedOtp: this.maskOtpValue(otp),
+        providedOtp: this.maskOtpValue(normalizedOtp),
         storedOtp: this.maskOtpValue(storedOtp),
-        otpMatches: hasValidStoredOtp && storedOtp === otp,
+        otpMatches: hasValidStoredOtp && storedOtp === normalizedOtp,
       });
 
       if (!hasValidStoredOtp) {
@@ -491,11 +492,11 @@ export class OtpService {
         };
       }
 
-      if (storedOtp !== otp) {
+      if (storedOtp !== normalizedOtp) {
         this.logOtp('OTP verification mismatch', {
           identifier: normalizedIdentifier,
           otpKey,
-          providedOtp: this.maskOtpValue(otp),
+          providedOtp: this.maskOtpValue(normalizedOtp),
           storedOtp: this.maskOtpValue(storedOtp),
         });
         return {
