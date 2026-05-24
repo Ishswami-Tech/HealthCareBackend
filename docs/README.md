@@ -2,6 +2,17 @@
 
 > **Complete documentation for the Healthcare Backend system**
 
+Current code facts to keep in mind:
+
+- NestJS `11.1.19`
+- Fastify `5.8.5`
+- Prisma `7.8.0`
+- 32 controller files
+- about 391 HTTP route handlers
+- 14 role values in the current enum
+- Dragonfly is the default cache provider; Redis is compatibility language where
+  the code uses Redis-compatible clients.
+
 ## 🎯 Quick Navigation
 
 ### Essential Documentation
@@ -63,25 +74,32 @@ docs/
 
 1. **Read [FEATURES.md](./FEATURES.md)** - Understand all features
 2. **Read [DEVELOPER_GUIDE.md](./DEVELOPER_GUIDE.md)** - Setup environment
-3. **Read [Communication Guide](./guides/COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md)** - Configure communication
+3. **Read
+   [Communication Guide](./guides/COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md)** -
+   Configure communication
 
 ### For Setup
 
-1. **Configure Environment** - See [ENVIRONMENT_VARIABLES.md](./ENVIRONMENT_VARIABLES.md)
-2. **Setup Communication** - See [Communication Guide](./guides/COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md)
-3. **Configure Clinic** - Use API endpoints from [API_DOCUMENTATION.md](./API_DOCUMENTATION.md)
+1. **Configure Environment** - See
+   [ENVIRONMENT_VARIABLES.md](./ENVIRONMENT_VARIABLES.md)
+2. **Setup Communication** - See
+   [Communication Guide](./guides/COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md)
+3. **Configure Clinic** - Use API endpoints from
+   [API_DOCUMENTATION.md](./API_DOCUMENTATION.md)
 
 ---
 
 ## 📋 Key Features
 
 ### ✅ Communication System
+
 - **Primary Email:** ZeptoMail
 - **Fallback:** AWS SES, SMTP
 - **Push:** Firebase FCM
 - **WhatsApp:** Meta Business API
 
 ### ✅ Core Features
+
 - Appointments & Follow-ups
 - Video Consultations
 - RBAC & Security
@@ -95,16 +113,23 @@ docs/
 ## 🔗 Important Links
 
 - **Features:** [FEATURES.md](./FEATURES.md)
-- **Location QR Check-In:** [Location QR Check-In](./features/LOCATION_QR_CHECKIN.md) ⭐ **NEW**
-- **Communication:** [Communication Guide](./guides/COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md)
-- **Testing:** [Testing Appointment Endpoints](./guides/TESTING_APPOINTMENT_ENDPOINTS.md)
+- **Location QR Check-In:**
+  [Location QR Check-In](./features/LOCATION_QR_CHECKIN.md) ⭐ **NEW**
+- **Communication:**
+  [Communication Guide](./guides/COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md)
+- **Testing:**
+  [Testing Appointment Endpoints](./guides/TESTING_APPOINTMENT_ENDPOINTS.md)
 - **API:** [API_DOCUMENTATION.md](./API_DOCUMENTATION.md)
-- **API Inventory:** [Actual API Inventory](./ACTUAL_API_INVENTORY.md) ⭐ **COMPLETE ENDPOINT LIST** - All 235+ endpoints from actual code
+- **API Inventory:** [Actual API Inventory](./ACTUAL_API_INVENTORY.md) ⭐
+  **SOURCE-DERIVED ENDPOINT INVENTORY** - About 391 route handlers from actual
+  code
 - **Setup:** [DEVELOPER_GUIDE.md](./DEVELOPER_GUIDE.md)
 
 ---
 
-**Last Updated:** January 2025  
+**Last Updated:** May 2026  
 **Status:** ✅ **Production Ready**
 
-**⚠️ Documentation Gaps**: See [Documentation Index - Analysis & Missing Items](./DOCUMENTATION_INDEX.md#-documentation-analysis--missing-implementation-checklist) for missing feature documentation and implementation checklist
+**⚠️ Documentation Gaps**: See
+[Documentation Index - Analysis & Missing Items](./DOCUMENTATION_INDEX.md#-documentation-analysis--missing-implementation-checklist)
+for missing feature documentation and implementation checklist

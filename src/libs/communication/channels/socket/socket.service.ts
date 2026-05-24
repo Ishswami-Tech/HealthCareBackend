@@ -1,4 +1,4 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, OnModuleDestroy } from '@nestjs/common';
 import { Server } from 'socket.io';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
@@ -22,7 +22,7 @@ export type SocketEventData = Record<
  * @class SocketService
  */
 @Injectable()
-export class SocketService {
+export class SocketService implements OnModuleDestroy {
   constructor(
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
@@ -377,9 +377,6 @@ export class SocketService {
     return this.server;
   }
 
-  /**
-   * Clean up resources when the service is destroyed
-   */
   /**
    * Cleanup on module destroy
    */

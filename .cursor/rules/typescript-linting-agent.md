@@ -1,46 +1,84 @@
 # 🏥 Healthcare TypeScript & Linting Agent Rules
 
 ## 🎯 Agent Mission
-This agent enforces comprehensive TypeScript, ESLint, and coding standards for the Healthcare Backend system. It ensures code quality, security, and compliance with healthcare industry standards.
 
-**📚 IMPORTANT**: This file works in conjunction with the comprehensive `.ai-rules` folder documentation. Always reference both this file and the detailed guides in `.ai-rules/` when implementing features.
+This agent enforces comprehensive TypeScript, ESLint, and coding standards for
+the Healthcare Backend system. It ensures code quality, security, and compliance
+with healthcare industry standards.
+
+Current code facts from source scan:
+
+- NestJS `11.1.19`
+- Fastify `5.8.5`
+- Prisma `7.8.0`
+- 32 controller files
+- about 391 HTTP route handlers
+- 14 role values in the current enum
+
+**📚 IMPORTANT**: This file works in conjunction with the comprehensive
+`.ai-rules` folder documentation. Always reference both this file and the
+detailed guides in `.ai-rules/` when implementing features.
 
 ## 📚 Official Documentation References
 
-**ALWAYS reference official documentation when implementing features or fixing issues:**
+**ALWAYS reference official documentation when implementing features or fixing
+issues:**
 
 ### Core Framework & Language
-- **NestJS**: https://docs.nestjs.com - Framework architecture, modules, dependency injection, guards, interceptors, lifecycle hooks
-- **TypeScript**: https://www.typescriptlang.org/docs/ - Type system, strict mode, type safety, advanced types, utility types
-- **Fastify**: https://fastify.dev/docs/latest/ - HTTP framework, plugins, hooks, TypeScript support, request lifecycle
+
+- **NestJS**: https://docs.nestjs.com - Framework architecture, modules,
+  dependency injection, guards, interceptors, lifecycle hooks
+- **TypeScript**: https://www.typescriptlang.org/docs/ - Type system, strict
+  mode, type safety, advanced types, utility types
+- **Fastify**: https://fastify.dev/docs/latest/ - HTTP framework, plugins,
+  hooks, TypeScript support, request lifecycle
 
 ### Database & ORM
-- **Prisma**: https://www.prisma.io/docs - Schema design, migrations, queries, transactions, type safety, Prisma Client API
-- **PostgreSQL**: https://www.postgresql.org/docs/ - SQL syntax, performance optimization, indexing strategies, Row-Level Security (RLS)
+
+- **Prisma**: https://www.prisma.io/docs - Schema design, migrations, queries,
+  transactions, type safety, Prisma Client API
+- **PostgreSQL**: https://www.postgresql.org/docs/ - SQL syntax, performance
+  optimization, indexing strategies, Row-Level Security (RLS)
 
 ### Caching & Session Management
-- **Dragonfly**: https://www.dragonflydb.io/docs - High-performance cache, Redis-compatible API, commands, data structures
-- **Redis**: https://redis.io/docs/ - Data structures, commands, pub/sub, clustering, persistence, performance tuning
-- **@fastify/session**: https://github.com/fastify/session - Session management, Store interface (callback-based), cookie handling
+
+- **Dragonfly**: https://www.dragonflydb.io/docs - High-performance cache,
+  Redis-compatible API, commands, data structures
+- **Redis**: https://redis.io/docs/ - Data structures, commands, pub/sub,
+  clustering, persistence, performance tuning
+- **@fastify/session**: https://github.com/fastify/session - Session management,
+  Store interface (callback-based), cookie handling
 
 ### Queue & Background Jobs
-- **BullMQ**: https://docs.bullmq.io/ - Job queues, workers, repeatable jobs, rate limiting, job priorities, error handling
+
+- **BullMQ**: https://docs.bullmq.io/ - Job queues, workers, repeatable jobs,
+  rate limiting, job priorities, error handling
 
 ### Real-time Communication
-- **Socket.IO**: https://socket.io/docs/v4/ - WebSocket communication, rooms, namespaces, adapters, horizontal scaling
+
+- **Socket.IO**: https://socket.io/docs/v4/ - WebSocket communication, rooms,
+  namespaces, adapters, horizontal scaling
 
 ### Infrastructure & DevOps
-- **Docker**: https://docs.docker.com/ - Containerization, Dockerfile best practices, docker-compose, multi-stage builds, networking
-- **Kubernetes**: https://kubernetes.io/docs/ - Pods, services, deployments, ingress, configmaps, secrets, horizontal pod autoscaling
+
+- **Docker**: https://docs.docker.com/ - Containerization, Dockerfile best
+  practices, docker-compose, multi-stage builds, networking
+- **Kubernetes**: https://kubernetes.io/docs/ - Pods, services, deployments,
+  ingress, configmaps, secrets, horizontal pod autoscaling
 
 ### Frontend (for API design reference)
-- **Next.js**: https://nextjs.org/docs - SSR patterns, API routes, routing conventions, data fetching
-- **React**: https://react.dev/reference/react - Component patterns, hooks, state management, performance optimization
-- **Expo**: https://docs.expo.dev/ - Mobile app development, API compatibility, native modules
+
+- **Next.js**: https://nextjs.org/docs - SSR patterns, API routes, routing
+  conventions, data fetching
+- **React**: https://react.dev/reference/react - Component patterns, hooks,
+  state management, performance optimization
+- **Expo**: https://docs.expo.dev/ - Mobile app development, API compatibility,
+  native modules
 
 ## 🔧 TypeScript Enforcement
 
 ### **Strict Mode Requirements**
+
 ```typescript
 // ✅ ALWAYS use strict TypeScript
 interface IUser {
@@ -52,14 +90,15 @@ interface IUser {
 }
 
 // ❌ NEVER use any or unknown
-function processData(data: any): any { } // FORBIDDEN
-function processData(data: unknown): unknown { } // FORBIDDEN
+function processData(data: any): any {} // FORBIDDEN
+function processData(data: unknown): unknown {} // FORBIDDEN
 
 // ✅ Use proper types
-function processData(data: IUser): ProcessedUser { }
+function processData(data: IUser): ProcessedUser {}
 ```
 
 ### **Type Safety Rules**
+
 - **No `any` types** - Use proper interfaces and types
 - **No `unknown` types** - Use specific types or type guards
 - **Strict null checks** - Always handle null/undefined cases
@@ -67,6 +106,7 @@ function processData(data: IUser): ProcessedUser { }
 - **Interface segregation** - Use specific interfaces over general ones
 
 ### **Path Aliases (MANDATORY)**
+
 ```typescript
 // ✅ ALWAYS use path aliases
 import { UserService } from '@services/users';
@@ -83,16 +123,24 @@ import { UserService } from '../../../services/users/user.service';
 ```
 
 ### **Centralized Types (MANDATORY)**
-- All domain types and interfaces MUST be defined only in `@types` (alias to `src/libs/core/types`).
-- Database-generated types MUST live in `@database/types` and be mapped to `@types` via mappers. Business logic must NOT depend directly on database types.
+
+- All domain types and interfaces MUST be defined only in `@types` (alias to
+  `src/libs/core/types`).
+- Database-generated types MUST live in `@database/types` and be mapped to
+  `@types` via mappers. Business logic must NOT depend directly on database
+  types.
 - DTOs MUST import from `@types` and MUST NOT import from `@database/types`.
-- Services/controllers MUST import shared types from `@types` (single source of truth).
+- Services/controllers MUST import shared types from `@types` (single source of
+  truth).
 
 ### **Alias Usage (MANDATORY)**
-- **Configuration MUST import from `@config`** - Use enhanced ConfigService, NOT `@nestjs/config`
+
+- **Configuration MUST import from `@config`** - Use enhanced ConfigService, NOT
+  `@nestjs/config`
 - Logging MUST import from `@logging/*`.
 - Cache MUST import from `@cache/*`.
-- Events MUST import from `@infrastructure/events` (EventService is the centralized event hub).
+- Events MUST import from `@infrastructure/events` (EventService is the
+  centralized event hub).
 - Queue MUST import from `@queue/*`.
 - Core domain modules import from `@core/*`.
 - Communication modules import from `@communication/*`.
@@ -116,12 +164,15 @@ import { QueueService } from '@infrastructure/queue/src/queue.service';
 ```
 
 ### **Import & Boundary Enforcement (MANDATORY)**
+
 - Use only approved aliases; no cross-layer relative imports.
-- Business/services must depend on abstractions; infrastructure accessed via DI and approved facades.
+- Business/services must depend on abstractions; infrastructure accessed via DI
+  and approved facades.
 
 ## 🏗️ Architecture Patterns
 
 ### **SOLID Principles Enforcement**
+
 1. **Single Responsibility** - One class, one purpose
 2. **Open/Closed** - Open for extension, closed for modification
 3. **Liskov Substitution** - Derived classes must be substitutable
@@ -129,6 +180,7 @@ import { QueueService } from '@infrastructure/queue/src/queue.service';
 5. **Dependency Inversion** - Depend on abstractions, not concretions
 
 ### **Service Pattern (MANDATORY)**
+
 ```typescript
 @Injectable()
 export class UserService {
@@ -141,7 +193,10 @@ export class UserService {
     private readonly rbacService: RbacService
   ) {}
 
-  async create(data: CreateUserDto, requestContext?: RequestContext): Promise<User> {
+  async create(
+    data: CreateUserDto,
+    requestContext?: RequestContext
+  ): Promise<User> {
     try {
       // 1. RBAC permission check
       if (requestContext?.user) {
@@ -155,8 +210,8 @@ export class UserService {
       const user = await this.prisma.$client.user.create({
         data: {
           ...data,
-          createdBy: requestContext?.user?.id
-        }
+          createdBy: requestContext?.user?.id,
+        },
       });
 
       // 3. Event emission via centralized EventService (single source of truth)
@@ -172,19 +227,23 @@ export class UserService {
         clinicId: requestContext?.clinicId,
         payload: {
           user,
-          context: requestContext
-        }
+          context: requestContext,
+        },
       });
 
       // 4. Caching
-      const cacheKey = this.buildCacheKey('user', user.id, requestContext?.clinicId);
+      const cacheKey = this.buildCacheKey(
+        'user',
+        user.id,
+        requestContext?.clinicId
+      );
       await this.cache.set(cacheKey, JSON.stringify(user), 3600);
 
       // 5. Logging
       this.logger.info('User created successfully', {
         userId: user.id,
         clinicId: requestContext?.clinicId,
-        createdBy: requestContext?.user?.id
+        createdBy: requestContext?.user?.id,
       });
 
       return user;
@@ -193,7 +252,7 @@ export class UserService {
         error: error.message,
         stack: error.stack,
         data,
-        context: requestContext
+        context: requestContext,
       });
       throw error;
     }
@@ -208,6 +267,7 @@ export class UserService {
 ## 🛡️ Security Standards
 
 ### **Authentication & Authorization**
+
 ```typescript
 // ✅ ALWAYS use proper guards
 @Controller('users')
@@ -216,7 +276,7 @@ export class UserController {
   @Post()
   @Roles(Role.DOCTOR, Role.RECEPTIONIST)
   async create(
-    @Body() createUserDto: CreateUserDto, 
+    @Body() createUserDto: CreateUserDto,
     @RequestContext() context: RequestContext
   ) {
     return this.userService.create(createUserDto, context);
@@ -225,13 +285,16 @@ export class UserController {
 ```
 
 ### **Input Validation (MANDATORY)**
+
 ```typescript
 export class CreateUserDto {
   @ApiProperty({ description: 'User full name' })
   @IsString()
   @Length(2, 50)
   @Transform(({ value }) => value?.trim())
-  @Matches(/^[a-zA-Z\s]+$/, { message: 'Name can only contain letters and spaces' })
+  @Matches(/^[a-zA-Z\s]+$/, {
+    message: 'Name can only contain letters and spaces',
+  })
   name: string;
 
   @ApiProperty({ description: 'User email address' })
@@ -244,7 +307,8 @@ export class CreateUserDto {
   @IsString()
   @Length(8, 100)
   @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/, {
-    message: 'Password must contain at least one uppercase letter, one lowercase letter, one number and one special character'
+    message:
+      'Password must contain at least one uppercase letter, one lowercase letter, one number and one special character',
   })
   password: string;
 }
@@ -253,6 +317,7 @@ export class CreateUserDto {
 ## 📝 Logging Standards
 
 ### **Use Custom LoggingService (MANDATORY)**
+
 ```typescript
 // ✅ ALWAYS use LoggingService from @infrastructure/logging
 import { LoggingService, LogType, LogLevel } from '@infrastructure/logging';
@@ -283,16 +348,17 @@ console.log('Debug info'); // FORBIDDEN
 **Reference**: https://docs.nestjs.com
 
 ### **Module Structure**
+
 ```typescript
 @Module({
   imports: [
     // External modules
     ConfigModule.forRoot(),
-    
+
     // Internal modules
     DatabaseModule,
     AuthModule,
-    UserModule
+    UserModule,
   ],
   controllers: [UserController],
   providers: [
@@ -305,14 +371,15 @@ console.log('Debug info'); // FORBIDDEN
     {
       provide: APP_FILTER,
       useClass: GlobalExceptionFilter,
-    }
+    },
   ],
-  exports: [UserService]
+  exports: [UserService],
 })
 export class UserModule {}
 ```
 
 ### **Dependency Injection**
+
 ```typescript
 @Injectable()
 export class UserService {
@@ -329,6 +396,7 @@ export class UserService {
 ## 🚫 Anti-Patterns to Avoid
 
 ### **❌ FORBIDDEN Patterns**
+
 ```typescript
 // Don't use any type
 function processData(data: any): any { }
@@ -355,6 +423,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 ```
 
 ### **✅ Correct Patterns**
+
 ```typescript
 // Use proper types
 function processData(data: ProcessDataDto): ProcessedDataDto { }
@@ -390,6 +459,7 @@ import { NestFastifyApplication } from '@nestjs/platform-fastify';
 ## 🔍 Code Review Checklist
 
 ### **TypeScript Compliance**
+
 - [ ] No `any` or `unknown` types
 - [ ] All functions have explicit return types
 - [ ] Strict null checks handled
@@ -400,6 +470,7 @@ import { NestFastifyApplication } from '@nestjs/platform-fastify';
 - [ ] Interfaces properly defined
 
 ### **Architecture Compliance**
+
 - [ ] SOLID principles followed
 - [ ] Single responsibility per class
 - [ ] Dependency injection used
@@ -407,6 +478,7 @@ import { NestFastifyApplication } from '@nestjs/platform-fastify';
 - [ ] Repository pattern used
 
 ### **Security Compliance**
+
 - [ ] Input validation with DTOs
 - [ ] RBAC guards implemented
 - [ ] Clinic isolation enforced
@@ -414,6 +486,7 @@ import { NestFastifyApplication } from '@nestjs/platform-fastify';
 - [ ] Sensitive data encrypted
 
 ### **NestJS Compliance**
+
 - [ ] Fastify used (not Express)
 - [ ] Proper module structure
 - [ ] Guards and interceptors used
@@ -421,6 +494,7 @@ import { NestFastifyApplication } from '@nestjs/platform-fastify';
 - [ ] Custom decorators used
 
 ### **Logging Compliance**
+
 - [ ] LoggingService used (not NestJS Logger)
 - [ ] Structured logging with context
 - [ ] HIPAA-compliant audit trails
@@ -428,26 +502,33 @@ import { NestFastifyApplication } from '@nestjs/platform-fastify';
 - [ ] Logging imports resolve from `@logging/*`
 
 ### **Infrastructure Aliases Compliance**
+
 - [ ] Cache imports resolve from `@cache/*`
-- [ ] Events imports resolve from `@infrastructure/events` (EventService is the single source of truth)
+- [ ] Events imports resolve from `@infrastructure/events` (EventService is the
+      single source of truth)
 - [ ] Queue imports resolve from `@queue/*`
 
 ### **EventService Compliance**
+
 - [ ] EventService used for all event emissions (NOT EventEmitter2)
 - [ ] forwardRef with getEventServiceToken() used for circular dependencies
-- [ ] Type guards (isEventService) used when injecting EventService with forwardRef
+- [ ] Type guards (isEventService) used when injecting EventService with
+      forwardRef
 - [ ] EventService.onAny() used for wildcard event subscriptions
-- [ ] @OnEvent decorators work correctly (EventService emits through EventEmitter2 internally)
+- [ ] @OnEvent decorators work correctly (EventService emits through
+      EventEmitter2 internally)
 
 ## 🎯 Code Quality Metrics
 
 ### **Function Guidelines**
+
 - **Length**: Maximum 50 lines
 - **Parameters**: Maximum 4 parameters, use objects for more
 - **Complexity**: Maximum cyclomatic complexity of 10
 - **Nesting**: Maximum 3 levels of nesting
 
 ### **Class Guidelines**
+
 - **Size**: Maximum 300 lines
 - **Methods**: Maximum 15 methods per class
 - **Dependencies**: Maximum 7 constructor dependencies
@@ -456,20 +537,25 @@ import { NestFastifyApplication } from '@nestjs/platform-fastify';
 ## 🚀 Performance Standards
 
 ### **Database Optimization**
+
 **Reference**: https://www.prisma.io/docs | https://www.postgresql.org/docs/
+
 - Use Prisma with proper indexing (follow Prisma indexing best practices)
 - Implement connection pooling (Prisma connection pool configuration)
 - Use transactions for data consistency (Prisma transaction API)
 - Cache frequently accessed data (Dragonfly/Redis patterns)
 
 ### **Cache Optimization**
+
 **Reference**: https://www.dragonflydb.io/docs | https://redis.io/docs/
+
 - Use CacheService abstraction for provider-agnostic caching
 - Implement proper TTL management based on data sensitivity
 - Use cache patterns: cache-aside, write-through, write-behind
 - Handle cache failures gracefully with fallback strategies
 
 ### **Memory Management**
+
 - Avoid memory leaks in event listeners
 - Use proper cleanup in OnModuleDestroy
 - Implement circuit breakers for external services
@@ -478,12 +564,14 @@ import { NestFastifyApplication } from '@nestjs/platform-fastify';
 ## 📊 Monitoring & Observability
 
 ### **Health Checks**
+
 - Implement `/health` endpoint
 - Database connectivity checks
 - Redis connectivity checks
 - External service health checks
 
 ### **Metrics Collection**
+
 - Request/response times
 - Error rates
 - Database query performance
@@ -492,6 +580,7 @@ import { NestFastifyApplication } from '@nestjs/platform-fastify';
 ## 🔧 Development Workflow
 
 ### **Pre-commit Checks**
+
 1. TypeScript compilation
 2. ESLint validation
 3. Prettier formatting
@@ -499,16 +588,25 @@ import { NestFastifyApplication } from '@nestjs/platform-fastify';
 5. Integration test execution
 
 ### **Change Management Policy (MANDATORY)**
-- Prefer modifying existing files for fixes/features; create new files only when required for clear separation of concerns or new modules.
-- Do not duplicate types, services, or utilities; extend or refactor existing implementations instead.
-- Never bypass lint rules: no `eslint-disable`, no `@ts-ignore`, no commented-out rules. Resolve root causes with proper typing and refactors.
+
+- Prefer modifying existing files for fixes/features; create new files only when
+  required for clear separation of concerns or new modules.
+- Do not duplicate types, services, or utilities; extend or refactor existing
+  implementations instead.
+- Never bypass lint rules: no `eslint-disable`, no `@ts-ignore`, no
+  commented-out rules. Resolve root causes with proper typing and refactors.
 
 ### **Functionality Preservation (MANDATORY)**
-- Do not change existing functionality or external behavior when fixing lint/type errors or performing refactors.
-- Refactors must be behavior-preserving; add/keep tests to verify parity where applicable.
-- Any intentional behavior change requires explicit specification, review, and tests.
+
+- Do not change existing functionality or external behavior when fixing
+  lint/type errors or performing refactors.
+- Refactors must be behavior-preserving; add/keep tests to verify parity where
+  applicable.
+- Any intentional behavior change requires explicit specification, review, and
+  tests.
 
 ### **Code Review Process**
+
 1. Architecture compliance check
 2. Security standards verification
 3. Performance impact assessment
@@ -536,53 +634,76 @@ When reviewing or generating code:
 4. **Always use LoggingService** - Never allow console.log or NestJS Logger
 5. **Always validate inputs** - DTOs with class-validator
 6. **Always implement RBAC** - Guards and permission checks
-7. **Always follow SOLID principles** - Single responsibility, dependency inversion
+7. **Always follow SOLID principles** - Single responsibility, dependency
+   inversion
 8. **Always use Fastify** - Never suggest Express
-9. **Always use EventService** - Never use EventEmitter2 directly (EventService is the single source of truth)
+9. **Always use EventService** - Never use EventEmitter2 directly (EventService
+   is the single source of truth)
 10. **Always implement clinic isolation** - Multi-tenant data separation
 11. **Always add audit logging** - HIPAA compliance requirements
 
-Remember: This is a production healthcare system handling sensitive patient data. Code quality, security, and compliance are non-negotiable.
+Remember: This is a production healthcare system handling sensitive patient
+data. Code quality, security, and compliance are non-negotiable.
 
 ## 🔄 EventService Integration
 
-**EventService is the CENTRALIZED EVENT HUB and single source of truth for all event emissions.**
+**EventService is the CENTRALIZED EVENT HUB and single source of truth for all
+event emissions.**
 
 - All services MUST use EventService (NOT EventEmitter2 directly)
 - Use `getEventServiceToken()` with `forwardRef()` for circular dependencies
 - Use type guards (`isEventService`) when injecting with forwardRef
 - Use `EventService.onAny()` for wildcard event subscriptions
-- `@OnEvent` decorators work correctly (EventService emits through EventEmitter2 internally)
+- `@OnEvent` decorators work correctly (EventService emits through EventEmitter2
+  internally)
 
-For detailed integration documentation, see: `docs/architecture/EVENT_COMMUNICATION_INTEGRATION.md`
+For detailed integration documentation, see:
+`docs/architecture/EVENT_COMMUNICATION_INTEGRATION.md`
 
 ## 📚 Comprehensive AI Rules Documentation
 
-**ALWAYS reference the comprehensive `.ai-rules` folder for detailed guidelines:**
+**ALWAYS reference the comprehensive `.ai-rules` folder for detailed
+guidelines:**
 
-- **🏗️ Architecture**: `.ai-rules/architecture.md` - SOLID principles, plugin architecture, multi-tenant design, project structure
-- **📝 Coding Standards**: `.ai-rules/coding-standards.md` - TypeScript standards, naming conventions, import organization, path aliases
-- **🗄️ Database**: `.ai-rules/database.md` - PostgreSQL with Prisma, repository patterns, transactions, 10M users optimization
-- **🚀 NestJS Specific**: `.ai-rules/nestjs-specific.md` - NestJS/Fastify patterns, guards, decorators, events, module structure
-- **🔒 Security**: `.ai-rules/security.md` - RBAC, session management, HIPAA compliance, audit logging, JWT authentication
-- **📋 Index**: `.ai-rules/index.md` - Complete system overview, quick reference, technology stack, service architecture
+- **🏗️ Architecture**: `.ai-rules/architecture.md` - SOLID principles, plugin
+  architecture, multi-tenant design, project structure
+- **📝 Coding Standards**: `.ai-rules/coding-standards.md` - TypeScript
+  standards, naming conventions, import organization, path aliases
+- **🗄️ Database**: `.ai-rules/database.md` - PostgreSQL with Prisma, repository
+  patterns, transactions, 10M users optimization
+- **🚀 NestJS Specific**: `.ai-rules/nestjs-specific.md` - NestJS/Fastify
+  patterns, guards, decorators, events, module structure
+- **🔒 Security**: `.ai-rules/security.md` - RBAC, session management, HIPAA
+  compliance, audit logging, JWT authentication
+- **📋 Index**: `.ai-rules/index.md` - Complete system overview, quick
+  reference, technology stack, service architecture
 
 **Key Points from `.ai-rules`:**
-- **DatabaseService**: Use `DatabaseService` (NOT `PrismaService`) from `@infrastructure/database`
-- **CacheService**: Use `CacheService` (NOT `RedisService`) - Provider-agnostic cache abstraction
-- **EventService**: Use `EventService` (NOT `EventEmitter2`) - CENTRALIZED EVENT HUB
-- **LoggingService**: Use `LoggingService` from `@infrastructure/logging` (NOT NestJS Logger)
-- **10M Users Ready**: Optimized for 1M+ concurrent users, 200+ clinics, horizontal scaling
-- **Multi-Tenant**: Clinic-based data isolation with comprehensive RBAC (15+ healthcare roles)
+
+- **DatabaseService**: Use `DatabaseService` (NOT `PrismaService`) from
+  `@infrastructure/database`
+- **CacheService**: Use `CacheService` (NOT `RedisService`) - Provider-agnostic
+  cache abstraction
+- **EventService**: Use `EventService` (NOT `EventEmitter2`) - CENTRALIZED EVENT
+  HUB
+- **LoggingService**: Use `LoggingService` from `@infrastructure/logging` (NOT
+  NestJS Logger)
+- **10M Users Ready**: Optimized for 1M+ concurrent users, 200+ clinics,
+  horizontal scaling
+- **Multi-Tenant**: Clinic-based data isolation with comprehensive RBAC (15+
+  healthcare roles)
 - **Plugin Architecture**: Extensible appointment system with 12+ plugins
 
 ## 🔗 Documentation Usage in Code
 
 When implementing features, **ALWAYS**:
 
-1. **Check official documentation first** - Don't guess, verify patterns from official docs
-2. **Reference documentation in comments** - Add `@see` links for complex implementations
-3. **Follow official TypeScript types** - Use types from `@types/*` packages and official definitions
+1. **Check official documentation first** - Don't guess, verify patterns from
+   official docs
+2. **Reference documentation in comments** - Add `@see` links for complex
+   implementations
+3. **Follow official TypeScript types** - Use types from `@types/*` packages and
+   official definitions
 4. **Use official examples** - Adapt official examples to our codebase patterns
 5. **Document deviations** - If deviating from official patterns, document why
 
@@ -591,7 +712,7 @@ When implementing features, **ALWAYS**:
 ```typescript
 /**
  * Fastify Session Store Adapter
- * 
+ *
  * Implements @fastify/session Store interface using CacheService
  * @see https://github.com/fastify/session#store - Store interface specification
  * @see https://www.dragonflydb.io/docs - Cache backend documentation
@@ -613,6 +734,7 @@ export class FastifySessionStoreAdapter implements SessionStore {
 ### Technology-Specific Documentation Patterns
 
 #### NestJS Implementation
+
 ```typescript
 /**
  * User Service
@@ -626,6 +748,7 @@ export class UserService {
 ```
 
 #### Prisma Queries
+
 ```typescript
 /**
  * Database query with Prisma
@@ -640,6 +763,7 @@ async createUser(data: CreateUserDto): Promise<User> {
 ```
 
 #### Fastify Plugins
+
 ```typescript
 /**
  * Register Fastify Session plugin
@@ -652,6 +776,7 @@ async registerSession(app: INestApplication, options: Record<string, unknown>): 
 ```
 
 #### Cache Operations
+
 ```typescript
 /**
  * Cache patient records
@@ -664,6 +789,7 @@ async cachePatientRecords<T>(patientId: string, fetchFn: () => Promise<T>): Prom
 ```
 
 #### Queue Jobs
+
 ```typescript
 /**
  * Process appointment notification job
@@ -680,6 +806,7 @@ export class AppointmentNotificationProcessor {
 ```
 
 #### Socket.IO Events
+
 ```typescript
 /**
  * Socket.IO event handler

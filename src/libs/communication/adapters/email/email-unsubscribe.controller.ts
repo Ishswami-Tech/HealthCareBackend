@@ -10,6 +10,7 @@
 
 import { Controller, Get, Post, Query, Body, Param, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery, ApiParam } from '@nestjs/swagger';
+import { Public } from '@core/decorators/public.decorator';
 import { EmailUnsubscribeService } from './email-unsubscribe.service';
 
 class UnsubscribeDto {
@@ -19,6 +20,7 @@ class UnsubscribeDto {
 
 @ApiTags('communication')
 @Controller('email')
+@Public()
 export class EmailUnsubscribeController {
   constructor(private readonly unsubscribeService: EmailUnsubscribeService) {}
 

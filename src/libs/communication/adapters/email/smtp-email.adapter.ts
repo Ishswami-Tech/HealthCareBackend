@@ -8,7 +8,7 @@
  * @description SMTP email adapter for multi-tenant communication
  */
 
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Inject, forwardRef } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 // Use direct import to avoid TDZ issues with barrel exports
@@ -42,7 +42,6 @@ async function callSendMailTyped(
  * SMTP Email Adapter
  * Handles email sending via SMTP protocol
  */
-@Injectable()
 export class SMTPEmailAdapter extends BaseEmailAdapter {
   private transporter: Transporter | null = null;
   private config: ProviderConfig | null = null;

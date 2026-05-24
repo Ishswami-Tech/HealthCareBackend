@@ -15,6 +15,7 @@
 // Core services
 export * from './business-rules-engine.service';
 export * from './services/rule-validation.service';
+export * from './business-rules.module';
 
 // Types (re-export centralized core types)
 export * from '@core/types';

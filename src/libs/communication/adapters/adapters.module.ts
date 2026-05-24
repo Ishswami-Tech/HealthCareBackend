@@ -15,7 +15,6 @@ import { CommunicationConfigModule } from '../config/communication-config.module
 import { EmailServicesModule } from './email/email-services.module';
 
 // Email adapters
-import { SMTPEmailAdapter } from './email/smtp-email.adapter';
 import { SESEmailAdapter } from './email/ses/ses-email.adapter';
 import { ZeptoMailEmailAdapter } from './email/zeptomail/zeptomail-email.adapter';
 
@@ -34,7 +33,6 @@ import { TwilioWhatsAppAdapter } from './whatsapp/twilio-whatsapp.adapter';
     // Factory
     ProviderFactory,
     // Email adapters (not singletons - created per clinic)
-    SMTPEmailAdapter,
     SESEmailAdapter,
     ZeptoMailEmailAdapter,
     // WhatsApp adapters (not singletons - created per clinic)

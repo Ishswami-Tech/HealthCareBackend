@@ -21,6 +21,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiHeader, ApiQuery } from '@nestjs/swagger';
+import { Public } from '@core/decorators/public.decorator';
 import { WhatsAppWebhookService } from './whatsapp-webhook.service';
 import { ConfigService } from '@config/config.service';
 import * as crypto from 'crypto';
@@ -77,6 +78,7 @@ interface TwilioWhatsAppWebhookEvent {
 
 @ApiTags('WhatsApp Webhooks')
 @Controller('webhooks/whatsapp')
+@Public()
 export class WhatsAppWebhookController {
   constructor(
     private readonly whatsAppWebhookService: WhatsAppWebhookService,

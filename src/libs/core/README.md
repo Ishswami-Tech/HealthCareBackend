@@ -5,6 +5,17 @@
 
 ---
 
+Current code facts from source scan:
+
+- NestJS `11.1.19`
+- Fastify `5.8.5`
+- Prisma `7.8.0`
+- 32 controller files
+- about 391 HTTP route handlers
+- 14 role values in the current enum
+- Dragonfly is the default cache provider; Redis is compatibility language where
+  the code uses Redis-compatible clients.
+
 ## Quick Start
 
 ```typescript
@@ -56,7 +67,7 @@ import type { User, Appointment, RequestContext } from '@core/types';
 ## Key Features
 
 - ✅ **Business Rules Engine** - Rule-based validation and workflow automation
-- ✅ **RBAC System** - 12 healthcare roles, 140+ permissions
+- ✅ **RBAC System** - 14 healthcare role values, 140+ permissions
 - ✅ **Session Management** - Multi-device session tracking (max 5 per user)
 - ✅ **Plugin Interface** - Extensible plugin architecture (14 appointment
   plugins)
@@ -144,7 +155,7 @@ not_contains, is_empty, is_not_empty, custom
 
 ## RBAC (Role-Based Access Control)
 
-12 healthcare roles with permission management:
+14 healthcare role values with permission management:
 
 ```typescript
 import { RbacService } from '@core';
@@ -184,7 +195,7 @@ const summary = await this.rbacService.getUserPermissionsSummary(
 );
 ```
 
-**12 Healthcare Roles:**
+**14 Healthcare Roles:**
 
 - SUPER_ADMIN - Full system access
 - CLINIC_ADMIN - Clinic management
@@ -198,6 +209,8 @@ const summary = await this.rbacService.getUserPermissionsSummary(
 - FINANCE_BILLING - Billing operations
 - SUPPORT_STAFF - Support operations
 - COUNSELOR - Counseling services
+- ASSISTANT_DOCTOR - Additional doctor support
+- CLINIC_LOCATION_HEAD - Location-level leadership
 
 **Permission Format:** `resource:action`
 

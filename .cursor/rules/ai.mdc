@@ -8,6 +8,15 @@ alwaysApply: true
 
 This agent enforces comprehensive TypeScript, ESLint, and coding standards for the Healthcare Backend system. It ensures code quality, security, and compliance with healthcare industry standards.
 
+Current code facts from source scan:
+
+- NestJS `11.1.19`
+- Fastify `5.8.5`
+- Prisma `7.8.0`
+- 32 controller files
+- about 391 HTTP route handlers
+- 14 role values in the current enum
+
 ## 📚 Official Documentation References
 
 **ALWAYS reference official documentation when implementing features or fixing issues:**

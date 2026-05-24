@@ -15,7 +15,14 @@ import {
   ConnectedSocket,
   OnGatewayInit,
 } from '@nestjs/websockets';
-import { Injectable, OnModuleInit, Inject, forwardRef, Optional } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleInit,
+  OnModuleDestroy,
+  Inject,
+  forwardRef,
+  Optional,
+} from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { QueueService } from '@queue/src/queue.service';
 import { EventService } from '@infrastructure/events/event.service';
@@ -51,7 +58,7 @@ const getCorsOrigin = (): string | string[] => {
 })
 @Injectable()
 export class QueueStatusGateway
-  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect, OnModuleInit
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect, OnModuleInit, OnModuleDestroy
 {
   @WebSocketServer() server!: Server;
 
@@ -457,7 +464,7 @@ export class QueueStatusGateway
     this.connectionMetrics.lastMessageTime = now;
   }
 
-  onModuleDestroy() {
+  onModuleDestroy(): void {
     // Cleanup if needed
   }
 }

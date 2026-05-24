@@ -18,6 +18,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiHeader } from '@nestjs/swagger';
+import { Public } from '@core/decorators/public.decorator';
 import { ZeptoMailWebhookService } from './zeptomail-webhook.service';
 import { ConfigService } from '@config/config.service';
 import * as crypto from 'crypto';
@@ -39,6 +40,7 @@ interface ZeptoMailWebhookEvent {
 
 @ApiTags('communication')
 @Controller('webhooks/zeptomail')
+@Public()
 export class ZeptoMailWebhookController {
   constructor(
     private readonly zeptoMailWebhookService: ZeptoMailWebhookService,

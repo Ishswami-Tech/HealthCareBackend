@@ -8,7 +8,14 @@
  * @description Email bounce/complaint rate monitoring and alerting
  */
 
-import { Injectable, Inject, forwardRef, OnModuleInit, Optional } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  forwardRef,
+  OnModuleInit,
+  OnModuleDestroy,
+  Optional,
+} from '@nestjs/common';
 import { COMMUNICATION_SERVICE_TOKEN } from '@communication/communication.constants';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
@@ -41,7 +48,7 @@ export interface RateAlert {
 }
 
 @Injectable()
-export class EmailRateMonitoringService implements OnModuleInit {
+export class EmailRateMonitoringService implements OnModuleInit, OnModuleDestroy {
   private readonly BOUNCE_RATE_THRESHOLD_WARNING = 3.0; // 3%
   private readonly BOUNCE_RATE_THRESHOLD_CRITICAL = 5.0; // 5%
   private readonly COMPLAINT_RATE_THRESHOLD_WARNING = 0.05; // 0.05%

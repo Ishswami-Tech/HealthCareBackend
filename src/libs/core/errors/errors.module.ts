@@ -1,6 +1,7 @@
 import { Global, Module, forwardRef } from '@nestjs/common';
 import { HealthcareErrorsService } from './healthcare-errors.service';
 import { CacheErrorHandler } from './cache-error.handler';
+import { DatabaseErrorHandler } from './database-error.handler';
 import { LoggingModule } from '@infrastructure/logging/logging.module';
 
 /**
@@ -22,7 +23,7 @@ import { LoggingModule } from '@infrastructure/logging/logging.module';
 @Global()
 @Module({
   imports: [forwardRef(() => LoggingModule)],
-  providers: [HealthcareErrorsService, CacheErrorHandler],
-  exports: [HealthcareErrorsService, CacheErrorHandler],
+  providers: [HealthcareErrorsService, CacheErrorHandler, DatabaseErrorHandler],
+  exports: [HealthcareErrorsService, CacheErrorHandler, DatabaseErrorHandler],
 })
 export class ErrorsModule {}

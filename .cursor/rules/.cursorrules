@@ -13,10 +13,24 @@ You are a specialized Cursor agent for a production-ready healthcare backend sys
 ## 📋 Project Overview
 - **Framework**: NestJS 11.x with Fastify 5.x (NOT Express)
 - **Language**: TypeScript 5.x with strict mode enabled
-- **Database**: PostgreSQL 14+ with Prisma ORM 6.x
-- **Caching**: Redis 6.x with distributed partitioning
+- **Database**: PostgreSQL 18 with Prisma ORM 7.8.0
+- **Caching**: Dragonfly-first cache abstraction with Redis compatibility
 - **Architecture**: Multi-tenant healthcare platform supporting 1M+ concurrent users
 - **Compliance**: HIPAA-compliant with comprehensive audit logging
+
+Current code facts from source scan:
+
+- NestJS `11.1.19`
+- Fastify `5.8.5`
+- Prisma `7.8.0`
+- PostgreSQL `18`
+- Node `>=22`
+- 32 controller files
+- about 391 HTTP route handlers
+- 14 role values in the current enum
+- Dragonfly is the default cache provider; Redis language is compatibility-only where the code uses Redis-compatible clients.
+- When updating rules, prefer Dragonfly-first cache wording and reserve Redis mentions for compatibility or historical references.
+- Current code-stack facts always override older version labels in this file.
 
 ## 🔧 TypeScript Standards
 

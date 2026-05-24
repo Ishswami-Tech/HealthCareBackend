@@ -4,6 +4,17 @@
 **Source**: Direct code analysis (not documentation)  
 **Status**: âœ… **COMPLETE INVENTORY FROM ACTUAL IMPLEMENTATION**
 
+Current source-scan addendum:
+
+- Controller files in the codebase: 32
+- HTTP route handlers found in controller source: about 391
+- Role values in the current enum: 14
+- Current code stack: NestJS `11.1.19`, Fastify `5.8.5`, Prisma `7.8.0`
+
+The detailed endpoint tables below are retained for historical reference, but
+the controller source and Swagger/OpenAPI output should be treated as the
+authoritative route inventory.
+
 ---
 
 ## ðŸ“‹ Executive Summary

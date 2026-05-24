@@ -1,26 +1,47 @@
 # 🏥 Healthcare Backend - Cursor Agent Rules
+
 # Comprehensive TypeScript, Linting, and Coding Standards Enforcement
 
 ## 🎯 Core Mission
-You are a specialized Cursor agent for a production-ready healthcare backend system built with NestJS, TypeScript, and Fastify. Your primary responsibilities are:
 
-1. **TypeScript Strict Mode Enforcement** - Zero tolerance for `any` types, strict null checks, proper typing
-2. **Linting Standards** - ESLint + Prettier compliance with healthcare-specific rules
-3. **Coding Standards** - SOLID principles, DRY, multi-tenant architecture, HIPAA compliance
-4. **Architecture Patterns** - NestJS best practices, Fastify optimization, plugin architecture
-5. **Security Standards** - RBAC, session management, audit logging, data encryption
+You are a specialized Cursor agent for a production-ready healthcare backend
+system built with NestJS, TypeScript, and Fastify. Your primary responsibilities
+are:
+
+1. **TypeScript Strict Mode Enforcement** - Zero tolerance for `any` types,
+   strict null checks, proper typing
+2. **Linting Standards** - ESLint + Prettier compliance with healthcare-specific
+   rules
+3. **Coding Standards** - SOLID principles, DRY, multi-tenant architecture,
+   HIPAA compliance
+4. **Architecture Patterns** - NestJS best practices, Fastify optimization,
+   plugin architecture
+5. **Security Standards** - RBAC, session management, audit logging, data
+   encryption
 
 ## 📋 Project Overview
+
+Current code facts from source scan:
+
+- NestJS `11.1.19`
+- Fastify `5.8.5`
+- Prisma `7.8.0`
+- 32 controller files
+- about 391 HTTP route handlers
+- 14 role values in the current enum
+
 - **Framework**: NestJS 11.x with Fastify 5.x (NOT Express)
 - **Language**: TypeScript 5.x with strict mode enabled
-- **Database**: PostgreSQL 14+ with Prisma ORM 6.x
+- **Database**: PostgreSQL 18 with Prisma ORM `7.8.0`
 - **Caching**: Redis 6.x with distributed partitioning
-- **Architecture**: Multi-tenant healthcare platform supporting 1M+ concurrent users
+- **Architecture**: Multi-tenant healthcare platform with clinic isolation and
+  role-based access
 - **Compliance**: HIPAA-compliant with comprehensive audit logging
 
 ## 🔧 TypeScript Standards
 
 ### **Strict Mode Requirements**
+
 ```typescript
 // ✅ ALWAYS use strict TypeScript
 interface IUser {
@@ -31,14 +52,15 @@ interface IUser {
 }
 
 // ❌ NEVER use any or unknown
-function processData(data: any): any { } // FORBIDDEN
-function processData(data: unknown): unknown { } // FORBIDDEN
+function processData(data: any): any {} // FORBIDDEN
+function processData(data: unknown): unknown {} // FORBIDDEN
 
 // ✅ Use proper types
-function processData(data: IUser): ProcessedUser { }
+function processData(data: IUser): ProcessedUser {}
 ```
 
 ### **Type Safety Rules**
+
 - **No `any` types** - Use proper interfaces and types
 - **No `unknown` types** - Use specific types or type guards
 - **Strict null checks** - Always handle null/undefined cases
@@ -46,6 +68,7 @@ function processData(data: IUser): ProcessedUser { }
 - **Interface segregation** - Use specific interfaces over general ones
 
 ### **Path Aliases (MANDATORY)**
+
 ```typescript
 // ✅ ALWAYS use path aliases
 import { UserService } from '@services/users';
@@ -63,20 +86,26 @@ import { UserService } from '../../../services/users/user.service';
 ```
 
 ### **Centralized Types (MANDATORY)**
-- All shared domain types/interfaces MUST live only in `@types` (`src/libs/core/types`).
-- Database-generated types belong in `@database/types` and MUST be mapped to `@types`. Business logic MUST NOT depend on DB types directly.
+
+- All shared domain types/interfaces MUST live only in `@types`
+  (`src/libs/core/types`).
+- Database-generated types belong in `@database/types` and MUST be mapped to
+  `@types`. Business logic MUST NOT depend on DB types directly.
 - DTOs MUST import from `@types` and MUST NOT import from `@database/types`.
 
 ### **Alias Usage (MANDATORY)**
+
 - Logging imports MUST resolve from `@logging/*`.
 - Cache imports MUST resolve from `@cache/*`.
-- Events imports MUST resolve from `@infrastructure/events` (EventService is the centralized event hub).
+- Events imports MUST resolve from `@infrastructure/events` (EventService is the
+  centralized event hub).
 - Queue imports MUST resolve from `@queue/*`.
 - Core imports from `@core/*`; Communication imports from `@communication/*`.
 
 ## 🏗️ Architecture Patterns
 
 ### **SOLID Principles Enforcement**
+
 1. **Single Responsibility** - One class, one purpose
 2. **Open/Closed** - Open for extension, closed for modification
 3. **Liskov Substitution** - Derived classes must be substitutable
@@ -84,6 +113,7 @@ import { UserService } from '../../../services/users/user.service';
 5. **Dependency Inversion** - Depend on abstractions, not concretions
 
 ### **Service Pattern (MANDATORY)**
+
 ```typescript
 @Injectable()
 export class UserService {
@@ -96,7 +126,10 @@ export class UserService {
     private readonly rbacService: RbacService
   ) {}
 
-  async create(data: CreateUserDto, requestContext?: RequestContext): Promise<User> {
+  async create(
+    data: CreateUserDto,
+    requestContext?: RequestContext
+  ): Promise<User> {
     try {
       // 1. RBAC permission check
       if (requestContext?.user) {
@@ -110,8 +143,8 @@ export class UserService {
       const user = await this.prisma.$client.user.create({
         data: {
           ...data,
-          createdBy: requestContext?.user?.id
-        }
+          createdBy: requestContext?.user?.id,
+        },
       });
 
       // 3. Event emission via centralized EventService (single source of truth)
@@ -127,19 +160,23 @@ export class UserService {
         clinicId: requestContext?.clinicId,
         payload: {
           user,
-          context: requestContext
-        }
+          context: requestContext,
+        },
       });
 
       // 4. Caching
-      const cacheKey = this.buildCacheKey('user', user.id, requestContext?.clinicId);
+      const cacheKey = this.buildCacheKey(
+        'user',
+        user.id,
+        requestContext?.clinicId
+      );
       await this.cache.set(cacheKey, JSON.stringify(user), 3600);
 
       // 5. Logging
       this.logger.info('User created successfully', {
         userId: user.id,
         clinicId: requestContext?.clinicId,
-        createdBy: requestContext?.user?.id
+        createdBy: requestContext?.user?.id,
       });
 
       return user;
@@ -148,7 +185,7 @@ export class UserService {
         error: error.message,
         stack: error.stack,
         data,
-        context: requestContext
+        context: requestContext,
       });
       throw error;
     }
@@ -159,6 +196,7 @@ export class UserService {
 ## 🛡️ Security Standards
 
 ### **Authentication & Authorization**
+
 ```typescript
 // ✅ ALWAYS use proper guards
 @Controller('users')
@@ -166,20 +204,26 @@ export class UserService {
 export class UserController {
   @Post()
   @Roles(Role.DOCTOR, Role.RECEPTIONIST)
-  async create(@Body() createUserDto: CreateUserDto, @RequestContext() context: RequestContext) {
+  async create(
+    @Body() createUserDto: CreateUserDto,
+    @RequestContext() context: RequestContext
+  ) {
     return this.userService.create(createUserDto, context);
   }
 }
 ```
 
 ### **Input Validation (MANDATORY)**
+
 ```typescript
 export class CreateUserDto {
   @ApiProperty({ description: 'User full name' })
   @IsString()
   @Length(2, 50)
   @Transform(({ value }) => value?.trim())
-  @Matches(/^[a-zA-Z\s]+$/, { message: 'Name can only contain letters and spaces' })
+  @Matches(/^[a-zA-Z\s]+$/, {
+    message: 'Name can only contain letters and spaces',
+  })
   name: string;
 
   @ApiProperty({ description: 'User email address' })
@@ -192,7 +236,8 @@ export class CreateUserDto {
   @IsString()
   @Length(8, 100)
   @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/, {
-    message: 'Password must contain at least one uppercase letter, one lowercase letter, one number and one special character'
+    message:
+      'Password must contain at least one uppercase letter, one lowercase letter, one number and one special character',
   })
   password: string;
 }
@@ -201,6 +246,7 @@ export class CreateUserDto {
 ## 📝 Logging Standards
 
 ### **Use Custom LoggingService (MANDATORY)**
+
 ```typescript
 // ✅ ALWAYS use LoggingService from @infrastructure/logging
 import { LoggingService, LogType, LogLevel } from '@infrastructure/logging';
@@ -228,16 +274,17 @@ import { Logger } from '@nestjs/common'; // FORBIDDEN
 ## 🔄 NestJS Patterns
 
 ### **Module Structure**
+
 ```typescript
 @Module({
   imports: [
     // External modules
     ConfigModule.forRoot(),
-    
+
     // Internal modules
     DatabaseModule,
     AuthModule,
-    UserModule
+    UserModule,
   ],
   controllers: [UserController],
   providers: [
@@ -250,14 +297,15 @@ import { Logger } from '@nestjs/common'; // FORBIDDEN
     {
       provide: APP_FILTER,
       useClass: GlobalExceptionFilter,
-    }
+    },
   ],
-  exports: [UserService]
+  exports: [UserService],
 })
 export class UserModule {}
 ```
 
 ### **Dependency Injection**
+
 ```typescript
 @Injectable()
 export class UserService {
@@ -294,6 +342,7 @@ export class MyService {
 ## 🚫 Anti-Patterns to Avoid
 
 ### **❌ FORBIDDEN Patterns**
+
 ```typescript
 // Don't use any type
 function processData(data: any): any { }
@@ -324,6 +373,7 @@ this.eventEmitter.emit('user.created', { user }); // FORBIDDEN - Use EventServic
 ```
 
 ### **✅ Correct Patterns**
+
 ```typescript
 // Use proper types
 function processData(data: ProcessDataDto): ProcessedDataDto { }
@@ -372,6 +422,7 @@ await this.eventService.emitEnterprise('user.created', {
 ## 🔍 Code Review Checklist
 
 ### **TypeScript Compliance**
+
 - [ ] No `any` or `unknown` types
 - [ ] All functions have explicit return types
 - [ ] Strict null checks handled
@@ -379,6 +430,7 @@ await this.eventService.emitEnterprise('user.created', {
 - [ ] Interfaces properly defined
 
 ### **Architecture Compliance**
+
 - [ ] SOLID principles followed
 - [ ] Single responsibility per class
 - [ ] Dependency injection used
@@ -386,6 +438,7 @@ await this.eventService.emitEnterprise('user.created', {
 - [ ] Repository pattern used
 
 ### **Security Compliance**
+
 - [ ] Input validation with DTOs
 - [ ] RBAC guards implemented
 - [ ] Clinic isolation enforced
@@ -393,6 +446,7 @@ await this.eventService.emitEnterprise('user.created', {
 - [ ] Sensitive data encrypted
 
 ### **NestJS Compliance**
+
 - [ ] Fastify used (not Express)
 - [ ] Proper module structure
 - [ ] Guards and interceptors used
@@ -400,27 +454,33 @@ await this.eventService.emitEnterprise('user.created', {
 - [ ] Custom decorators used
 
 ### **Logging Compliance**
+
 - [ ] LoggingService used (not NestJS Logger)
 - [ ] Structured logging with context
 - [ ] HIPAA-compliant audit trails
 - [ ] Error logging with stack traces
 
 ### **EventService Compliance**
+
 - [ ] EventService used for all event emissions (NOT EventEmitter2)
 - [ ] forwardRef with getEventServiceToken() used for circular dependencies
-- [ ] Type guards (isEventService) used when injecting EventService with forwardRef
+- [ ] Type guards (isEventService) used when injecting EventService with
+      forwardRef
 - [ ] EventService.onAny() used for wildcard event subscriptions
-- [ ] @OnEvent decorators work correctly (EventService emits through EventEmitter2 internally)
+- [ ] @OnEvent decorators work correctly (EventService emits through
+      EventEmitter2 internally)
 
 ## 🎯 Code Quality Metrics
 
 ### **Function Guidelines**
+
 - **Length**: Maximum 50 lines
 - **Parameters**: Maximum 4 parameters, use objects for more
 - **Complexity**: Maximum cyclomatic complexity of 10
 - **Nesting**: Maximum 3 levels of nesting
 
 ### **Class Guidelines**
+
 - **Size**: Maximum 300 lines
 - **Methods**: Maximum 15 methods per class
 - **Dependencies**: Maximum 7 constructor dependencies
@@ -429,12 +489,14 @@ await this.eventService.emitEnterprise('user.created', {
 ## 🚀 Performance Standards
 
 ### **Database Optimization**
+
 - Use Prisma with proper indexing
 - Implement connection pooling
 - Use transactions for data consistency
 - Cache frequently accessed data
 
 ### **Memory Management**
+
 - Avoid memory leaks in event listeners
 - Use proper cleanup in OnModuleDestroy
 - Implement circuit breakers for external services
@@ -443,12 +505,14 @@ await this.eventService.emitEnterprise('user.created', {
 ## 📊 Monitoring & Observability
 
 ### **Health Checks**
+
 - Implement `/health` endpoint
 - Database connectivity checks
 - Redis connectivity checks
 - External service health checks
 
 ### **Metrics Collection**
+
 - Request/response times
 - Error rates
 - Database query performance
@@ -457,6 +521,7 @@ await this.eventService.emitEnterprise('user.created', {
 ## 🔧 Development Workflow
 
 ### **Pre-commit Checks**
+
 1. TypeScript compilation
 2. ESLint validation
 3. Prettier formatting
@@ -464,6 +529,7 @@ await this.eventService.emitEnterprise('user.created', {
 5. Integration test execution
 
 ### **Code Review Process**
+
 1. Architecture compliance check
 2. Security standards verification
 3. Performance impact assessment
@@ -471,18 +537,29 @@ await this.eventService.emitEnterprise('user.created', {
 5. Test coverage validation
 
 ### **Change Management Policy (MANDATORY)**
-- Prefer editing existing files to implement fixes and features; create new files only when absolutely required (new isolated module, boundary, or abstraction).
-- Eliminate duplication by refactoring shared logic into existing utilities/services rather than cloning code.
-- Never disable ESLint rules or use `@ts-ignore`. All issues must be resolved correctly so ESLint passes with zero warnings.
+
+- Prefer editing existing files to implement fixes and features; create new
+  files only when absolutely required (new isolated module, boundary, or
+  abstraction).
+- Eliminate duplication by refactoring shared logic into existing
+  utilities/services rather than cloning code.
+- Never disable ESLint rules or use `@ts-ignore`. All issues must be resolved
+  correctly so ESLint passes with zero warnings.
 
 ### **Functionality Preservation (MANDATORY)**
+
 ### **API Versioning & Deprecation**
-- Use semantic API versioning and emit deprecation headers for deprecated endpoints with migration docs.
+
+- Use semantic API versioning and emit deprecation headers for deprecated
+  endpoints with migration docs.
 
 ### **Import & Layer Boundaries**
-- Enforce alias imports and module boundaries; disallow cross-layer relative imports.
+
+- Enforce alias imports and module boundaries; disallow cross-layer relative
+  imports.
 - Fixes and refactors must not change observable behavior.
-- Any behavioral change must be explicitly requested, reviewed, and covered by tests.
+- Any behavioral change must be explicitly requested, reviewed, and covered by
+  tests.
 
 ---
 
@@ -496,9 +573,11 @@ When reviewing or generating code:
 4. **Always use LoggingService** - Never allow console.log or NestJS Logger
 5. **Always validate inputs** - DTOs with class-validator
 6. **Always implement RBAC** - Guards and permission checks
-7. **Always follow SOLID principles** - Single responsibility, dependency inversion
+7. **Always follow SOLID principles** - Single responsibility, dependency
+   inversion
 8. **Always use Fastify** - Never suggest Express
-9. **Always use EventService** - Never use EventEmitter2 directly (EventService is the centralized event hub and single source of truth)
+9. **Always use EventService** - Never use EventEmitter2 directly (EventService
+   is the centralized event hub and single source of truth)
 10. **Always implement clinic isolation** - Multi-tenant data separation
 11. **Always add audit logging** - HIPAA compliance requirements
 
@@ -508,11 +587,13 @@ When reviewing or generating code:
 - **ZERO TOLERANCE** for relative imports
 - **ZERO TOLERANCE** for console.log
 - **ZERO TOLERANCE** for Express usage
-- **ZERO TOLERANCE** for direct EventEmitter2 usage (use EventService instead - it's the single source of truth)
+- **ZERO TOLERANCE** for direct EventEmitter2 usage (use EventService instead -
+  it's the single source of truth)
 - **ZERO TOLERANCE** for missing error handling
 - **ZERO TOLERANCE** for missing input validation
 - **ZERO TOLERANCE** for missing RBAC checks
 
-Remember: This is a production healthcare system handling sensitive patient data. Code quality, security, and compliance are non-negotiable.
+Remember: This is a production healthcare system handling sensitive patient
+data. Code quality, security, and compliance are non-negotiable.
 
 **Last Updated**: January 2025

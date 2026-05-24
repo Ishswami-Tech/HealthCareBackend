@@ -14,23 +14,16 @@ import { DatabaseModule } from '@infrastructure/database/database.module';
 import { CacheModule } from '@infrastructure/cache/cache.module';
 import { LoggingModule } from '@infrastructure/logging';
 import { EventsModule } from '@infrastructure/events/events.module';
+import { ConfigModule } from '@config/config.module';
 import { PaymentService } from './payment.service';
 import { PaymentProviderFactory } from './adapters/factories/payment-provider.factory';
 import { PaymentController } from './payment.controller';
 
 @Module({
-  imports: [
-    HttpModule,
-    DatabaseModule,
-    CacheModule,
-    LoggingModule,
-    EventsModule,
-    // PaymentConfigService is now provided by ConfigModule (Global)
-  ],
+  imports: [HttpModule, DatabaseModule, CacheModule, LoggingModule, EventsModule, ConfigModule],
   controllers: [PaymentController],
   providers: [
     PaymentService,
-    // PaymentConfigService is now provided by ConfigModule (Global)
     PaymentProviderFactory,
     // Note: CashfreePaymentAdapter, RazorpayPaymentAdapter, PhonePePaymentAdapter are
     // created via manual `new` in PaymentProviderFactory.createAdapterWithHttpService()

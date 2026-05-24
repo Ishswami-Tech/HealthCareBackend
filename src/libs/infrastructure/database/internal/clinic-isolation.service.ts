@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { PrismaService } from '@database/prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -19,7 +19,7 @@ export type { ClinicIsolationResult } from '@core/types/database.types';
  * @internal
  */
 @Injectable()
-export class ClinicIsolationService implements OnModuleInit {
+export class ClinicIsolationService implements OnModuleInit, OnModuleDestroy {
   private readonly serviceName = 'ClinicIsolationService';
   private clinicCache = new Map<string, ClinicContext>();
   private userClinicCache = new Map<string, string[]>(); // userId -> clinicIds[]
@@ -1029,7 +1029,7 @@ export class ClinicIsolationService implements OnModuleInit {
   }
 
   // Cleanup
-  onModuleDestroy() {
+  onModuleDestroy(): void {
     // Set shutdown flag to prevent new Prisma operations
     this.isShuttingDown = true;
 

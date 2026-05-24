@@ -1,21 +1,35 @@
-
 # 📝 Coding Standards - Healthcare Backend
 
 ## 🎯 Core Principles
 
+Current code facts from source scan:
+
+- NestJS `11.1.19`
+- Fastify `5.8.5`
+- Prisma `7.8.0`
+- 32 controller files
+- about 391 HTTP route handlers
+- 14 role values in the current enum
+
+Use `unknown` only when it is unavoidable and immediately narrowed with a type
+guard. Avoid `any` entirely.
+
 ### **Code Quality Standards**
-- **TypeScript Strict Mode**: Always enabled, no `any`and `unknown` types
+
+- **TypeScript Strict Mode**: Always enabled; avoid `any`, and use `unknown`
+  only when it is immediately narrowed
 - **ESLint + Prettier**: Automated formatting and linting
 - **Path Aliases**: Use `@services`, `@dtos`, etc. (never relative imports)
 - **Error Handling**: Comprehensive try-catch with proper logging
 - **Validation**: All inputs validated with class-validator DTOs
 
 ### **Naming Conventions**
+
 ```typescript
 // Files: kebab-case
-user.service.ts
-auth.controller.ts
-create-user.dto.ts
+user.service.ts;
+auth.controller.ts;
+create - user.dto.ts;
 
 // Classes: PascalCase
 export class UserService {}
@@ -38,6 +52,7 @@ interface IConfig {}
 ## 📁 Import Organization
 
 ### **Import Order**
+
 ```typescript
 // 1. External imports (Node.js, npm packages)
 import { Injectable } from '@nestjs/common';
@@ -53,6 +68,7 @@ import { UserRepository } from './user.repository';
 ```
 
 ### **Path Aliases Usage**
+
 ```typescript
 // ✅ DO - Use path aliases
 import { UserService } from '@services/users';
@@ -67,7 +83,12 @@ import { CacheService } from '@cache';
 import { LoggingService } from '@logging';
 import { QueueService } from '@queue';
 import { EventService, getEventServiceToken } from '@infrastructure/events';
-import { EventCategory, EventPriority, type IEventService, isEventService } from '@core/types';
+import {
+  EventCategory,
+  EventPriority,
+  type IEventService,
+  isEventService,
+} from '@core/types';
 
 import { AuthDto, CreateUserDto } from '@dtos';
 
@@ -97,6 +118,7 @@ import { PrismaService } from '../../infrastructure/database/src/prisma/prisma.s
 ## 🔧 Service Patterns
 
 ### **Standard Service Structure**
+
 ```typescript
 @Injectable()
 export class UserService {
@@ -109,7 +131,10 @@ export class UserService {
     private readonly rbacService: RbacService
   ) {}
 
-  async create(data: CreateUserDto, requestContext?: RequestContext): Promise<User> {
+  async create(
+    data: CreateUserDto,
+    requestContext?: RequestContext
+  ): Promise<User> {
     try {
       // Validate permissions using RBAC
       if (requestContext?.user) {
@@ -123,8 +148,8 @@ export class UserService {
       const user = await this.prisma.$client.user.create({
         data: {
           ...data,
-          createdBy: requestContext?.user?.id
-        }
+          createdBy: requestContext?.user?.id,
+        },
       });
 
       // Emit event via centralized EventService (single source of truth)
@@ -140,19 +165,23 @@ export class UserService {
         clinicId: requestContext?.clinicId,
         payload: {
           user,
-          context: requestContext
-        }
+          context: requestContext,
+        },
       });
 
       // Cache the result (with clinic-specific key if applicable)
       // Use CacheService - single entry point for all cache operations
-      const cacheKey = this.buildCacheKey('user', user.id, requestContext?.clinicId);
+      const cacheKey = this.buildCacheKey(
+        'user',
+        user.id,
+        requestContext?.clinicId
+      );
       await this.cache.set(cacheKey, user, 3600); // CacheService handles serialization
 
       this.logger.info('User created successfully', {
         userId: user.id,
         clinicId: requestContext?.clinicId,
-        createdBy: requestContext?.user?.id
+        createdBy: requestContext?.user?.id,
       });
 
       return user;
@@ -161,7 +190,7 @@ export class UserService {
         error: error.message,
         stack: error.stack,
         data,
-        context: requestContext
+        context: requestContext,
       });
       throw error;
     }
@@ -194,8 +223,8 @@ export class UserService {
           isActive: true,
           isVerified: true,
           createdAt: true,
-          updatedAt: true
-        }
+          updatedAt: true,
+        },
       });
 
       // Cache result
@@ -208,7 +237,7 @@ export class UserService {
       this.logger.error('Failed to find user', {
         error: error.message,
         userId: id,
-        clinicId
+        clinicId,
       });
       throw error;
     }
@@ -233,6 +262,7 @@ interface RequestContext {
 ## 🌐 Controller Patterns
 
 ### **Standard Controller Structure**
+
 ```typescript
 @Controller('users')
 @UseGuards(JwtAuthGuard)
@@ -282,8 +312,15 @@ export class UserController {
 ## 📋 DTO Patterns
 
 ### **DTO Structure with Validation**
+
 ```typescript
-import { IsString, IsEmail, IsOptional, Length, Matches } from 'class-validator';
+import {
+  IsString,
+  IsEmail,
+  IsOptional,
+  Length,
+  Matches,
+} from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -294,7 +331,10 @@ export class CreateUserDto {
   @Transform(({ value }) => value?.trim())
   name: string;
 
-  @ApiProperty({ description: 'User email address', example: 'john@example.com' })
+  @ApiProperty({
+    description: 'User email address',
+    example: 'john@example.com',
+  })
   @IsEmail()
   @Transform(({ value }) => value?.toLowerCase().trim())
   email: string;
@@ -303,11 +343,15 @@ export class CreateUserDto {
   @IsString()
   @Length(8, 100)
   @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/, {
-    message: 'Password must contain uppercase, lowercase, number and special character'
+    message:
+      'Password must contain uppercase, lowercase, number and special character',
   })
   password: string;
 
-  @ApiPropertyOptional({ description: 'User phone number', example: '+1234567890' })
+  @ApiPropertyOptional({
+    description: 'User phone number',
+    example: '+1234567890',
+  })
   @IsOptional()
   @IsString()
   @Matches(/^\+?[1-9]\d{1,14}$/, { message: 'Invalid phone number format' })
@@ -328,6 +372,7 @@ export class UserResponseDto extends IntersectionType(
 ## 🚫 Error Handling
 
 ### **Comprehensive Error Handling**
+
 ```typescript
 // Custom exception classes
 export class BusinessRuleException extends HttpException {
@@ -350,12 +395,12 @@ async createUser(data: CreateUserDto): Promise<User> {
     }
 
     const user = await this.prisma.healthcare.user.create({ data });
-    
+
     this.logger.info('User created successfully', {
       userId: user.id,
       email: data.email
     });
-    
+
     return user;
   } catch (error) {
     if (error instanceof BusinessRuleException) {
@@ -376,13 +421,14 @@ async createUser(data: CreateUserDto): Promise<User> {
 ## 📝 Logging Standards
 
 ### **Structured Logging**
+
 ```typescript
 // ✅ DO - Structured logging with context
 this.logger.info('User operation completed', {
   operation: 'create',
   userId: user.id,
   email: user.email,
-  duration: Date.now() - startTime
+  duration: Date.now() - startTime,
 });
 
 this.logger.error('Database operation failed', {
@@ -390,7 +436,7 @@ this.logger.error('Database operation failed', {
   userId,
   error: error.message,
   stack: error.stack,
-  query: 'user.findUnique'
+  query: 'user.findUnique',
 });
 
 // ❌ DON'T - Plain string logging
@@ -401,6 +447,7 @@ this.logger.info('Error occurred: ' + error.message);
 ## 🔧 Code Quality Rules
 
 ### **Function Guidelines**
+
 - **Single Responsibility**: One function, one purpose
 - **Function Length**: Keep under 50 lines ideally
 - **Parameter Count**: Maximum 4 parameters, use objects for more
@@ -408,6 +455,7 @@ this.logger.info('Error occurred: ' + error.message);
 - **Async/Await**: Use async/await instead of Promises
 
 ### 🚀 Performance Guidelines (10M Users)
+
 - Avoid unnecessary JSON.parse/stringify on hot paths; reuse buffers/objects.
 - Use memoization and caching for expensive pure computations.
 - Prefer Set/Map over arrays for membership checks in hot paths.
@@ -416,12 +464,14 @@ this.logger.info('Error occurred: ' + error.message);
 - Use lazy imports for rarely used modules in cold paths.
 
 ### **Class Guidelines**
+
 - **Constructor Injection**: Use dependency injection
 - **Private Methods**: Mark internal methods as private
 - **Method Ordering**: Public methods first, then private
 - **Class Size**: Keep classes focused and under 300 lines
 
 ### **Comments and Documentation**
+
 ```typescript
 /**
  * Creates a new user with validation and business rule checks
@@ -441,6 +491,7 @@ const hashedPassword = await bcrypt.hash(password, 10); // Salt rounds: 10
 ## 🚫 Anti-Patterns to Avoid
 
 ### **❌ Don't Do This**
+
 ```typescript
 // Don't use any type
 function processData(data: any): any {
@@ -468,6 +519,7 @@ async create(@Body() data: any) {
 ```
 
 ### **✅ Do This Instead**
+
 ```typescript
 // Use proper types
 function processData(data: ProcessDataDto): ProcessedDataDto {
@@ -504,22 +556,32 @@ async create(@Body() createUserDto: CreateUserDto) {
 
 ---
 
-**💡 Remember**: These standards ensure code consistency, maintainability, and reliability across the healthcare system.
+**💡 Remember**: These standards ensure code consistency, maintainability, and
+reliability across the healthcare system.
 
 **Last Updated**: January 2025
 
 ## 📚 EventService Integration
 
 For comprehensive EventService usage patterns and integration details, see:
-- **Architecture**: `.ai-rules/architecture.md` - Event-Driven Architecture section
+
+- **Architecture**: `.ai-rules/architecture.md` - Event-Driven Architecture
+  section
 - **NestJS Patterns**: `.ai-rules/nestjs-specific.md` - Event Handling section
-- **Integration Verification**: `docs/architecture/EVENT_COMMUNICATION_INTEGRATION.md`
+- **Integration Verification**:
+  `docs/architecture/EVENT_COMMUNICATION_INTEGRATION.md`
 
 ## 🧭 Change Management Policy
-- Prefer editing existing files to add features and fixes; create new files only when necessary.
-- Consolidate logic into existing modules; do not duplicate types/services/utilities.
-- ESLint rules must never be disabled or bypassed; fix issues correctly to achieve zero warnings.
+
+- Prefer editing existing files to add features and fixes; create new files only
+  when necessary.
+- Consolidate logic into existing modules; do not duplicate
+  types/services/utilities.
+- ESLint rules must never be disabled or bypassed; fix issues correctly to
+  achieve zero warnings.
 
 ## ✅ Functionality Preservation
+
 - Refactors and lint/type fixes must preserve existing behavior.
-- For any intended behavior change, add/update tests and document the change in the PR description.
+- For any intended behavior change, add/update tests and document the change in
+  the PR description.

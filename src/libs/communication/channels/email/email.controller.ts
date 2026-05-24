@@ -2,6 +2,7 @@ import { Controller, Post, Body, Get } from '@nestjs/common';
 import { EmailService } from '@communication/channels/email/email.service';
 import { ConfigService } from '@config/config.service';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
+import { Public } from '@core/decorators/public.decorator';
 import { EmailTemplate, EmailContext } from '@core/types';
 import type { AppointmentTemplateData } from '@core/types/communication.types';
 import { formatDateTimeInIST, nowIso } from '../../../utils/date-time.util';
@@ -13,6 +14,7 @@ class SendTestEmailDto {
 
 @ApiTags('communication')
 @Controller('email')
+@Public()
 export class EmailController {
   constructor(
     private readonly emailService: EmailService,
