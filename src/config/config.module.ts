@@ -11,7 +11,7 @@ import { PaymentConfigService } from './payment-config.service';
 @Global()
 @Module({
   providers: [ConfigService, PaymentConfigService],
-  exports: [ConfigService],
+  exports: [ConfigService, PaymentConfigService],
 })
 export class ConfigModule {
   static forRoot(): typeof ConfigModule {
