@@ -1,19 +1,44 @@
 # 🔒 Security Guidelines
+
 ## 🌐 Internet-Scale Defenses (10M Users)
-- Dependencies: define allowlist/banlist; automate vulnerability scanning on PRs; enforce update cadence.
-- Secrets: mandatory secret scanning in CI; runtime env schema validation on boot.
-- Rate Limiting: sliding window per IP/user/tenant; stricter on auth, relaxed on static.
-- Bot/Abuse: WAF rules, user-agent heuristics, IP reputation, challenge/ban flows.
-- DoS/Backpressure: admission control, queue buffering, shed non-critical traffic under load.
-- Secrets: short-lived creds, key rotation, no secrets/PHI in logs, token binding.
-- Multi-Region: failover runbooks, DNS health checks, data residency and key management per region.
-- Privacy: field-level encryption for PHI; purpose-based access logging; least-privilege across services.
+
+Current code facts from source scan:
+
+- NestJS `11.1.19`
+- Fastify `5.8.5`
+- Prisma `7.8.0`
+- 32 controller files
+- about 391 HTTP route handlers
+- 14 role values in the current enum
+- Dragonfly is the default cache provider; Redis is compatibility language where
+  the code uses Redis-compatible clients.
+
+Use the auth, guard, and controller source as the source of truth when older
+scale or count claims in this file differ from implementation.
+
+- Dependencies: define allowlist/banlist; automate vulnerability scanning on
+  PRs; enforce update cadence.
+- Secrets: mandatory secret scanning in CI; runtime env schema validation on
+  boot.
+- Rate Limiting: sliding window per IP/user/tenant; stricter on auth, relaxed on
+  static.
+- Bot/Abuse: WAF rules, user-agent heuristics, IP reputation, challenge/ban
+  flows.
+- DoS/Backpressure: admission control, queue buffering, shed non-critical
+  traffic under load.
+- Secrets: short-lived creds, key rotation, no secrets/PHI in logs, token
+  binding.
+- Multi-Region: failover runbooks, DNS health checks, data residency and key
+  management per region.
+- Privacy: field-level encryption for PHI; purpose-based access logging;
+  least-privilege across services.
 
 ## 🛡️ Authentication & Authorization
 
 ### **JWT Authentication Implementation**
 
-**Current Implementation**: The system uses `JwtAuthGuard` with Redis-backed session management and progressive lockout protection.
+**Current Implementation**: The system uses `JwtAuthGuard` with Redis-backed
+session management and progressive lockout protection.
 
 **Location**: `src/libs/core/guards/jwt-auth.guard.ts`
 
@@ -30,7 +55,8 @@ export class JwtAuthGuard implements CanActivate {
 
     // 1. Check if route is public
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
-      context.getHandler(), context.getClass()
+      context.getHandler(),
+      context.getClass(),
     ]);
     if (isPublic) return true;
 
@@ -40,8 +66,11 @@ export class JwtAuthGuard implements CanActivate {
 
     // 3. Check token blacklist in cache
     if (payload.jti) {
-      const isBlacklisted = await this.cacheService.get(`jwt:blacklist:${payload.jti}`);
-      if (isBlacklisted) throw new UnauthorizedException('Token has been revoked');
+      const isBlacklisted = await this.cacheService.get(
+        `jwt:blacklist:${payload.jti}`
+      );
+      if (isBlacklisted)
+        throw new UnauthorizedException('Token has been revoked');
     }
 
     // 4. Validate session in cache
@@ -60,16 +89,22 @@ export class JwtAuthGuard implements CanActivate {
 ```
 
 **Key Features**:
-- **Dual JWT Verification**: Uses both `JwtService` and `JwtAuthService.verifyEnhancedToken()` for compatibility
-- **Token Blacklist**: Cache-based revoked token tracking (`jwt:blacklist:{jti}`) - uses CacheService (provider-agnostic)
-- **Session Validation**: Cache-backed session with device fingerprinting (`session:{userId}:{sessionId}`) - uses CacheService
+
+- **Dual JWT Verification**: Uses both `JwtService` and
+  `JwtAuthService.verifyEnhancedToken()` for compatibility
+- **Token Blacklist**: Cache-based revoked token tracking
+  (`jwt:blacklist:{jti}`) - uses CacheService (provider-agnostic)
+- **Session Validation**: Cache-backed session with device fingerprinting
+  (`session:{userId}:{sessionId}`) - uses CacheService
 - **Progressive Lockout**: 10m → 25m → 45m → 1h → 6h based on failed attempts
 - **Concurrent Session Limit**: Maximum 5 active sessions per user
-- **Security Event Tracking**: 30-day retention of auth failures in cache (`security:events:{identifier}`) - uses CacheService
+- **Security Event Tracking**: 30-day retention of auth failures in cache
+  (`security:events:{identifier}`) - uses CacheService
 
 ### **Role-Based Access Control (RBAC)**
 
-**Current Implementation**: The system uses `RolesGuard` with healthcare-specific roles from Prisma schema.
+**Current Implementation**: The system uses `RolesGuard` with
+healthcare-specific roles from Prisma schema.
 
 **Location**: `src/libs/core/guards/roles.guard.ts`
 
@@ -93,12 +128,13 @@ export class RolesGuard implements CanActivate {
     const { user } = request;
 
     // Check if user has any of the required roles
-    return requiredRoles.some((role) => user?.role?.includes(role));
+    return requiredRoles.some(role => user?.role?.includes(role));
   }
 }
 ```
 
 **Prisma Role Enum** (from `schema.prisma`):
+
 ```prisma
 enum Role {
   SUPER_ADMIN
@@ -117,6 +153,7 @@ enum Role {
 ```
 
 **Usage Pattern**:
+
 ```typescript
 // Decorator in src/libs/core/decorators/roles.decorator.ts
 export const ROLES_KEY = 'roles';
@@ -169,7 +206,9 @@ export class ClinicGuard implements CanActivate {
     );
 
     if (!clinicResult.success) {
-      throw new ForbiddenException(`Clinic access denied: ${clinicResult.error}`);
+      throw new ForbiddenException(
+        `Clinic access denied: ${clinicResult.error}`
+      );
     }
 
     // 4. Set clinic context for downstream use
@@ -182,8 +221,13 @@ export class ClinicGuard implements CanActivate {
   private isClinicRoute(context: ExecutionContext): boolean {
     // Check patterns: /appointments/, /clinics/, /doctors/, /patients/, /queue/
     const clinicRoutePatterns = [
-      /\/appointments\//, /\/clinics\//, /\/doctors\//,
-      /\/locations\//, /\/patients\//, /\/queue\//, /\/prescriptions\//
+      /\/appointments\//,
+      /\/clinics\//,
+      /\/doctors\//,
+      /\/locations\//,
+      /\/patients\//,
+      /\/queue\//,
+      /\/prescriptions\//,
     ];
     return clinicRoutePatterns.some(pattern => pattern.test(request.url));
   }
@@ -191,6 +235,7 @@ export class ClinicGuard implements CanActivate {
 ```
 
 **Clinic ID Extraction Priority**:
+
 1. `x-clinic-id` or `clinic-id` headers
 2. `clinicId` or `clinic_id` query parameters
 3. `clinicId` from JWT token payload
@@ -200,13 +245,16 @@ export class ClinicGuard implements CanActivate {
 ## 🔐 Input Validation & Sanitization
 
 ### **Comprehensive DTO Validation**
+
 ```typescript
 export class CreateUserDto {
   @ApiProperty({ description: 'User full name' })
   @IsString()
   @Length(2, 50)
   @Transform(({ value }) => value?.trim())
-  @Matches(/^[a-zA-Z\s]+$/, { message: 'Name can only contain letters and spaces' })
+  @Matches(/^[a-zA-Z\s]+$/, {
+    message: 'Name can only contain letters and spaces',
+  })
   name: string;
 
   @ApiProperty({ description: 'User email address' })
@@ -219,7 +267,8 @@ export class CreateUserDto {
   @IsString()
   @Length(8, 100)
   @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/, {
-    message: 'Password must contain at least one uppercase letter, one lowercase letter, one number and one special character'
+    message:
+      'Password must contain at least one uppercase letter, one lowercase letter, one number and one special character',
   })
   password: string;
 
@@ -236,6 +285,7 @@ export class CreateUserDto {
 ```
 
 ### **Custom Validation Decorators**
+
 ```typescript
 // Medical record number validator
 export function IsMedicalRecordNumber(validationOptions?: ValidationOptions) {
@@ -251,8 +301,8 @@ export function IsMedicalRecordNumber(validationOptions?: ValidationOptions) {
         },
         defaultMessage() {
           return 'Medical record number must be in format MR12345678';
-        }
-      }
+        },
+      },
     });
   };
 }
@@ -267,6 +317,7 @@ export class CreateMedicalRecordDto {
 ## 🔒 Data Protection & Encryption
 
 ### **Sensitive Data Encryption**
+
 ```typescript
 @Injectable()
 export class EncryptionService {
@@ -293,7 +344,7 @@ export class EncryptionService {
     return {
       encrypted,
       iv: iv.toString('hex'),
-      authTag: authTag.toString('hex')
+      authTag: authTag.toString('hex'),
     };
   }
 
@@ -317,7 +368,9 @@ export class MedicalRecordService {
     private readonly prisma: PrismaService
   ) {}
 
-  async createMedicalRecord(data: CreateMedicalRecordDto): Promise<MedicalRecord> {
+  async createMedicalRecord(
+    data: CreateMedicalRecordDto
+  ): Promise<MedicalRecord> {
     // Encrypt sensitive fields
     const encryptedDiagnosis = this.encryptionService.encrypt(data.diagnosis);
     const encryptedTreatment = this.encryptionService.encrypt(data.treatment);
@@ -326,14 +379,14 @@ export class MedicalRecordService {
       data: {
         ...data,
         diagnosis: JSON.stringify(encryptedDiagnosis),
-        treatment: JSON.stringify(encryptedTreatment)
-      }
+        treatment: JSON.stringify(encryptedTreatment),
+      },
     });
   }
 
   async getMedicalRecord(id: string): Promise<MedicalRecord> {
     const record = await this.prisma.healthcare.medicalRecord.findUnique({
-      where: { id }
+      where: { id },
     });
 
     if (record) {
@@ -354,7 +407,8 @@ export class MedicalRecordService {
 
 ### **Security Headers Configuration**
 
-**Current Implementation**: Fastify Helmet with CSP, CORS, and production optimizations.
+**Current Implementation**: Fastify Helmet with CSP, CORS, and production
+optimizations.
 
 **Location**: `src/main.ts` (lines 796-840)
 
@@ -365,66 +419,83 @@ await app.register(fastifyHelmet, {
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: [
-        "'self'", "'unsafe-inline'", "'unsafe-eval'",
-        "https://accounts.google.com",
-        "https://apis.google.com",
-        "https://www.googleapis.com"
+        "'self'",
+        "'unsafe-inline'",
+        "'unsafe-eval'",
+        'https://accounts.google.com',
+        'https://apis.google.com',
+        'https://www.googleapis.com',
       ],
-      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-      imgSrc: ["'self'", "data:", "https:", "blob:"],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      imgSrc: ["'self'", 'data:', 'https:', 'blob:'],
       connectSrc: [
         "'self'",
-        "http://localhost:3000",
-        "https://ishswami.in",
-        "https://api.ishswami.in",
-        "wss://api.ishswami.in",
-        "https://accounts.google.com"
+        'http://localhost:3000',
+        'https://ishswami.in',
+        'https://api.ishswami.in',
+        'wss://api.ishswami.in',
+        'https://accounts.google.com',
       ],
-      fontSrc: ["'self'", "https://fonts.gstatic.com"],
-      frameSrc: ["'self'", "https://accounts.google.com"],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+      frameSrc: ["'self'", 'https://accounts.google.com'],
       objectSrc: ["'none'"],
       baseUri: ["'self'"],
-      formAction: ["'self'", "https://accounts.google.com", "http://localhost:3000"],
-      frameAncestors: ["'none'"]
-    }
+      formAction: [
+        "'self'",
+        'https://accounts.google.com',
+        'http://localhost:3000',
+      ],
+      frameAncestors: ["'none'"],
+    },
   },
   crossOriginEmbedderPolicy: false,
-  crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
-  crossOriginResourcePolicy: { policy: "cross-origin" }
+  crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
 });
 
 // CORS Configuration
 app.enableCors({
-  origin: process.env.NODE_ENV === 'production'
-    ? [
-        "https://ishswami.in",
-        "https://www.ishswami.in",
-        /\.ishswami\.in$/,
-        "http://localhost:3000", // Allow local dev frontend
-        "https://accounts.google.com"
-      ]
-    : [
-        "http://localhost:3000",
-        "http://localhost:8088",
-        "http://localhost:5050",
-        "https://accounts.google.com"
-      ],
+  origin:
+    process.env.NODE_ENV === 'production'
+      ? [
+          'https://ishswami.in',
+          'https://www.ishswami.in',
+          /\.ishswami\.in$/,
+          'http://localhost:3000', // Allow local dev frontend
+          'https://accounts.google.com',
+        ]
+      : [
+          'http://localhost:3000',
+          'http://localhost:8088',
+          'http://localhost:5050',
+          'https://accounts.google.com',
+        ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   credentials: true,
   allowedHeaders: [
-    'Content-Type', 'Authorization', 'X-Session-ID', 'X-Clinic-ID',
-    'Origin', 'Accept', 'X-Requested-With',
-    'Access-Control-Request-Method', 'Access-Control-Request-Headers',
-    'X-Client-Data', 'Sec-Fetch-Site', 'Sec-Fetch-Mode', 'Sec-Fetch-Dest'
+    'Content-Type',
+    'Authorization',
+    'X-Session-ID',
+    'X-Clinic-ID',
+    'Origin',
+    'Accept',
+    'X-Requested-With',
+    'Access-Control-Request-Method',
+    'Access-Control-Request-Headers',
+    'X-Client-Data',
+    'Sec-Fetch-Site',
+    'Sec-Fetch-Mode',
+    'Sec-Fetch-Dest',
   ],
   exposedHeaders: ['Set-Cookie', 'Authorization'],
-  maxAge: 86400 // 24 hours
+  maxAge: 86400, // 24 hours
 });
 ```
 
 ### **Rate Limiting**
 
-**Current Implementation**: Redis-based rate limiting with sliding window algorithm.
+**Current Implementation**: Redis-based rate limiting with sliding window
+algorithm.
 
 **Location**: `src/libs/utils/rate-limit/rate-limit.service.ts`
 
@@ -463,7 +534,7 @@ export class RateLimitService {
 
       return {
         limited: requestCount > maxRequests,
-        remaining: Math.max(0, maxRequests - requestCount)
+        remaining: Math.max(0, maxRequests - requestCount),
       };
     } catch (error) {
       // Fail open in case of Redis errors
@@ -472,7 +543,10 @@ export class RateLimitService {
   }
 
   // Get rate limit metrics for last N minutes
-  async getRateLimitMetrics(type: string, minutes: number = 5): Promise<{
+  async getRateLimitMetrics(
+    type: string,
+    minutes: number = 5
+  ): Promise<{
     total: number;
     limited: number;
     limitedPercentage: number;
@@ -483,6 +557,7 @@ export class RateLimitService {
 ```
 
 **Fastify Rate Limiting** (configured in `main.ts`):
+
 ```typescript
 await app.register(fastifyRateLimit, {
   max: parseInt(process.env.RATE_LIMIT_MAX || '1000', 10),
@@ -490,27 +565,29 @@ await app.register(fastifyRateLimit, {
   redis: {
     host: configService.get('REDIS_HOST'),
     port: configService.get('REDIS_PORT'),
-    password: configService.get('REDIS_PASSWORD')
+    password: configService.get('REDIS_PASSWORD'),
   },
-  keyGenerator: (request) => {
+  keyGenerator: request => {
     return `${request.ip}:${request.headers?.['user-agent'] || 'unknown'}`;
   },
   addHeaders: {
     'x-ratelimit-limit': true,
     'x-ratelimit-remaining': true,
     'x-ratelimit-reset': true,
-    'retry-after': true
-  }
+    'retry-after': true,
+  },
 });
 ```
 
 ## 🔐 Session Management
 
-**Current Implementation**: Enterprise-grade Redis-based session management with distributed partitioning for 1M+ users.
+**Current Implementation**: Enterprise-grade Redis-based session management with
+distributed partitioning for 1M+ users.
 
 **Location**: `src/libs/core/session/session-management.service.ts`
 
 ### **Session Service Implementation**
+
 ```typescript
 @Injectable()
 export class SessionManagementService implements OnModuleInit {
@@ -674,17 +751,22 @@ export class SessionManagementService implements OnModuleInit {
 ```
 
 **Key Features**:
-- **Distributed Partitioning**: 16 partitions using MD5 hash for horizontal scaling
+
+- **Distributed Partitioning**: 16 partitions using MD5 hash for horizontal
+  scaling
 - **Session Limits**: Maximum 5 sessions per user (auto-cleanup oldest)
 - **Blacklist System**: Redis-based session blacklisting on invalidation
-- **Auto-Cleanup**: Hourly expired session cleanup + suspicious session detection
+- **Auto-Cleanup**: Hourly expired session cleanup + suspicious session
+  detection
 - **Activity Extension**: Auto-extends sessions on activity (configurable)
-- **Security Monitoring**: 10-minute statistics logging, suspicious session detection
+- **Security Monitoring**: 10-minute statistics logging, suspicious session
+  detection
 - **Clinic Isolation**: Multi-tenant session support with clinic context
 
 ## 🔄 Event-Driven Security
 
-**MANDATORY**: Always use `EventService` from `@infrastructure/events` for security-related events.
+**MANDATORY**: Always use `EventService` from `@infrastructure/events` for
+security-related events.
 
 ```typescript
 import { EventService } from '@infrastructure/events';
@@ -694,7 +776,10 @@ import { EventCategory, EventPriority } from '@core/types';
 export class SecurityService {
   constructor(private readonly eventService: EventService) {}
 
-  async logSecurityEvent(eventType: string, details: Record<string, unknown>): Promise<void> {
+  async logSecurityEvent(
+    eventType: string,
+    details: Record<string, unknown>
+  ): Promise<void> {
     await this.eventService.emitEnterprise(eventType, {
       eventId: `security-${Date.now()}`,
       eventType,
@@ -703,7 +788,7 @@ export class SecurityService {
       timestamp: new Date().toISOString(),
       source: 'SecurityService',
       version: '1.0.0',
-      payload: details
+      payload: details,
     });
   }
 }
@@ -711,11 +796,13 @@ export class SecurityService {
 
 ## 🔍 Audit Logging
 
-**Current Implementation**: Uses enterprise `LoggingService` with structured logging instead of separate audit tables.
+**Current Implementation**: Uses enterprise `LoggingService` with structured
+logging instead of separate audit tables.
 
 **Location**: `src/libs/infrastructure/logging/logging.service.ts`
 
 **Prisma Schema**: AuditLog model exists in schema for compliance tracking:
+
 ```prisma
 model AuditLog {
   id          String   @id @default(uuid())
@@ -742,6 +829,7 @@ model AuditLog {
 ```
 
 **Actual Implementation** - Uses `LoggingService`:
+
 ```typescript
 // Security logging in JwtAuthGuard
 await this.trackSecurityEvent(identifier, 'AUTHENTICATION_FAILURE', {
@@ -798,6 +886,7 @@ await this.logging.log(
 ```
 
 **LoggingService Features**:
+
 - **Structured Logging**: JSON-formatted logs with full context
 - **Log Types**: AUTH, SECURITY, SYSTEM, ERROR, DATABASE, CACHE, QUEUE
 - **Multiple Outputs**: Database + File + Console
@@ -842,7 +931,7 @@ export class SocketAuthMiddleware {
       role: payload.role,
       email: payload.email,
       firstName: payload.firstName,
-      lastName: payload.lastName
+      lastName: payload.lastName,
     };
 
     if (!user.userId) {
@@ -890,6 +979,7 @@ export class SocketAuthMiddleware {
 ```
 
 **WebSocket Configuration** (`main.ts`):
+
 ```typescript
 createIOServer(port: number, options?: Record<string, unknown>) {
   const server = super.createIOServer(port, {
@@ -918,6 +1008,7 @@ createIOServer(port: number, options?: Record<string, unknown>) {
 ```
 
 **Key Features**:
+
 - **Dual Authentication**: Session-based + JWT token support
 - **Multiple Token Sources**: Auth object, query params, authorization header
 - **Optional Auth**: Supports anonymous connections where needed
@@ -928,6 +1019,7 @@ createIOServer(port: number, options?: Record<string, unknown>) {
 ## 🚫 Security Anti-Patterns
 
 ### **❌ Don't Do This**
+
 ```typescript
 // Don't store passwords in plain text
 const user = { password: 'plaintext123' };
@@ -953,6 +1045,7 @@ const query = `SELECT * FROM users WHERE id = ${userId}`;
 ```
 
 ### **✅ Do This Instead**
+
 ```typescript
 // Hash passwords properly
 const hashedPassword = await bcrypt.hash(password, 12);
@@ -995,6 +1088,7 @@ const user = await prisma.user.findUnique({ where: { id: userId } });
 
 ---
 
-**💡 Security is paramount in healthcare applications. Always follow HIPAA compliance requirements and implement defense-in-depth strategies.**
+**💡 Security is paramount in healthcare applications. Always follow HIPAA
+compliance requirements and implement defense-in-depth strategies.**
 
 **Last Updated**: January 2025

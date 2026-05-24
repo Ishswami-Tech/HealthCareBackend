@@ -21,7 +21,7 @@
 ### Prerequisites
 
 - Node.js v16+
-- PostgreSQL 14+
+- PostgreSQL 18+
 - Redis/Dragonfly
 - Docker & Docker Compose (optional)
 

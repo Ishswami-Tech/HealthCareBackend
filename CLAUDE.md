@@ -1,20 +1,40 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with
+code in this repository.
 
 ## Project Overview
 
-This is a **production-ready HIPAA-compliant healthcare backend** built with NestJS 11.x, Fastify 5.x, TypeScript 5.x, PostgreSQL 14+, and Redis 6.x. The system is designed for **1M+ concurrent users** with multi-tenant clinic isolation and specialized Ayurvedic healthcare features.
+This is a **production healthcare backend** built with NestJS `11.1.19`, Fastify
+`5.8.5`, PostgreSQL `18`, Prisma `7.8.0`, and Dragonfly-first cache/session
+flows with Redis compatibility where the code supports it. Treat the current
+source code and source-derived docs as the source of truth for implemented
+behavior.
 
-**Framework**: NestJS with Fastify (NOT Express)
-**Database**: PostgreSQL with Prisma ORM 7.x
-**Caching**: Redis with distributed partitioning
-**Package Manager**: yarn 1.22.22
-**Architecture**: Multi-tenant, plugin-based, event-driven
+## Current Code Facts
+
+- NestJS `11.1.19`
+- Fastify `5.8.5`
+- Prisma `7.8.0`
+- Node `>=22`
+- 32 controller files
+- about 391 HTTP route handlers
+- 14 role values in the current enum
+- Dragonfly is the default cache provider; Redis is compatibility language only
+  where the code uses Redis-compatible clients.
+
+Use these code-backed facts as the source of truth when older count-based
+statements in this file differ from implementation.
+
+**Framework**: NestJS with Fastify (NOT Express) **Database**: PostgreSQL with
+Prisma ORM 7.x **Caching**: Dragonfly-first cache abstraction with Redis
+compatibility **Package Manager**: yarn 1.22.22 **Architecture**: Multi-tenant,
+plugin-based, event-driven
 
 ## Quick Start Summary
 
 ### Essential Services (Inject these in most services):
+
 ```typescript
 constructor(
   private readonly database: DatabaseService,      // DB access (NOT PrismaService)
@@ -26,6 +46,7 @@ constructor(
 ```
 
 ### Most Common Pattern:
+
 ```typescript
 async createEntity(data: CreateDto, context?: RequestContext): Promise<Entity> {
   try {
@@ -64,6 +85,7 @@ async createEntity(data: CreateDto, context?: RequestContext): Promise<Entity> {
 ## Commands
 
 ### Development
+
 ```bash
 yarn start:dev              # Start with hot-reload (port 8088)
 yarn build                  # Production build
@@ -72,6 +94,7 @@ yarn type-check             # TypeScript type checking
 ```
 
 ### Database (Prisma)
+
 ```bash
 yarn prisma:generate        # Generate Prisma client (auto-runs on postinstall)
 yarn prisma:migrate:dev     # Create and apply migration
@@ -82,9 +105,12 @@ yarn prisma:format          # Format schema.prisma
 yarn seed:dev               # Seed database (development)
 ```
 
-**Important**: Prisma schema is at `src/libs/infrastructure/database/prisma/schema.prisma`. Generated client outputs to `src/libs/infrastructure/database/prisma/generated/client`.
+**Important**: Prisma schema is at
+`src/libs/infrastructure/database/prisma/schema.prisma`. Generated client
+outputs to `src/libs/infrastructure/database/prisma/generated/client`.
 
 ### Validation & Quality
+
 ```bash
 yarn validate:all           # Run all validations (type, lint, format, security, etc.)
 yarn lint                   # Fix linting issues
@@ -94,10 +120,11 @@ yarn format:check           # Check formatting
 yarn security:audit         # Security audit
 ```
 
-**Pre-commit**: `yarn pre-commit` runs `validate:all`
-**Pre-push**: `yarn pre-push` runs `validate:build`
+**Pre-commit**: `yarn pre-commit` runs `validate:all` **Pre-push**:
+`yarn pre-push` runs `validate:build`
 
 ### Docker & Deployment
+
 ```bash
 yarn docker:up              # Start Docker services (PostgreSQL, Redis)
 yarn docker:down            # Stop Docker services
@@ -108,6 +135,7 @@ yarn k8s:logs               # View pod logs
 ```
 
 ### Testing & Health
+
 ```bash
 yarn health:check           # Health check endpoint (curl localhost:8088/health)
 ```
@@ -141,8 +169,9 @@ yarn health:check           # Health check endpoint (curl localhost:8088/health)
 ### Key Modules
 
 **Services** (`src/services/`):
+
 - `auth/` - Authentication (JWT, OTP, session management)
-- `users/` - User management (15+ healthcare roles)
+- `users/` - User management (14 healthcare role values in the current enum)
 - `appointments/` - Appointment scheduling with plugin architecture
 - `clinic/` - Multi-tenant clinic management
 - `ehr/` - Electronic Health Records
@@ -151,13 +180,15 @@ yarn health:check           # Health check endpoint (curl localhost:8088/health)
 - `health/` - System health monitoring
 
 **Infrastructure** (`src/libs/infrastructure/`):
+
 - `database/` - DatabaseService (single entry point), Prisma, connection pooling
-- `cache/` - Redis caching with SWR pattern
+- `cache/` - Dragonfly-first caching with SWR pattern
 - `events/` - EventService (centralized event hub, NOT EventEmitter2)
 - `queue/` - BullMQ with 19 specialized queues
 - `logging/` - LoggingService (HIPAA-compliant, NOT NestJS Logger)
 
 **Core** (`src/libs/core/`):
+
 - `types/` - All shared domain types (single source of truth)
 - `errors/` - HealthcareError, error codes
 - `guards/` - JwtAuthGuard, RolesGuard, ClinicGuard
@@ -166,6 +197,7 @@ yarn health:check           # Health check endpoint (curl localhost:8088/health)
 - `business-rules/` - Business rules engine
 
 **Communication** (`src/libs/communication/`):
+
 - `channels/email/` - Email service (SES, Mailtrap)
 - `channels/whatsapp/` - WhatsApp Business API
 - `channels/push/` - Push notifications (SNS)
@@ -191,6 +223,7 @@ import { UserService } from '../../../services/users/user.service';
 ```
 
 **Available aliases** (see `tsconfig.json` paths):
+
 - `@database/*` - Database infrastructure
 - `@infrastructure/*` - All infrastructure
 - `@services/*` - Domain services
@@ -213,14 +246,20 @@ import { UserService } from '../../../services/users/user.service';
 4. **NO `console.log`** - Use `LoggingService` from `@logging`
 5. **NO NestJS Logger** - Use custom `LoggingService`
 6. **NO Express** - This is a Fastify application
-7. **NO EventEmitter2 directly** - Use `EventService` (centralized event hub, single source of truth)
-8. **NO missing error handling** - Always try-catch with `HealthcareError` from `@core/errors`
+7. **NO EventEmitter2 directly** - Use `EventService` (centralized event hub,
+   single source of truth)
+8. **NO missing error handling** - Always try-catch with `HealthcareError` from
+   `@core/errors`
 9. **NO missing input validation** - All DTOs must use class-validator
 10. **NO missing RBAC checks** - All endpoints require guards
-11. **NO RedisService directly** - Use `CacheService` (provider-agnostic: Redis/Dragonfly)
-12. **NO @nestjs/config ConfigService** - Use enhanced `ConfigService` from `@config`
-13. **NO PrismaService directly** - Use `DatabaseService` from `@infrastructure/database`
-14. **NO ESLint rule disabling** - Fix issues properly, never use `eslint-disable`
+11. **NO RedisService directly** - Use `CacheService` (provider-agnostic:
+    Redis/Dragonfly)
+12. **NO @nestjs/config ConfigService** - Use enhanced `ConfigService` from
+    `@config`
+13. **NO PrismaService directly** - Use `DatabaseService` from
+    `@infrastructure/database`
+14. **NO ESLint rule disabling** - Fix issues properly, never use
+    `eslint-disable`
 
 ## TypeScript Standards
 
@@ -236,7 +275,7 @@ async function findUser(id: string): Promise<User | null> {
     throw new HealthcareError(ErrorCodes.INVALID_INPUT, 'User ID required');
   }
 
-  const user = await this.database.executeHealthcareRead(async (client) => {
+  const user = await this.database.executeHealthcareRead(async client => {
     return await client.user.findUnique({ where: { id } });
   });
 
@@ -244,7 +283,8 @@ async function findUser(id: string): Promise<User | null> {
 }
 
 // ❌ FORBIDDEN
-async function findUser(id) {  // Missing type annotations
+async function findUser(id) {
+  // Missing type annotations
   const user = await prisma.user.findUnique({ where: { id } }); // Direct Prisma usage
   return user; // No null handling
 }
@@ -253,6 +293,7 @@ async function findUser(id) {  // Missing type annotations
 ## Healthcare Roles (RBAC)
 
 The system supports 12 healthcare-specific roles:
+
 - `SUPER_ADMIN` - System administrator
 - `CLINIC_ADMIN` - Clinic administrator
 - `DOCTOR` - Medical doctor
@@ -268,7 +309,8 @@ The system supports 12 healthcare-specific roles:
 
 ## Configuration Service (Enhanced)
 
-**ALWAYS use enhanced `ConfigService` from `@config`, NOT from `@nestjs/config`**
+**ALWAYS use enhanced `ConfigService` from `@config`, NOT from
+`@nestjs/config`**
 
 ```typescript
 // ✅ CORRECT
@@ -316,7 +358,7 @@ export class UserService {
     private readonly database: DatabaseService,
     private readonly logger: LoggingService,
     private readonly eventService: EventService,
-    private readonly cache: CacheService,
+    private readonly cache: CacheService
   ) {}
 
   async create(data: CreateUserDto, context?: RequestContext): Promise<User> {
@@ -330,7 +372,7 @@ export class UserService {
 
       // 3. Business logic
       const user = await this.database.executeHealthcareWrite(
-        async (client) => {
+        async client => {
           return await client.user.create({
             data: {
               ...data,
@@ -445,13 +487,9 @@ this.eventEmitter.emit('user.created', { user });
 // ✅ CORRECT
 import { LoggingService, LogType, LogLevel } from '@logging';
 
-this.logger.log(
-  LogType.AUDIT,
-  LogLevel.INFO,
-  'User created',
-  'UserService',
-  { userId: user.id }
-);
+this.logger.log(LogType.AUDIT, LogLevel.INFO, 'User created', 'UserService', {
+  userId: user.id,
+});
 
 // ❌ FORBIDDEN
 console.log('User created', user);
@@ -467,11 +505,9 @@ import { Logger } from '@nestjs/common'; // FORBIDDEN
 import { HealthcareError } from '@core/errors/healthcare-error.class';
 import { ErrorCodes } from '@core/errors/error-codes.enum';
 
-throw new HealthcareError(
-  ErrorCodes.USER_NOT_FOUND,
-  'User not found',
-  { userId: id }
-);
+throw new HealthcareError(ErrorCodes.USER_NOT_FOUND, 'User not found', {
+  userId: id,
+});
 
 // ❌ FORBIDDEN
 throw new Error('User not found'); // Generic errors in business logic
@@ -494,7 +530,7 @@ export class UserController {
   @Roles(Role.DOCTOR, Role.ADMIN)
   async create(
     @Body() createUserDto: CreateUserDto,
-    @RequestContext() context: RequestContext,
+    @RequestContext() context: RequestContext
   ): Promise<User> {
     return await this.userService.create(createUserDto, context);
   }
@@ -531,7 +567,8 @@ export class CreateUserDto {
 
 ## Multi-Tenant Isolation
 
-This is a **multi-tenant system** with clinic-based isolation. Always enforce clinic context:
+This is a **multi-tenant system** with clinic-based isolation. Always enforce
+clinic context:
 
 ```typescript
 // Automatic isolation via ClinicGuard
@@ -576,6 +613,7 @@ await this.queueService.addJob('email', {
 ## Testing
 
 When adding new features:
+
 1. Write unit tests for services
 2. Add integration tests for API endpoints
 3. Ensure all tests pass before committing
@@ -592,15 +630,17 @@ When adding new features:
 ## Important Notes
 
 1. **Fastify, not Express**: All HTTP configuration must be Fastify-specific
-2. **Plugin Architecture**: Appointments use plugin architecture for extensibility
+2. **Plugin Architecture**: Appointments use plugin architecture for
+   extensibility
 3. **Connection Pooling**: Optimized for 1M+ users (500 max connections)
-4. **Caching Strategy**: Multi-level caching (memory + Redis) with SWR
+4. **Caching Strategy**: Multi-level caching (memory + Dragonfly) with SWR
 5. **Circuit Breakers**: Resilience patterns for external services
 6. **Read Replicas**: Support for read scaling (configured via env vars)
 
 ## Environment Variables
 
 Key variables (see `.env.example` for complete list):
+
 - `NODE_ENV` - development | staging | production
 - `PORT` - 8088 (default)
 - `DATABASE_URL` - PostgreSQL connection string
@@ -609,9 +649,11 @@ Key variables (see `.env.example` for complete list):
 
 ## Centralized Types & Mappers (MANDATORY)
 
-**Single Source of Truth**: All shared domain types live in `@types/*` (`src/libs/core/types`)
+**Single Source of Truth**: All shared domain types live in `@types/*`
+(`src/libs/core/types`)
 
 ### Rules:
+
 - Database-generated types (Prisma) stay in `@database/types`
 - Business/domain types live in `@types` as the canonical contract
 - Implement mappers between `@database/types` and `@types`
@@ -619,6 +661,7 @@ Key variables (see `.env.example` for complete list):
 - **Services/controllers depend on `@types`, NOT DB models**
 
 ### Example Mapper:
+
 ```typescript
 // src/libs/infrastructure/database/mappers/user.mapper.ts
 import type { User as DbUser } from '@database/types';
@@ -630,7 +673,7 @@ export function mapDbUserToDomain(db: DbUser): User {
     name: db.name,
     email: db.email,
     clinicId: db.clinicId,
-    role: db.role
+    role: db.role,
   };
 }
 
@@ -641,32 +684,44 @@ export function mapDomainUserToDb(domain: User): DbUser {
 
 ## Change Management Policy (MANDATORY)
 
-1. **Prefer editing existing files** - Only create new files for genuinely new modules
-2. **No code duplication** - Refactor/extend existing code instead of parallel implementations
-3. **ESLint compliance required** - Fix issues properly until ESLint passes with zero warnings
-4. **Preserve functionality** - Lint/type fixes and refactors MUST NOT change behavior
-5. **Test behavior changes** - Any intended behavior change requires explicit tests
-6. **API versioning** - Use semantic versioning (v1, v2) with deprecation headers
-7. **No secrets in code** - All secrets in environment variables, validated on boot
+1. **Prefer editing existing files** - Only create new files for genuinely new
+   modules
+2. **No code duplication** - Refactor/extend existing code instead of parallel
+   implementations
+3. **ESLint compliance required** - Fix issues properly until ESLint passes with
+   zero warnings
+4. **Preserve functionality** - Lint/type fixes and refactors MUST NOT change
+   behavior
+5. **Test behavior changes** - Any intended behavior change requires explicit
+   tests
+6. **API versioning** - Use semantic versioning (v1, v2) with deprecation
+   headers
+7. **No secrets in code** - All secrets in environment variables, validated on
+   boot
 
 ## Scalability for 10M+ Users
 
 ### Architecture Patterns:
-- **Horizontal scaling**: Stateless services, session in Redis with 16 partitions
+
+- **Horizontal scaling**: Stateless services, session in Redis with 16
+  partitions
 - **Connection pooling**: 500 max DB connections, auto-scaling based on load
-- **Caching**: Multi-level (memory + Redis/Dragonfly) with SWR pattern
+- **Caching**: Multi-level (memory + Dragonfly, Redis-compatible) with SWR
+  pattern
 - **Read replicas**: Database read/write splitting for heavy reads
 - **Queue-based offloading**: 19 specialized BullMQ queues for async tasks
 - **Circuit breakers**: Resilience patterns on all external calls
 - **Rate limiting**: Per IP/user/tenant with sliding window algorithm
 
 ### Performance Budgets:
+
 - API response time: p95 < 200ms, p99 < 500ms
 - Database queries: No unindexed filters on large tables
 - Cache hit rate: Target > 70%
 - Uptime SLA: ≥ 99.95%
 
 ### Database Optimization:
+
 - Migrations: Online, backward-compatible (expand-migrate-contract pattern)
 - Partitioning: Per-tenant/clinic where feasible
 - Indexing: Composite indexes for high-cardinality filters
@@ -675,6 +730,7 @@ export function mapDomainUserToDb(domain: User): DbUser {
 ## Security Best Practices
 
 ### Authentication & Authorization:
+
 ```typescript
 // Controller with proper guards
 @Controller('patients')
@@ -691,6 +747,7 @@ export class PatientsController {
 ```
 
 ### Session Management:
+
 - Maximum 5 sessions per user (auto-cleanup oldest)
 - 16 Redis partitions for distributed session storage
 - Progressive lockout: 10m → 25m → 45m → 1h → 6h
@@ -698,6 +755,7 @@ export class PatientsController {
 - HIPAA-compliant audit logging
 
 ### Input Validation:
+
 ```typescript
 export class CreatePatientDto {
   @ApiProperty()
@@ -717,6 +775,7 @@ export class CreatePatientDto {
 ## Common Tasks
 
 ### Adding a new service
+
 1. Create in `src/services/my-service/`
 2. Follow service pattern above
 3. Use path aliases for all imports
@@ -724,6 +783,7 @@ export class CreatePatientDto {
 5. Inject `DatabaseService`, `LoggingService`, `EventService`, `CacheService`
 
 ### Adding a new model
+
 1. Update `src/libs/infrastructure/database/prisma/schema.prisma`
 2. Run `yarn prisma:generate`
 3. Create migration: `yarn prisma:migrate:dev`
@@ -732,6 +792,7 @@ export class CreatePatientDto {
 6. Update `DatabaseService` if adding repository methods
 
 ### Modifying existing code
+
 1. **Prefer editing existing files** over creating new ones
 2. Fix all ESLint errors (NEVER disable rules with `eslint-disable`)
 3. Maintain existing behavior unless explicitly changing it
@@ -740,6 +801,7 @@ export class CreatePatientDto {
 6. Run `yarn type-check` to ensure TypeScript compliance
 
 ### Emitting events
+
 ```typescript
 // ALWAYS use EventService (NOT EventEmitter2)
 await this.eventService.emitEnterprise('patient.created', {
@@ -752,11 +814,12 @@ await this.eventService.emitEnterprise('patient.created', {
   version: '1.0.0',
   userId: context?.user?.id,
   clinicId: patient.clinicId,
-  payload: { patient }
+  payload: { patient },
 });
 ```
 
 ### Listening to events
+
 ```typescript
 // Use @OnEvent decorator (works with EventService)
 @Injectable()
@@ -772,20 +835,26 @@ export class PatientEventListener {
 ## Important Architectural Decisions
 
 1. **Fastify over Express**: Fastify is 2-3x faster, production-optimized
-2. **EventService as Single Source of Truth**: All events go through EventService for monitoring, rate limiting, PHI validation
-3. **CacheService abstraction**: Supports Redis and Dragonfly, easy to switch providers
-4. **DatabaseService encapsulation**: All DB access through DatabaseService with connection pooling, caching, metrics
+2. **EventService as Single Source of Truth**: All events go through
+   EventService for monitoring, rate limiting, PHI validation
+3. **CacheService abstraction**: Supports Redis and Dragonfly, easy to switch
+   providers
+4. **DatabaseService encapsulation**: All DB access through DatabaseService with
+   connection pooling, caching, metrics
 5. **Enhanced ConfigService**: Type-safe configuration with validation on boot
-6. **Multi-tenant by design**: Clinic isolation enforced at every layer (guards, repos, cache keys)
+6. **Multi-tenant by design**: Clinic isolation enforced at every layer (guards,
+   repos, cache keys)
 7. **Plugin architecture**: Appointment system extensible via lifecycle hooks
 8. **Queue-based async**: Heavy operations offloaded to BullMQ queues
 
 ## Documentation
 
 See also:
+
 - `README.md` - Main project documentation
 - `QUICK_START_LOCAL.md` - Local development setup
-- `src/libs/infrastructure/database/README.md` - Database architecture (10M+ users)
+- `src/libs/infrastructure/database/README.md` - Database architecture (10M+
+  users)
 - `.cursor/rules/.cursorrules` - Detailed coding standards
 - `.ai-rules/` - Comprehensive AI agent guidelines
   - `index.md` - Quick reference and system overview

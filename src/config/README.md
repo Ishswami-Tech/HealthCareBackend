@@ -42,8 +42,8 @@ export class MyService {
   autocomplete
 - âœ… **Environment File Priority** - .env.local > .env.{NODE_ENV} > .env
 - âœ… **Environment Validation** - Required variables validated on boot
-- âœ… **Multi-Provider Support** - Redis/Dragonfly caching,
-  Cloudflare/Daily/Google Meet video
+- âœ… **Multi-Provider Support** - Dragonfly-first caching with Redis
+  compatibility, Cloudflare/Daily/Google Meet video
 - âœ… **Global Module** - Available everywhere via @Global decorator
 - âœ… **Zero Runtime Overhead** - Singleton pattern, loaded once at startup
 - âœ… **PaymentConfigService** - Multi-tenant payment configuration
@@ -112,7 +112,7 @@ interface DatabaseConfig {
   ssl: boolean;
 }
 
-// Redis configuration
+// Cache configuration (Dragonfly-first)
 const redisConfig = this.config.getRedisConfig();
 interface RedisConfig {
   host: string;
@@ -192,7 +192,7 @@ const password = this.config.getCachePassword(); // Returns Dragonfly or Redis p
 const dragonflyHost = this.config.getDragonflyHost();
 const dragonflyPort = this.config.getDragonflyPort();
 
-// Get Redis config
+// Get Redis config (compatibility)
 const redisHost = this.config.getRedisHost();
 const redisPort = this.config.getRedisPort();
 ```
@@ -444,8 +444,8 @@ DATABASE_URL=postgresql://user:pass@localhost:5432/healthcare
 DATABASE_MAX_CONNECTIONS=500
 DATABASE_QUERY_TIMEOUT=30000
 
-# Cache (Redis/Dragonfly)
-CACHE_PROVIDER=dragonfly      # redis | dragonfly | memory
+# Cache (Dragonfly-first, Redis-compatible)
+CACHE_PROVIDER=dragonfly      # dragonfly | redis | memory
 DRAGONFLY_HOST=localhost
 DRAGONFLY_PORT=6379
 REDIS_HOST=localhost

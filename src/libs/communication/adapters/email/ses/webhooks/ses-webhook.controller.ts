@@ -10,6 +10,7 @@
 
 import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
+import { Public } from '@core/decorators/public.decorator';
 import { SESWebhookService } from './ses-webhook.service';
 
 /**
@@ -30,6 +31,7 @@ interface SNSMessage {
 
 @ApiTags('communication')
 @Controller('webhooks/ses')
+@Public()
 export class SESWebhookController {
   constructor(private readonly sesWebhookService: SESWebhookService) {}
 

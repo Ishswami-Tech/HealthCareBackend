@@ -1,10 +1,27 @@
 # 🗄️ Database & Repository Patterns
 
 ## 🎯 Database Architecture
+
+Current code facts from source scan:
+
+- NestJS `11.1.19`
+- Fastify `5.8.5`
+- Prisma `7.8.0`
+- Node `>=22`
+- 32 controller files
+- about 391 HTTP route handlers
+- 14 role values in the current enum
+- Dragonfly is the default cache provider; Redis wording is compatibility-only
+  where the code uses Redis-compatible clients.
+- Prefer Dragonfly-first wording in new guidance; keep Redis references only
+  when describing compatibility or historical material.
+
 ### Centralized Types Mapping (MANDATORY)
+
 - Database-generated types (e.g., Prisma) live in `@database/types`.
 - Business/domain types live in `@types` and act as the canonical contract.
-- Implement mappers between `@database/types` and `@types`. Business logic and DTOs must consume `@types` only.
+- Implement mappers between `@database/types` and `@types`. Business logic and
+  DTOs must consume `@types` only.
 
 ```typescript
 // Example mapper (DB -> Domain)
@@ -17,28 +34,40 @@ export function mapDbUserToDomain(db: DbUser): User {
     name: db.name,
     email: db.email,
     clinicId: db.clinicId,
-    roleType: db.roleType
+    roleType: db.roleType,
   };
 }
 ```
 
 Checklist:
+
 - DTOs never import from `@database/types`.
 - Services/controllers depend on `@types` and mappers, not DB models.
 
 ## 📈 Database at 10M Users
-- Migrations Policy: always online, backward-compatible expand→migrate→contract; toggle-based rollouts; guard for long locks.
-- Query Budgets: documented max scans/latency for hot queries; enforce indexes before merging changes that add filters.
-- Partitioning/Shard Strategy: per-tenant/clinic partitioning where feasible; time-based partitioning for logs/audits.
-- Read Scaling: replicas for read-heavy endpoints; lag-aware reads; fallback to primary if required.
-- Indexing: composite indexes for high-cardinality filters; regular index health audits.
-- Hot Paths: denormalized read models for top queries (e.g., appointment summaries) updated via events.
-- Write Contention: batch writes where safe; queue buffering for spikes; idempotent upserts.
-- Caching: Provider-agnostic cache (Redis/Dragonfly) with tenant-aware keys; TTL + SWR; cache stampede protection (locks/jitter). Use CacheService (NOT RedisService).
-- Migrations: online, backward-compatible; expand-and-contract pattern; dark migrations for big tables.
 
+- Migrations Policy: always online, backward-compatible expand→migrate→contract;
+  toggle-based rollouts; guard for long locks.
+- Query Budgets: documented max scans/latency for hot queries; enforce indexes
+  before merging changes that add filters.
+- Partitioning/Shard Strategy: per-tenant/clinic partitioning where feasible;
+  time-based partitioning for logs/audits.
+- Read Scaling: replicas for read-heavy endpoints; lag-aware reads; fallback to
+  primary if required.
+- Indexing: composite indexes for high-cardinality filters; regular index health
+  audits.
+- Hot Paths: denormalized read models for top queries (e.g., appointment
+  summaries) updated via events.
+- Write Contention: batch writes where safe; queue buffering for spikes;
+  idempotent upserts.
+- Caching: Provider-agnostic cache (Redis/Dragonfly) with tenant-aware keys;
+  TTL + SWR; cache stampede protection (locks/jitter). Use CacheService (NOT
+  RedisService).
+- Migrations: online, backward-compatible; expand-and-contract pattern; dark
+  migrations for big tables.
 
 ### **Prisma Service Configuration**
+
 ```typescript
 @Injectable()
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
@@ -51,28 +80,28 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     this.client = new PrismaClient({
       datasources: {
         db: {
-          url: this.configService.get<string>('DATABASE_URL')
-        }
+          url: this.configService.get<string>('DATABASE_URL'),
+        },
       },
       log: [
         { emit: 'event', level: 'query' },
         { emit: 'event', level: 'error' },
         { emit: 'event', level: 'info' },
-        { emit: 'event', level: 'warn' }
+        { emit: 'event', level: 'warn' },
       ],
-      errorFormat: 'pretty'
+      errorFormat: 'pretty',
     });
 
     // Set up logging handlers
-    this.client.$on('query', (e) => {
+    this.client.$on('query', e => {
       this.logger.debug('Query executed', {
         query: e.query,
         params: e.params,
-        duration: e.duration
+        duration: e.duration,
       });
     });
 
-    this.client.$on('error', (e) => {
+    this.client.$on('error', e => {
       this.logger.error('Prisma error', { error: e.message });
     });
   }
@@ -109,13 +138,14 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   ): Promise<T> {
     return this.client.$transaction(fn, {
       timeout: options?.timeout || 5000,
-      maxWait: options?.maxWait || 2000
+      maxWait: options?.maxWait || 2000,
     });
   }
 }
 ```
 
 ### **Database Usage Patterns**
+
 ```typescript
 // Standard service usage
 @Injectable()
@@ -134,15 +164,15 @@ export class UserService {
         isActive: true,
         isVerified: true,
         createdAt: true,
-        updatedAt: true
-      }
+        updatedAt: true,
+      },
     });
   }
 
   async findUsersByClinic(clinicId: string): Promise<User[]> {
     return this.prisma.$client.user.findMany({
       where: { clinicId, isActive: true },
-      orderBy: { createdAt: 'desc' }
+      orderBy: { createdAt: 'desc' },
     });
   }
 }
@@ -162,10 +192,10 @@ export class AppointmentService {
             user: {
               select: {
                 name: true,
-                email: true
-              }
-            }
-          }
+                email: true,
+              },
+            },
+          },
         },
         doctor: {
           select: {
@@ -173,13 +203,13 @@ export class AppointmentService {
             user: {
               select: {
                 name: true,
-                email: true
-              }
-            }
-          }
-        }
+                email: true,
+              },
+            },
+          },
+        },
       },
-      orderBy: { appointmentDateTime: 'asc' }
+      orderBy: { appointmentDateTime: 'asc' },
     });
   }
 }
@@ -188,6 +218,7 @@ export class AppointmentService {
 ## 🔧 Repository Pattern Implementation
 
 ### **Base Repository Interface**
+
 ```typescript
 export interface IBaseRepository<T> {
   findById(id: string): Promise<T | null>;
@@ -208,6 +239,7 @@ export interface FindManyOptions<T> {
 ```
 
 ### **Concrete Repository Implementation**
+
 ```typescript
 @Injectable()
 export class UserRepository implements IBaseRepository<User> {
@@ -233,8 +265,8 @@ export class UserRepository implements IBaseRepository<User> {
         isActive: true,
         isVerified: true,
         createdAt: true,
-        updatedAt: true
-      }
+        updatedAt: true,
+      },
     });
   }
 
@@ -244,7 +276,7 @@ export class UserRepository implements IBaseRepository<User> {
       orderBy: options.orderBy || { createdAt: 'desc' },
       skip: options.skip,
       take: options.take,
-      include: options.include
+      include: options.include,
     });
   }
 
@@ -262,8 +294,8 @@ export class UserRepository implements IBaseRepository<User> {
         isActive: true,
         isVerified: true,
         createdAt: true,
-        updatedAt: true
-      }
+        updatedAt: true,
+      },
     });
   }
 
@@ -274,7 +306,7 @@ export class UserRepository implements IBaseRepository<User> {
       where: { id },
       data: {
         ...data,
-        updatedAt: new Date()
+        updatedAt: new Date(),
       },
       select: {
         id: true,
@@ -285,8 +317,8 @@ export class UserRepository implements IBaseRepository<User> {
         isActive: true,
         isVerified: true,
         createdAt: true,
-        updatedAt: true
-      }
+        updatedAt: true,
+      },
     });
   }
 
@@ -294,7 +326,7 @@ export class UserRepository implements IBaseRepository<User> {
     this.logger.warn('Deleting user', { userId: id });
 
     await this.prisma.$client.user.delete({
-      where: { id }
+      where: { id },
     });
   }
 
@@ -303,8 +335,8 @@ export class UserRepository implements IBaseRepository<User> {
       where: { id },
       data: {
         isActive: false,
-        deletedAt: new Date()
-      }
+        deletedAt: new Date(),
+      },
     });
   }
 
@@ -330,7 +362,7 @@ export class UserRepository implements IBaseRepository<User> {
 
     return this.prisma.$client.user.findMany({
       where,
-      orderBy: { createdAt: 'desc' }
+      orderBy: { createdAt: 'desc' },
     });
   }
 
@@ -342,7 +374,7 @@ export class UserRepository implements IBaseRepository<User> {
 
     return this.prisma.$client.user.findMany({
       where,
-      orderBy: { name: 'asc' }
+      orderBy: { name: 'asc' },
     });
   }
 }
@@ -351,6 +383,7 @@ export class UserRepository implements IBaseRepository<User> {
 ## 🔍 Query Optimization
 
 ### **Efficient Query Patterns**
+
 ```typescript
 // ✅ DO - Use select to limit fields
 async findUsers(clinicId?: string): Promise<User[]> {
@@ -462,6 +495,7 @@ async findUsers(): Promise<User[]> {
 ```
 
 ### **Transaction Management**
+
 ```typescript
 @Injectable()
 export class UserService {
@@ -475,10 +509,10 @@ export class UserService {
     userData: CreateUserData,
     profileData: CreateProfileData
   ): Promise<{ user: User; profile: Profile }> {
-    return this.prisma.transaction(async (tx) => {
+    return this.prisma.transaction(async tx => {
       // Create user first
       const user = await tx.user.create({
-        data: userData
+        data: userData,
       });
 
       this.logger.info('User created in transaction', { userId: user.id });
@@ -487,8 +521,8 @@ export class UserService {
       const profile = await tx.patientProfile.create({
         data: {
           ...profileData,
-          userId: user.id
-        }
+          userId: user.id,
+        },
       });
 
       this.logger.info('Patient profile created', { profileId: profile.id });
@@ -505,7 +539,7 @@ export class UserService {
           version: '1.0.0',
           userId: user.id,
           clinicId: user.clinicId,
-          payload: { user, profile }
+          payload: { user, profile },
         });
       }
 
@@ -520,76 +554,84 @@ export class UserService {
     reason: string,
     requestedBy: string
   ): Promise<void> {
-    await this.prisma.transaction(async (tx) => {
-      // Verify appointment exists and is transferable
-      const appointment = await tx.appointment.findUnique({
-        where: { id: appointmentId },
-        include: { doctor: true }
-      });
+    await this.prisma.transaction(
+      async tx => {
+        // Verify appointment exists and is transferable
+        const appointment = await tx.appointment.findUnique({
+          where: { id: appointmentId },
+          include: { doctor: true },
+        });
 
-      if (!appointment) {
-        throw new NotFoundException('Appointment not found');
-      }
-
-      if (appointment.status === 'COMPLETED' || appointment.status === 'CANCELLED') {
-        throw new BadRequestException('Cannot transfer completed or cancelled appointment');
-      }
-
-      // Update appointment
-      await tx.appointment.update({
-        where: { id: appointmentId },
-        data: {
-          doctorId: toDoctorId,
-          updatedAt: new Date(),
-          updatedBy: requestedBy
+        if (!appointment) {
+          throw new NotFoundException('Appointment not found');
         }
-      });
 
-      // Create audit log for the transfer
-      await tx.appointmentAuditLog.create({
-        data: {
+        if (
+          appointment.status === 'COMPLETED' ||
+          appointment.status === 'CANCELLED'
+        ) {
+          throw new BadRequestException(
+            'Cannot transfer completed or cancelled appointment'
+          );
+        }
+
+        // Update appointment
+        await tx.appointment.update({
+          where: { id: appointmentId },
+          data: {
+            doctorId: toDoctorId,
+            updatedAt: new Date(),
+            updatedBy: requestedBy,
+          },
+        });
+
+        // Create audit log for the transfer
+        await tx.appointmentAuditLog.create({
+          data: {
+            appointmentId,
+            action: 'TRANSFERRED',
+            previousDoctorId: fromDoctorId,
+            newDoctorId: toDoctorId,
+            reason,
+            performedBy: requestedBy,
+            timestamp: new Date(),
+          },
+        });
+
+        // Update doctor availability slots
+        await tx.doctorAvailability.updateMany({
+          where: {
+            doctorId: fromDoctorId,
+            appointmentId,
+            status: 'BOOKED',
+          },
+          data: {
+            status: 'AVAILABLE',
+            appointmentId: null,
+          },
+        });
+
+        await tx.doctorAvailability.updateMany({
+          where: {
+            doctorId: toDoctorId,
+            slotDateTime: appointment.appointmentDateTime,
+            status: 'AVAILABLE',
+          },
+          data: {
+            status: 'BOOKED',
+            appointmentId,
+          },
+        });
+
+        this.logger.info('Appointment transferred successfully', {
           appointmentId,
-          action: 'TRANSFERRED',
-          previousDoctorId: fromDoctorId,
-          newDoctorId: toDoctorId,
-          reason,
-          performedBy: requestedBy,
-          timestamp: new Date()
-        }
-      });
-
-      // Update doctor availability slots
-      await tx.doctorAvailability.updateMany({
-        where: {
-          doctorId: fromDoctorId,
-          appointmentId,
-          status: 'BOOKED'
-        },
-        data: {
-          status: 'AVAILABLE',
-          appointmentId: null
-        }
-      });
-
-      await tx.doctorAvailability.updateMany({
-        where: {
-          doctorId: toDoctorId,
-          slotDateTime: appointment.appointmentDateTime,
-          status: 'AVAILABLE'
-        },
-        data: {
-          status: 'BOOKED',
-          appointmentId
-        }
-      });
-
-      this.logger.info('Appointment transferred successfully', {
-        appointmentId,
-        fromDoctorId,
-        toDoctorId,
-        requestedBy
-      });
-    }, { timeout: 10000 }); // 10 second timeout for complex transaction
+          fromDoctorId,
+          toDoctorId,
+          requestedBy,
+        });
+      },
+      { timeout: 10000 }
+    ); // 10 second timeout for complex transaction
   }
 }
 ```
@@ -597,6 +639,7 @@ export class UserService {
 ## 📊 Advanced Query Patterns
 
 ### **Complex Filtering**
+
 ```typescript
 @Injectable()
 export class AppointmentRepository {
@@ -630,9 +673,9 @@ export class AppointmentRepository {
         user: {
           name: {
             contains: filters.patientName,
-            mode: 'insensitive'
-          }
-        }
+            mode: 'insensitive',
+          },
+        },
       };
     }
 
@@ -645,10 +688,10 @@ export class AppointmentRepository {
               select: {
                 id: true,
                 name: true,
-                email: true
-              }
-            }
-          }
+                email: true,
+              },
+            },
+          },
         },
         doctor: {
           include: {
@@ -656,19 +699,20 @@ export class AppointmentRepository {
               select: {
                 id: true,
                 name: true,
-                email: true
-              }
-            }
-          }
-        }
+                email: true,
+              },
+            },
+          },
+        },
       },
-      orderBy: { date: 'asc' }
+      orderBy: { date: 'asc' },
     });
   }
 }
 ```
 
 ### **Aggregation Queries**
+
 ```typescript
 @Injectable()
 export class AnalyticsRepository {
@@ -676,19 +720,19 @@ export class AnalyticsRepository {
     const stats = await this.prisma.healthcare.appointment.aggregate({
       where: { clinicId },
       _count: {
-        id: true
+        id: true,
       },
       _avg: {
-        duration: true
-      }
+        duration: true,
+      },
     });
 
     const statusCounts = await this.prisma.healthcare.appointment.groupBy({
       by: ['status'],
       where: { clinicId },
       _count: {
-        id: true
-      }
+        id: true,
+      },
     });
 
     return {
@@ -696,8 +740,8 @@ export class AnalyticsRepository {
       averageDuration: stats._avg.duration,
       statusBreakdown: statusCounts.map(item => ({
         status: item.status,
-        count: item._count.id
-      }))
+        count: item._count.id,
+      })),
     };
   }
 
@@ -706,19 +750,19 @@ export class AnalyticsRepository {
       this.prisma.healthcare.appointment.aggregate({
         where: { doctorId },
         _count: { id: true },
-        _avg: { rating: true }
+        _avg: { rating: true },
       }),
       this.prisma.healthcare.appointment.findMany({
         where: { doctorId },
         distinct: ['patientId'],
-        select: { patientId: true }
-      })
+        select: { patientId: true },
+      }),
     ]);
 
     return {
       totalAppointments: appointmentStats._count.id,
       averageRating: appointmentStats._avg.rating,
-      uniquePatients: patientStats.length
+      uniquePatients: patientStats.length,
     };
   }
 }
@@ -727,6 +771,7 @@ export class AnalyticsRepository {
 ## 🔄 Database Commands
 
 ### **Migration Commands**
+
 ```bash
 # Generate Prisma clients
 npm run db:generate         # Both schemas
@@ -756,6 +801,7 @@ npm run db:deploy:fashion
 ```
 
 ### **Seeding Data**
+
 ```typescript
 // prisma/healthcare/seed.ts
 import { PrismaClient } from '@prisma/healthcare-client';
@@ -772,8 +818,8 @@ async function main() {
       name: 'System Admin',
       roleType: 'SUPER_ADMIN',
       isVerified: true,
-      password: await bcrypt.hash('admin123', 10)
-    }
+      password: await bcrypt.hash('admin123', 10),
+    },
   });
 
   // Create sample clinic
@@ -784,15 +830,15 @@ async function main() {
       name: 'Main Clinic',
       address: '123 Health St',
       phone: '+1234567890',
-      email: 'info@mainclinic.com'
-    }
+      email: 'info@mainclinic.com',
+    },
   });
 
   console.log({ admin, clinic });
 }
 
 main()
-  .catch((e) => {
+  .catch(e => {
     console.error(e);
     process.exit(1);
   })
@@ -804,6 +850,7 @@ main()
 ## 🚫 Anti-Patterns to Avoid
 
 ### **❌ Don't Do This**
+
 ```typescript
 // Don't use raw SQL without proper escaping
 await prisma.$executeRaw`SELECT * FROM users WHERE id = ${userId}`; // SQL injection risk
@@ -814,7 +861,7 @@ const users = await prisma.user.findMany(); // Fetches all fields
 // Don't use N+1 queries
 for (const user of users) {
   const appointments = await prisma.appointment.findMany({
-    where: { userId: user.id }
+    where: { userId: user.id },
   }); // N+1 problem
 }
 
@@ -824,24 +871,25 @@ await prisma.profile.create({ data: profileData }); // Not atomic
 ```
 
 ### **✅ Do This Instead**
+
 ```typescript
 // Use parameterized queries
 await prisma.$executeRaw`SELECT * FROM users WHERE id = ${userId}`;
 
 // Select only needed fields
 const users = await prisma.user.findMany({
-  select: { id: true, name: true, email: true }
+  select: { id: true, name: true, email: true },
 });
 
 // Use include to avoid N+1
 const usersWithAppointments = await prisma.user.findMany({
   include: {
-    appointments: true
-  }
+    appointments: true,
+  },
 });
 
 // Use transactions for related operations
-await prisma.$transaction(async (tx) => {
+await prisma.$transaction(async tx => {
   const user = await tx.user.create({ data: userData });
   await tx.profile.create({ data: { ...profileData, userId: user.id } });
 });
@@ -849,6 +897,7 @@ await prisma.$transaction(async (tx) => {
 
 ---
 
-**💡 These database patterns ensure optimal performance, data integrity, and maintainable code with proper separation of concerns.**
+**💡 These database patterns ensure optimal performance, data integrity, and
+maintainable code with proper separation of concerns.**
 
 **Last Updated**: January 2025

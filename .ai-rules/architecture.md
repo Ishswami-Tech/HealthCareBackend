@@ -2,14 +2,31 @@
 
 ## 🎯 SOLID & DRY Principles
 
+Current code facts from source scan:
+
+- NestJS `11.1.19`
+- Fastify `5.8.5`
+- Prisma `7.8.0`
+- 32 controller files
+- about 391 HTTP route handlers
+- 14 role values in the current enum
+- Dragonfly is the default cache provider; Redis is compatibility language where
+  the code uses Redis-compatible clients.
+
+Use the controller, service, and infrastructure source as the source of truth
+when older count-based claims in this file differ from implementation.
+
 ### **SOLID Principles**
+
 - **S**ingle Responsibility: Each class/function has one reason to change
 - **O**pen/Closed: Open for extension, closed for modification
-- **L**iskov Substitution: Derived classes must be substitutable for base classes
+- **L**iskov Substitution: Derived classes must be substitutable for base
+  classes
 - **I**nterface Segregation: Many specific interfaces over one general interface
 - **D**ependency Inversion: Depend on abstractions, not concretions
 
 ### **DRY (Don't Repeat Yourself)**
+
 - Extract common logic into utilities, services, or decorators
 - Use composition over inheritance
 - Create reusable components and patterns
@@ -18,6 +35,7 @@
 ## 📁 Project Structure
 
 ### **Library Organization (`src/libs/`)**
+
 ```
 libs/
 ├── communication/             # Communication layer
@@ -80,6 +98,7 @@ libs/
 ```
 
 ### **Service Organization (`src/services/`)**
+
 ```
 services/
 ├── appointments/            # Appointment management system
@@ -125,6 +144,7 @@ services/
 ```
 
 ### **Configuration & Documentation**
+
 ```
 src/
 ├── config/                 # Application configuration
@@ -150,19 +170,32 @@ docs/
 ```
 
 ## 🔧 Design Patterns
+
 ## 🌍 High-Scale Architecture (10M Users)
-- Module and boundary rules: services depend on abstractions; infrastructure behind interfaces; imports adhere to aliases.
-- Rollout strategies: canary first, then 50/50, then full; define rollback criteria and monitoring signals.
-- Stateless services; shared-nothing where possible; session in Redis with partitioning.
-- Horizontal scaling as first-class: HPA targets on CPU/RAM/RPS; graceful shutdown.
-- Bulkheads: isolate critical services (auth, billing, appointments) with separate pools/queues.
-- Circuit breakers and timeouts on all network calls; retry with exponential backoff + jitter.
-- Multi-tenant isolation enforced in every layer (guards, repos, cache keys, metrics labels).
-- Read/write separation; read replicas for heavy reads; CQRS where it reduces contention.
-- Event-driven integration between domains; idempotent consumers; DLQ and replay strategy.
-- Feature flags and gradual rollouts; surge protection; brownout modes under pressure.
+
+- Module and boundary rules: services depend on abstractions; infrastructure
+  behind interfaces; imports adhere to aliases.
+- Rollout strategies: canary first, then 50/50, then full; define rollback
+  criteria and monitoring signals.
+- Stateless services; shared-nothing where possible; session in Redis with
+  partitioning.
+- Horizontal scaling as first-class: HPA targets on CPU/RAM/RPS; graceful
+  shutdown.
+- Bulkheads: isolate critical services (auth, billing, appointments) with
+  separate pools/queues.
+- Circuit breakers and timeouts on all network calls; retry with exponential
+  backoff + jitter.
+- Multi-tenant isolation enforced in every layer (guards, repos, cache keys,
+  metrics labels).
+- Read/write separation; read replicas for heavy reads; CQRS where it reduces
+  contention.
+- Event-driven integration between domains; idempotent consumers; DLQ and replay
+  strategy.
+- Feature flags and gradual rollouts; surge protection; brownout modes under
+  pressure.
 
 ### **Repository Pattern**
+
 ```typescript
 // Abstract repository interface
 export abstract class BaseRepository<T> {
@@ -187,8 +220,8 @@ export class UserRepository extends BaseRepository<User> {
         name: true,
         email: true,
         createdAt: true,
-        updatedAt: true
-      }
+        updatedAt: true,
+      },
     });
   }
 
@@ -198,13 +231,14 @@ export class UserRepository extends BaseRepository<User> {
 
   async findByEmail(email: string): Promise<User | null> {
     return this.prisma.healthcare.user.findUnique({
-      where: { email }
+      where: { email },
     });
   }
 }
 ```
 
 ### **Factory Pattern**
+
 ```typescript
 // Service factory for different domains
 @Injectable()
@@ -228,6 +262,7 @@ export class ServiceFactory {
 ```
 
 ### **Strategy Pattern**
+
 ```typescript
 // Authentication strategy interface
 export interface AuthStrategy {
@@ -258,7 +293,10 @@ export class AuthService {
     private readonly oauthStrategy: OAuthStrategy
   ) {}
 
-  async authenticate(type: 'jwt' | 'oauth', credentials: any): Promise<User | null> {
+  async authenticate(
+    type: 'jwt' | 'oauth',
+    credentials: any
+  ): Promise<User | null> {
     const strategy = type === 'jwt' ? this.jwtStrategy : this.oauthStrategy;
     return strategy.authenticate(credentials);
   }
@@ -266,23 +304,28 @@ export class AuthService {
 ```
 
 ### **Decorator Pattern**
+
 ```typescript
 // Caching decorator
 export function Cacheable(ttl: number = 3600) {
-  return function (target: any, propertyName: string, descriptor: PropertyDescriptor) {
+  return function (
+    target: any,
+    propertyName: string,
+    descriptor: PropertyDescriptor
+  ) {
     const method = descriptor.value;
-    
+
     descriptor.value = async function (...args: any[]) {
       const cacheKey = `${target.constructor.name}:${propertyName}:${JSON.stringify(args)}`;
       const cached = await this.cache.get(cacheKey);
-      
+
       if (cached) {
         return JSON.parse(cached);
       }
-      
+
       const result = await method.apply(this, args);
       await this.cache.set(cacheKey, JSON.stringify(result), ttl);
-      
+
       return result;
     };
   };
@@ -302,9 +345,11 @@ export class UserService {
 
 ### **Centralized EventService - Single Source of Truth (MANDATORY)**
 
-**EventService is the CENTRAL EVENT HUB for the entire application. All event emissions MUST go through EventService.**
+**EventService is the CENTRAL EVENT HUB for the entire application. All event
+emissions MUST go through EventService.**
 
 **Architecture:**
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │              CENTRAL EVENT SYSTEM (Hub)                      │
@@ -327,7 +372,8 @@ export class UserService {
 └──────────────┘ └──────────────┘ └──────────────┘
 ```
 
-**ALWAYS use `EventService` from `@infrastructure/events` instead of direct `EventEmitter2` usage.**
+**ALWAYS use `EventService` from `@infrastructure/events` instead of direct
+`EventEmitter2` usage.**
 
 ```typescript
 // ✅ DO - Use EventService
@@ -344,7 +390,7 @@ export class UserService {
 
   async create(data: CreateUserDto): Promise<User> {
     const user = await this.userRepository.create(data);
-    
+
     // Emit enterprise-grade event with full features
     await this.eventService.emitEnterprise('user.created', {
       eventId: `user-created-${user.id}`,
@@ -356,9 +402,9 @@ export class UserService {
       version: '1.0.0',
       userId: user.id,
       clinicId: user.clinicId,
-      payload: { user }
+      payload: { user },
     });
-    
+
     return user;
   }
 }
@@ -383,6 +429,7 @@ export class NotificationService {
 ```
 
 **Key Benefits of EventService**:
+
 - ✅ **Single Source of Truth** - All event emissions go through EventService
 - ✅ Built on NestJS EventEmitter2 (compatible with @OnEvent decorators)
 - ✅ Circuit breaker protection via CircuitBreakerService
@@ -393,13 +440,16 @@ export class NotificationService {
 - ✅ Comprehensive metrics and monitoring
 - ✅ PHI data validation for healthcare events
 - ✅ Simple API for basic use cases (emit, emitAsync, on, once, off, onAny)
-- ✅ Enterprise API for advanced features (emitEnterprise, queryEvents, getEventMetrics)
+- ✅ Enterprise API for advanced features (emitEnterprise, queryEvents,
+  getEventMetrics)
 - ✅ Wildcard subscriptions via `onAny()` for listening to all events
 - ✅ Integration with CommunicationService for event-driven notifications
 - ✅ Integration with EventSocketBroadcaster for real-time WebSocket updates
 
 **Integration Points:**
-- ✅ All business services (users, auth, billing, ehr, appointments) use EventService
+
+- ✅ All business services (users, auth, billing, ehr, appointments) use
+  EventService
 - ✅ CommunicationService uses EventService to emit `communication.sent` events
 - ✅ Infrastructure services (cache, database, queue) use EventService
 - ✅ EventSocketBroadcaster uses `EventService.onAny()` to listen to all events
@@ -408,6 +458,7 @@ export class NotificationService {
 ## 🗄️ Database Architecture
 
 ### **Prisma Service Pattern**
+
 ```typescript
 @Injectable()
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
@@ -416,10 +467,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   constructor(private configService: ConfigService) {
     this.client = new PrismaClient({
       datasources: {
-        db: { url: this.configService.get('DATABASE_URL') }
+        db: { url: this.configService.get('DATABASE_URL') },
       },
       log: ['query', 'info', 'warn', 'error'],
-      errorFormat: 'pretty'
+      errorFormat: 'pretty',
     });
   }
 
@@ -455,6 +506,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 ## 🔧 Dependency Injection Patterns
 
 ### **Interface Segregation**
+
 ```typescript
 // Specific interfaces for different concerns
 export interface IUserReader {
@@ -485,25 +537,22 @@ export class UserService implements IUserService {
 ```
 
 ### **Provider Configuration**
+
 ```typescript
 // Module with proper DI configuration
 @Module({
-  imports: [
-    ConfigModule,
-    DatabaseModule,
-    CacheModule
-  ],
+  imports: [ConfigModule, DatabaseModule, CacheModule],
   providers: [
     // Service providers
     UserService,
     AuthService,
-    
+
     // Repository providers
     {
       provide: 'IUserRepository',
-      useClass: UserRepository
+      useClass: UserRepository,
     },
-    
+
     // Factory providers
     {
       provide: 'UserServiceFactory',
@@ -511,11 +560,11 @@ export class UserService implements IUserService {
         healthcareService: HealthcareUserService,
         fashionService: FashionUserService
       ) => new ServiceFactory(healthcareService, fashionService),
-      inject: [HealthcareUserService, FashionUserService]
-    }
+      inject: [HealthcareUserService, FashionUserService],
+    },
   ],
   controllers: [UserController],
-  exports: [UserService, 'IUserRepository']
+  exports: [UserService, 'IUserRepository'],
 })
 export class UserModule {}
 ```
@@ -523,6 +572,7 @@ export class UserModule {}
 ## 🔄 Module Organization
 
 ### **Feature Module Pattern**
+
 ```typescript
 // Core module for shared functionality
 @Global()
@@ -532,34 +582,25 @@ export class UserModule {}
     DatabaseModule,
     LoggingModule,
     CacheModule,
-    EventsModule
+    EventsModule,
   ],
-  exports: [
-    DatabaseModule,
-    LoggingModule,
-    CacheModule,
-    EventsModule
-  ]
+  exports: [DatabaseModule, LoggingModule, CacheModule, EventsModule],
 })
 export class CoreModule {}
 
 // Feature module with plugin support
 @Module({
-  imports: [
-    CoreModule,
-    AuthModule,
-    NotificationModule
-  ],
+  imports: [CoreModule, AuthModule, NotificationModule],
   providers: [
     UserService,
     UserRepository,
     // Session management
     SessionService,
     // RBAC integration
-    RbacService
+    RbacService,
   ],
   controllers: [UserController],
-  exports: [UserService, SessionService]
+  exports: [UserService, SessionService],
 })
 export class UserModule {}
 
@@ -571,7 +612,7 @@ export class UserModule {}
     NotificationModule,
     BillingModule,
     EhrModule,
-    QueueModule
+    QueueModule,
   ],
   providers: [
     AppointmentService,
@@ -589,15 +630,16 @@ export class UserModule {}
     QueuePlugin,
     ReminderPlugin,
     VideoPlugin,
-    WaitlistPlugin
+    WaitlistPlugin,
   ],
   controllers: [AppointmentController],
-  exports: [AppointmentService]
+  exports: [AppointmentService],
 })
 export class AppointmentModule {}
 ```
 
 ### **Plugin Architecture Pattern**
+
 ```typescript
 // Base plugin interface
 export interface IAppointmentPlugin {
@@ -629,7 +671,7 @@ export class NotificationPlugin implements IAppointmentPlugin {
       appointment
     );
     this.logger.info('Notification sent for new appointment', {
-      appointmentId: appointment.id
+      appointmentId: appointment.id,
     });
   }
 
@@ -679,6 +721,7 @@ export class PluginRegistry {
 ## 🚫 Anti-Patterns to Avoid
 
 ### **❌ Avoid These Patterns**
+
 ```typescript
 // God Object - too many responsibilities
 class UserService {
@@ -703,11 +746,11 @@ interface IUserService {
   // User methods
   createUser(): void;
   updateUser(): void;
-  
+
   // Admin methods (not needed by all clients)
   deleteAllUsers(): void;
   exportUserData(): void;
-  
+
   // Reporting methods (not needed by all clients)
   generateUserReport(): void;
   analyzeUserBehavior(): void;
@@ -715,6 +758,7 @@ interface IUserService {
 ```
 
 ### **✅ Correct Patterns**
+
 ```typescript
 // Single Responsibility - focused classes
 class UserService {
@@ -757,7 +801,8 @@ interface IUserAdmin {
 
 ### **Enterprise LoggingService (HIPAA-Compliant)**
 
-**ALWAYS use the custom `LoggingService` from `@infrastructure/logging` for all logging needs.**
+**ALWAYS use the custom `LoggingService` from `@infrastructure/logging` for all
+logging needs.**
 
 ```typescript
 // ✅ DO - Use custom LoggingService
@@ -801,7 +846,7 @@ export class UserService {
         {
           error: error.message,
           stack: error.stack,
-          email: data.email
+          email: data.email,
         }
       );
       throw error;
@@ -816,28 +861,24 @@ import { Logger } from '@nestjs/common'; // Missing HIPAA compliance, audit trai
 ### **Key LoggingService Features**
 
 1. **HIPAA-Compliant PHI Access Logging**
+
 ```typescript
 // Log PHI access with complete audit trail
-await this.loggingService.logPhiAccess(
-  userId,
-  userRole,
-  patientId,
-  'VIEW',
-  {
-    resource: 'MedicalRecord',
-    resourceId: recordId,
-    clinicId: clinicId,
-    ipAddress: request.ip,
-    userAgent: request.headers['user-agent'],
-    sessionId: request.session.id,
-    dataFields: ['diagnosis', 'medications', 'allergies'],
-    purpose: 'treatment',
-    outcome: 'SUCCESS'
-  }
-);
+await this.loggingService.logPhiAccess(userId, userRole, patientId, 'VIEW', {
+  resource: 'MedicalRecord',
+  resourceId: recordId,
+  clinicId: clinicId,
+  ipAddress: request.ip,
+  userAgent: request.headers['user-agent'],
+  sessionId: request.session.id,
+  dataFields: ['diagnosis', 'medications', 'allergies'],
+  purpose: 'treatment',
+  outcome: 'SUCCESS',
+});
 ```
 
 2. **Multi-Tenant Clinic Logging**
+
 ```typescript
 // Log operations with clinic isolation
 await this.loggingService.logClinicOperation(
@@ -848,54 +889,48 @@ await this.loggingService.logClinicOperation(
     appointmentId: appointment.id,
     patientId: appointment.patientId,
     doctorId: appointment.doctorId,
-    scheduledTime: appointment.scheduledTime
+    scheduledTime: appointment.scheduledTime,
   }
 );
 ```
 
 3. **Performance Monitoring**
+
 ```typescript
 // Track operation performance
-this.loggingService.logPerformance(
-  'database_query',
-  duration,
-  {
-    query: 'findPatientsByClinic',
-    recordCount: results.length,
-    clinicId: clinicId
-  }
-);
+this.loggingService.logPerformance('database_query', duration, {
+  query: 'findPatientsByClinic',
+  recordCount: results.length,
+  clinicId: clinicId,
+});
 ```
 
 4. **Security Event Logging**
+
 ```typescript
 // Log security events
-await this.loggingService.logSecurity(
-  'UNAUTHORIZED_ACCESS_ATTEMPT',
-  {
-    userId: userId,
-    resource: 'PatientRecord',
-    resourceId: patientId,
-    ipAddress: request.ip,
-    reason: 'User lacks READ_PATIENT permission'
-  }
-);
+await this.loggingService.logSecurity('UNAUTHORIZED_ACCESS_ATTEMPT', {
+  userId: userId,
+  resource: 'PatientRecord',
+  resourceId: patientId,
+  ipAddress: request.ip,
+  reason: 'User lacks READ_PATIENT permission',
+});
 ```
 
 5. **Emergency Logging**
+
 ```typescript
 // Critical system events
-await this.loggingService.logEmergency(
-  'Database connection pool exhausted',
-  {
-    activeConnections: 100,
-    queuedRequests: 50,
-    clinicsAffected: ['clinic-1', 'clinic-2']
-  }
-);
+await this.loggingService.logEmergency('Database connection pool exhausted', {
+  activeConnections: 100,
+  queuedRequests: 50,
+  clinicsAffected: ['clinic-1', 'clinic-2'],
+});
 ```
 
 6. **Batch Logging for High Volume**
+
 ```typescript
 // Log multiple events efficiently
 await this.loggingService.logBatch([
@@ -904,25 +939,30 @@ await this.loggingService.logBatch([
     level: LogLevel.INFO,
     message: 'User viewed dashboard',
     context: 'DashboardController',
-    metadata: { userId, clinicId }
+    metadata: { userId, clinicId },
   },
   {
     type: LogType.PERFORMANCE,
     level: LogLevel.INFO,
     message: 'Dashboard loaded',
     context: 'DashboardController',
-    metadata: { duration: 150, widgets: 5 }
-  }
+    metadata: { duration: 150, widgets: 5 },
+  },
 ]);
 ```
 
 ### **LogType Categories**
 
-- **System & Infrastructure**: `SYSTEM`, `ERROR`, `DATABASE`, `CACHE`, `QUEUE`, `PERFORMANCE`
-- **Authentication & Security**: `AUTH`, `SECURITY`, `ACCESS_CONTROL`, `LOGIN`, `LOGOUT`
-- **Communication**: `REQUEST`, `RESPONSE`, `WEBSOCKET`, `EMAIL`, `SMS`, `NOTIFICATION`
-- **Business Operations**: `AUDIT`, `APPOINTMENT`, `BUSINESS`, `PAYMENT`, `USER_ACTIVITY`
-- **HIPAA Compliance**: `PHI_ACCESS`, `MEDICAL_RECORD_ACCESS`, `PATIENT_DATA_EXPORT`, `CONSENT_MANAGEMENT`
+- **System & Infrastructure**: `SYSTEM`, `ERROR`, `DATABASE`, `CACHE`, `QUEUE`,
+  `PERFORMANCE`
+- **Authentication & Security**: `AUTH`, `SECURITY`, `ACCESS_CONTROL`, `LOGIN`,
+  `LOGOUT`
+- **Communication**: `REQUEST`, `RESPONSE`, `WEBSOCKET`, `EMAIL`, `SMS`,
+  `NOTIFICATION`
+- **Business Operations**: `AUDIT`, `APPOINTMENT`, `BUSINESS`, `PAYMENT`,
+  `USER_ACTIVITY`
+- **HIPAA Compliance**: `PHI_ACCESS`, `MEDICAL_RECORD_ACCESS`,
+  `PATIENT_DATA_EXPORT`, `CONSENT_MANAGEMENT`
 - **Emergency & Critical**: `EMERGENCY`, `CRITICAL_ALERT`, `INCIDENT`
 - **Multi-Tenant**: `CLINIC_OPERATIONS`, `TENANT_ISOLATION`, `MULTI_CLINIC`
 
@@ -937,24 +977,31 @@ await this.loggingService.logBatch([
 
 ### **Benefits of Custom LoggingService**
 
-✅ **HIPAA Compliance** - Automatic PHI access tracking and audit trails
-✅ **Distributed Tracing** - Correlation IDs and trace IDs for request tracking
-✅ **Multi-Tenant Support** - Clinic isolation and tenant-specific logging
-✅ **Performance Monitoring** - Built-in metrics collection and thresholds
-✅ **Security Events** - Comprehensive security event tracking
-✅ **Auto-Scaling** - Buffered metrics for 1M+ concurrent users
-✅ **Redis Caching** - Fast log retrieval with configurable retention
-✅ **Database Integration** - Automatic audit log creation
-✅ **Dashboard UI** - Web interface at `/logger` for viewing logs
+✅ **HIPAA Compliance** - Automatic PHI access tracking and audit trails ✅
+**Distributed Tracing** - Correlation IDs and trace IDs for request tracking ✅
+**Multi-Tenant Support** - Clinic isolation and tenant-specific logging ✅
+**Performance Monitoring** - Built-in metrics collection and thresholds ✅
+**Security Events** - Comprehensive security event tracking ✅
+**Auto-Scaling** - Buffered metrics for 1M+ concurrent users ✅ **Redis
+Caching** - Fast log retrieval with configurable retention ✅ **Database
+Integration** - Automatic audit log creation ✅ **Dashboard UI** - Web interface
+at `/logger` for viewing logs
 
 ---
 
-**💡 These architectural patterns ensure scalable, maintainable, and testable code that follows SOLID principles and industry best practices.**
+**💡 These architectural patterns ensure scalable, maintainable, and testable
+code that follows SOLID principles and industry best practices.**
 
 **Last Updated**: January 2025
 
 ## 📚 Additional Resources
 
-- **Event & Communication Integration**: See `docs/architecture/EVENT_COMMUNICATION_INTEGRATION.md` for detailed integration verification
-- **EventService Documentation**: See `src/libs/infrastructure/events/event.service.ts` for complete API documentation
-- **Communication Architecture**: See `src/libs/communication/communication.service.ts` for unified communication patterns
+- **Event & Communication Integration**: See
+  `docs/architecture/EVENT_COMMUNICATION_INTEGRATION.md` for detailed
+  integration verification
+- **EventService Documentation**: See
+  `src/libs/infrastructure/events/event.service.ts` for complete API
+  documentation
+- **Communication Architecture**: See
+  `src/libs/communication/communication.service.ts` for unified communication
+  patterns

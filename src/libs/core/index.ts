@@ -25,7 +25,7 @@ export * from './decorators/public.decorator';
 export * from './decorators/roles.decorator';
 
 // Filters
-export * from './filters/http-exception.filter';
+export * from './filters';
 
 // Interceptors
 export * from './interceptors';

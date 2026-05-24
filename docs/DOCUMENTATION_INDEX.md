@@ -1,21 +1,35 @@
 ﻿# Documentation Index - Complete Reference
 
-**Date**: January 2025  
+**Date**: May 2026  
 **Status**: âœ… **VERIFIED & CONSOLIDATED** - Updated to reflect actual file
 structure
+
+Addendum: current code facts from source scan
+
+- NestJS `11.1.19`
+- Fastify `5.8.5`
+- Prisma `7.8.0`
+- 32 controller files
+- about 391 HTTP route handlers
+- 14 role values in the current enum
+- Dragonfly is the default cache provider; Redis is compatibility language where
+  the code uses Redis-compatible clients.
+
+Use the controller source and Swagger/OpenAPI output as the source of truth for
+route counts and exact endpoints.
 
 ---
 
 ## ðŸ“‹ Quick Reference
 
-| Category          | File                                                   | Description                                  |
-| ----------------- | ------------------------------------------------------ | -------------------------------------------- |
-| **â­ Start Here** | [SYSTEM_COMPLETE.md](./SYSTEM_COMPLETE.md)             | Complete system overview                     |
-| **API**           | [API_DOCUMENTATION.md](./API_DOCUMENTATION.md)         | 250+ endpoints reference                     |
-| **Developer**     | [DEVELOPER_GUIDE.md](./DEVELOPER_GUIDE.md)             | Quick start & best practices                 |
-| **Environment**   | [ENVIRONMENT_VARIABLES.md](./ENVIRONMENT_VARIABLES.md) | All environment variables                    |
-| **API Inventory** | [ACTUAL_API_INVENTORY.md](./ACTUAL_API_INVENTORY.md)   | Complete endpoint list (235+ endpoints)      |
-| **Deployment**    | [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md)           | CI/CD, server setup, **rollback & recovery** |
+| Category          | File                                                   | Description                                     |
+| ----------------- | ------------------------------------------------------ | ----------------------------------------------- |
+| **â­ Start Here** | [SYSTEM_COMPLETE.md](./SYSTEM_COMPLETE.md)             | Complete system overview                        |
+| **API**           | [API_DOCUMENTATION.md](./API_DOCUMENTATION.md)         | Source-derived route reference                  |
+| **Developer**     | [DEVELOPER_GUIDE.md](./DEVELOPER_GUIDE.md)             | Quick start & best practices                    |
+| **Environment**   | [ENVIRONMENT_VARIABLES.md](./ENVIRONMENT_VARIABLES.md) | All environment variables                       |
+| **API Inventory** | [ACTUAL_API_INVENTORY.md](./ACTUAL_API_INVENTORY.md)   | Source-derived endpoint inventory (~391 routes) |
+| **Deployment**    | [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md)           | CI/CD, server setup, **rollback & recovery**    |
 
 ---
 
@@ -28,12 +42,12 @@ structure
    - Quick start guide
 
 2. **[API_DOCUMENTATION.md](./API_DOCUMENTATION.md)**
-   - 250+ API endpoints
+   - Current API route inventory derived from controller source
    - Security status (100% secured)
    - RBAC analysis
 
 3. **[ROLE_PERMISSIONS_COMPLETE.md](./ROLE_PERMISSIONS_COMPLETE.md)**
-   - 12 roles, 140+ permissions
+   - 14 roles, 140+ permissions
    - Permission matrices
    - API verification by role
 
@@ -156,7 +170,7 @@ section below for implementation gaps
 
 - **[ACTUAL_API_INVENTORY.md](./ACTUAL_API_INVENTORY.md)** â­ **COMPLETE
   ENDPOINT LIST**
-  - All 235+ endpoints from actual code
+  - Current endpoint inventory from actual code
   - Controller-by-controller breakdown
   - Implementation status per endpoint
   - Postman collection status (âœ… Complete)
@@ -176,7 +190,8 @@ section below for implementation gaps
 - âœ… **Architecture Docs**: 7 files, all complete
 - âœ… **Feature Documentation**: **Consolidated into FEATURES.md** +
   LOCATION_QR_CHECKIN.md (standalone)
-- âœ… **Postman Collection**: **COMPLETE** - All 235+ endpoints included
+- âœ… **Postman Collection**: **COMPLETE** - Current source-derived endpoints
+  included
 - âœ… **API Documentation**: Basic structure exists, needs endpoint details
 
 #### Implementation Status
@@ -210,12 +225,13 @@ section below for implementation gaps
   encryption)
 - âœ… Event System (45+ event types, event patterns)
 - âœ… Queue Integration (queue patterns, implementation examples)
-- âœ… RBAC (12 roles, 25+ resources, controller protection)
+- âœ… RBAC (14 roles, 25+ resources, controller protection)
 - âœ… Ayurvedic Enhancements (appointment types, therapy management)
 
 #### 2. Postman Collection Status
 
-**Current Status**: âœ… **COMPLETE** - All 235+ endpoints added to collection
+**Current Status**: âœ… **COMPLETE** - Current source-derived endpoints added to
+collection
 
 **Note**: Postman collection has been updated with all endpoints from
 ACTUAL_API_INVENTORY.md. See [api/README.md](./api/README.md) for details.
@@ -231,7 +247,8 @@ details
 
 **Missing Information**:
 
-1. âŒ Detailed endpoint descriptions for all 250+ endpoints
+1. âŒ Detailed endpoint descriptions for the current source-derived endpoint
+   inventory
 2. âŒ Request/response examples for each endpoint
 3. âŒ Error codes and handling for each endpoint
 4. âŒ Authentication requirements per endpoint
@@ -290,7 +307,7 @@ details
 
 ##### Documentation
 
-- âœ… Postman collection updated with all 235+ endpoints
+- âœ… Postman collection updated with current source-derived endpoints
 - [ ] Expand API_DOCUMENTATION.md with detailed endpoint information
 - [ ] Add request/response examples to API documentation
 
@@ -344,16 +361,16 @@ details
 
 ### ðŸ“‹ Implementation Priority Matrix
 
-| Item                       | Priority | Effort | Impact   | Status                            |
-| -------------------------- | -------- | ------ | -------- | --------------------------------- |
-| Feature Documentation      | âœ… DONE | -      | -        | âœ… Consolidated into FEATURES.md |
-| Postman Collection Updates | âœ… DONE | -      | -        | âœ… Complete (235+ endpoints)     |
-| Bounce/Complaint Webhooks  | CRITICAL | Medium | Critical | âŒ Missing                        |
-| Suppression List Service   | CRITICAL | Medium | Critical | âŒ Missing                        |
-| Unsubscribe Links          | CRITICAL | Low    | Critical | âš ï¸ Partial                     |
-| API Documentation Details  | HIGH     | High   | Medium   | âš ï¸ Basic                       |
-| Configuration Sets         | MEDIUM   | Low    | Low      | âŒ Missing                        |
-| Enhanced Monitoring        | MEDIUM   | Medium | Medium   | âŒ Missing                        |
+| Item                       | Priority | Effort | Impact   | Status                                          |
+| -------------------------- | -------- | ------ | -------- | ----------------------------------------------- |
+| Feature Documentation      | âœ… DONE | -      | -        | âœ… Consolidated into FEATURES.md               |
+| Postman Collection Updates | âœ… DONE | -      | -        | âœ… Complete (current source-derived endpoints) |
+| Bounce/Complaint Webhooks  | CRITICAL | Medium | Critical | âŒ Missing                                      |
+| Suppression List Service   | CRITICAL | Medium | Critical | âŒ Missing                                      |
+| Unsubscribe Links          | CRITICAL | Low    | Critical | âš ï¸ Partial                                   |
+| API Documentation Details  | HIGH     | High   | Medium   | âš ï¸ Basic                                     |
+| Configuration Sets         | MEDIUM   | Low    | Low      | âŒ Missing                                      |
+| Enhanced Monitoring        | MEDIUM   | Medium | Medium   | âŒ Missing                                      |
 
 ---
 

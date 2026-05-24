@@ -51,11 +51,6 @@ import { ResilienceModule } from '@core/resilience/resilience.module';
   exports: [
     SuppressionListService,
     EmailUnsubscribeService,
-    SESWebhookService,
-    ZeptoMailWebhookService,
-    EmailRateMonitoringService,
-    ClinicEmailMapperService,
-    CommunicationResilienceService,
     ZeptoMailFileCacheService,
     ZeptoMailBatchService,
     ZeptoMailTemplateService,
