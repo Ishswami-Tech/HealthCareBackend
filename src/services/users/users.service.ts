@@ -830,7 +830,7 @@ export class UsersService {
         if (existingPhoneUser && existingPhoneUser.id !== id) {
           throw this.errors.validationError(
             'phone',
-            'Phone number already registered',
+            'Phone number already registered with another account. Please login with existing account or try a different number.',
             'UsersService.update'
           );
         }
