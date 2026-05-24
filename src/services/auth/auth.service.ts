@@ -18,6 +18,7 @@ import { JobType } from '@core/types/queue.types';
 import { JwtAuthService } from './core/jwt.service';
 import { SocialAuthService } from './core/social-auth.service';
 import { OtpService } from './core/otp.service';
+import { normalizeAuthPhoneNumber } from './core/phone-normalizer.util';
 import {
   LoginDto,
   RegisterDto,
@@ -1122,7 +1123,7 @@ export class AuthService {
         user = await this.databaseService.findUserByEmailSafe(requestDto.identifier);
       } else {
         // Find by phone
-        const normalizedPhoneIdentifier = this.normalizePhoneNumber(requestDto.identifier);
+        const normalizedPhoneIdentifier = normalizeAuthPhoneNumber(requestDto.identifier);
         const users = await this.databaseService.findUsersSafe(
           { phone: normalizedPhoneIdentifier },
           { take: 1 }
@@ -1146,7 +1147,7 @@ export class AuthService {
         : 'Future User';
       const normalizedIdentifier = isEmail
         ? requestDto.identifier.trim().toLowerCase()
-        : this.normalizePhoneNumber(requestDto.identifier);
+        : normalizeAuthPhoneNumber(requestDto.identifier);
       const existingOtp = await this.otpService.peekOtp(normalizedIdentifier);
       const otpCode = existingOtp || this.otpService.generateOtp();
 
@@ -1182,7 +1183,7 @@ export class AuthService {
         );
       } else {
         // ✅ DUAL-CHANNEL OTP: Send via WhatsApp AND email (if available) for better delivery
-        const phoneTarget = this.normalizePhoneNumber(user?.phone || requestDto.identifier);
+        const phoneTarget = normalizeAuthPhoneNumber(user?.phone || requestDto.identifier);
         if (!phoneTarget) {
           throw this.errors.validationError(
             'phone',
@@ -1341,7 +1342,7 @@ export class AuthService {
       if (isEmail) {
         user = await this.databaseService.findUserByEmailSafe(verifyDto.identifier);
       } else {
-        const normalizedPhoneIdentifier = this.normalizePhoneNumber(verifyDto.identifier);
+        const normalizedPhoneIdentifier = normalizeAuthPhoneNumber(verifyDto.identifier);
         // Find by phone
         // Uses findUsersSafe which returns an array, take the first one
         const users = await this.databaseService.findUsersSafe(
@@ -1367,7 +1368,7 @@ export class AuthService {
 
         // First verify OTP (before creating user)
         const verificationResult = await this.otpService.verifyOtp(
-          isEmail ? verifyDto.identifier : this.normalizePhoneNumber(verifyDto.identifier),
+          isEmail ? verifyDto.identifier : normalizeAuthPhoneNumber(verifyDto.identifier),
           verifyDto.otp
         );
 
@@ -1397,7 +1398,7 @@ export class AuthService {
 
         const normalizedIdentifier = isEmail
           ? verifyDto.identifier.trim().toLowerCase()
-          : this.normalizePhoneNumber(verifyDto.identifier);
+          : normalizeAuthPhoneNumber(verifyDto.identifier);
 
         user = await this.databaseService.createUserSafe({
           email: isEmail ? normalizedIdentifier : `${normalizedIdentifier}@temp.com`,
@@ -1528,14 +1529,14 @@ export class AuthService {
       // Verify OTP using dedicated service
       // This handles cache lookup and deletion
       const verificationResult = await this.otpService.verifyOtp(
-        isEmail ? verifyDto.identifier : this.normalizePhoneNumber(verifyDto.identifier),
+        isEmail ? verifyDto.identifier : normalizeAuthPhoneNumber(verifyDto.identifier),
         verifyDto.otp
       );
       this.logOtp('OTP verification attempted', {
         identifier: verifyDto.identifier,
         normalizedIdentifier: isEmail
           ? verifyDto.identifier.trim().toLowerCase()
-          : this.normalizePhoneNumber(verifyDto.identifier),
+          : normalizeAuthPhoneNumber(verifyDto.identifier),
         flow: isEmail ? 'email' : 'phone',
         otpLength: verifyDto.otp?.length,
         otp: this.maskOtp(verifyDto.otp),
@@ -1731,8 +1732,8 @@ export class AuthService {
       throw this.errors.userNotFound(userId, 'AuthService.verifyPhone');
     }
 
-    const normalizedInputPhone = this.normalizePhoneNumber(phone);
-    const expectedPhone = this.normalizePhoneNumber(user.phone || normalizedInputPhone);
+    const normalizedInputPhone = normalizeAuthPhoneNumber(phone);
+    const expectedPhone = normalizeAuthPhoneNumber(user.phone || normalizedInputPhone);
     if (expectedPhone !== normalizedInputPhone && user.phone) {
       throw this.errors.validationError(
         'phone',
@@ -1799,14 +1800,6 @@ export class AuthService {
       phoneVerified: true,
       phoneVerifiedAt: verifiedAt.toISOString(),
     };
-  }
-
-  private normalizePhoneNumber(phone: string): string {
-    const cleaned = phone.trim().replace(/[^\d+]/g, '');
-    if (!cleaned.startsWith('+')) {
-      return `+${cleaned}`;
-    }
-    return cleaned;
   }
 
   /**
