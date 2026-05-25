@@ -824,6 +824,11 @@ export class UsersService {
 
       // Update the user record using updateUserSafe or executeHealthcareWrite
       // Map UpdateUserProfileDto to UserUpdateInput, converting Gender enum to string and filtering undefined
+      // SECURITY: Strip phoneVerified/emailVerified from frontend input - these are only set by backend verification
+      delete (cleanedData as Record<string, unknown>)['phoneVerified'];
+      delete (cleanedData as Record<string, unknown>)['phoneVerifiedAt'];
+      delete (cleanedData as Record<string, unknown>)['emailVerified'];
+
       if (typeof cleanedData.phone === 'string' && cleanedData.phone.trim()) {
         const normalizedPhone = cleanedData.phone.trim();
         const existingPhoneUser = await this.databaseService.findUserByPhoneSafe(normalizedPhone);
@@ -836,23 +841,41 @@ export class UsersService {
         }
 
         cleanedData.phone = normalizedPhone as never;
-        (cleanedData as Record<string, unknown>)['phoneVerified'] = false;
-        (cleanedData as Record<string, unknown>)['phoneVerifiedAt'] = null;
+
+        // Only reset phone verification if the phone number actually changed
+        const currentPhone = (existingUser as Record<string, unknown>)['phone'] as string | null;
+        if (currentPhone !== normalizedPhone) {
+          (cleanedData as Record<string, unknown>)['phoneVerified'] = false;
+          (cleanedData as Record<string, unknown>)['phoneVerifiedAt'] = null;
+        }
+      }
+
+      // Build base update fields
+      const baseFields: Record<string, unknown> = {
+        firstName: cleanedData.firstName,
+        lastName: cleanedData.lastName,
+        phone: cleanedData.phone,
+        dateOfBirth: cleanedData.dateOfBirth,
+        gender: cleanedData.gender ? String(cleanedData.gender) : undefined,
+        address: cleanedData.address,
+        city: cleanedData.city,
+        state: cleanedData.state,
+        country: cleanedData.country,
+        profilePicture: cleanedData.profilePicture,
+      };
+
+      // Include phone verification fields when phone changes (phoneVerified reset)
+      const phoneVerifiedValue = (cleanedData as Record<string, unknown>)['phoneVerified'];
+      const phoneVerifiedAtValue = (cleanedData as Record<string, unknown>)['phoneVerifiedAt'];
+      if (phoneVerifiedValue !== undefined) {
+        baseFields['phoneVerified'] = phoneVerifiedValue;
+      }
+      if (phoneVerifiedAtValue !== undefined) {
+        baseFields['phoneVerifiedAt'] = phoneVerifiedAtValue;
       }
 
       const userUpdateData = Object.fromEntries(
-        Object.entries({
-          firstName: cleanedData.firstName,
-          lastName: cleanedData.lastName,
-          phone: cleanedData.phone,
-          dateOfBirth: cleanedData.dateOfBirth,
-          gender: cleanedData.gender ? String(cleanedData.gender) : undefined,
-          address: cleanedData.address,
-          city: cleanedData.city,
-          state: cleanedData.state,
-          country: cleanedData.country,
-          profilePicture: cleanedData.profilePicture,
-        }).filter(([_, v]) => v !== undefined)
+        Object.entries(baseFields).filter(([_, v]) => v !== undefined)
       ) as UserUpdateInput;
       await this.databaseService.updateUserSafe(id, userUpdateData);
       // Fetch updated user with relations
@@ -1954,7 +1977,17 @@ export class UsersService {
       const userRole = user.role as Role;
 
       // Validate profile completion using local method
-      const validation = this.validateProfileCompletion(profileData, userRole);
+      // Merge DB user data with provided profile data so that fields like phoneVerified
+      // (set by backend during OTP login) are included in validation
+      // SECURITY: Always use DB values for phoneVerified/emailVerified, not frontend input
+      const validationData = {
+        ...(user as unknown as Record<string, unknown>),
+        ...profileData,
+        // Override with DB truth for verification status
+        phoneVerified: (user as unknown as Record<string, unknown>)['phoneVerified'],
+        emailVerified: (user as unknown as Record<string, unknown>)['emailVerified'],
+      };
+      const validation = this.validateProfileCompletion(validationData, userRole);
 
       if (!validation.isComplete) {
         return {
@@ -2302,10 +2335,16 @@ export class UsersService {
       const userRole = user.role as Role;
 
       // Validate profile data (non-blocking validation)
-      const validation = this.validateProfileCompletion(
-        { ...(user as unknown as Record<string, unknown>), ...profileData },
-        userRole
-      );
+      // SECURITY: Use DB values for phoneVerified/emailVerified, not frontend input
+      // Frontend can send these fields (to pass DTO whitelist), but we don't trust them for validation
+      const validationData = {
+        ...(user as unknown as Record<string, unknown>),
+        ...profileData,
+        // Override with DB truth for verification status
+        phoneVerified: (user as unknown as Record<string, unknown>)['phoneVerified'],
+        emailVerified: (user as unknown as Record<string, unknown>)['emailVerified'],
+      };
+      const validation = this.validateProfileCompletion(validationData, userRole);
 
       // Update user with provided data
       const updatedUser = await this.update(
