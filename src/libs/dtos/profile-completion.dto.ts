@@ -88,13 +88,13 @@ export class CompleteProfileRequestDto {
   @IsOptional()
   gender?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Address',
     example: '123 Main St, City, State 12345',
   })
   @IsString()
-  @IsNotEmpty()
-  address!: string;
+  @IsOptional()
+  address?: string;
 
   @ApiPropertyOptional({
     description: 'Emergency contact information',
