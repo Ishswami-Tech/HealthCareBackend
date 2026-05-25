@@ -71,6 +71,22 @@ export class CompleteProfileRequestDto {
   @IsNotEmpty()
   phone!: string;
 
+  @ApiPropertyOptional({
+    description: 'Whether the phone number has been verified',
+    example: true,
+  })
+  @IsBoolean()
+  @IsOptional()
+  phoneVerified?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Whether the email has been verified',
+    example: true,
+  })
+  @IsBoolean()
+  @IsOptional()
+  emailVerified?: boolean;
+
   @ApiProperty({
     description: 'Date of birth',
     example: '1990-01-01',
