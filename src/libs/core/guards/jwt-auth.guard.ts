@@ -332,21 +332,23 @@ export class JwtAuthGuard implements CanActivate {
       const userId = payload.sub || payload['id'];
 
       // Reject deactivated users - invalidate session on next request
+      // Also check profile completion using DATABASE as source of truth
       if (this.databaseService && typeof userId === 'string' && userId) {
         const user = await this.databaseService.findUserByIdSafe(userId);
         if (user && typeof user === 'object' && 'isActive' in user && user.isActive === false) {
           throw new UnauthorizedException('Account has been deactivated');
         }
 
-        // Staff roles are pre-validated by clinic admin — skip profile completion enforcement
-        const userRole =
-          user && typeof user === 'object' && 'role' in user ? String(user.role) : '';
+        // Cast user record for profile completion check
+        const dbUser = user as Record<string, unknown> | null;
+        const profileCompleteValue = dbUser?.['isProfileComplete'];
+        const isProfileComplete = profileCompleteValue === true;
+        const roleValue = dbUser?.['role'];
+        const userRole = typeof roleValue === 'string' ? roleValue : '';
         const normalizedUserRole = userRole.toUpperCase();
         if (
-          user &&
-          typeof user === 'object' &&
-          'isProfileComplete' in user &&
-          user.isProfileComplete === false &&
+          dbUser &&
+          !isProfileComplete &&
           !STAFF_ROLES.has(normalizedUserRole) &&
           PROFILE_COMPLETION_ENFORCED_ROLES.has(normalizedUserRole) &&
           this.shouldEnforceProfileCompletion(path)
@@ -362,6 +364,7 @@ export class JwtAuthGuard implements CanActivate {
 
       // Map JWT payload to request.user format expected by guards
       // RbacGuard expects request.user.id, but JWT uses 'sub' for user ID
+      // Include isProfileComplete from database (source of truth) to ensure guards see current status
       request.user = {
         ...payload,
         id: userId, // Map 'sub' to 'id' for compatibility

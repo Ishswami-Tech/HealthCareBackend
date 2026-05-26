@@ -198,7 +198,11 @@ export class ProfileCompletionController {
       return {
         success: true,
         message: 'Profile completed successfully',
-        ...(result.user && { user: result.user }),
+        user: result.user as unknown as {
+          isProfileComplete?: boolean;
+          profileComplete?: boolean;
+          [key: string]: unknown;
+        },
       };
     } catch (error) {
       await this.logging.log(
@@ -265,7 +269,11 @@ export class ProfileCompletionController {
       return {
         success: true,
         message: 'Profile updated successfully',
-        ...(updatedUser && { user: updatedUser }),
+        user: updatedUser as unknown as {
+          isProfileComplete?: boolean;
+          profileComplete?: boolean;
+          [key: string]: unknown;
+        },
       };
     } catch (error) {
       await this.logging.log(

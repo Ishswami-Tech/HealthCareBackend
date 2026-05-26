@@ -206,6 +206,8 @@ export class UsersService {
               createdAt: user.createdAt,
               updatedAt: user.updatedAt,
               phone: user.phone ?? '',
+              isProfileComplete: user.isProfileComplete ?? false,
+              profileComplete: user.isProfileComplete ?? false,
               ...(typeof user.phoneVerified === 'boolean'
                 ? { phoneVerified: user.phoneVerified }
                 : {}),
@@ -258,6 +260,8 @@ export class UsersService {
           createdAt: result.createdAt,
           updatedAt: result.updatedAt,
           phone: result.phone ?? '',
+          isProfileComplete: result.isProfileComplete ?? false,
+          profileComplete: result.isProfileComplete ?? false,
           ...(typeof result.phoneVerified === 'boolean'
             ? { phoneVerified: result.phoneVerified }
             : {}),
@@ -362,6 +366,7 @@ export class UsersService {
       phone?: string | null;
       phoneVerified?: boolean | null;
       phoneVerifiedAt?: Date | null;
+      isProfileComplete?: boolean | null;
       password?: string;
     };
     const { password: _password, ...result } = userRecord;
@@ -381,6 +386,8 @@ export class UsersService {
       phone: result.phone ?? '',
       ...(typeof result.phoneVerified === 'boolean' ? { phoneVerified: result.phoneVerified } : {}),
       ...(result.phoneVerifiedAt ? { phoneVerifiedAt: result.phoneVerifiedAt } : {}),
+      isProfileComplete: result.isProfileComplete ?? false,
+      profileComplete: result.isProfileComplete ?? false,
     };
     return userResponse;
   }
@@ -632,6 +639,7 @@ export class UsersService {
         phoneVerified?: boolean | null;
         phoneVerifiedAt?: Date | null;
         password?: string;
+        isProfileComplete?: boolean | null;
       };
 
       const userResponse: UserResponseDto = {
@@ -649,6 +657,8 @@ export class UsersService {
           ? { phoneVerified: userRecord.phoneVerified }
           : {}),
         ...(userRecord.phoneVerifiedAt ? { phoneVerifiedAt: userRecord.phoneVerifiedAt } : {}),
+        isProfileComplete: userRecord.isProfileComplete ?? false,
+        profileComplete: userRecord.isProfileComplete ?? false,
       };
 
       if (userRecord.dateOfBirth) {
@@ -940,6 +950,7 @@ export class UsersService {
         phoneVerified?: boolean | null;
         phoneVerifiedAt?: Date | null;
         password?: string;
+        isProfileComplete?: boolean | null;
       };
       const { password: _password, ...result } = userRecord;
       const userResponse: UserResponseDto = {
@@ -960,6 +971,8 @@ export class UsersService {
           ? { phoneVerified: result.phoneVerified }
           : {}),
         ...(result.phoneVerifiedAt ? { phoneVerifiedAt: result.phoneVerifiedAt } : {}),
+        isProfileComplete: result.isProfileComplete ?? false,
+        profileComplete: result.isProfileComplete ?? false,
       };
       return userResponse;
     } catch (error: unknown) {
@@ -1462,6 +1475,7 @@ export class UsersService {
       phoneVerified?: boolean | null;
       phoneVerifiedAt?: Date | null;
       password?: string;
+      isProfileComplete?: boolean | null;
     };
     const { password: _password, ...result } = userRecord;
     const userResponse: UserResponseDto = {
@@ -1478,6 +1492,8 @@ export class UsersService {
         dateOfBirth: this.formatDateToString(result.dateOfBirth),
       }),
       phone: result.phone ?? '',
+      isProfileComplete: result.isProfileComplete ?? false,
+      profileComplete: result.isProfileComplete ?? false,
     };
     return userResponse;
   }
@@ -1604,7 +1620,10 @@ export class UsersService {
         ]);
 
         const data = users.map(user => {
-          const { password: _password, ...rest } = user as User & { password?: string };
+          const { password: _password, ...rest } = user as User & {
+            password?: string;
+            isProfileComplete?: boolean | null;
+          };
           const userResponse: UserResponseDto = {
             id: rest.id,
             email: rest.email,
@@ -1616,6 +1635,8 @@ export class UsersService {
             createdAt: rest.createdAt,
             updatedAt: rest.updatedAt,
             phone: rest.phone ?? '',
+            isProfileComplete: rest.isProfileComplete ?? false,
+            profileComplete: rest.isProfileComplete ?? false,
           };
           if (rest.dateOfBirth) {
             userResponse.dateOfBirth = this.formatDateToString(rest.dateOfBirth);
