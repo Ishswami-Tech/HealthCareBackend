@@ -7,6 +7,7 @@ import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { ProviderFactory } from '@communication/adapters/factories/provider.factory';
 import { CommunicationConfigService } from '@communication/config/communication-config.service';
+import { DatabaseService } from '@infrastructure/database';
 import { ClinicTemplateService } from '@communication/services/clinic-template.service';
 import {
   formatOTPTemplateParams,
@@ -35,7 +36,9 @@ export class WhatsAppService {
     @Inject(forwardRef(() => CommunicationConfigService))
     private readonly communicationConfigService: CommunicationConfigService,
     @Inject(forwardRef(() => ClinicTemplateService))
-    private readonly clinicTemplateService: ClinicTemplateService
+    private readonly clinicTemplateService: ClinicTemplateService,
+    @Inject(forwardRef(() => DatabaseService))
+    private readonly databaseService: DatabaseService
   ) {}
   /**
    * Creates an instance of WhatsAppService
@@ -88,9 +91,23 @@ export class WhatsAppService {
     let templateId = this.whatsAppConfig.otpTemplateId;
 
     if (clinicId) {
-      const clinicData = await this.clinicTemplateService.getClinicTemplateData(clinicId);
+      // Resolve clinicId to UUID if it's a clinic code (e.g., "CL0002")
+      let resolvedClinicId = clinicId;
+      try {
+        const { resolveClinicUUID } = await import('@utils/clinic.utils');
+        resolvedClinicId = await resolveClinicUUID(this.databaseService, clinicId);
+      } catch (_error) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Failed to resolve clinic code to UUID in WhatsApp service: ${clinicId}. Using original value.`,
+          'WhatsAppService'
+        );
+      }
+
+      const clinicData = await this.clinicTemplateService.getClinicTemplateData(resolvedClinicId);
       if (clinicData) {
-        clinicName = clinicData.whatsappName || clinicData.clinicName;
+        clinicName = clinicData.whatsappName || clinicData.clinicName || appName;
         templateId = clinicData.templateIds.otp || this.whatsAppConfig.otpTemplateId;
       }
     }

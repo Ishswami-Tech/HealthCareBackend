@@ -384,6 +384,13 @@ export class ClinicIsolationService implements OnModuleInit, OnModuleDestroy {
       // Check if clinic exists and is active
       const clinicResult = await this.getClinicContext(clinicId);
       if (!clinicResult.success) {
+        void this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.WARN,
+          `validateClinicAccess: Clinic not found: ${clinicId}`,
+          this.serviceName,
+          { userId, clinicId }
+        );
         return {
           success: false,
           ...(clinicResult.error && { error: clinicResult.error }),
@@ -395,6 +402,13 @@ export class ClinicIsolationService implements OnModuleInit, OnModuleDestroy {
       const userClinics = this.userClinicCache.get(userId);
       if (!userClinics || !userClinics.includes(clinicId)) {
         // Load from database if not in cache
+        void this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.INFO,
+          `validateClinicAccess: User ${userId} accessing clinic ${clinicId} - checking database`,
+          this.serviceName
+        );
+
         // Use PrismaService directly
         type UserDelegate = {
           findFirst: <T>(args: T) => Promise<{
@@ -447,12 +461,27 @@ export class ClinicIsolationService implements OnModuleInit, OnModuleDestroy {
 
         // Access is granted if EITHER direct association, valid UserRole, or ClinicAdmin exists.
         if (!userClinicAccess && !userRoleAssignment && !clinicAdminAssignment) {
+          void this.loggingService.log(
+            LogType.SECURITY,
+            LogLevel.WARN,
+            `validateClinicAccess: User ${userId} denied access to clinic ${clinicId}. ` +
+              `hasDirectAccess: ${!!userClinicAccess}, hasUserRole: ${!!userRoleAssignment}, isClinicAdmin: ${!!clinicAdminAssignment}`,
+            this.serviceName
+          );
           return {
             success: false,
             error: `User ${userId} does not have access to clinic ${clinicId}`,
             ...(clinicResult.data && { clinicContext: clinicResult.data }),
           };
         }
+
+        void this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.INFO,
+          `validateClinicAccess: User ${userId} granted access to clinic ${clinicId}. ` +
+            `hasDirectAccess: ${!!userClinicAccess}, hasUserRole: ${!!userRoleAssignment}, isClinicAdmin: ${!!clinicAdminAssignment}`,
+          this.serviceName
+        );
 
         // Update cache
         const currentClinics = this.userClinicCache.get(userId) || [];

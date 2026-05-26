@@ -1789,6 +1789,7 @@ export class CoreAppointmentService {
 
           if (_context?.appointmentType === 'VIDEO_CALL' && videoCallWindow) {
             if (!this.isSlotWithinWindow(time, slotDuration, videoCallWindow)) {
+              // Skip slots outside video call window
               continue;
             }
           }
@@ -1890,6 +1891,24 @@ export class CoreAppointmentService {
         ...Array.from(slotsByTime.values()).sort((a, b) => a.time.localeCompare(b.time))
       );
 
+      // Log availability details for debugging video slots issue
+      void this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        `[getDoctorAvailability] Video slots analysis for doctor ${doctorId} on ${date}`,
+        'CoreAppointmentService.getDoctorAvailability',
+        {
+          appointmentType: _context?.appointmentType,
+          slotDuration,
+          videoCallWindow,
+          workingSessions: validSessions.map(w => ({ start: w.start, end: w.end })),
+          totalSlotsGenerated: slotsByTime.size,
+          availableSlots: timeSlots.filter(slot => slot.available).length,
+          bookedSlots: timeSlots.filter(slot => !slot.available).length,
+          bookedAppointmentCount: appointments.length,
+        }
+      );
+
       return {
         doctorId,
         date,
@@ -1898,6 +1917,8 @@ export class CoreAppointmentService {
         bookedSlots: timeSlots.filter(slot => !slot.available).map(slot => slot.time),
         workingHours,
         workingSessions: validSessions.map(({ start, end }) => ({ start, end })),
+        videoCallWindow,
+        slotDuration,
         restrictions: {
           clinicPaused,
           doctorPaused,
