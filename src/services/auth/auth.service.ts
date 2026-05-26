@@ -1420,12 +1420,14 @@ export class AuthService {
         await this.ensurePatientRecordForAuth(user.id, clinicUUID, 'verifyOtp');
 
         // Emit registration event
+        const loginMethod = isEmail ? 'email_otp' : 'phone_otp';
+
         await this.eventService.emit('user.registered', {
           userId: user.id,
           identifier: normalizedIdentifier,
           role: user.role,
           clinicId: clinicUUID,
-          registrationMethod: 'otp',
+          registrationMethod: loginMethod,
         });
 
         await this.logging.log(
@@ -1494,7 +1496,7 @@ export class AuthService {
           appName,
           isFirstLogin: true,
           metadata: {
-            loginMethod: 'otp',
+            loginMethod,
             isNewUser: true,
             userAgent: sessionMetadata?.userAgent,
             ipAddress: sessionMetadata?.ipAddress,
@@ -1521,7 +1523,7 @@ export class AuthService {
             clinicId: validatedClinicUUID || undefined,
             profileComplete: false,
             requiresProfileCompletion: true,
-            loginMethod: 'otp',
+            loginMethod,
           }),
         };
       }
@@ -1659,6 +1661,8 @@ export class AuthService {
       // Emit OTP login event
       const appName = this.configService.getEnv('APP_NAME') || 'Healthcare App';
       const clinicName = await this.resolveClinicDisplayName(clinicUUID);
+      const loginMethod = isEmail ? 'email_otp' : 'phone_otp';
+
       await this.eventService.emit('user.otp_logged_in', {
         userId: verifiedUser.id,
         email: verifiedUser.email,
@@ -1669,7 +1673,7 @@ export class AuthService {
         appName,
         isFirstLogin,
         metadata: {
-          loginMethod: 'otp',
+          loginMethod,
           userAgent: sessionMetadata?.userAgent,
           ipAddress: sessionMetadata?.ipAddress,
         },
@@ -1700,7 +1704,7 @@ export class AuthService {
           clinicId: clinicUUID || undefined,
           profileComplete: profileStatus.isComplete,
           requiresProfileCompletion: !profileStatus.isComplete,
-          loginMethod: 'otp',
+          loginMethod,
         }),
       };
     } catch (_error) {
@@ -1911,9 +1915,23 @@ export class AuthService {
       clinicName?: string | undefined;
       profileComplete: boolean;
       requiresProfileCompletion: boolean;
-      loginMethod?: 'password' | 'otp' | 'google_oauth' | 'facebook_oauth' | 'apple_oauth';
+      loginMethod?:
+        | 'password'
+        | 'phone_otp'
+        | 'email_otp'
+        | 'google_oauth'
+        | 'facebook_oauth'
+        | 'apple_oauth';
     }
   ): UserProfile {
+    // Email OTP login: email is verified since OTP was sent to and verified at that email
+    // Google OAuth: email is verified by Google
+    // Phone OTP login: phone is verified but email is NOT automatically verified
+    const emailVerified =
+      options.loginMethod === 'email_otp' || options.loginMethod === 'google_oauth'
+        ? true
+        : undefined;
+
     return {
       id: user.id,
       email: user.email,
@@ -1932,6 +1950,7 @@ export class AuthService {
                 : new Date(user.phoneVerifiedAt).toISOString(),
           }
         : {}),
+      ...(emailVerified !== undefined ? { emailVerified } : {}),
       ...(options.clinicId ? { clinicId: options.clinicId } : {}),
       ...(options.clinicName ? { clinicName: options.clinicName } : {}),
       ...(user.profilePicture ? { profilePicture: user.profilePicture } : {}),
@@ -2081,9 +2100,13 @@ export class AuthService {
   }
 
   private calculateProfileCompletionFromUser(user: Record<string, unknown>, role: Role): boolean {
+    if (role !== Role.PATIENT) {
+      return true;
+    }
+
     const requiredFields = this.getRequiredProfileFieldsForRole(role);
     if (requiredFields.length === 0) {
-      return false;
+      return true;
     }
 
     const hasRequiredFields = requiredFields.every(field =>
@@ -2096,11 +2119,12 @@ export class AuthService {
   }
 
   private getRequiredProfileFieldsForRole(role: Role): string[] {
+    if (role !== Role.PATIENT) {
+      return [];
+    }
+
     switch (role) {
       case Role.PATIENT:
-        return ['firstName', 'lastName', 'phone'];
-      case Role.DOCTOR:
-      case Role.ASSISTANT_DOCTOR:
         return ['firstName', 'lastName', 'phone'];
       default:
         return ['firstName', 'lastName', 'phone'];
