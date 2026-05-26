@@ -59,62 +59,55 @@ export class UsersService {
       conditionalFields: {},
     },
     DOCTOR: {
-      requiredFields: ['firstName', 'lastName', 'phone'],
+      requiredFields: [],
       conditionalFields: {},
     },
     ASSISTANT_DOCTOR: {
-      requiredFields: ['firstName', 'lastName', 'phone'],
+      requiredFields: [],
       conditionalFields: {},
     },
     RECEPTIONIST: {
-      requiredFields: ['firstName', 'lastName', 'phone'],
+      requiredFields: [],
       conditionalFields: {},
     },
     PHARMACIST: {
-      requiredFields: ['firstName', 'lastName', 'phone'],
+      requiredFields: [],
       conditionalFields: {},
     },
     THERAPIST: {
-      requiredFields: ['firstName', 'lastName', 'phone'],
+      requiredFields: [],
       conditionalFields: {},
     },
     LAB_TECHNICIAN: {
-      requiredFields: ['firstName', 'lastName', 'phone'],
+      requiredFields: [],
       conditionalFields: {},
     },
     FINANCE_BILLING: {
-      requiredFields: ['firstName', 'lastName', 'phone'],
+      requiredFields: [],
       conditionalFields: {},
     },
     SUPPORT_STAFF: {
-      requiredFields: ['firstName', 'lastName', 'phone'],
+      requiredFields: [],
       conditionalFields: {},
     },
     NURSE: {
-      requiredFields: ['firstName', 'lastName', 'phone'],
+      requiredFields: [],
       conditionalFields: {},
     },
     COUNSELOR: {
-      requiredFields: ['firstName', 'lastName', 'phone'],
+      requiredFields: [],
       conditionalFields: {},
     },
     CLINIC_LOCATION_HEAD: {
-      requiredFields: ['firstName', 'lastName', 'phone'],
+      requiredFields: [],
       conditionalFields: {},
     },
     CLINIC_ADMIN: {
-      requiredFields: [
-        'firstName',
-        'lastName',
-        'phone',
-        // Note: clinicName and clinicAddress are NOT required here
-        // Clinic is already configured in the Clinic table and associated with the user via clinicId
-        // These should only be managed in clinic settings, not during user profile completion
-      ],
+      requiredFields: [],
       conditionalFields: {},
     },
     SUPER_ADMIN: {
-      requiredFields: ['firstName', 'lastName', 'phone'],
+      requiredFields: [],
       conditionalFields: {},
     },
   };
@@ -2408,6 +2401,14 @@ export class UsersService {
     profile: Record<string, unknown>,
     role: Role
   ): ProfileCompletionValidationResult {
+    if (role !== Role.PATIENT) {
+      return {
+        isComplete: true,
+        missingFields: [],
+        errors: [],
+      };
+    }
+
     const requirements = this.ROLE_REQUIREMENTS[role];
 
     if (!requirements) {
@@ -2589,6 +2590,10 @@ export class UsersService {
    * Get required fields for a specific role
    */
   public getRequiredFieldsForRole(role: Role): string[] {
+    if (role !== Role.PATIENT) {
+      return [];
+    }
+
     const requirements = this.ROLE_REQUIREMENTS[role];
     return requirements?.requiredFields || [];
   }
@@ -2606,6 +2611,10 @@ export class UsersService {
    * Get profile completion percentage
    */
   public getCompletionPercentage(profile: Record<string, unknown>, role: Role): number {
+    if (role !== Role.PATIENT) {
+      return 100;
+    }
+
     const requirements = this.ROLE_REQUIREMENTS[role];
 
     if (!requirements || requirements.requiredFields.length === 0) {

@@ -713,6 +713,18 @@ export class ClinicService {
         { clinicId: clinic.id }
       );
 
+      // Invalidate clinic cache to ensure fresh data on next fetch
+      if (this.cacheService) {
+        const cacheKeys = [
+          `clinic:${clinic.id}:active:anon:no-ctx`,
+          `clinic:${clinic.id}:active:anon:anon`,
+          `clinic:${clinic.id}:all:anon:no-ctx`,
+          `clinic:${clinic.id}:all:anon:anon`,
+          `clinic:my:${clinic.id}`,
+        ];
+        await Promise.all(cacheKeys.map(key => this.cacheService!.delete(key)));
+      }
+
       // Emit clinic lifecycle event
       void this.eventService.emitEnterprise('clinic.updated', {
         eventId: `clinic-updated-${clinic.id}`,

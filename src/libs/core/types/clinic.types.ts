@@ -608,6 +608,8 @@ export interface ClinicResponseDto {
     readonly createdAt: Date;
     readonly updatedAt: Date;
   }>;
+  /** Optional clinic settings including appointment settings with videoCallWindow */
+  readonly settings?: ClinicSettings;
 }
 
 /**

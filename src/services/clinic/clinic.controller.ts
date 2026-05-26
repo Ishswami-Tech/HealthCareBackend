@@ -982,7 +982,7 @@ export class ClinicController {
       const clinicName = 'name' in clinic && typeof clinic.name === 'string' ? clinic.name : '';
       const clinicSettings =
         'settings' in clinic && typeof clinic.settings === 'object' && clinic.settings !== null
-          ? (clinic.settings as Record<string, unknown>)
+          ? (clinic.settings as unknown as Record<string, unknown>)
           : {};
 
       const result = {
