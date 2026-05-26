@@ -69,12 +69,22 @@ export class ClinicTemplateService {
       }
 
       // Fetch clinic data from database
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        clinicId
+      );
+      const whereClause = isUuid
+        ? { id: clinicId }
+        : {
+            OR: [{ id: clinicId }, { clinicId: clinicId }, { subdomain: clinicId }] as Array<
+              Record<string, unknown>
+            >,
+          };
       const clinic = await this.databaseService.executeHealthcareRead(async prisma => {
         const clinicClient = prisma as unknown as {
           clinic: {
-            findUnique: (args: {
-              where: { id: string };
-              select: { id: true; name: true; logo: true; phone: true; whatsappName: true };
+            findFirst: (args: {
+              where: Record<string, unknown>;
+              select: Record<string, boolean>;
             }) => Promise<{
               id: string;
               name: string;
@@ -84,8 +94,8 @@ export class ClinicTemplateService {
             } | null>;
           };
         };
-        return await clinicClient.clinic.findUnique({
-          where: { id: clinicId },
+        return await clinicClient.clinic.findFirst({
+          where: whereClause,
           select: {
             id: true,
             name: true,
