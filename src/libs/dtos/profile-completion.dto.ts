@@ -223,18 +223,24 @@ export class ProfileCompletionDto {
   message!: string;
 
   @ApiPropertyOptional({
-    description: 'Updated user data',
+    description: 'Updated user data with profile completion status',
     example: {
       id: 'user-123',
       email: 'user@example.com',
       firstName: 'John',
       lastName: 'Doe',
       role: 'PATIENT',
+      isProfileComplete: true,
+      profileComplete: true,
     },
   })
   @IsObject()
   @IsOptional()
-  user?: object;
+  user?: {
+    isProfileComplete?: boolean;
+    profileComplete?: boolean;
+    [key: string]: unknown;
+  };
 }
 
 /**

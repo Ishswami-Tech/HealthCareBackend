@@ -41,13 +41,30 @@ async function findClinicById(
   // Use DatabaseService for proper connection pooling, caching, and optimization
   return (await databaseService.executeHealthcareRead(async client => {
     const clinic = client['clinic'] as {
-      findUnique: (args: {
-        where: { clinicId: string } | { id: string };
-        select: { id: boolean; clinicId: boolean; name: boolean; isActive: boolean };
+      findFirst: (args: {
+        where: Record<string, unknown>;
+        select: Record<string, boolean>;
       }) => Promise<ClinicData | null>;
     };
-    return (await clinic.findUnique({
-      where: where as { clinicId: string } | { id: string },
+
+    // Case-insensitive lookup for clinicId (handles CL0002, cl0002, CLINIC001, etc.)
+    if ('clinicId' in where) {
+      const searchTerm = where.clinicId;
+      return (await clinic.findFirst({
+        where: {
+          OR: [
+            { clinicId: searchTerm },
+            { clinicId: searchTerm.toLowerCase() },
+            { clinicId: searchTerm.toUpperCase() },
+          ],
+        },
+        select: { id: true, clinicId: true, name: true, isActive: true },
+      })) as unknown as ClinicData | null;
+    }
+
+    // UUID lookup (case-insensitive by nature)
+    return (await clinic.findFirst({
+      where: { id: where.id },
       select: { id: true, clinicId: true, name: true, isActive: true },
     })) as unknown as ClinicData | null;
   })) as unknown as ClinicData | null;
@@ -57,11 +74,14 @@ async function findClinicById(
  * Utility to resolve a clinic identifier (UUID or code) to the UUID
  *
  * @param databaseService - DatabaseService instance (from @infrastructure/database)
- * @param clinicIdOrUUID - Clinic identifier (either clinicId or UUID)
+ * @param clinicIdOrUUID - Clinic identifier (either clinicId code like "CL0002" or UUID)
  * @returns Promise resolving to the clinic's UUID
  *
- * @description Resolves a clinic identifier to its UUID by first trying to find
- * by clinicId, then by UUID. Validates that the clinic is active before returning.
+ * @description Resolves a clinic identifier to its UUID by trying multiple lookup strategies:
+ * 1. If valid UUID format: look up by UUID first
+ * 2. Look up by clinicId field (e.g., "CL0002") with case-insensitive search
+ * 3. If still not found and it's a UUID-like string, throw not found
+ * Validates that the clinic is active before returning.
  * Uses DatabaseService for proper connection pooling, caching, and query optimization.
  *
  * @example
@@ -70,8 +90,8 @@ async function findClinicById(
  * constructor(private readonly databaseService: DatabaseService) {}
  *
  * // Usage:
- * const clinicUUID = await resolveClinicUUID(this.databaseService, 'clinic-123');
- * // Returns: 'uuid-of-clinic-123'
+ * const clinicUUID = await resolveClinicUUID(this.databaseService, 'cl0002');
+ * // Returns: 'uuid-of-clinic' (looks up by clinicId field)
  *
  * const clinicUUID2 = await resolveClinicUUID(this.databaseService, 'existing-uuid');
  * // Returns: 'existing-uuid' if clinic exists and is active
@@ -92,9 +112,31 @@ export async function resolveClinicUUID(
     );
   }
 
+  const isUuidFormat = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    clinicIdOrUUID
+  );
+
   try {
-    // First try to find by clinicId (the unique identifier)
-    let clinic: ClinicData | null = await findClinicById(databaseService, {
+    let clinic: ClinicData | null = null;
+
+    // Strategy 1: If it looks like a UUID, try UUID lookup first
+    if (isUuidFormat) {
+      clinic = await findClinicById(databaseService, { id: clinicIdOrUUID });
+      if (clinic) {
+        if (!clinic.isActive) {
+          throw new HealthcareError(
+            ErrorCode.CLINIC_ACCESS_DENIED,
+            `Clinic ${clinic.name} (${clinic.clinicId}) is inactive`,
+            HttpStatus.FORBIDDEN,
+            { clinicId: clinic.clinicId, clinicName: clinic.name }
+          );
+        }
+        return clinic.id;
+      }
+    }
+
+    // Strategy 2: Try looking up by clinicId field (e.g., "CL0002", "cl0002")
+    clinic = await findClinicById(databaseService, {
       clinicId: clinicIdOrUUID,
     });
 
@@ -110,30 +152,18 @@ export async function resolveClinicUUID(
       return clinic.id;
     }
 
-    // Then try to find by UUID, but only if the string is a valid UUID
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-      clinicIdOrUUID
-    );
-
-    if (isUuid) {
-      clinic = await findClinicById(databaseService, { id: clinicIdOrUUID });
-    } else {
-      clinic = null;
+    // Strategy 3: If we already tried UUID and didn't find it, throw not found
+    // Otherwise, this string isn't a UUID and wasn't found by clinicId, so not found
+    if (isUuidFormat) {
+      throw new HealthcareError(
+        ErrorCode.CLINIC_NOT_FOUND,
+        `Clinic not found with UUID: ${clinicIdOrUUID}. Please check if the clinic exists and is active.`,
+        HttpStatus.NOT_FOUND,
+        { clinicIdOrUUID }
+      );
     }
 
-    if (clinic) {
-      if (!clinic.isActive) {
-        throw new HealthcareError(
-          ErrorCode.CLINIC_ACCESS_DENIED,
-          `Clinic ${clinic.name} (${clinic.clinicId}) is inactive`,
-          HttpStatus.FORBIDDEN,
-          { clinicId: clinic.clinicId, clinicName: clinic.name }
-        );
-      }
-      return clinic.id;
-    }
-
-    // If still not found, provide detailed error
+    // Not found by clinicId field either
     throw new HealthcareError(
       ErrorCode.CLINIC_NOT_FOUND,
       `Clinic not found with identifier: ${clinicIdOrUUID}. Please check if the clinic exists and is active.`,
