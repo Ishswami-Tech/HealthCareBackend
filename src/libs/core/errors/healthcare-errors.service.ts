@@ -90,8 +90,14 @@ export class HealthcareErrorsService {
     return this.createError(ErrorCode.AUTH_ACCOUNT_LOCKED, HttpStatus.FORBIDDEN, context);
   }
 
-  otpInvalid(context?: string): HealthcareError {
-    return this.createError(ErrorCode.AUTH_OTP_INVALID, HttpStatus.BAD_REQUEST, context);
+  otpInvalid(context?: string, message?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.AUTH_OTP_INVALID,
+      HttpStatus.BAD_REQUEST,
+      context,
+      undefined,
+      message
+    );
   }
 
   otpSendFailed(message?: string, context?: string): HealthcareError {

@@ -3,6 +3,7 @@ import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { PrismaDelegateArgs, PrismaTransactionClientWithDelegates } from '@core/types/prisma.types';
+import { LogType, LogLevel } from '@core/types/logging.types';
 
 @Injectable()
 export class DoctorsService {
@@ -136,6 +137,15 @@ export class DoctorsService {
     const clinicSegment = filters?.clinicId?.trim() || 'global';
     const specializationSegment = filters?.specialization?.trim() || 'all';
     const locationSegment = filters?.locationId?.trim() || 'all';
+
+    // DEBUG: Log the incoming filters
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.DEBUG,
+      `getAllDoctors called with filters: ${JSON.stringify({ filters, clinicSegment, specializationSegment, locationSegment })}`,
+      'DoctorsService'
+    );
+
     const cacheKey = this.cacheService
       .getKeyFactory()
       .fromTemplate('clinic:{clinicId}:doctors:spec:{specialization}:loc:{locationId}', {
@@ -159,6 +169,14 @@ export class DoctorsService {
               specialization: { contains: filters.specialization, mode: 'insensitive' },
             };
           }
+
+          // DEBUG: Log the where clause before query
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.DEBUG,
+            `getAllDoctors query - filters: ${JSON.stringify(filters)}, where clause: ${JSON.stringify(where)}`,
+            'DoctorsService'
+          );
 
           if (filters?.clinicId || filters?.locationId) {
             if (!where['doctor']) {
@@ -200,6 +218,14 @@ export class DoctorsService {
           `clinic:${clinicSegment}:doctors:spec:${specializationSegment}:loc:${locationSegment}`,
         ],
       }
+    );
+
+    // DEBUG: Log the final result
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.DEBUG,
+      `getAllDoctors final result - count: ${result?.length || 0}`,
+      'DoctorsService'
     );
 
     if (Array.isArray(result) && result.length === 0) {

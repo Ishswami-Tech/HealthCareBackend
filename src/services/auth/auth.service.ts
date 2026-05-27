@@ -1326,296 +1326,176 @@ export class AuthService {
    * Verify OTP
    */
   /**
-   * Verify OTP
+   * Verify OTP - Single entry point for both login and registration
+   *
+   * Flow:
+   * 1. ALWAYS verify OTP first (before any user operations)
+   * 2. Find user by identifier (phone or email)
+   * 3. If user exists -> LOGIN (existing user)
+   * 4. If user doesn't exist -> REGISTER (new user)
+   * 5. If authenticated user needs phone verification -> use verifyPhone instead
    */
   async verifyOtp(
     verifyDto: VerifyOtpRequestDto,
     sessionMetadata?: { userAgent?: string; ipAddress?: string },
     clinicIdFromHeader?: string
   ): Promise<AuthResponse> {
-    try {
-      // Determine if identifier is email or phone
-      // Simple check: if it contains '@', assume email
-      const isEmail = verifyDto.identifier.includes('@');
-      let user: UserWithRelations | null = null;
+    const isEmail = verifyDto.identifier.includes('@');
+    const normalizedIdentifier = isEmail
+      ? verifyDto.identifier.trim().toLowerCase()
+      : normalizeAuthPhoneNumber(verifyDto.identifier);
 
-      if (isEmail) {
-        user = await this.databaseService.findUserByEmailSafe(verifyDto.identifier);
-      } else {
-        const normalizedPhoneIdentifier = normalizeAuthPhoneNumber(verifyDto.identifier);
-        // Find by phone
-        // Uses findUsersSafe which returns an array, take the first one
-        const users = await this.databaseService.findUsersSafe(
-          { phone: normalizedPhoneIdentifier },
-          { take: 1 }
-        );
-        user = users[0] || null;
-      }
+    // STEP 1: ALWAYS verify OTP first - this must succeed before any user operations
+    const verificationResult = await this.otpService.verifyOtp(
+      isEmail ? verifyDto.identifier : normalizeAuthPhoneNumber(verifyDto.identifier),
+      verifyDto.otp
+    );
 
-      if (!user) {
-        // Auto-register new users via OTP login
-        const clinicId = verifyDto.clinicId || clinicIdFromHeader;
-        if (!clinicId) {
-          throw this.errors.validationError(
-            'clinicId',
-            'Clinic ID is required for OTP verification',
-            'AuthService.verifyOtp'
-          );
+    this.logOtp('OTP verification attempted', {
+      identifier: verifyDto.identifier,
+      normalizedIdentifier,
+      flow: isEmail ? 'email' : 'phone',
+      otpLength: verifyDto.otp?.length,
+      otp: this.maskOtp(verifyDto.otp),
+      verificationSuccess: verificationResult.success,
+      verificationMessage: verificationResult.message,
+    });
+
+    // OTP verification failed - fail immediately, no user operations
+    if (!verificationResult.success) {
+      await this.logging.log(
+        LogType.SECURITY,
+        LogLevel.WARN,
+        `Failed OTP verification for ${verifyDto.identifier}`,
+        'AuthService.verifyOtp',
+        {
+          identifier: verifyDto.identifier,
+          ipAddress: sessionMetadata?.ipAddress,
+          userAgent: sessionMetadata?.userAgent,
+          reason: verificationResult.message,
+          timestamp: nowIso(),
         }
-
-        const { resolveClinicUUID } = await import('@utils/clinic.utils');
-        const clinicUUID = await resolveClinicUUID(this.databaseService, clinicId);
-
-        // First verify OTP (before creating user)
-        const verificationResult = await this.otpService.verifyOtp(
-          isEmail ? verifyDto.identifier : normalizeAuthPhoneNumber(verifyDto.identifier),
-          verifyDto.otp
-        );
-
-        if (!verificationResult.success) {
-          await this.logging.log(
-            LogType.SECURITY,
-            LogLevel.WARN,
-            `Failed OTP verification for new user registration: ${verifyDto.identifier}`,
-            'AuthService.verifyOtp',
-            {
-              identifier: verifyDto.identifier,
-              reason: verificationResult.message,
-              timestamp: nowIso(),
-            }
-          );
-          throw this.errors.otpInvalid('AuthService.verifyOtp');
-        }
-
-        // Auto-register the new user
-        await this.logging.log(
-          LogType.AUTH,
-          LogLevel.INFO,
-          `Auto-registering new user via OTP: ${verifyDto.identifier}`,
-          'AuthService.verifyOtp',
-          { identifier: verifyDto.identifier }
-        );
-
-        const normalizedIdentifier = isEmail
-          ? verifyDto.identifier.trim().toLowerCase()
-          : normalizeAuthPhoneNumber(verifyDto.identifier);
-
-        user = await this.databaseService.createUserSafe({
-          email: isEmail ? normalizedIdentifier : `${normalizedIdentifier}@temp.com`,
-          password: await bcrypt.hash(uuidv4(), 12),
-          firstName: verifyDto.firstName || '',
-          lastName: verifyDto.lastName || '',
-          name:
-            `${verifyDto.firstName || ''} ${verifyDto.lastName || ''}`.trim() ||
-            normalizedIdentifier,
-          isVerified: true,
-          phoneVerified: !isEmail,
-          role: 'PATIENT',
-          primaryClinicId: clinicUUID,
-          userid: uuidv4(),
-          ...(!isEmail ? { phone: normalizedIdentifier } : {}),
-        });
-
-        // Ensure patient record
-        await this.ensurePatientRecordForAuth(user.id, clinicUUID, 'verifyOtp');
-
-        // Emit registration event
-        const loginMethod = isEmail ? 'email_otp' : 'phone_otp';
-
-        await this.eventService.emit('user.registered', {
-          userId: user.id,
-          identifier: normalizedIdentifier,
-          role: user.role,
-          clinicId: clinicUUID,
-          registrationMethod: loginMethod,
-        });
-
-        await this.logging.log(
-          LogType.AUDIT,
-          LogLevel.INFO,
-          `New user registered via OTP: ${normalizedIdentifier}`,
-          'AuthService.verifyOtp',
-          { userId: user.id }
-        );
-
-        // Skip to session creation - OTP already verified above
-        // Validate clinic access
-        const validatedClinicUUID = await this.validateClinicAccessForAuth(
-          user.id,
-          clinicUUID,
-          'verifyOtp'
-        );
-
-        const otpUserRole = user.role as Role;
-        if (otpUserRole === Role.PATIENT) {
-          await this.ensurePatientRecordForAuth(user.id, validatedClinicUUID, 'verifyOtp');
-        }
-
-        // Create session
-        const session = await this.sessionService.createSession({
-          userId: user.id,
-          userAgent: sessionMetadata?.userAgent || 'OTP Login',
-          ipAddress: sessionMetadata?.ipAddress || '127.0.0.1',
-          metadata: { otpLogin: true, isNewUser: true },
-          ...(validatedClinicUUID && { clinicId: validatedClinicUUID }),
-        });
-
-        // Generate tokens
-        const userForTokens: UserProfile = {
-          id: user.id,
-          email: user.email || '',
-          name: user.name || normalizedIdentifier,
-          role: user.role as Role,
-          ...(user.phone && { phone: user.phone }),
-          ...(validatedClinicUUID && { clinicId: validatedClinicUUID }),
-          ...(user.primaryClinicId && { primaryClinicId: user.primaryClinicId }),
-        };
-        const tokens = await this.generateTokens(
-          userForTokens,
-          session.sessionId,
-          undefined,
-          sessionMetadata?.userAgent,
-          sessionMetadata?.ipAddress
-        );
-
-        // Update last login
-        await this.databaseService.updateUserSafe(user.id, {
-          lastLogin: new Date(),
-        });
-
-        // Emit OTP login event
-        const appName = this.configService.getEnv('APP_NAME') || 'Healthcare App';
-        const clinicName = await this.resolveClinicDisplayName(validatedClinicUUID);
-        await this.eventService.emit('user.otp_logged_in', {
-          userId: user.id,
-          email: user.email || '',
-          role: user.role as Role,
-          clinicId: validatedClinicUUID,
-          ...(clinicName && { clinicName }),
-          sessionId: session.sessionId,
-          appName,
-          isFirstLogin: true,
-          metadata: {
-            loginMethod,
-            isNewUser: true,
-            userAgent: sessionMetadata?.userAgent,
-            ipAddress: sessionMetadata?.ipAddress,
-          },
-        });
-
-        await this.logging.log(
-          LogType.AUDIT,
-          LogLevel.INFO,
-          `OTP login successful for new user: ${normalizedIdentifier}`,
-          'AuthService.verifyOtp',
-          {
-            userId: user.id,
-            email: user.email,
-            role: user.role,
-            clinicId: validatedClinicUUID,
-          }
-        );
-
-        return {
-          accessToken: tokens.accessToken,
-          refreshToken: tokens.refreshToken,
-          user: this.buildAuthUserPayload(user, {
-            clinicId: validatedClinicUUID || undefined,
-            profileComplete: false,
-            requiresProfileCompletion: true,
-            loginMethod,
-          }),
-        };
-      }
-
-      // Verify OTP using dedicated service
-      // This handles cache lookup and deletion
-      const verificationResult = await this.otpService.verifyOtp(
-        isEmail ? verifyDto.identifier : normalizeAuthPhoneNumber(verifyDto.identifier),
-        verifyDto.otp
       );
-      this.logOtp('OTP verification attempted', {
-        identifier: verifyDto.identifier,
-        normalizedIdentifier: isEmail
-          ? verifyDto.identifier.trim().toLowerCase()
-          : normalizeAuthPhoneNumber(verifyDto.identifier),
-        flow: isEmail ? 'email' : 'phone',
-        otpLength: verifyDto.otp?.length,
-        otp: this.maskOtp(verifyDto.otp),
-        verificationSuccess: verificationResult.success,
-        verificationMessage: verificationResult.message,
-      });
+      throw this.errors.otpInvalid('AuthService.verifyOtp', verificationResult.message);
+    }
 
-      if (!verificationResult.success) {
-        // ✅ SECURITY: Log failed OTP attempts for audit trail
-        await this.logging.log(
-          LogType.SECURITY,
-          LogLevel.WARN,
-          `Failed OTP verification for ${verifyDto.identifier}`,
-          'AuthService.verifyOtp',
-          {
-            identifier: verifyDto.identifier,
-            ipAddress: sessionMetadata?.ipAddress,
-            userAgent: sessionMetadata?.userAgent,
-            reason: verificationResult.message,
-            timestamp: nowIso(),
-          }
-        );
-        // Return proper 400 error instead of 500
-        throw this.errors.otpInvalid('AuthService.verifyOtp');
-      }
+    // STEP 2: OTP verified successfully - now find user to determine login vs registration
+    let user: UserWithRelations | null;
 
-      // Legacy cleanup: Also try to delete OTP stored by user ID if it exists (legacy support)
-      await this.cacheService.del(`otp:${user.id}`).catch(() => {});
+    if (isEmail) {
+      user = await this.databaseService.findUserByEmailSafe(verifyDto.identifier);
+    } else {
+      // Try to find by phone number first
+      const usersByPhone = await this.databaseService.findUsersSafe(
+        { phone: normalizedIdentifier },
+        { take: 1 }
+      );
+      user = usersByPhone[0] ?? null;
 
-      if (verifyDto.clinicId && clinicIdFromHeader && verifyDto.clinicId !== clinicIdFromHeader) {
-        throw this.errors.validationError(
-          'clinicId',
-          'Clinic ID mismatch detected. Please verify through the correct clinic portal.',
-          'AuthService.verifyOtp'
-        );
-      }
+      // If not found by phone, check if user exists with the phone-based temp email
+      if (!user) {
+        const potentialTempEmail = `${normalizedIdentifier}@temp.com`;
+        user = await this.databaseService.findUserByEmailSafe(potentialTempEmail);
 
-      const clinicId = verifyDto.clinicId || clinicIdFromHeader;
-      if (!clinicId) {
-        throw this.errors.validationError(
-          'clinicId',
-          'Clinic ID is required for OTP verification',
-          'AuthService.verifyOtp'
-        );
-      }
-
-      const clinicUUID = await this.validateClinicAccessForAuth(user.id, clinicId, 'verifyOtp');
-
-      const otpUserRole = user.role as Role;
-      if (otpUserRole === Role.PATIENT) {
-        await this.ensurePatientRecordForAuth(user.id, clinicUUID, 'verifyOtp');
-      }
-
-      // Create session first
-      // Session is stored in Redis via SessionManagementService
-      // Fastify session will be set in controller if request object is available
-      const session = await this.sessionService.createSession({
-        userId: user.id,
-        userAgent: sessionMetadata?.userAgent || 'OTP Login',
-        ipAddress: sessionMetadata?.ipAddress || '127.0.0.1',
-        metadata: { otpLogin: true },
-        ...(clinicUUID && { clinicId: clinicUUID }),
-      });
-
-      let verifiedUser = user;
-      const loginIdentifier = verifyDto.identifier.trim();
-      if (!isEmail) {
-        const normalizedPhone = user.phone || loginIdentifier;
-        const existingPhoneUser = await this.databaseService.findUserByPhoneSafe(normalizedPhone);
-        if (existingPhoneUser && existingPhoneUser.id !== user.id) {
-          throw this.errors.validationError(
-            'phone',
-            'Phone number already registered with another account. Please login with existing account or try a different number.',
-            'AuthService.verifyOtp'
-          );
+        if (user) {
+          // Update the user's phone field to the normalized format for future logins
+          await this.databaseService.updateUserSafe(user.id, {
+            phone: normalizedIdentifier,
+            phoneVerified: true,
+          } as never);
         }
+      }
+    }
 
+    // STEP 3: Branch based on whether user exists
+    if (user) {
+      // ===== EXISTING USER LOGIN =====
+      return await this.handleExistingUserLogin(
+        user,
+        clinicIdFromHeader,
+        verifyDto,
+        sessionMetadata,
+        isEmail,
+        normalizedIdentifier
+      );
+    } else {
+      // ===== NEW USER REGISTRATION =====
+      return await this.handleNewUserRegistration(
+        verifyDto,
+        sessionMetadata,
+        clinicIdFromHeader,
+        isEmail,
+        normalizedIdentifier
+      );
+    }
+  }
+
+  /**
+   * Handle login for existing user - no user creation
+   * Called only after OTP is verified AND user exists
+   */
+  private async handleExistingUserLogin(
+    user: UserWithRelations,
+    clinicIdFromHeader: string | undefined,
+    verifyDto: VerifyOtpRequestDto,
+    sessionMetadata: { userAgent?: string; ipAddress?: string } | undefined,
+    isEmail: boolean,
+    normalizedIdentifier: string
+  ): Promise<AuthResponse> {
+    // normalizedIdentifier is available for logging but not needed in existing user login
+    void normalizedIdentifier;
+
+    // Legacy cleanup: Also try to delete OTP stored by user ID if it exists (legacy support)
+    this.cacheService.del(`otp:${user.id}`).catch(() => {});
+
+    if (verifyDto.clinicId && clinicIdFromHeader && verifyDto.clinicId !== clinicIdFromHeader) {
+      throw this.errors.validationError(
+        'clinicId',
+        'Clinic ID mismatch detected. Please verify through the correct clinic portal.',
+        'AuthService.verifyOtp'
+      );
+    }
+
+    const clinicId = verifyDto.clinicId || clinicIdFromHeader;
+    if (!clinicId) {
+      throw this.errors.validationError(
+        'clinicId',
+        'Clinic ID is required for OTP verification',
+        'AuthService.verifyOtp'
+      );
+    }
+
+    const clinicUUID = await this.validateClinicAccessForAuth(user.id, clinicId, 'verifyOtp');
+
+    const otpUserRole = user.role as Role;
+    if (otpUserRole === Role.PATIENT) {
+      await this.ensurePatientRecordForAuth(user.id, clinicUUID, 'verifyOtp');
+    }
+
+    // Create session
+    const session = await this.sessionService.createSession({
+      userId: user.id,
+      userAgent: sessionMetadata?.userAgent || 'OTP Login',
+      ipAddress: sessionMetadata?.ipAddress || '127.0.0.1',
+      metadata: { otpLogin: true },
+      ...(clinicUUID && { clinicId: clinicUUID }),
+    });
+
+    let verifiedUser = user;
+    const loginIdentifier = verifyDto.identifier.trim();
+    if (!isEmail) {
+      const normalizedPhone = user.phone || loginIdentifier;
+      const existingPhoneUser = await this.databaseService.findUserByPhoneSafe(normalizedPhone);
+      if (existingPhoneUser && existingPhoneUser.id !== user.id) {
+        throw this.errors.validationError(
+          'phone',
+          'Phone number already registered with another account. Please login with existing account or try a different number.',
+          'AuthService.verifyOtp'
+        );
+      }
+
+      // Update phone if needed
+      if (!user.phoneVerified || normalizedPhone !== user.phone) {
         await this.databaseService.updateUserSafe(user.id, {
           phone: normalizedPhone,
           phoneVerified: true,
@@ -1629,98 +1509,245 @@ export class AuthService {
           phoneVerifiedAt: new Date(),
         } as UserWithRelations;
       }
+    }
 
-      // Generate tokens with session ID - handle null phone
-      // Include clinicId from login or user's primary clinic
-      const userForTokens: UserProfile = {
-        id: verifiedUser.id,
-        email: verifiedUser.email,
-        name:
-          verifiedUser.name ||
-          `${verifiedUser.firstName || ''} ${verifiedUser.lastName || ''}`.trim() ||
-          verifiedUser.email,
-        role: verifiedUser.role as Role,
-        ...(verifiedUser.phone && { phone: verifiedUser.phone }),
-        ...(clinicUUID && { clinicId: clinicUUID }),
-        ...(verifiedUser.primaryClinicId && { primaryClinicId: verifiedUser.primaryClinicId }),
-      };
-      const tokens = await this.generateTokens(
-        userForTokens,
-        session.sessionId,
-        undefined,
-        sessionMetadata?.userAgent,
-        sessionMetadata?.ipAddress
-      );
+    // Generate tokens
+    const userForTokens: UserProfile = {
+      id: verifiedUser.id,
+      email: verifiedUser.email,
+      name:
+        verifiedUser.name ||
+        `${verifiedUser.firstName || ''} ${verifiedUser.lastName || ''}`.trim() ||
+        verifiedUser.email,
+      role: verifiedUser.role as Role,
+      ...(verifiedUser.phone && { phone: verifiedUser.phone }),
+      ...(clinicUUID && { clinicId: clinicUUID }),
+      ...(verifiedUser.primaryClinicId && { primaryClinicId: verifiedUser.primaryClinicId }),
+    };
+    const tokens = await this.generateTokens(
+      userForTokens,
+      session.sessionId,
+      undefined,
+      sessionMetadata?.userAgent,
+      sessionMetadata?.ipAddress
+    );
 
-      // Update last login
-      const isFirstLogin = !verifiedUser.lastLogin;
-      await this.databaseService.updateUserSafe(verifiedUser.id, {
-        lastLogin: new Date(),
-      });
+    // Update last login
+    const isFirstLogin = !verifiedUser.lastLogin;
+    await this.databaseService.updateUserSafe(verifiedUser.id, { lastLogin: new Date() });
 
-      // Emit OTP login event
-      const appName = this.configService.getEnv('APP_NAME') || 'Healthcare App';
-      const clinicName = await this.resolveClinicDisplayName(clinicUUID);
-      const loginMethod = isEmail ? 'email_otp' : 'phone_otp';
+    // Emit OTP login event
+    const appName = this.configService.getEnv('APP_NAME') || 'Healthcare App';
+    const clinicName = await this.resolveClinicDisplayName(clinicUUID);
+    const loginMethod = isEmail ? 'email_otp' : 'phone_otp';
 
-      await this.eventService.emit('user.otp_logged_in', {
+    await this.eventService.emit('user.otp_logged_in', {
+      userId: verifiedUser.id,
+      email: verifiedUser.email,
+      role: verifiedUser.role as Role,
+      clinicId: clinicUUID,
+      ...(clinicName && { clinicName }),
+      sessionId: session.sessionId,
+      appName,
+      isFirstLogin,
+      metadata: {
+        loginMethod,
+        isExistingUser: true,
+        userAgent: sessionMetadata?.userAgent,
+        ipAddress: sessionMetadata?.ipAddress,
+      },
+    });
+
+    await this.logging.log(
+      LogType.AUDIT,
+      LogLevel.INFO,
+      `OTP login successful for: ${verifiedUser.email}`,
+      'AuthService.verifyOtp',
+      {
         userId: verifiedUser.id,
         email: verifiedUser.email,
-        role: verifiedUser.role as Role,
+        role: verifiedUser.role,
         clinicId: clinicUUID,
-        ...(clinicName && { clinicName }),
-        sessionId: session.sessionId,
-        appName,
-        isFirstLogin,
-        metadata: {
-          loginMethod,
-          userAgent: sessionMetadata?.userAgent,
-          ipAddress: sessionMetadata?.ipAddress,
-        },
-      });
+        isExistingUser: true,
+      }
+    );
 
-      await this.logging.log(
-        LogType.AUDIT,
-        LogLevel.INFO,
-        `OTP login successful for: ${verifiedUser.email}`,
-        'AuthService.verifyOtp',
-        {
-          userId: verifiedUser.id,
-          email: verifiedUser.email,
-          role: verifiedUser.role as Role,
-          clinicId: clinicUUID,
-        }
-      );
+    const profileStatus = await this.checkProfileCompletionStatus(
+      verifiedUser.id,
+      verifiedUser.role as Role
+    );
 
-      const profileStatus = await this.checkProfileCompletionStatus(
-        verifiedUser.id,
-        verifiedUser.role as Role
-      );
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      user: this.buildAuthUserPayload(verifiedUser, {
+        clinicId: clinicUUID || undefined,
+        profileComplete: profileStatus.isComplete,
+        requiresProfileCompletion: !profileStatus.isComplete,
+        loginMethod,
+      }),
+    };
+  }
 
-      return {
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        user: this.buildAuthUserPayload(verifiedUser, {
-          clinicId: clinicUUID || undefined,
-          profileComplete: profileStatus.isComplete,
-          requiresProfileCompletion: !profileStatus.isComplete,
-          loginMethod,
-        }),
-      };
-    } catch (_error) {
-      await this.logging.log(
-        LogType.SYSTEM,
-        LogLevel.ERROR,
-        `OTP verification failed for ${verifyDto.identifier}`,
-        'AuthService.verifyOtp',
-        {
-          identifier: verifyDto.identifier,
-          error: _error instanceof Error ? _error.message : String(_error),
-          stack: _error instanceof Error ? _error.stack : undefined,
-        }
+  /**
+   * Handle new user registration - create user after OTP verified
+   * Called only after OTP is verified AND user doesn't exist
+   */
+  private async handleNewUserRegistration(
+    verifyDto: VerifyOtpRequestDto,
+    sessionMetadata: { userAgent?: string; ipAddress?: string } | undefined,
+    clinicIdFromHeader: string | undefined,
+    isEmail: boolean,
+    normalizedIdentifier: string
+  ): Promise<AuthResponse> {
+    // OTP already verified at this point - proceed to registration
+
+    const clinicId = verifyDto.clinicId || clinicIdFromHeader;
+    if (!clinicId) {
+      throw this.errors.validationError(
+        'clinicId',
+        'Clinic ID is required for OTP verification',
+        'AuthService.verifyOtp'
       );
-      throw _error;
     }
+
+    const { resolveClinicUUID } = await import('@utils/clinic.utils');
+    const clinicUUID = await resolveClinicUUID(this.databaseService, clinicId);
+
+    await this.logging.log(
+      LogType.AUTH,
+      LogLevel.INFO,
+      `Auto-registering new user via OTP: ${verifyDto.identifier}`,
+      'AuthService.verifyOtp',
+      { identifier: verifyDto.identifier }
+    );
+
+    // Create new user (OTP already verified above)
+    const tempEmail = isEmail ? normalizedIdentifier : `${normalizedIdentifier}@temp.com`;
+
+    const user = await this.databaseService.createUserSafe({
+      email: tempEmail,
+      password: await bcrypt.hash(uuidv4(), 12),
+      firstName: verifyDto.firstName || '',
+      lastName: verifyDto.lastName || '',
+      name:
+        `${verifyDto.firstName || ''} ${verifyDto.lastName || ''}`.trim() || normalizedIdentifier,
+      isVerified: true,
+      phoneVerified: !isEmail,
+      role: 'PATIENT',
+      primaryClinicId: clinicUUID,
+      userid: uuidv4(),
+      ...(!isEmail ? { phone: normalizedIdentifier } : {}),
+    });
+
+    // Ensure patient record
+    await this.ensurePatientRecordForAuth(user.id, clinicUUID, 'verifyOtp');
+
+    // Emit registration event
+    const loginMethod = isEmail ? 'email_otp' : 'phone_otp';
+
+    await this.eventService.emit('user.registered', {
+      userId: user.id,
+      identifier: normalizedIdentifier,
+      role: user.role,
+      clinicId: clinicUUID,
+      registrationMethod: loginMethod,
+    });
+
+    await this.logging.log(
+      LogType.AUDIT,
+      LogLevel.INFO,
+      `New user registered via OTP: ${normalizedIdentifier}`,
+      'AuthService.verifyOtp',
+      { userId: user.id }
+    );
+
+    // Validate clinic access
+    const validatedClinicUUID = await this.validateClinicAccessForAuth(
+      user.id,
+      clinicUUID,
+      'verifyOtp'
+    );
+
+    const otpUserRole = user.role as Role;
+    if (otpUserRole === Role.PATIENT) {
+      await this.ensurePatientRecordForAuth(user.id, validatedClinicUUID, 'verifyOtp');
+    }
+
+    // Create session
+    const session = await this.sessionService.createSession({
+      userId: user.id,
+      userAgent: sessionMetadata?.userAgent || 'OTP Login',
+      ipAddress: sessionMetadata?.ipAddress || '127.0.0.1',
+      metadata: { otpLogin: true, isNewUser: true },
+      ...(validatedClinicUUID && { clinicId: validatedClinicUUID }),
+    });
+
+    // Generate tokens
+    const userForTokens: UserProfile = {
+      id: user.id,
+      email: user.email || '',
+      name: user.name || normalizedIdentifier,
+      role: user.role as Role,
+      ...(user.phone && { phone: user.phone }),
+      ...(validatedClinicUUID && { clinicId: validatedClinicUUID }),
+      ...(user.primaryClinicId && { primaryClinicId: user.primaryClinicId }),
+    };
+    const tokens = await this.generateTokens(
+      userForTokens,
+      session.sessionId,
+      undefined,
+      sessionMetadata?.userAgent,
+      sessionMetadata?.ipAddress
+    );
+
+    // Update last login
+    await this.databaseService.updateUserSafe(user.id, { lastLogin: new Date() });
+
+    // Emit OTP login event
+    const appName = this.configService.getEnv('APP_NAME') || 'Healthcare App';
+    const clinicName = await this.resolveClinicDisplayName(validatedClinicUUID);
+    await this.eventService.emit('user.otp_logged_in', {
+      userId: user.id,
+      email: user.email || '',
+      role: user.role as Role,
+      clinicId: validatedClinicUUID,
+      ...(clinicName && { clinicName }),
+      sessionId: session.sessionId,
+      appName,
+      isFirstLogin: true,
+      metadata: {
+        loginMethod,
+        isNewUser: true,
+        userAgent: sessionMetadata?.userAgent,
+        ipAddress: sessionMetadata?.ipAddress,
+      },
+    });
+
+    await this.logging.log(
+      LogType.AUDIT,
+      LogLevel.INFO,
+      `OTP login successful for new user: ${normalizedIdentifier}`,
+      'AuthService.verifyOtp',
+      {
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+        clinicId: validatedClinicUUID,
+        isNewUser: true,
+      }
+    );
+
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      user: this.buildAuthUserPayload(user, {
+        clinicId: validatedClinicUUID || undefined,
+        profileComplete: false,
+        requiresProfileCompletion: true,
+        loginMethod,
+      }),
+    };
   }
 
   /**
@@ -1789,7 +1816,7 @@ export class AuthService {
       verificationMessage: verificationResult.message,
     });
     if (!verificationResult.success) {
-      throw this.errors.otpInvalid('AuthService.verifyPhone');
+      throw this.errors.otpInvalid('AuthService.verifyPhone', verificationResult.message);
     }
 
     const verifiedAt = new Date();
