@@ -829,6 +829,14 @@ export class AuthResponse {
   @IsString({ message: 'Refresh token must be a string' })
   refreshToken?: string;
 
+  @ApiPropertyOptional({
+    description: 'Session identifier',
+    example: 'session_123456789',
+  })
+  @IsOptional()
+  @IsString({ message: 'Session ID must be a string' })
+  sessionId?: string;
+
   @ApiProperty({
     description: 'User information',
     example: { id: 'user-123', email: 'user@example.com' },
