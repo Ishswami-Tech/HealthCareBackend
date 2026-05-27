@@ -1672,6 +1672,23 @@ export class CoreAppointmentService {
                       ? []
                       : legacySession;
 
+            // For VIDEO_CALL appointments with a configured videoCallWindow that falls
+            // OUTSIDE the session windows, add videoCallWindow as a separate valid session.
+            // This allows video appointments to be booked during the clinic's video hours
+            // even when the doctor's regular session hours don't cover that window.
+            if (_context?.appointmentType === 'VIDEO_CALL' && videoCallWindow) {
+              const vwStart = this.timeToMinutes(videoCallWindow.start);
+              const vwEnd = this.timeToMinutes(videoCallWindow.end);
+              const covered = sessionWindows.some(w => {
+                const s = this.timeToMinutes(w.start);
+                const e = this.timeToMinutes(w.end);
+                return s <= vwStart && e >= vwEnd;
+              });
+              if (!covered && vwStart < vwEnd) {
+                sessionWindows.push({ start: videoCallWindow.start, end: videoCallWindow.end });
+              }
+            }
+
             if (sessionWindows.length === 0 && hasExplicitSchedule) {
               return {
                 doctorId,
@@ -1726,7 +1743,12 @@ export class CoreAppointmentService {
 
       // Ensure appointments is an array
       // findAppointmentsSafe should return AppointmentWithRelations[], but handle edge cases
-      type AppointmentItem = Record<string, unknown> & { id?: string; time?: string };
+      type AppointmentItem = Record<string, unknown> & {
+        id?: string;
+        time?: string;
+        duration?: string | number;
+        status?: string;
+      };
       let appointments: AppointmentItem[] = [];
       if (Array.isArray(appointmentsResult)) {
         appointments = appointmentsResult as unknown as AppointmentItem[];
@@ -1738,6 +1760,25 @@ export class CoreAppointmentService {
         const data = (appointmentsResult as { data: unknown }).data;
         appointments = Array.isArray(data) ? (data as AppointmentItem[]) : [];
       }
+
+      // DEBUG: Log appointments for video slots issue
+      void this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        `[getDoctorAvailability] Appointments query result for doctor ${doctorId} on ${date}`,
+        'CoreAppointmentService.getDoctorAvailability',
+        {
+          appointmentsCount: appointments.length,
+          appointmentsTimes: appointments.map(a => ({
+            time: a.time,
+            duration: a.duration,
+            status: a.status,
+          })),
+          isToday:
+            new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date()) ===
+            date,
+        }
+      );
 
       // Generate time slots based on working hours
       const timeSlots = [];
@@ -1902,10 +1943,14 @@ export class CoreAppointmentService {
           slotDuration,
           videoCallWindow,
           workingSessions: validSessions.map(w => ({ start: w.start, end: w.end })),
+          earliestStart,
+          latestEnd,
+          validSessionCount: validSessions.length,
           totalSlotsGenerated: slotsByTime.size,
           availableSlots: timeSlots.filter(slot => slot.available).length,
           bookedSlots: timeSlots.filter(slot => !slot.available).length,
           bookedAppointmentCount: appointments.length,
+          allSlotTimes: Array.from(slotsByTime.keys()),
         }
       );
 
