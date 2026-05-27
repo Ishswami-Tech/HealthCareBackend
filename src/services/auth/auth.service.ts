@@ -699,6 +699,7 @@ export class AuthService {
       return {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
+        sessionId: tokens.sessionId,
         user: this.buildAuthUserPayload(user, {
           clinicId: clinicUUID || undefined,
           clinicName: loginResponseClinicName,
@@ -1396,14 +1397,6 @@ export class AuthService {
       if (!user) {
         const potentialTempEmail = `${normalizedIdentifier}@temp.com`;
         user = await this.databaseService.findUserByEmailSafe(potentialTempEmail);
-
-        if (user) {
-          // Update the user's phone field to the normalized format for future logins
-          await this.databaseService.updateUserSafe(user.id, {
-            phone: normalizedIdentifier,
-            phoneVerified: true,
-          } as never);
-        }
       }
     }
 
@@ -1442,9 +1435,6 @@ export class AuthService {
     isEmail: boolean,
     normalizedIdentifier: string
   ): Promise<AuthResponse> {
-    // normalizedIdentifier is available for logging but not needed in existing user login
-    void normalizedIdentifier;
-
     // Legacy cleanup: Also try to delete OTP stored by user ID if it exists (legacy support)
     this.cacheService.del(`otp:${user.id}`).catch(() => {});
 
@@ -1484,7 +1474,9 @@ export class AuthService {
     let verifiedUser = user;
     const loginIdentifier = verifyDto.identifier.trim();
     if (!isEmail) {
-      const normalizedPhone = user.phone || loginIdentifier;
+      const normalizedPhone = normalizeAuthPhoneNumber(
+        user.phone || normalizedIdentifier || loginIdentifier
+      );
       const existingPhoneUser = await this.databaseService.findUserByPhoneSafe(normalizedPhone);
       if (existingPhoneUser && existingPhoneUser.id !== user.id) {
         throw this.errors.validationError(
@@ -1580,6 +1572,7 @@ export class AuthService {
     return {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
+      sessionId: tokens.sessionId,
       user: this.buildAuthUserPayload(verifiedUser, {
         clinicId: clinicUUID || undefined,
         profileComplete: profileStatus.isComplete,
@@ -1741,6 +1734,7 @@ export class AuthService {
     return {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
+      sessionId: tokens.sessionId,
       user: this.buildAuthUserPayload(user, {
         clinicId: validatedClinicUUID || undefined,
         profileComplete: false,
@@ -2525,6 +2519,7 @@ export class AuthService {
       return {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
+        sessionId: tokens.sessionId,
         user: this.buildAuthUserPayload(fullUser, {
           clinicId: finalClinicId || undefined,
           clinicName: googleResponseClinicName,
