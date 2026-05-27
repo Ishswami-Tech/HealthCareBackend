@@ -1,16 +1,14 @@
-# Dependencies
+﻿# Dependencies
 node_modules/
 npm-debug.log
 yarn-debug.log
 yarn-error.log
-
 # Package manager lock files (keep pnpm-lock.yaml only)
 package-lock.json
 # yarn.lock - REMOVED: Lock files should be committed for reproducible builds
 # yarn.lock
 .yarnrc.yml
 .npmrc
-
 # Environment files
 .env
 .env.local
@@ -19,13 +17,11 @@ package-lock.json
 .env.production
 .env.local-prod
 .env*.local
-
 # Build output
 dist/
 build/
 out/
 .next/
-
 # IDE and editor files
 .idea/
 .vscode/
@@ -33,43 +29,35 @@ out/
 *.swo
 .DS_Store
 Thumbs.db
-
 # Debug logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 debug.log
-
 # Test coverage
 coverage/
 .nyc_output/
-
 # Temporary files
 *.tmp
 *.temp
 .cache/
 .temp
 .tmp
-
 # System Files
 .DS_Store
 Thumbs.db
-
 # Logs
 logs
 *.log
 pnpm-debug.log*
 lerna-debug.log*
-
 # Runtime data
 pids
 *.pid
 *.seed
 *.pid.lock
-
 # Diagnostic reports
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
-
 # Prisma
 src/libs/infrastructure/database/prisma/generated/
 src/libs/infrastructure/database/prisma/*.db
@@ -77,12 +65,9 @@ src/generated/
 node_modules/.prisma
 # Note: Prisma generated client should NOT be committed
 # Generated during build/deployment via: yarn prisma:generate
-
 # Docker data directories (local development data)
 devops/docker/data/
-
 .claude
-
 # Binary files and executables
 *.tar.gz
 buildkit-*.tar.gz
@@ -91,13 +76,11 @@ containerd-rootless*.sh
 kubectl
 wsl
 bin/
-
 # Temporary test scripts (keep only essential ones)
 # test-startup.sh
 # test-local-start.sh
 # quick-test.sh
 # Note: .env files are already ignored above (lines 14-20)
-
 # Test output and log files
 seed-output*.txt
 test-results.txt
@@ -105,7 +88,6 @@ test-results.txt
 build.log
 server.log
 tsc-run.log
-
 # Temporary documentation (consolidated)
 COMPLETE_FIXES_SUMMARY.md
 ENDPOINT_ANALYSIS_REPORT.md
@@ -114,11 +96,9 @@ FIXES_APPLIED.md
 SEED_FIXES_SUMMARY.md
 CLEANUP_PLAN.md
 CLEANUP_SUMMARY.md
-
 # Generated secrets (DO NOT COMMIT)
 docs/GENERATED_SECRETS.md
 GENERATED_SECRETS.md
-
 # Temporary test scripts (one-off helpers)
 analyze-endpoints.js
 test-all-fixes.js
@@ -129,6 +109,7 @@ check-db.js
 get-doctor-id.js
 force-seed.js
 run-seed.js
-
 .pnpm-store/*
 .env.local-prod
+graphify-out/
+
