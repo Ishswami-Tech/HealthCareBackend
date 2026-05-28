@@ -1912,10 +1912,21 @@ export class AuthService {
         ? true
         : undefined;
 
+    // For phone OTP login, don't include the fake temp email in the response
+    const isPhoneOtpLogin = options.loginMethod === 'phone_otp';
+    const isFakeEmail = user.email && user.email.endsWith('@temp.com');
+    const shouldIncludeEmail = !isPhoneOtpLogin || !isFakeEmail;
+
+    // Build name from available fields
+    const userName = user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim();
+
+    // For phone OTP with fake email, don't include email at all
+    const emailToInclude = shouldIncludeEmail ? user.email : undefined;
+
     return {
       id: user.id,
-      email: user.email,
-      name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
+      ...(emailToInclude ? { email: emailToInclude } : {}),
+      name: userName || emailToInclude || '',
       ...(user.firstName ? { firstName: user.firstName } : {}),
       ...(user.lastName ? { lastName: user.lastName } : {}),
       role: user.role as Role,
@@ -2200,7 +2211,7 @@ export class AuthService {
     // For other roles: always include clinicId
     const payload: TokenPayload = {
       sub: user.id,
-      email: user.email,
+      ...(user.email ? { email: user.email } : {}),
       role: user.role || '',
       sessionId: sessionId,
       ...(clinicId || isSuperAdmin ? { clinicId: clinicId || '' } : {}),

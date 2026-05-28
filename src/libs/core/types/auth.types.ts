@@ -78,8 +78,8 @@ export interface AuthTokens {
 export interface TokenPayload {
   /** Subject (user ID) */
   readonly sub: string;
-  /** User email */
-  readonly email: string;
+  /** User email (optional for phone OTP login) */
+  readonly email?: string;
   /** Optional user role */
   readonly role?: string;
   /** Optional array of roles */
@@ -112,8 +112,8 @@ export interface TokenPayload {
 export interface UserProfile {
   /** User ID */
   readonly id: string;
-  /** User email */
-  readonly email: string;
+  /** User email (optional for phone OTP login - user provides real email during profile completion) */
+  readonly email?: string;
   /** User name */
   readonly name: string;
   /** Optional first name */

@@ -36,12 +36,13 @@ export class UserProfileDto {
   @IsString()
   id!: string;
 
-  @ApiProperty({
-    description: 'User Email',
+  @ApiPropertyOptional({
+    description: 'User Email (optional for phone OTP login)',
     example: 'user@example.com',
   })
+  @IsOptional()
   @IsString()
-  email!: string;
+  email?: string;
 
   @ApiPropertyOptional({
     description: 'First Name',
