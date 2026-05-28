@@ -412,25 +412,13 @@ export class OtpService {
           `WhatsApp OTP send returned false for ${normalizedPhone}`,
           'OtpService'
         );
-      }
-
-      // Return success true even if "sent" is false?
-      // For now, if WhatsApp service is disabled it returns false, but we still might want to treat it as "attempted" or fail?
-      // Since it's dev/mock usually, we can simulate success for testing if needed, or stick to strict success.
-      // Given previous mock implementation, I'll return success: true but with a note.
-      // But for production correctness:
-      if (!sent) {
-        // If we don't have another SMS provider, this is a failure to send.
-        // But maybe we want to allow login if it's just a "service disabled" thing in dev?
-        // I'll assume strictly it should return the result of the send operation OR fallback.
-        // For now, I'll return success: true to allow the flow to proceed in dev even if WA is disabled,
-        // effectively acting as a "log-only" fallback if WA is off.
-        void this.loggingService.log(
-          LogType.AUTH,
-          LogLevel.INFO,
-          `[DEV FALLBACK] WhatsApp disabled/failed. OTP for ${normalizedPhone}: ${otp}`,
-          'OtpService'
-        );
+        return {
+          success: false,
+          message: 'Failed to send WhatsApp message. Please try again later.',
+          otp,
+          expiresIn: expirySeconds,
+          attemptsRemaining: this.config.maxAttempts - attemptCount - 1,
+        };
       }
 
       return {
@@ -454,7 +442,7 @@ export class OtpService {
       );
       return {
         success: false,
-        message: 'Failed to send OTP. Please try again.',
+        message: 'Failed to send WhatsApp message. Please try again later.',
       };
     }
   }

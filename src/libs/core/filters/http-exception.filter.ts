@@ -222,8 +222,11 @@ export class HttpExceptionFilter implements ExceptionFilter {
         : typeof exception === 'string'
           ? exception
           : 'Internal server error';
-    const preserveMessageForOperationalHealthcareError =
-      exception instanceof HealthcareError && exception.code !== ErrorCode.INTERNAL_SERVER_ERROR;
+    const preserveMessageForOperationalHealthcareError = this.shouldPreserveErrorMessage(
+      exception,
+      exceptionResponse,
+      errorMessage
+    );
 
     // Extract stack trace safely
     const stackTrace = exception instanceof Error ? exception.stack : undefined;
@@ -341,6 +344,82 @@ export class HttpExceptionFilter implements ExceptionFilter {
     if (status === 429) return 'RATE_LIMIT';
     if (status >= 500) return 'SERVER_ERROR';
     return 'CLIENT_ERROR';
+  }
+
+  /**
+   * Preserve clear user-facing errors even when the status code is 5xx.
+   */
+  private shouldPreserveErrorMessage(
+    exception: unknown,
+    exceptionResponse: unknown,
+    errorMessage: string
+  ): boolean {
+    const code = this.extractErrorCode(exceptionResponse);
+    if (code && code !== ErrorCode.INTERNAL_SERVER_ERROR) {
+      return true;
+    }
+
+    if (
+      exception instanceof HealthcareError &&
+      exception.code !== ErrorCode.INTERNAL_SERVER_ERROR
+    ) {
+      return true;
+    }
+
+    return this.isUserFacingErrorMessage(errorMessage);
+  }
+
+  /**
+   * Extract an error code from the raw exception response payload.
+   */
+  private extractErrorCode(exceptionResponse: unknown): ErrorCode | undefined {
+    if (!exceptionResponse || typeof exceptionResponse !== 'object') {
+      return undefined;
+    }
+
+    const payload = exceptionResponse as Record<string, unknown>;
+    const directCode = payload['code'];
+    if (typeof directCode === 'string' && directCode.trim()) {
+      return directCode as ErrorCode;
+    }
+
+    const nestedError = payload['error'];
+    if (nestedError && typeof nestedError === 'object') {
+      const nestedCode = (nestedError as Record<string, unknown>)['code'];
+      if (typeof nestedCode === 'string' && nestedCode.trim()) {
+        return nestedCode as ErrorCode;
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Determine whether the message is safe to show to users.
+   */
+  private isUserFacingErrorMessage(message: string): boolean {
+    if (!message || !message.trim()) {
+      return false;
+    }
+
+    const technicalPatterns = [
+      /internal server error/i,
+      /cannot (GET|POST|PUT|DELETE|PATCH)/i,
+      /\/api\//i,
+      /http:\/\//i,
+      /https:\/\//i,
+      /\b(?:4|5)\d{2}\b/,
+      /ECONNREFUSED/i,
+      /ETIMEDOUT/i,
+      /ENOTFOUND/i,
+      /ECONNRESET/i,
+      /TypeError/i,
+      /ReferenceError/i,
+      /SyntaxError/i,
+      /Prisma/i,
+    ];
+
+    return !technicalPatterns.some(pattern => pattern.test(message));
   }
 
   /**

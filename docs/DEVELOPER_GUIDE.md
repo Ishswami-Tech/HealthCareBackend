@@ -1,7 +1,7 @@
 ﻿# Developer Guide - Healthcare Backend
 
 **Date**: December 2024  
-**Status**: âœ… **COMPLETE**
+**Status**:… **COMPLETE**
 
 ---
 
@@ -76,23 +76,23 @@ Rules:
 ### System Architecture
 
 ```
-â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”    â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”    â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-â”‚   Frontend      â”‚    â”‚   API Gateway   â”‚    â”‚   Load Balancer â”‚
-â”‚   (Next.js)     â”‚â—„â”€â”€â–ºâ”‚   (NestJS)      â”‚â—„â”€â”€â–ºâ”‚   (Nginx)       â”‚
-â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜    â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜    â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
-                                â”‚
-                                â–¼
-                       â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-                       â”‚   Application   â”‚
-                       â”‚   Layer         â”‚
-                       â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
-                                â”‚
-                â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-                â–¼               â–¼               â–¼
-        â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â” â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â” â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-        â”‚ PostgreSQL  â”‚ â”‚    Redis    â”‚ â”‚   BullMQ    â”‚
-        â”‚ (Primary)   â”‚ â”‚   (Cache)   â”‚ â”‚  (Queues)   â”‚
-        â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜ â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜ â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+â”â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”   ”â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”   ”â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚   Frontend     ”‚   ”‚   API Gateway  ”‚   ”‚   Load Balancer”‚
+â”‚   (Next.js)    ”‚â—„â”€â”€â–ºâ”‚   (NestJS)     ”‚â—„â”€â”€â–ºâ”‚   (Nginx)      ”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜   ””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜   ””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+                               ”‚
+                               –¼
+                      ”â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+                      ”‚   Application  ”‚
+                      ”‚   Layer        ”‚
+                      ””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+                               ”‚
+               ”â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+               –¼              –¼              –¼
+       ”â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+       ”‚ PostgreSQL ”‚”‚    Redis   ”‚”‚   BullMQ   ”‚
+       ”‚ (Primary)  ”‚”‚   (Cache)  ”‚”‚  (Queues)  ”‚
+       ””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
 ### Core Principles
@@ -105,7 +105,7 @@ Rules:
 
 ---
 
-## âš™ï¸ Configuration Management
+##š™ï¸ Configuration Management
 
 ### Central Configuration Service
 
@@ -286,40 +286,37 @@ const provider = videoService.getCurrentProvider();
 **Always use path aliases**, never relative imports:
 
 ```typescript
-// âœ… GOOD
+//… GOOD
 import { DatabaseService } from '@database';
 import { CacheService } from '@cache';
 import { LoggingService } from '@logging';
 
-// âŒ BAD
+// BAD
 import { DatabaseService } from '../../../libs/infrastructure/database/database.service';
 ```
 
 **Available Aliases**:
 
-- `@services/*` â†’ `src/services/*`
-- `@infrastructure/*` â†’ `src/libs/infrastructure/*`
-- `@dtos/*` â†’ `src/libs/dtos/*`
-- `@core/*` â†’ `src/libs/core/*`
-- `@config` â†’ `src/config`
-- `@logging` â†’ `src/libs/infrastructure/logging`
-- `@cache` â†’ `src/libs/infrastructure/cache`
-- `@database` â†’ `src/libs/infrastructure/database`
+- `@services/*`’ `src/services/*`
+- `@infrastructure/*`’ `src/libs/infrastructure/*`
+- `@dtos/*`’ `src/libs/dtos/*`
+- `@core/*`’ `src/libs/core/*`
+- `@config`’ `src/config`
+- `@logging`’ `src/libs/infrastructure/logging`
+- `@cache`’ `src/libs/infrastructure/cache`
+- `@database`’ `src/libs/infrastructure/database`
 
 ### TypeScript Standards
 
 **Zero Tolerance Rules**:
 
-- âŒ No `any` types
-- âŒ No relative imports
-- âŒ No `console.log` (use `LoggingService`)
-- âŒ No missing error handling
-- âŒ No missing input validation
+- No `any` types - No relative imports - No `console.log` (use `LoggingService`)
+- No missing error handling - No missing input validation
 
 **Example**:
 
 ```typescript
-// âœ… GOOD
+//… GOOD
 async findUser(id: string): Promise<User | null> {
   if (!id) {
     throw new BadRequestException('User ID is required');
@@ -327,7 +324,7 @@ async findUser(id: string): Promise<User | null> {
   return await this.databaseService.findUserByIdSafe(id);
 }
 
-// âŒ BAD
+// BAD
 async findUser(id: any): Promise<any> {
   console.log('Finding user', id);
   return await this.databaseService.findUserByIdSafe(id);
@@ -373,13 +370,13 @@ await this.loggingService.log(
 **Always use safe methods**:
 
 ```typescript
-// âœ… GOOD - Uses safe method with pagination
+//… GOOD - Uses safe method with pagination
 const users = await this.databaseService.findUsersSafe(
   { role: 'PATIENT' },
   { take: 100, skip: 0 }
 );
 
-// âŒ BAD - Direct Prisma access
+// BAD - Direct Prisma access
 const users = await prisma.user.findMany({ where: { role: 'PATIENT' } });
 ```
 
@@ -409,4 +406,4 @@ async getAppointment(@Param('id') id: string) {
 ---
 
 **Last Updated**: December 2024  
-**Status**: âœ… **COMPLETE**
+**Status**:… **COMPLETE**

@@ -22,7 +22,7 @@ during application startup in Docker production environments.
 
 ## Fixes Applied
 
-### 1. Fixed `getRawPrismaClient()` in `PrismaService` âœ…
+### 1. Fixed `getRawPrismaClient()` in `PrismaService`…
 
 **File**: `src/libs/infrastructure/database/prisma/prisma.service.ts`
 
@@ -61,7 +61,7 @@ getRawPrismaClient(): PrismaClient {
 }
 ```
 
-### 2. Added Prisma Initialization Errors to Retryable Errors âœ…
+### 2. Added Prisma Initialization Errors to Retryable Errors…
 
 **File**: `src/libs/infrastructure/database/internal/retry.service.ts`
 
@@ -79,7 +79,7 @@ getRawPrismaClient(): PrismaClient {
 - `'not ready'`
 - `'Invalid invocation'`
 
-### 3. Added Prisma Readiness Check in Database Service âœ…
+### 3. Added Prisma Readiness Check in Database Service…
 
 **File**: `src/libs/infrastructure/database/database.service.ts`
 
@@ -114,7 +114,7 @@ const executeWithRetry = async (): Promise<T> => {
 
 ## Docker Configuration Verification
 
-### Dockerfile âœ…
+### Dockerfile…
 
 **File**: `devops/docker/Dockerfile`
 
@@ -128,7 +128,7 @@ const executeWithRetry = async (): Promise<T> => {
 
 **No changes needed** - Docker configuration is correct.
 
-### docker-compose.prod.yml âœ…
+### docker-compose.prod.yml…
 
 **File**: `devops/docker/docker-compose.prod.yml`
 
@@ -152,12 +152,10 @@ const executeWithRetry = async (): Promise<T> => {
 
 **Recommendations**:
 
-1. âœ… **Keep Prisma generation in Docker build** - This ensures consistent
-   client generation across environments
-2. âœ… **Verify Prisma Client in entrypoint** - Already implemented in
-   Dockerfile
-3. âœ… **Run migrations at container startup** - Already implemented in
-   Dockerfile CMD
+1.… **Keep Prisma generation in Docker build** - This ensures consistent client
+generation across environments 2.… **Verify Prisma Client in entrypoint** -
+Already implemented in Dockerfile 3.… **Run migrations at container startup** -
+Already implemented in Dockerfile CMD
 
 ### CI/CD Workflow Recommendations
 
@@ -192,17 +190,16 @@ docker-compose -f devops/docker/docker-compose.prod.yml up
 
 ### Before Fixes
 
-- âŒ Multiple "PrismaClient not generated yet" warnings during startup
-- âŒ "Retry failed" errors when database queries execute before Prisma is ready
-- âŒ Login and other database operations fail during startup
+- Multiple "PrismaClient not generated yet" warnings during startup - "Retry
+failed" errors when database queries execute before Prisma is ready - Login and
+other database operations fail during startup
 
 ### After Fixes
 
-- âœ… PrismaClient initialization warnings are reduced (only during initial
-  startup)
-- âœ… Database queries wait for Prisma to be ready before executing
-- âœ… "Retry failed" errors are eliminated
-- âœ… Login and other database operations succeed after Prisma initialization
+-… PrismaClient initialization warnings are reduced (only during initial
+startup) -… Database queries wait for Prisma to be ready before executing -…
+"Retry failed" errors are eliminated -… Login and other database operations
+succeed after Prisma initialization
 
 ## Monitoring
 
@@ -220,7 +217,7 @@ docker-compose -f devops/docker/docker-compose.prod.yml up
 
 ## Package.json Analysis
 
-### Current Configuration âœ…
+### Current Configuration…
 
 **File**: `package.json`
 
@@ -232,12 +229,10 @@ docker-compose -f devops/docker/docker-compose.prod.yml up
 
 **Docker Compatibility**:
 
-- âœ… Dockerfile uses `--ignore-scripts` flag (line 22, 140) to skip
-  `postinstall`
-- âœ… Prisma Client is explicitly generated during Docker build (line 34 of
-  Dockerfile)
-- âœ… Production stage also uses `--ignore-scripts` to prevent postinstall from
-  running
+-… Dockerfile uses `--ignore-scripts` flag (line 22, 140) to skip `postinstall`
+-… Prisma Client is explicitly generated during Docker build (line 34 of
+Dockerfile) -… Production stage also uses `--ignore-scripts` to prevent
+postinstall from running
 
 **Potential Issues & Recommendations**:
 
@@ -250,19 +245,17 @@ docker-compose -f devops/docker/docker-compose.prod.yml up
      ```json
      "postinstall": "node -e \"if (process.env.SKIP_PRISMA_GENERATE !== 'true') { require('child_process').execSync('yarn prisma:generate', {stdio: 'inherit'}) }\" || true"
      ```
-   - **Status**: âœ… **Acceptable** - Works correctly in Docker (skipped), and
+   - **Status**:… **Acceptable** - Works correctly in Docker (skipped), and
      `|| true` allows local dev to continue even if Prisma generation fails
      (user can manually run it)
 
-2. **Build Scripts** (Lines 9-12)
-   - âœ… All build scripts are correctly configured
-   - âœ… `pre-build` runs validation including `prisma:validate` (line 14)
-   - âœ… No issues detected
+2. **Build Scripts** (Lines 9-12) -… All build scripts are correctly configured
+   -… `pre-build` runs validation including `prisma:validate` (line 14) -… No
+   issues detected
 
-3. **Deploy Scripts** (Lines 53-54)
-   - âœ… `deploy:dev` and `deploy:prod` correctly include `prisma:generate`
-   - âœ… Production deploy includes build step before Prisma generation
-   - âœ… No issues detected
+3. **Deploy Scripts** (Lines 53-54) -… `deploy:dev` and `deploy:prod` correctly
+   include `prisma:generate` -… Production deploy includes build step before
+   Prisma generation -… No issues detected
 
 ### Recommendations
 
@@ -287,12 +280,12 @@ docker-compose -f devops/docker/docker-compose.prod.yml up
   "postinstall": "if [ \"$NODE_ENV\" != \"production\" ] && [ \"$SKIP_PRISMA_GENERATE\" != \"true\" ]; then yarn prisma:generate || true; fi"
   ```
 
-**Current Status**: âœ… **No changes required** - Package.json is correctly
+**Current Status**:… **No changes required** - Package.json is correctly
 configured for Docker builds.
 
 ## Related Files
 
-- `package.json` - Package configuration (verified âœ…)
+- `package.json` - Package configuration (verified…)
 - `src/libs/infrastructure/database/prisma/prisma.service.ts` - PrismaService
   with initialization fixes
 - `src/libs/infrastructure/database/database.service.ts` - DatabaseService with
@@ -307,12 +300,10 @@ configured for Docker builds.
 
 All Prisma initialization issues have been addressed:
 
-1. âœ… Fixed `getRawPrismaClient()` to wait for shared instance
-2. âœ… Added Prisma errors to retryable errors list
-3. âœ… Added Prisma readiness checks in database service
-4. âœ… Verified Docker configuration is correct
-5. âœ… Verified Docker Compose configuration is correct
-6. âœ… Verified package.json configuration is correct
+1.… Fixed `getRawPrismaClient()` to wait for shared instance 2.… Added Prisma
+errors to retryable errors list 3.… Added Prisma readiness checks in database
+service 4.… Verified Docker configuration is correct 5.… Verified Docker Compose
+configuration is correct 6.… Verified package.json configuration is correct
 
 The application should now start successfully in Docker production environments
 without "Retry failed" errors.
@@ -382,16 +373,13 @@ docker compose up -d --pull always --force-recreate --no-deps api worker
 
 ### Expected Behavior
 
-- âœ… Current running image is tagged as backup BEFORE pulling new one (enables
-  rollback)
-- âœ… Latest API/Worker image is always pulled from registry
-- âœ… Only API and Worker containers are recreated (postgres, dragonfly,
-- âœ… API and Worker containers are recreated on every code push
-- âœ… Infrastructure containers (postgres, dragonfly, etc.) are NOT recreated
-- âœ… Old backup images are removed AFTER successful deployment (keeps most
-  recent backup)
-- âœ… If deployment fails, rollback restores both Docker image AND database from
-  backup
+-… Current running image is tagged as backup BEFORE pulling new one (enables
+rollback) -… Latest API/Worker image is always pulled from registry -… Only API
+and Worker containers are recreated (postgres, dragonfly, -… API and Worker
+containers are recreated on every code push -… Infrastructure containers
+(postgres, dragonfly, etc.) are NOT recreated -… Old backup images are removed
+AFTER successful deployment (keeps most recent backup) -… If deployment fails,
+rollback restores both Docker image AND database from backup
 
 ### Verification
 
