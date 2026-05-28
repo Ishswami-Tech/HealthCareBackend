@@ -1202,65 +1202,24 @@ export class AuthService {
           clinicId,
         });
 
-        const promises: Promise<{ success: boolean; message: string }>[] = [
-          this.otpService.sendOtpSms(phoneTarget, 'login', clinicId, otpCode),
-        ];
+        result = await this.otpService.sendOtpSms(phoneTarget, 'login', clinicId, otpCode);
 
-        // Also send to email if user has one (increases delivery success rate)
-        if (user?.email) {
-          promises.push(
-            this.otpService
-              .sendOtpEmail(user.email, userName, 'login', clinicId, otpCode)
-              .catch((err: Error) => {
-                // Log but don't fail if email send fails (WhatsApp is primary)
-                void this.logging.log(
-                  LogType.SYSTEM,
-                  LogLevel.WARN,
-                  'Email OTP fallback failed for phone login',
-                  'AuthService.requestOtp',
-                  { error: err.message, phone: phoneTarget }
-                );
-                return { success: false, message: err.message };
-              })
-          );
-        }
-
-        // Wait for all channels
-        const results = await Promise.allSettled(promises);
-        const successful = results.filter(
-          (r): r is PromiseFulfilledResult<{ success: boolean; message: string }> =>
-            r.status === 'fulfilled'
-        );
-
-        this.logOtp('OTP request channel results', {
+        this.logOtp('OTP request channel result', {
           identifier: requestDto.identifier,
           normalizedPhone: phoneTarget,
           otpKey: `otp:${phoneTarget}`,
           otp: this.maskOtp(otpCode),
           otpLength: otpCode.length,
           clinicId,
-          results: results.map((r, index) => ({
-            channel: index === 0 ? 'whatsapp' : 'email',
-            status: r.status,
-            ...(r.status === 'fulfilled'
-              ? { success: r.value.success, message: r.value.message }
-              : { reason: String(r.reason) }),
-          })),
+          result,
         });
 
-        // ✅ At least one channel must succeed
-        if (successful.length === 0) {
+        if (!result.success) {
           throw this.errors.otpSendFailed(
-            'Failed to send OTP via all channels. Please try again later.',
+            result.message || 'Failed to send WhatsApp message. Please try again later.',
             'AuthService.requestOtp'
           );
         }
-
-        // Use the first successful result
-        result =
-          successful.length > 0 && successful[0]?.status === 'fulfilled'
-            ? (successful[0] as PromiseFulfilledResult<{ success: boolean; message: string }>).value
-            : { success: true, message: 'OTP sent via multiple channels' };
 
         this.logOtp('OTP request completed', {
           identifier: requestDto.identifier,

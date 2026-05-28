@@ -294,7 +294,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
    * Cache data with automatic fetch on miss
    * This is the main method to use for all caching needs
    *
-   * Now supports multi-layer caching (L1 â†’ L2 â†’ L3):
+   * Now supports multi-layer caching (L1’ L2’ L3):
    * - L1: In-memory cache (fastest, process-local)
    * - L2: Distributed cache (Redis/Dragonfly - this service)
    * - L3: Database (via fetchFn)

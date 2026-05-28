@@ -965,7 +965,7 @@ export class VideoController {
         throw error;
       }
       // NotFoundException originates from ensureAppointmentJoinable (via the appointment
-      // fallback path) â€” re-throw it directly so the HTTP filter maps it to 404,
+      // fallback path) re-throw it directly so the HTTP filter maps it to 404,
       // preserving the differentiated message the frontend decoder relies on.
       if (error instanceof NotFoundException) {
         throw error;

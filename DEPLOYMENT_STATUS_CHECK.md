@@ -12,13 +12,14 @@
 
 The GitHub Actions workflow will:
 
-1. âœ… **Security Scan** - Already running/completed
-2. ðŸ”„ **Docker Build** - Building new image with latest code
-3. â³ **Deploy** - Will run after build completes
-   - Pulls new image from registry
-   - Uses enhanced deploy.sh script
-   - Verifies image digest
-   - Recreates containers with new image
+1.… **Security Scan** - Already running/completed 2. ðŸ”„ **Docker Build** -
+Building new image with latest code 3.³ **Deploy** - Will run after build
+completes
+
+- Pulls new image from registry
+- Uses enhanced deploy.sh script
+- Verifies image digest
+- Recreates containers with new image
 
 ### 2. Check CI/CD Status
 
