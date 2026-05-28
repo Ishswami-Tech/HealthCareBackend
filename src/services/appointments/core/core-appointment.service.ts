@@ -1856,6 +1856,17 @@ export class CoreAppointmentService {
             return aptStartMinutes < slotEndMinutes && aptEndMinutes > currentMinutes;
           });
 
+          // Mark slot as unavailable if booked (regardless of appointment type)
+          // Video filtering happens earlier - if we reach here, slot is within video window
+          if (isBooked) {
+            slotsByTime.set(time, {
+              time,
+              available: false,
+              appointmentId: null,
+            });
+            continue;
+          }
+
           // 3. For today's availability, filter out slots that have already passed
           const dateParts = date.split('-');
           // Enforce IST time exactly
@@ -1904,27 +1915,10 @@ export class CoreAppointmentService {
             }
           }
 
-          const bookedAppointment = isBooked
-            ? appointments.find((apt: AppointmentItem) => {
-                const aptTime = (apt as Record<string, unknown>)['time'] as string | undefined;
-                if (!aptTime) return false;
-                const aptDuration =
-                  ((apt as Record<string, unknown>)['duration'] as number | undefined) || 30;
-                // Extract time parts - using non-null assertion on split result
-                const timeParts = (aptTime || '').split(':');
-                const aptHour = parseInt(timeParts[0] || '0', 10);
-                const aptMin = parseInt(timeParts[1] || '0', 10);
-                const aptStartMinutes = aptHour * 60 + aptMin;
-                const aptEndMinutes = aptStartMinutes + aptDuration;
-
-                return currentMinutes >= aptStartMinutes && currentMinutes < aptEndMinutes;
-              })
-            : null;
-
           slotsByTime.set(time, {
             time,
-            available: !isBooked,
-            appointmentId: bookedAppointment?.id ?? null,
+            available: true,
+            appointmentId: null,
           });
         }
       }
