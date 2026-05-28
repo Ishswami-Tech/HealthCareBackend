@@ -36,9 +36,9 @@ export class OtpService {
     // Use ConfigService (which uses dotenv) for all environment variable access
     this.config = {
       length: this.configService.getEnvNumber('OTP_LENGTH', 6),
-      expiryMinutes: this.configService.getEnvNumber('OTP_EXPIRY_MINUTES', 5),
-      maxAttempts: this.configService.getEnvNumber('OTP_MAX_ATTEMPTS', 3),
-      cooldownMinutes: this.configService.getEnvNumber('OTP_COOLDOWN_MINUTES', 1),
+      expiryMinutes: this.configService.getEnvNumber('OTP_EXPIRY_MINUTES', 10),
+      maxAttempts: this.configService.getEnvNumber('OTP_MAX_ATTEMPTS', 5),
+      cooldownMinutes: this.configService.getEnvNumber('OTP_COOLDOWN_MINUTES', 3),
     };
 
     this.otpDebugEnabled =
