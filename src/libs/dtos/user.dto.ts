@@ -578,6 +578,23 @@ export class CreateUserDto extends SimpleCreateUserDto {
  * ```
  */
 export class UpdateUserDto extends PartialType(CreateUserDto) {
+  /**
+   * Email is optional for updates.
+   * Note: Phone OTP login users should not update email as it wasn't verified.
+   * The frontend is responsible for not sending email for phone OTP users.
+   * Email changes for other login methods will be accepted.
+   */
+  @ApiPropertyOptional({
+    description: 'User email (optional for updates)',
+    example: 'user@example.com',
+  })
+  @IsOptional()
+  @IsEmail({}, { message: 'Please provide a valid email address' })
+  @Transform(({ value }): string | undefined =>
+    typeof value === 'string' && value.trim() ? value.toLowerCase().trim() : undefined
+  )
+  email?: string;
+
   @ApiPropertyOptional({
     example: '2024-01-01T00:00:00.000Z',
     description: 'Last login timestamp',
