@@ -842,6 +842,13 @@ export class UpdateUserProfileDto {
   })
   @IsOptional()
   @IsString({ message: 'Phone number must be a string' })
+  @Transform(({ value }): string | undefined => {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed.length === 0 ? undefined : trimmed;
+    }
+    return value as string | undefined;
+  })
   @Matches(/^\+?[1-9]\d{1,14}$/, { message: 'Invalid phone number format' })
   phone?: string;
 
