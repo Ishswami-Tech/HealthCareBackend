@@ -60,6 +60,7 @@ export type UserUpdateInput = {
   profilePicture?: string;
   isActive?: boolean;
   isVerified?: boolean;
+  isProfileComplete?: boolean;
   lastLogin?: Date;
   role?: string;
   primaryClinicId?: string;
