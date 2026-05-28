@@ -42,6 +42,7 @@ import type {
 import * as bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import type { FastifyReply } from 'fastify';
+import { generateUserId } from '@utils/user-id.util';
 // import { ProfileCompletionService } from '@services/profile-completion/profile-completion.service';
 
 @Injectable()
@@ -430,10 +431,11 @@ export class AuthService {
       }
 
       const effectiveRole = Role.PATIENT;
+      const userid = generateUserId(registerDto.email, true);
       const user = await this.databaseService.createUserSafe({
         email: registerDto.email,
         password: hashedPassword,
-        userid: uuidv4(),
+        userid,
         name: `${registerDto.firstName} ${registerDto.lastName}`,
         age,
         firstName: registerDto.firstName,
@@ -1345,18 +1347,12 @@ export class AuthService {
     if (isEmail) {
       user = await this.databaseService.findUserByEmailSafe(verifyDto.identifier);
     } else {
-      // Try to find by phone number first
+      // Find user by phone number
       const usersByPhone = await this.databaseService.findUsersSafe(
         { phone: normalizedIdentifier },
         { take: 1 }
       );
       user = usersByPhone[0] ?? null;
-
-      // If not found by phone, check if user exists with the phone-based temp email
-      if (!user) {
-        const potentialTempEmail = `${normalizedIdentifier}@temp.com`;
-        user = await this.databaseService.findUserByEmailSafe(potentialTempEmail);
-      }
     }
 
     // STEP 3: Branch based on whether user exists
@@ -1575,11 +1571,13 @@ export class AuthService {
     );
 
     // Create new user (OTP already verified above)
-    const tempEmail = isEmail ? normalizedIdentifier : `${normalizedIdentifier}@temp.com`;
+    // For phone-only login, don't create a fake email
+    // Generate meaningful user ID from identifier
+    const userid = generateUserId(normalizedIdentifier, isEmail);
 
     const user = await this.databaseService.createUserSafe({
-      email: tempEmail,
-      password: await bcrypt.hash(uuidv4(), 12),
+      ...(isEmail ? { email: normalizedIdentifier } : {}),
+      ...(isEmail ? { password: await bcrypt.hash(uuidv4(), 12) } : {}),
       firstName: verifyDto.firstName || '',
       lastName: verifyDto.lastName || '',
       name:
@@ -1588,7 +1586,7 @@ export class AuthService {
       phoneVerified: !isEmail,
       role: 'PATIENT',
       primaryClinicId: clinicUUID,
-      userid: uuidv4(),
+      userid,
       ...(!isEmail ? { phone: normalizedIdentifier } : {}),
     });
 
@@ -2342,6 +2340,7 @@ export class AuthService {
         finalClinicId = await resolveClinicUUID(this.databaseService, clinicId);
 
         // Create new user with Google info
+        const googleUserid = generateUserId(userEmail, true);
         fullUser = await this.databaseService.createUserSafe({
           email: userEmail,
           password: await bcrypt.hash(uuidv4(), 12),
@@ -2352,7 +2351,7 @@ export class AuthService {
           isVerified: true,
           role: 'PATIENT',
           primaryClinicId: finalClinicId,
-          userid: uuidv4(),
+          userid: googleUserid,
           ...(socialUser.profilePicture ? { profilePicture: socialUser.profilePicture } : {}),
         });
 

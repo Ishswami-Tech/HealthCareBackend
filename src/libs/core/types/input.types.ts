@@ -10,8 +10,8 @@
  * User creation input
  */
 export type UserCreateInput = {
-  email: string;
-  password: string;
+  email?: string;
+  password?: string;
   userid: string;
   name: string;
   age?: number;
