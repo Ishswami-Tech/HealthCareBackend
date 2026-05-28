@@ -880,6 +880,7 @@ export class UsersService {
       const userUpdateData = Object.fromEntries(
         Object.entries(baseFields).filter(([_, v]) => v !== undefined)
       ) as UserUpdateInput;
+
       await this.databaseService.updateUserSafe(id, userUpdateData);
       // Fetch updated user with relations
       const user = existingUserRaw
