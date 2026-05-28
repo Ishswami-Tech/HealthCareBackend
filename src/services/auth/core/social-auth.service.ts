@@ -7,6 +7,7 @@ import { LogType, LogLevel } from '@core/types';
 import type { SocialAuthProvider, SocialUser, SocialAuthResult } from '@core/types/auth.types';
 import type { UserCreateInput, UserUpdateInput } from '@core/types/input.types';
 import { resolveClinicUUID } from '@utils/clinic.utils';
+import { generateSocialUserId } from '@utils/user-id.util';
 import { OAuth2Client } from 'google-auth-library';
 
 @Injectable()
@@ -211,7 +212,7 @@ export class SocialAuthService {
 
         // Create new user
         const userData: Record<string, unknown> = {
-          userid: `user_${Date.now()}_${Math.random().toString(36).substring(2)}`,
+          userid: generateSocialUserId(socialUser.email, socialUser.provider),
           email: socialUser.email,
           name:
             `${socialUser.firstName || ''} ${socialUser.lastName || ''}`.trim() || socialUser.email,
