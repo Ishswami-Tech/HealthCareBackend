@@ -57,6 +57,14 @@ type LoggingCacheServiceLike = {
   lRange: (key: string, start: number, stop: number) => Promise<string[]>;
 };
 
+type LogEntryLike = {
+  message?: unknown;
+  context?: unknown;
+  type?: unknown;
+  metadata?: unknown;
+  timestamp?: unknown;
+};
+
 /**
  * ===================================================================
  * ENTERPRISE-GRADE LOGGING SERVICE FOR 1M+ USERS
@@ -158,6 +166,11 @@ export class LoggingService {
   // Error tracking for observability
   private errorCounts = new Map<string, number>();
   private lastErrorTime = new Map<string, number>();
+  private readonly healthLogRetentionMs = 4 * 60 * 60 * 1000;
+  private readonly generalLogRetentionMs = 72 * 60 * 60 * 1000;
+  private readonly logRetentionCleanupIntervalMs = 5 * 60 * 1000;
+  private lastLogRetentionCleanupAt = 0;
+  private logRetentionCleanupPromise: Promise<void> | null = null;
 
   constructor(
     @Inject(forwardRef(() => ConfigService))
@@ -219,6 +232,124 @@ export class LoggingService {
           });
       }
     });
+  }
+
+  private isHealthCheckLogEntry(logEntry: LogEntryLike): boolean {
+    const safeToString = (value: unknown): string =>
+      typeof value === 'string'
+        ? value
+        : value == null
+          ? ''
+          : value instanceof Date
+            ? value.toISOString()
+            : typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint'
+              ? String(value)
+              : (() => {
+                  try {
+                    return JSON.stringify(value);
+                  } catch {
+                    return '';
+                  }
+                })();
+
+    const combinedText = [
+      safeToString(logEntry['message']),
+      safeToString(logEntry['context']),
+      safeToString(logEntry['type']),
+      JSON.stringify(logEntry['metadata'] || {}),
+    ]
+      .join(' ')
+      .toLowerCase();
+
+    return [
+      'health check',
+      'get /health',
+      'get /api/health',
+      'healthmonitor',
+      'health monitor',
+      'databasehealthmonitor',
+      'logginghealthmonitor',
+      'heartbeat',
+      'healthcheck',
+    ].some(pattern => combinedText.includes(pattern));
+  }
+
+  private getLogEntryTimestamp(logEntry: LogEntryLike): number {
+    const topLevelTimestamp = logEntry['timestamp'];
+    const metadataTimestamp = (logEntry['metadata'] as Record<string, unknown> | undefined)?.[
+      'timestamp'
+    ];
+
+    const timestampValue =
+      typeof topLevelTimestamp === 'string'
+        ? topLevelTimestamp
+        : typeof metadataTimestamp === 'string'
+          ? metadataTimestamp
+          : '';
+
+    const parsedTime = new Date(timestampValue).getTime();
+    return Number.isNaN(parsedTime) ? 0 : parsedTime;
+  }
+
+  private async cleanupExpiredLogCache(force = false): Promise<void> {
+    const cacheService = this.cacheService;
+    if (!cacheService) {
+      return;
+    }
+
+    const now = Date.now();
+    if (!force && now - this.lastLogRetentionCleanupAt < this.logRetentionCleanupIntervalMs) {
+      return;
+    }
+
+    if (this.logRetentionCleanupPromise) {
+      return this.logRetentionCleanupPromise;
+    }
+
+    this.logRetentionCleanupPromise = (async () => {
+      try {
+        const cachedLogs = (await cacheService.lRange('logs', 0, -1)) || [];
+        if (cachedLogs.length === 0) {
+          this.lastLogRetentionCleanupAt = Date.now();
+          return;
+        }
+
+        const retainedLogs = cachedLogs.filter(logJson => {
+          try {
+            const parsed = JSON.parse(logJson) as Record<string, unknown>;
+            const timestamp = this.getLogEntryTimestamp(parsed);
+            if (timestamp === 0) {
+              return true;
+            }
+
+            const retentionMs = this.isHealthCheckLogEntry(parsed)
+              ? this.healthLogRetentionMs
+              : this.generalLogRetentionMs;
+
+            return Date.now() - timestamp < retentionMs;
+          } catch {
+            return true;
+          }
+        });
+
+        if (retainedLogs.length !== cachedLogs.length) {
+          await cacheService.del('logs');
+          if (retainedLogs.length > 0) {
+            await cacheService.rPush('logs', ...retainedLogs);
+            await cacheService.lTrim('logs', -10000, -1);
+          }
+        }
+
+        this.lastLogRetentionCleanupAt = Date.now();
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.warn(`[LoggingService] Failed to clean up expired logs: ${errorMessage}`);
+      } finally {
+        this.logRetentionCleanupPromise = null;
+      }
+    })();
+
+    return this.logRetentionCleanupPromise;
   }
 
   /**
@@ -436,6 +567,7 @@ export class LoggingService {
         await this.cacheService.rPush('logs', logJson);
         // Keep last 10000 logs (all types, all levels)
         await this.cacheService.lTrim('logs', -10000, -1);
+        void this.cleanupExpiredLogCache();
       }
     } catch (_cacheError) {
       // Handle cache errors gracefully - don't break logging operations
@@ -729,10 +861,16 @@ export class LoggingService {
       // If startTime is NOT provided (undefined), show ALL logs from cache (no time filter)
       // This allows "All Time" option in UI to show all available logs
       const now = new Date();
+      const retentionStartTime = new Date(now.getTime() - this.generalLogRetentionMs);
       // If startTime is undefined, use epoch (0) to show all logs from cache
       // If startTime is provided, use it for time-based filtering
       const finalStartTime = startTime !== undefined ? startTime : new Date(0); // Epoch = show all logs when no startTime
+      const effectiveStartTime = new Date(
+        Math.max(finalStartTime.getTime(), retentionStartTime.getTime())
+      );
       const finalEndTime = endTime || now;
+
+      void this.cleanupExpiredLogCache();
 
       // ALWAYS read from cache first (logs are stored in 'logs' list via rPush)
       // Cache is the primary source of truth for real-time log viewing
@@ -772,12 +910,18 @@ export class LoggingService {
         .filter((log): log is LogEntry => log !== null)
         .filter((log: LogEntry) => {
           const logDate = new Date(log.timestamp);
+          const logTimestamp = logDate.getTime();
+          const retentionMs = this.isHealthCheckLogEntry(log)
+            ? this.healthLogRetentionMs
+            : this.generalLogRetentionMs;
 
           // Apply time filter (only if startTime was explicitly provided)
           // If startTime is epoch (0), it means "show all time" - don't filter by time
           const inTimeRange =
-            finalStartTime.getTime() === 0 || // "All Time" selected
+            effectiveStartTime.getTime() === 0 || // "All Time" selected
             (logDate >= finalStartTime && logDate <= finalEndTime);
+          const withinRetention =
+            Number.isFinite(logTimestamp) && now.getTime() - logTimestamp < retentionMs;
 
           // Apply type filter (only if specified)
           const matchesType = !type || log.type === type;
@@ -796,7 +940,7 @@ export class LoggingService {
 
           // Return true if log matches ALL specified filters
           // This ensures ALL logs from ALL systems are shown when no filters are applied
-          return inTimeRange && matchesType && matchesLevel && matchesSearch;
+          return inTimeRange && withinRetention && matchesType && matchesLevel && matchesSearch;
         })
         .sort((a, b) => {
           const aTime = new Date(a.timestamp).getTime();
@@ -836,7 +980,7 @@ export class LoggingService {
       // Optimized database query for 1M users
       const whereClause: unknown = {
         timestamp: {
-          gte: finalStartTime,
+          gte: effectiveStartTime,
           lte: finalEndTime,
         },
       };
