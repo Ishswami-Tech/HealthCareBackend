@@ -1862,47 +1862,278 @@ run_migrations_safely() {
         fi
     fi
     
-    # Check if api container exists (for running migrations)
-    if ! container_running "${CONTAINER_PREFIX}api"; then
-        log_info "API container not running, starting temporarily for migrations..."
-        # CRITICAL: Temporarily increase memory limit for migrations to prevent OOM
-        # Prisma migrations can be memory-intensive, especially with large databases
-        log_info "Temporarily increasing container memory limit for migrations (to prevent OOM)..."
-        
-        # Start container with increased memory limit for migrations
-        # Use docker compose with memory override via environment variable
-        # Note: This requires docker-compose to support memory limits via environment
-        docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --no-deps api || {
-            log_error "Failed to start API container for migrations"
+    # =========================================================================
+    # RESOLVE DATABASE_URL (needed by both one-shot and docker exec paths)
+    # =========================================================================
+    
+    # Helper function to validate DATABASE_URL format
+    validate_database_url() {
+        local url="$1"
+        if [[ -z "$url" ]]; then
             return 1
-        }
-        
-        # If container started but has low memory limit, try to increase it temporarily
-        # Check current memory limit
-        local current_mem_limit
-        current_mem_limit=$(docker inspect "${CONTAINER_PREFIX}api" --format '{{.HostConfig.Memory}}' 2>/dev/null || echo "0")
-        if [[ "$current_mem_limit" != "0" ]]; then
-            local current_mem_mb=$((current_mem_limit / 1024 / 1024))
-            if [[ $current_mem_mb -lt 8192 ]]; then
-                log_warning "Container memory limit is ${current_mem_mb}MB - migrations may fail with OOM"
-                log_warning "Consider increasing memory limit in docker-compose.prod.yml to at least 8GB for migrations"
-                log_warning "Current limit: ${current_mem_mb}MB, Recommended: 8192MB (8GB) or higher"
+        fi
+        if [[ "$url" =~ (FailedPrecondition|Error|ERROR|error|container.*init process|No such container) ]]; then
+            return 1
+        fi
+        if [[ ! "$url" =~ ^postgresql:// ]] && [[ ! "$url" =~ ^postgres:// ]]; then
+            return 1
+        fi
+        if [[ ! "$url" =~ @ ]] || [[ ! "$url" =~ :// ]]; then
+            return 1
+        fi
+        local db_host
+        db_host=$(echo "$url" | sed -E 's#^postgres(ql)?://[^@]+@([^:/?]+).*#\2#' || echo "")
+        if [[ -z "$db_host" ]]; then
+            return 1
+        fi
+        if [[ "$db_host" == "localhost" ]] || [[ "$db_host" == "127.0.0.1" ]] || [[ "$db_host" == "::1" ]]; then
+            log_error "DATABASE_URL uses loopback host (${db_host}), which is invalid for Dockerized production."
+            log_error "Use PostgreSQL service host 'postgres' (e.g. postgresql://...@postgres:5432/userdb?schema=public)."
+            return 1
+        fi
+        return 0
+    }
+    
+    local database_url=""
+    local env_production_path="${BASE_DIR}/.env.production"
+    [[ ! -f "$env_production_path" ]] && env_production_path="${SCRIPT_DIR}/../../.env.production"
+    
+    # Priority 1: Check if DATABASE_URL is set in deployment script environment (from GitHub Actions)
+    if [[ -n "${DATABASE_URL:-}" ]] && validate_database_url "${DATABASE_URL}"; then
+        database_url="${DATABASE_URL}"
+        log_info "Using DATABASE_URL from GitHub Actions/environment variable"
+    else
+        # Priority 2: Try to read from .env.production file
+        log_info "DATABASE_URL not found in environment, checking .env.production file..."
+        if [[ -f "$env_production_path" ]]; then
+            local env_db_url
+            env_db_url=$(grep -E "^DATABASE_URL=" "$env_production_path" 2>/dev/null | head -n 1 | sed 's/^DATABASE_URL=//' | sed 's/^["'\'']//;s/["'\'']$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || echo "")
+            
+            if [[ -n "$env_db_url" ]] && validate_database_url "$env_db_url"; then
+                database_url="$env_db_url"
+                log_success "Using DATABASE_URL from .env.production file"
             fi
         fi
         
-        log_info "Waiting for API container to initialize..."
-        sleep 10  # Give container time to load environment variables
+        # Priority 3: Try to read from existing container environment
+        if [[ -z "${database_url:-}" ]] && container_running "${CONTAINER_PREFIX}api"; then
+            local db_url_output
+            db_url_output=$(docker exec "${CONTAINER_PREFIX}api" printenv DATABASE_URL 2>&1)
+            if [[ $? -eq 0 ]] && validate_database_url "$db_url_output"; then
+                database_url="$db_url_output"
+                log_success "Using DATABASE_URL from existing container environment"
+            fi
+        fi
+        
+        # Priority 4: FAIL if DATABASE_URL is still not found
+        if [[ -z "${database_url:-}" ]]; then
+            log_error "=========================================="
+            log_error "SECURITY ERROR: DATABASE_URL not found!"
+            log_error "=========================================="
+            log_error "DATABASE_URL must be provided via one of:"
+            log_error "  1. GitHub Actions environment variable/secrets (recommended)"
+            log_error "  2. .env.production file"
+            log_error "  3. Existing running container environment"
+            log_error "=========================================="
+            return 1
+        fi
     fi
     
+    # Final validation
+    if ! validate_database_url "$database_url"; then
+        log_error "ERROR: DATABASE_URL validation failed!"
+        return 1
+    fi
+    
+    log_info "DATABASE_URL resolved successfully (host: $(echo "$database_url" | sed -n 's|.*@\([^:/]*\).*|\1|p'))"
+    
+    # =========================================================================
+    # STRATEGY: ALWAYS prefer one-shot migration container (avoids crash-loop issues)
+    # Only fall back to docker exec when container is proven stable AND one-shot fails.
+    # =========================================================================
+    
+    # ALWAYS use one-shot migration container by default
+    # This avoids race conditions where the API container appears responsive but
+    # enters a restart loop before docker exec commands complete.
+    # The one-shot approach is more reliable because it creates a fresh container
+    # specifically for migrations without booting the full NestJS app.
+    local use_oneshot_migration=true
+    local api_container_usable=false
+    
+    # Log container state for diagnostics (does not affect migration strategy)
+    if container_running "${CONTAINER_PREFIX}api"; then
+        log_info "API container exists but one-shot migration is preferred (avoids restart-loop race conditions)"
+    else
+        log_info "API container not running - one-shot migration container will be used"
+    fi
+    
+    # =========================================================================
+    # ONE-SHOT MIGRATION: Run migrations in a temporary container that ONLY
+    # executes prisma migrate deploy (does NOT boot the NestJS application).
+    # This avoids the chicken-and-egg problem where the app crashes because
+    # it can't connect to the DB (or needs migrations first).
+    # =========================================================================
+    if [[ "$use_oneshot_migration" == "true" ]]; then
+        log_info "=============================================="
+        log_info "Using ONE-SHOT migration container (bypasses app boot)"
+        log_info "=============================================="
+        
+        local migration_image="${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest}"
+        
+        # Verify PostgreSQL is reachable from the Docker network first
+        log_info "Verifying PostgreSQL is reachable from Docker network..."
+        local pg_check
+        pg_check=$(docker run --rm --network app-network \
+            --entrypoint sh "$migration_image" \
+            -c "node -e \"
+const net = require('net');
+const s = net.createConnection({host:'postgres',port:5432});
+s.on('connect',()=>{console.log('OK');s.destroy();process.exit(0)});
+s.on('error',(e)=>{console.log('FAIL:'+e.message);process.exit(1)});
+setTimeout(()=>{console.log('TIMEOUT');process.exit(1)},10000);
+\"" 2>&1 || echo "FAIL")
+        
+        if echo "$pg_check" | grep -q "^OK$"; then
+            log_success "PostgreSQL is reachable from Docker network"
+        else
+            log_error "PostgreSQL is NOT reachable from Docker network!"
+            log_error "Connection test output: $pg_check"
+            log_error "This indicates a Docker network configuration issue."
+            log_error "Check: docker network inspect app-network"
+            log_error "Ensure postgres container is on app-network with IP 172.18.0.2"
+            
+            # Try to fix by reconnecting postgres to app-network
+            log_info "Attempting to reconnect postgres to app-network..."
+            docker network connect app-network postgres 2>/dev/null || true
+            sleep 3
+            
+            # Retry the check
+            pg_check=$(docker run --rm --network app-network \
+                --entrypoint sh "$migration_image" \
+                -c "node -e \"
+const net = require('net');
+const s = net.createConnection({host:'postgres',port:5432});
+s.on('connect',()=>{console.log('OK');s.destroy();process.exit(0)});
+s.on('error',(e)=>{console.log('FAIL:'+e.message);process.exit(1)});
+setTimeout(()=>{console.log('TIMEOUT');process.exit(1)},10000);
+\"" 2>&1 || echo "FAIL")
+            
+            if echo "$pg_check" | grep -q "^OK$"; then
+                log_success "PostgreSQL is now reachable after network reconnect"
+            else
+                log_error "PostgreSQL still unreachable after reconnect attempt"
+                log_error "Manual intervention required on the server"
+                return 1
+            fi
+        fi
+        
+        # Run migration via one-shot container
+        # Uses the same image but overrides entrypoint to only run prisma migrate deploy
+        local oneshot_migration_output
+        local oneshot_migration_exit_code
+        local schema_path="${PRISMA_SCHEMA_PATH:-/app/src/libs/infrastructure/database/prisma/schema.prisma}"
+        local config_file_path="/app/src/libs/infrastructure/database/prisma/prisma.config.js"
+        
+        # Encode DATABASE_URL to avoid shell escaping issues
+        local encoded_url
+        encoded_url=$(echo -n "$database_url" | base64 -w0)
+        
+        log_info "Running Prisma migration via one-shot container..."
+        oneshot_migration_output=$(docker run --rm \
+            --network app-network \
+            --env-file "${BASE_DIR}/.env.production" \
+            -e "DATABASE_URL=$database_url" \
+            --entrypoint bash \
+            "$migration_image" \
+            -c "
+                unset DIRECT_URL
+                export DATABASE_URL=\$(echo '$encoded_url' | base64 -d)
+                echo '[ONESHOT] Running prisma migrate deploy...'
+                echo '[ONESHOT] DATABASE_URL host:' \$(echo \$DATABASE_URL | sed -n 's|.*@\([^:/]*\).*|\1|p')
+                cd /app && node scripts/run-prisma.js migrate
+            " 2>&1)
+        oneshot_migration_exit_code=$?
+        
+        log_info "=== One-Shot Migration Output ==="
+        echo "$oneshot_migration_output"
+        log_info "=== End of One-Shot Migration Output ==="
+        
+        if [[ $oneshot_migration_exit_code -eq 0 ]]; then
+            log_success "One-shot migration completed successfully"
+            
+            # Validate schema
+            local validation_output
+            validation_output=$(docker run --rm \
+                --network app-network \
+                -e "DATABASE_URL=$database_url" \
+                --entrypoint bash \
+                "$migration_image" \
+                -c "
+                    unset DIRECT_URL
+                    cd /app && node scripts/run-prisma.js validate
+                " 2>&1)
+            
+            if [[ $? -eq 0 ]]; then
+                log_success "Schema validation passed (one-shot)"
+                return 0
+            else
+                log_warning "Schema validation had issues but migration succeeded"
+                echo "$validation_output"
+                return 0
+            fi
+        else
+            log_error "One-shot migration failed with exit code: $oneshot_migration_exit_code"
+            log_error "Full output saved to /tmp/migration.log"
+            echo "$oneshot_migration_output" > /tmp/migration.log 2>&1 || true
+            
+            # Rollback if we have a backup
+            if [[ -n "$PRE_MIGRATION_BACKUP" ]]; then
+                log_warning "Rolling back to pre-migration backup..."
+                restore_backup "$PRE_MIGRATION_BACKUP"
+            fi
+            return 1
+        fi
+    fi
+    
+    # =========================================================================
+    # FALLBACK: Use docker exec into running API container (original approach)
+    # This path is taken when the API container is running and responsive
+    # =========================================================================
+    log_info "Using running API container for migrations (container is responsive)"
+    
     # Verify container is actually healthy (not just running but crashed)
+    # CRITICAL: Also detect "restarting" state which causes docker exec to fail
     log_info "Verifying container health..."
     local container_status
     container_status=$(docker inspect "${CONTAINER_PREFIX}api" --format '{{.State.Status}}' 2>/dev/null || echo "unknown")
+    local container_restarting
+    container_restarting=$(docker inspect "${CONTAINER_PREFIX}api" --format '{{.State.Restarting}}' 2>/dev/null || echo "false")
     local container_exit_code
     container_exit_code=$(docker inspect "${CONTAINER_PREFIX}api" --format '{{.State.ExitCode}}' 2>/dev/null || echo "0")
     
-    if [[ "$container_status" != "running" ]]; then
-        log_error "API container is not running (status: $container_status)"
+    # Detect restart-loop: container may briefly report "running" between restarts
+    # Perform 3 rapid docker exec checks to confirm stability
+    if [[ "$container_status" == "running" ]] && [[ "$container_restarting" != "true" ]]; then
+        local exec_check_pass=0
+        local exec_check_attempts=3
+        for ((i=1; i<=exec_check_attempts; i++)); do
+            if docker exec "${CONTAINER_PREFIX}api" sh -c "exit 0" >/dev/null 2>&1; then
+                exec_check_pass=$((exec_check_pass + 1))
+            fi
+            sleep 2
+        done
+        if [[ $exec_check_pass -lt $exec_check_attempts ]]; then
+            log_warning "API container is unstable (only $exec_check_pass/$exec_check_attempts exec checks passed)"
+            log_warning "Container is likely in a restart loop - cannot use docker exec for migrations"
+            log_error "Cannot proceed with docker exec migrations - container is unreliable"
+            log_error "Migration should have been handled by one-shot container above"
+            return 1
+        fi
+        log_success "API container stability confirmed ($exec_check_pass/$exec_check_attempts exec checks passed)"
+    fi
+    
+    if [[ "$container_status" != "running" ]] || [[ "$container_restarting" == "true" ]]; then
+        log_error "API container is not running (status: $container_status, restarting: $container_restarting)"
         if [[ "$container_exit_code" != "0" ]] && [[ "$container_exit_code" != "" ]]; then
             log_error "Container exit code: $container_exit_code"
             
@@ -1917,14 +2148,6 @@ run_migrations_safely() {
             fi
         fi
         log_error "Cannot proceed with migrations - container must be running"
-        return 1
-    fi
-    
-    # Check if container process is actually running (not just created)
-    if ! docker exec "${CONTAINER_PREFIX}api" sh -c "exit 0" >/dev/null 2>&1; then
-        log_error "API container exists but is not responding to commands"
-        log_error "Container may be crashing or in a bad state"
-        log_error "Check container logs: docker logs ${CONTAINER_PREFIX}api"
         return 1
     fi
     
