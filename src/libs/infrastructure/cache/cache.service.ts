@@ -651,6 +651,94 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return count;
   }
 
+  /**
+   * Invalidate video consultation status and details caches for an appointment
+   * This method removes all video-specific cache entries associated with a given appointmentId
+   *
+   * Cache patterns invalidated:
+   * - video:consultation:status:{appointmentId}:*
+   * - video:consultation:details:{appointmentId}:*
+   *
+   * @param appointmentId - The ID of the appointment whose video caches should be invalidated
+   * @returns true on success, false on failure
+   *
+   * @description
+   * This method is called after successful payment for video appointments to ensure
+   * fresh appointment data is retrieved (specifically, updated payment status).
+   * Handles errors gracefully by logging them without throwing exceptions,
+   * ensuring cache invalidation failures don't disrupt payment processing workflows.
+   *
+   * @example
+   * // Invalidate video cache after payment webhook
+   * const success = await cacheService.invalidateVideoCacheForAppointment('apt-123');
+   * if (success) {
+   *   console.log('Video cache invalidated for appointment apt-123');
+   * }
+   */
+  async invalidateVideoCacheForAppointment(appointmentId: string): Promise<boolean> {
+    try {
+      await this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.DEBUG,
+        `Invalidating video cache for appointment: ${appointmentId}`,
+        'CacheService',
+        { appointmentId }
+      );
+
+      // Define video-specific cache key patterns
+      const cachePatterns = [
+        `video:consultation:status:${appointmentId}:*`,
+        `video:consultation:details:${appointmentId}:*`,
+      ];
+
+      let totalInvalidated = 0;
+
+      // Invalidate each cache pattern
+      for (const pattern of cachePatterns) {
+        try {
+          const invalidatedCount = await this.invalidateCacheByPattern(pattern);
+          totalInvalidated += invalidatedCount;
+        } catch (patternError) {
+          await this.loggingService.log(
+            LogType.CACHE,
+            LogLevel.WARN,
+            `Failed to invalidate video cache pattern: ${pattern}`,
+            'CacheService',
+            {
+              appointmentId,
+              pattern,
+              error: patternError instanceof Error ? patternError.message : String(patternError),
+            }
+          );
+          // Continue with next pattern even if one fails
+        }
+      }
+
+      await this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.DEBUG,
+        `Video cache invalidation completed for appointment: ${appointmentId}`,
+        'CacheService',
+        { appointmentId, invalidatedKeysCount: totalInvalidated }
+      );
+
+      return true;
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.WARN,
+        `Error invalidating video cache for appointment: ${appointmentId}`,
+        'CacheService',
+        {
+          appointmentId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      // Return false but don't throw - cache invalidation failures should not break payment processing
+      return false;
+    }
+  }
+
   async invalidateMyAppointmentsCache(userId: string): Promise<number> {
     const key = this.keyFactory.fromTemplate('appointments:my:{userId}', { userId });
     let count = await this.invalidateCacheByPattern(key);
