@@ -935,6 +935,10 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       return true;
     }
 
+    // All recognized payment-complete statuses across providers
+    // PAID/COMPLETED: generic, SUCCESS: Cashfree, CAPTURED: Razorpay
+    const PAID_STATUSES = ['PAID', 'COMPLETED', 'SUCCESS', 'CAPTURED'];
+
     const paymentEntries = Array.isArray(appointment.payment)
       ? appointment.payment
       : appointment.payment
@@ -943,18 +947,14 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
     return (
       paymentEntries.some(payment =>
-        ['PAID', 'COMPLETED'].includes(String(payment.status || '').toUpperCase())
+        PAID_STATUSES.includes(String(payment.status || '').toUpperCase())
       ) ||
-      ['PAID', 'COMPLETED'].includes(String(appointment.paymentStatus || '').toUpperCase()) ||
-      ['PAID', 'COMPLETED'].includes(
-        String(appointment.billing?.paymentStatus || '').toUpperCase()
-      ) ||
-      ['PAID', 'COMPLETED'].includes(String(appointment.billing?.status || '').toUpperCase()) ||
+      PAID_STATUSES.includes(String(appointment.paymentStatus || '').toUpperCase()) ||
+      PAID_STATUSES.includes(String(appointment.billing?.paymentStatus || '').toUpperCase()) ||
+      PAID_STATUSES.includes(String(appointment.billing?.status || '').toUpperCase()) ||
       appointment.billing?.paid === true ||
-      ['PAID', 'COMPLETED'].includes(
-        String(appointment.invoice?.paymentStatus || '').toUpperCase()
-      ) ||
-      ['PAID', 'COMPLETED'].includes(String(appointment.invoice?.status || '').toUpperCase()) ||
+      PAID_STATUSES.includes(String(appointment.invoice?.paymentStatus || '').toUpperCase()) ||
+      PAID_STATUSES.includes(String(appointment.invoice?.status || '').toUpperCase()) ||
       appointment.invoice?.paid === true
     );
   }

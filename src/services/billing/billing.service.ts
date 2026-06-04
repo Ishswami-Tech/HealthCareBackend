@@ -360,6 +360,10 @@ export class BillingService implements OnModuleInit {
         appointment.doctorId || undefined,
         resolvedClinicId
       ),
+      // Invalidate video consultation status cache for video appointments after payment
+      appointment.type === 'VIDEO'
+        ? this.cacheService.invalidateVideoCacheForAppointment(appointment.id)
+        : Promise.resolve(false),
       ...cacheIdentityIds.map(identityId =>
         this.cacheService.invalidateMyAppointmentsCache(identityId)
       ),
