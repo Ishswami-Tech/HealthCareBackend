@@ -146,6 +146,7 @@ function extractMigrationName(output) {
 function extractCreatedObjects(sql) {
   const tables = new Set();
   const types = new Set();
+  const alterColumns = [];
 
   for (const match of sql.matchAll(/CREATE TABLE\s+"([^"]+)"/gi)) {
     tables.add(match[1]);
@@ -155,7 +156,28 @@ function extractCreatedObjects(sql) {
     types.add(match[1]);
   }
 
-  return { tables: [...tables], types: [...types] };
+  // Detect idempotent ALTER TABLE ADD COLUMN IF NOT EXISTS statements
+  // Handle multi-line SQL where ADD COLUMN may be on a different line than ALTER TABLE
+  for (const match of sql.matchAll(
+    /ALTER TABLE\s+"([^"]+)"[\s\S]*?ADD COLUMN\s+IF NOT EXISTS\s+"([^"]+)"/gi
+  )) {
+    alterColumns.push({ table: match[1], column: match[2] });
+  }
+  // Also handle cases where multiple ADD COLUMNs follow a single ALTER TABLE
+  // e.g. ALTER TABLE "users"\n  ADD COLUMN IF NOT EXISTS "col1" TEXT,\n  ADD COLUMN IF NOT EXISTS "col2" TEXT;
+  for (const alterBlock of sql.matchAll(/ALTER TABLE\s+"([^"]+)"([\s\S]*?)(?:;|$)/gi)) {
+    const tableName = alterBlock[1];
+    const body = alterBlock[2];
+    for (const colMatch of body.matchAll(/ADD COLUMN\s+IF NOT EXISTS\s+"([^"]+)"/gi)) {
+      const col = { table: tableName, column: colMatch[1] };
+      // Avoid duplicates
+      if (!alterColumns.some(c => c.table === col.table && c.column === col.column)) {
+        alterColumns.push(col);
+      }
+    }
+  }
+
+  return { tables: [...tables], types: [...types], alterColumns };
 }
 
 function queryDatabase(sql) {
@@ -175,9 +197,45 @@ function isSafeToResolveFailedMigration(migrationName) {
     return false;
   }
 
-  const { tables, types } = extractCreatedObjects(migrationSql);
-  if (tables.length === 0 && types.length === 0) {
-    log(`⚠ No CREATE TABLE or CREATE TYPE statements found in ${migrationName}`, 'yellow');
+  const { tables, types, alterColumns } = extractCreatedObjects(migrationSql);
+
+  // Case 1: Migration has CREATE TABLE/TYPE — check those objects exist
+  if (tables.length > 0 || types.length > 0) {
+    // existing logic continues below
+  }
+  // Case 2: Migration only has idempotent ALTER TABLE ADD COLUMN IF NOT EXISTS
+  else if (alterColumns.length > 0) {
+    log(
+      `ℹ Migration contains ${alterColumns.length} idempotent ADD COLUMN IF NOT EXISTS statement(s)`,
+      'cyan'
+    );
+    try {
+      for (const { table, column } of alterColumns) {
+        const result = queryDatabase(
+          `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = '${table}' AND column_name = '${column}');`
+        );
+        if (result !== 't') {
+          log(
+            `⚠ Column "${column}" not found on table "${table}" - migration may not have applied`,
+            'yellow'
+          );
+          return false;
+        }
+        log(`  ✓ Column "${table}"."${column}" exists`, 'green');
+      }
+      log(`✅ All columns from migration exist - safe to mark as applied`, 'green');
+      return true;
+    } catch (error) {
+      log(`❌ Failed while validating ALTER TABLE state: ${error.message}`, 'red');
+      return false;
+    }
+  }
+  // Case 3: No recognizable statements
+  else {
+    log(
+      `⚠ No CREATE TABLE, CREATE TYPE, or idempotent ALTER TABLE statements found in ${migrationName}`,
+      'yellow'
+    );
     return false;
   }
 
@@ -276,7 +334,15 @@ try {
     log(`  Schema: ${schemaPath}`, 'cyan');
     log(`  Config: ${configPath}`, 'cyan');
     log(`  Database: ${cleanDbUrl.replace(/:[^:@]+@/, ':****@')}`, 'cyan');
-    runPrismaCli(['db', 'push', '--schema', schemaPath, '--config', configPath, '--accept-data-loss']);
+    runPrismaCli([
+      'db',
+      'push',
+      '--schema',
+      schemaPath,
+      '--config',
+      configPath,
+      '--accept-data-loss',
+    ]);
     log('✓ Database push completed successfully!', 'green');
     process.exit(0);
   } else if (command === 'validate') {
