@@ -23,6 +23,12 @@ export class OtpService {
   private readonly config: OtpConfig;
   private readonly otpDebugEnabled: boolean;
 
+  /**
+   * Progressive cooldown schedule (seconds) indexed by attempt count (0-based).
+   * First 3 OTP requests: no cooldown. Then: 1min, 3min, 5min, 10min.
+   */
+  private readonly PROGRESSIVE_COOLDOWNS = [0, 0, 0, 60, 180, 300, 600];
+
   constructor(
     @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
@@ -126,6 +132,15 @@ export class OtpService {
       : otp;
   }
 
+  /**
+   * Get progressive cooldown duration in seconds based on attempt count.
+   * First 3 attempts: 0s (no cooldown). Then escalates: 60s, 180s, 300s, 600s.
+   */
+  private getProgressiveCooldown(attemptCount: number): number {
+    const index = Math.min(attemptCount, this.PROGRESSIVE_COOLDOWNS.length - 1);
+    return this.PROGRESSIVE_COOLDOWNS[index] || 0;
+  }
+
   async peekOtp(identifier: string): Promise<string | null> {
     const normalizedIdentifier = this.normalizeIdentifier(identifier);
     const otpKey = `otp:${normalizedIdentifier}`;
@@ -175,9 +190,11 @@ export class OtpService {
       const cooldown = await this.cacheService.get<string>(cooldownKey);
 
       if (cooldown) {
+        const remainingTtl = await this.cacheService.ttl(cooldownKey);
+        const waitMinutes = Math.ceil((remainingTtl > 0 ? remainingTtl : 60) / 60);
         return {
           success: false,
-          message: `Please wait ${this.config.cooldownMinutes} minute(s) before requesting another OTP`,
+          message: `Please wait ${waitMinutes} minute(s) before requesting another OTP`,
         };
       }
 
@@ -230,8 +247,12 @@ export class OtpService {
         storedOtp: this.maskOtpValue(storedOtp),
         storedOtpMatches: storedOtp === otp,
       });
-      await this.cacheService.set(attemptsKey, (attemptCount + 1).toString(), 60 * 60); // 1 hour
-      await this.cacheService.set(cooldownKey, '1', this.config.cooldownMinutes * 60);
+      const newAttemptCount = attemptCount + 1;
+      await this.cacheService.set(attemptsKey, newAttemptCount.toString(), 60 * 60); // 1 hour
+      const cooldownSeconds = this.getProgressiveCooldown(newAttemptCount);
+      if (cooldownSeconds > 0) {
+        await this.cacheService.set(cooldownKey, '1', cooldownSeconds);
+      }
 
       const emailJobData = {
         to: email,
@@ -327,9 +348,11 @@ export class OtpService {
       const cooldown = await this.cacheService.get<string>(cooldownKey);
 
       if (cooldown) {
+        const remainingTtl = await this.cacheService.ttl(cooldownKey);
+        const waitMinutes = Math.ceil((remainingTtl > 0 ? remainingTtl : 60) / 60);
         return {
           success: false,
-          message: `Please wait ${this.config.cooldownMinutes} minute(s) before requesting another OTP`,
+          message: `Please wait ${waitMinutes} minute(s) before requesting another OTP`,
         };
       }
 
@@ -382,8 +405,12 @@ export class OtpService {
         storedOtp: this.maskOtpValue(storedOtp),
         storedOtpMatches: storedOtp === otp,
       });
-      await this.cacheService.set(attemptsKey, (attemptCount + 1).toString(), 60 * 60); // 1 hour
-      await this.cacheService.set(cooldownKey, '1', this.config.cooldownMinutes * 60);
+      const newAttemptCount = attemptCount + 1;
+      await this.cacheService.set(attemptsKey, newAttemptCount.toString(), 60 * 60); // 1 hour
+      const cooldownSeconds = this.getProgressiveCooldown(newAttemptCount);
+      if (cooldownSeconds > 0) {
+        await this.cacheService.set(cooldownKey, '1', cooldownSeconds);
+      }
 
       // Send via WhatsApp
       const sent = await this.whatsAppService.sendOTP(
@@ -493,8 +520,9 @@ export class OtpService {
         };
       }
 
-      // Remove OTP after successful verification
-      await this.cacheService.del(otpKey);
+      // NOTE: OTP is NOT deleted here. Deletion is deferred to the caller via consumeOtp()
+      // This allows retry if downstream operations (e.g., user creation) fail.
+      // The caller MUST call consumeOtp() after confirming the operation succeeded.
 
       this.logOtp('OTP verification succeeded', {
         identifier: normalizedIdentifier,
@@ -616,6 +644,15 @@ export class OtpService {
       );
       return false;
     }
+  }
+
+  /**
+   * Consume (delete) OTP after successful downstream operation
+   * This is the deferred deletion counterpart to verifyOtp().
+   * MUST be called by the auth service after user creation/login succeeds.
+   */
+  async consumeOtp(identifier: string): Promise<boolean> {
+    return this.invalidateOtp(identifier);
   }
 
   /**

@@ -2059,6 +2059,9 @@ export class UsersService {
       // Invalidate cache
       await this.cacheService.del(`user:${userId}`);
       await this.cacheService.del(`user:${userId}:profile`);
+      // Invalidate all user-related cache entries (including findUserByIdSafe's query cache)
+      await this.cacheService.invalidateCacheByPattern(`*${userId}*`);
+      await this.cacheService.invalidateCacheByTag(`user:${userId}`);
 
       await this.loggingService.log(
         LogType.AUDIT,

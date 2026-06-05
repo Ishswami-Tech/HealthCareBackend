@@ -170,9 +170,10 @@ export class JwtAuthGuard implements CanActivate {
    */
   private readonly profileCompletionBypassPrefixPaths = [
     '/api/v1/auth/',
-    '/api/v1/profile/completion', // Fixed: was 'profile-completion' (hyphen)
+    '/api/v1/profile/completion',
     '/api/v1/user/',
     '/api/v1/users/profile',
+    '/api/v1/clinics/',
   ];
 
   /**
@@ -342,7 +343,9 @@ export class JwtAuthGuard implements CanActivate {
         // Cast user record for profile completion check
         const dbUser = user as Record<string, unknown> | null;
         const profileCompleteValue = dbUser?.['isProfileComplete'];
-        const isProfileComplete = profileCompleteValue === true;
+        const profileCompletedAtValue = dbUser?.['profileCompletedAt'];
+        // Profile is complete if the DB flag is true OR if profileCompletedAt is set (one-time permanent flag)
+        const isProfileComplete = profileCompleteValue === true || profileCompletedAtValue != null;
         const roleValue = dbUser?.['role'];
         const userRole = typeof roleValue === 'string' ? roleValue : '';
         const normalizedUserRole = userRole.toUpperCase();

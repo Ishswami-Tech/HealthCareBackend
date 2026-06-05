@@ -305,7 +305,7 @@ export class JwtAuthService {
         // Log but don't fail - rate limiting is best effort
         void this.loggingService.log(
           LogType.AUTH,
-          LogLevel.WARN,
+          LogLevel.DEBUG,
           'Rate limit check failed (non-critical)',
           'JwtAuthService',
           {
