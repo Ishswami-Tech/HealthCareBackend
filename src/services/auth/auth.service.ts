@@ -390,6 +390,8 @@ export class AuthService {
             'AuthService.register'
           );
         }
+        // Consume OTP after successful verification (deferred deletion pattern)
+        await this.otpService.consumeOtp(identifier);
       }
 
       // 4. Check if user already exists
@@ -1358,7 +1360,7 @@ export class AuthService {
     // STEP 3: Branch based on whether user exists
     if (user) {
       // ===== EXISTING USER LOGIN =====
-      return await this.handleExistingUserLogin(
+      const loginResult = await this.handleExistingUserLogin(
         user,
         clinicIdFromHeader,
         verifyDto,
@@ -1366,6 +1368,9 @@ export class AuthService {
         isEmail,
         normalizedIdentifier
       );
+      // Consume OTP after successful login (deferred deletion pattern)
+      await this.otpService.consumeOtp(normalizedIdentifier);
+      return loginResult;
     } else {
       // ===== NEW USER REGISTRATION =====
       return await this.handleNewUserRegistration(
@@ -1562,6 +1567,15 @@ export class AuthService {
     const { resolveClinicUUID } = await import('@utils/clinic.utils');
     const clinicUUID = await resolveClinicUUID(this.databaseService, clinicId);
 
+    // Validate clinicUUID is non-null before user creation
+    if (!clinicUUID) {
+      throw this.errors.validationError(
+        'clinicId',
+        'Cannot create user: clinic UUID could not be resolved. Please ensure a valid clinic is selected.',
+        'AuthService.handleNewUserRegistration'
+      );
+    }
+
     await this.logging.log(
       LogType.AUTH,
       LogLevel.INFO,
@@ -1572,16 +1586,21 @@ export class AuthService {
 
     // Create new user (OTP already verified above)
     // For phone-only login, don't create a fake email
-    // Generate meaningful user ID from identifier
-    const userid = generateUserId(normalizedIdentifier, isEmail);
+    // Null-safe name resolution: default to normalizedIdentifier if firstName/lastName are empty
+    const resolvedFirstName = verifyDto.firstName?.trim() || '';
+    const resolvedLastName = verifyDto.lastName?.trim() || '';
+    const resolvedName = `${resolvedFirstName} ${resolvedLastName}`.trim() || normalizedIdentifier;
+
+    // Generate meaningful user ID from identifier (with fallback for safety)
+    const safeIdentifier = normalizedIdentifier || verifyDto.identifier || uuidv4();
+    const userid = generateUserId(safeIdentifier, isEmail);
 
     const user = await this.databaseService.createUserSafe({
       ...(isEmail ? { email: normalizedIdentifier } : {}),
       ...(isEmail ? { password: await bcrypt.hash(uuidv4(), 12) } : {}),
-      firstName: verifyDto.firstName || '',
-      lastName: verifyDto.lastName || '',
-      name:
-        `${verifyDto.firstName || ''} ${verifyDto.lastName || ''}`.trim() || normalizedIdentifier,
+      firstName: resolvedFirstName,
+      lastName: resolvedLastName,
+      name: resolvedName,
       isVerified: true,
       phoneVerified: !isEmail,
       role: 'PATIENT',
@@ -1589,6 +1608,9 @@ export class AuthService {
       userid,
       ...(!isEmail ? { phone: normalizedIdentifier } : {}),
     });
+
+    // Consume OTP after successful user creation (deferred deletion pattern)
+    await this.otpService.consumeOtp(normalizedIdentifier);
 
     // Ensure patient record
     await this.ensurePatientRecordForAuth(user.id, clinicUUID, 'verifyOtp');
@@ -1769,6 +1791,9 @@ export class AuthService {
     if (!verificationResult.success) {
       throw this.errors.otpInvalid('AuthService.verifyPhone', verificationResult.message);
     }
+
+    // Consume OTP after successful verification (deferred deletion pattern)
+    await this.otpService.consumeOtp(normalizedInputPhone);
 
     const verifiedAt = new Date();
     await this.databaseService.updateUserSafe(user.id, {
@@ -2232,6 +2257,9 @@ export class AuthService {
     if (!result.success) {
       throw this.errors.invalidCredentials('AuthService.verifyEmail');
     }
+
+    // Consume OTP after successful verification (deferred deletion pattern)
+    await this.otpService.consumeOtp(email);
 
     const user = await this.databaseService.findUserByEmailSafe(email);
     if (!user) {
