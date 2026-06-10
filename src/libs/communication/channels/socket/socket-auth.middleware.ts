@@ -45,6 +45,10 @@ interface JwtPayload extends AuthenticatedUser {
   id?: string;
 }
 
+interface JwtExpiredError extends Error {
+  expiredAt?: Date;
+}
+
 type HandshakeQueryValue = string | string[] | null | undefined;
 
 interface SocketHandshakeHeaders {
@@ -145,6 +149,32 @@ export class SocketAuthMiddleware {
       return user;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+      // Check for TokenExpiredError specifically - this is recoverable by refreshing the token
+      if (error instanceof Error && error.name === 'TokenExpiredError') {
+        void this.loggingService.log(
+          LogType.AUTH,
+          LogLevel.WARN,
+          `Token expired for ${client.id}`,
+          'SocketAuthMiddleware',
+          { clientId: client.id, error: errorMessage }
+        );
+
+        // Emit token_expired event to client so they can refresh and reconnect
+        client.emit('token_expired', {
+          message: 'Access token has expired',
+          canReconnect: true,
+        });
+
+        throw new HealthcareError(
+          ErrorCode.AUTH_TOKEN_EXPIRED,
+          'Token has expired - please refresh',
+          undefined,
+          { clientId: client.id, expiredAt: (error as JwtExpiredError).expiredAt },
+          'SocketAuthMiddleware.validateConnection'
+        );
+      }
+
       void this.loggingService.log(
         LogType.AUTH,
         LogLevel.ERROR,
