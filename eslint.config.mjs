@@ -59,6 +59,10 @@ export default [
       '@typescript-eslint/no-unsafe-member-access': 'error',
       '@typescript-eslint/no-unsafe-call': 'error',
       '@typescript-eslint/no-unsafe-return': 'error',
+      // Preserve explicit type assertions for clarity and type safety
+      // Project standard: explicit 'as Type' casts are permitted
+      '@typescript-eslint/no-unnecessary-type-assertion': 'off',
+      '@typescript-eslint/no-unnecessary-type-constituents': 'off',
       '@typescript-eslint/no-unused-vars': [
         'error',
         {

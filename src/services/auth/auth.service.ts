@@ -1595,9 +1595,9 @@ export class AuthService {
     const safeIdentifier = normalizedIdentifier || verifyDto.identifier || uuidv4();
     const userid = generateUserId(safeIdentifier, isEmail);
 
-    const user = await this.databaseService.createUserSafe({
-      ...(isEmail ? { email: normalizedIdentifier } : {}),
-      ...(isEmail ? { password: await bcrypt.hash(uuidv4(), 12) } : {}),
+    // Create user with optional fields omitted when not applicable
+    // Build conditionally to satisfy exactOptionalPropertyTypes: true
+    const baseUserData: UserCreateInput = {
       firstName: resolvedFirstName,
       lastName: resolvedLastName,
       name: resolvedName,
@@ -1606,8 +1606,20 @@ export class AuthService {
       role: 'PATIENT',
       primaryClinicId: clinicUUID,
       userid,
-      ...(!isEmail ? { phone: normalizedIdentifier } : {}),
-    });
+    };
+
+    const userCreateData: UserCreateInput = isEmail
+      ? {
+          ...baseUserData,
+          email: normalizedIdentifier,
+          password: await bcrypt.hash(uuidv4(), 12),
+        }
+      : {
+          ...baseUserData,
+          phone: normalizedIdentifier,
+        };
+
+    const user = await this.databaseService.createUserSafe(userCreateData);
 
     // Consume OTP after successful user creation (deferred deletion pattern)
     await this.otpService.consumeOtp(normalizedIdentifier);
