@@ -2021,26 +2021,27 @@ export class UsersService {
       };
 
       // Add name fields if provided
-      if (profileData.firstName) {
-        profileUpdateData.firstName = profileData.firstName;
+      // Use bracket notation because profileData is Record<string, unknown>
+      if (profileData['firstName']) {
+        profileUpdateData['firstName'] = profileData['firstName'];
       }
-      if (profileData.lastName) {
-        profileUpdateData.lastName = profileData.lastName;
+      if (profileData['lastName']) {
+        profileUpdateData['lastName'] = profileData['lastName'];
       }
-      if (profileData.name) {
-        profileUpdateData.name = profileData.name;
+      if (profileData['name']) {
+        profileUpdateData['name'] = profileData['name'];
       }
-      if (profileData.dateOfBirth) {
-        profileUpdateData.dateOfBirth = profileData.dateOfBirth;
+      if (profileData['dateOfBirth']) {
+        profileUpdateData['dateOfBirth'] = profileData['dateOfBirth'];
       }
-      if (profileData.gender) {
-        profileUpdateData.gender = profileData.gender;
+      if (profileData['gender']) {
+        profileUpdateData['gender'] = profileData['gender'];
       }
-      if (profileData.address) {
-        profileUpdateData.address = profileData.address;
+      if (profileData['address']) {
+        profileUpdateData['address'] = profileData['address'];
       }
-      if (profileData.phone) {
-        profileUpdateData.phone = profileData.phone;
+      if (profileData['phone']) {
+        profileUpdateData['phone'] = profileData['phone'];
         // Note: phoneVerified must already be true in the DB (set via the
         // /auth/verify-phone OTP endpoint). We do NOT auto-verify here.
       }
