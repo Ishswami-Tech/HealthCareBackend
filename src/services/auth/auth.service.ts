@@ -2089,13 +2089,21 @@ export class AuthService {
         user as unknown as Record<string, unknown>,
         role
       );
-      const isComplete = dbIsComplete || calculatedIsComplete;
 
-      // Self-heal stale rows so subsequent checks can use the persisted flag.
+      // Authoritative source is the calculated value (actual data on the user record).
+      // Trusting only the DB flag would let stale `isProfileComplete = true` rows
+      // hide incomplete profiles (e.g. user registered via OTP, never entered name).
+      const isComplete = calculatedIsComplete;
+
+      // Self-heal stale rows in both directions so subsequent checks can use the persisted flag.
       if (!dbIsComplete && calculatedIsComplete) {
         await this.databaseService.updateUserSafe(userId, {
           isProfileComplete: true,
           profileCompletedAt: new Date(),
+        } as UserUpdateInput);
+      } else if (dbIsComplete && !calculatedIsComplete) {
+        await this.databaseService.updateUserSafe(userId, {
+          isProfileComplete: false,
         } as UserUpdateInput);
       }
 
