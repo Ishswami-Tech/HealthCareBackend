@@ -1994,7 +1994,9 @@ export class UsersService {
       // Validate profile completion using local method
       // Merge DB user data with provided profile data so that fields like phoneVerified
       // (set by backend during OTP login) are included in validation
-      // SECURITY: Always use DB values for phoneVerified/emailVerified, not frontend input
+      // SECURITY: Always use DB values for phoneVerified/emailVerified, not frontend input.
+      // The profile-completion form MUST verify any new phone via OTP first
+      // (see /auth/verify-phone endpoint); only then will the DB hold a verified phone.
       const validationData = {
         ...(user as unknown as Record<string, unknown>),
         ...profileData,
@@ -2012,15 +2014,43 @@ export class UsersService {
       }
 
       // All validations passed - mark profile as complete in database
+      // Also SAVE the actual profile data (firstName, lastName, etc.)
+      const profileUpdateData: Record<string, unknown> = {
+        isProfileComplete: true,
+        profileCompletedAt: new Date(),
+      };
+
+      // Add name fields if provided
+      if (profileData.firstName) {
+        profileUpdateData.firstName = profileData.firstName;
+      }
+      if (profileData.lastName) {
+        profileUpdateData.lastName = profileData.lastName;
+      }
+      if (profileData.name) {
+        profileUpdateData.name = profileData.name;
+      }
+      if (profileData.dateOfBirth) {
+        profileUpdateData.dateOfBirth = profileData.dateOfBirth;
+      }
+      if (profileData.gender) {
+        profileUpdateData.gender = profileData.gender;
+      }
+      if (profileData.address) {
+        profileUpdateData.address = profileData.address;
+      }
+      if (profileData.phone) {
+        profileUpdateData.phone = profileData.phone;
+        // Note: phoneVerified must already be true in the DB (set via the
+        // /auth/verify-phone OTP endpoint). We do NOT auto-verify here.
+      }
+
       await this.databaseService.executeHealthcareWrite(
         async client => {
           const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
           await typedClient.user.update({
             where: { id: userId } as PrismaDelegateArgs,
-            data: {
-              isProfileComplete: true,
-              profileCompletedAt: new Date(),
-            } as PrismaDelegateArgs,
+            data: profileUpdateData as PrismaDelegateArgs,
           } as PrismaDelegateArgs);
         },
         {
