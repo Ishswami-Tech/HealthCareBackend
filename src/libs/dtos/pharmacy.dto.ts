@@ -172,7 +172,16 @@ export class PrescriptionItemDto {
   dosage?: string;
 }
 
-export class CreatePrescriptionDto {
+/**
+ * Pharmacy-specific prescription creation DTO.
+ *
+ * Renamed from `CreatePrescriptionDto` to avoid class-name collision with the
+ * EHR version in `ehr.dto.ts`. The two DTOs model different domain entities —
+ * this one is pharmacy-inventory oriented and requires
+ * `patientId` + `doctorId` + `items[]`, while the EHR version is a clinical
+ * note oriented DTO with `userId` + optional clinical fields.
+ */
+export class CreatePharmacyPrescriptionDto {
   @ApiProperty({ example: 'patient-uuid', description: 'Patient ID' })
   @IsString()
   patientId!: string;

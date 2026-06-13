@@ -91,9 +91,10 @@ export class CompleteProfileRequestDto {
     description: 'Date of birth',
     example: '1990-01-01',
   })
+  @Type(() => Date)
   @IsDateString()
   @IsOptional()
-  dateOfBirth?: string;
+  dateOfBirth?: Date;
 
   @ApiPropertyOptional({
     description: 'Gender',

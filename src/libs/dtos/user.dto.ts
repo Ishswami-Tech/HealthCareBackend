@@ -878,14 +878,6 @@ export class UpdateUserProfileDto {
   phoneVerified?: boolean;
 
   @ApiPropertyOptional({
-    example: true,
-    description: 'Whether the email has been verified',
-  })
-  @IsOptional()
-  @IsBoolean({ message: 'Email verified must be a boolean' })
-  emailVerified?: boolean;
-
-  @ApiPropertyOptional({
     example: 'profile.jpg',
     description: 'User profile picture URL',
   })

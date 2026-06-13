@@ -15,7 +15,7 @@ import { PharmacyService } from '../services/pharmacy.service';
 import {
   CreateMedicineDto,
   UpdateInventoryDto,
-  CreatePrescriptionDto,
+  CreatePharmacyPrescriptionDto,
   UpdatePrescriptionStatusDto,
   DispensePrescriptionDto,
   ReversePrescriptionDispenseDto,
@@ -180,7 +180,7 @@ export class PharmacyController {
   @RequireResourcePermission('prescriptions', 'create')
   @ApiOperation({ summary: 'Create a new prescription' })
   async createPrescription(
-    @Body() dto: CreatePrescriptionDto,
+    @Body() dto: CreatePharmacyPrescriptionDto,
     @Request() req: ClinicAuthenticatedRequest
   ) {
     // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
