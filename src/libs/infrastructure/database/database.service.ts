@@ -416,10 +416,11 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
         const cached = await this.queryCache.getCached<T>(cacheKey);
         if (cached !== null) {
           const cacheTime = Date.now() - startTime;
-          // Optimized: Record cache hit asynchronously to avoid blocking
-          setImmediate(() => {
-            this.metricsService.recordCacheHit(cacheTime);
-          });
+          // Record cache hit synchronously so the metric reflects every read.
+          // Using setImmediate here previously caused hit counts to be dropped
+          // when the event loop was saturated, leading to a 0.0% hit rate
+          // reading right after a process restart.
+          this.metricsService.recordCacheHit(cacheTime);
           // Only log in debug mode for performance (10M+ users)
           // Use helper function (which uses dotenv) for environment variable access
           if (getEnv('LOG_LEVEL') === 'DEBUG') {
@@ -433,10 +434,8 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
           }
           return cached;
         }
-        // Record cache miss asynchronously
-        setImmediate(() => {
-          this.metricsService.recordCacheMiss(Date.now() - startTime);
-        });
+        // Record cache miss synchronously for accurate metrics
+        this.metricsService.recordCacheMiss(Date.now() - startTime);
       } catch (cacheError) {
         // Cache error should not block query execution
         // Log asynchronously to avoid blocking query path

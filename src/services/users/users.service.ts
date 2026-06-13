@@ -793,8 +793,9 @@ export class UsersService {
 
       // Handle role-specific data updates
       // Handle role-specific data updates
+      const userRole = (existingUser as { role?: string })['role'];
       if (
-        (existingUser as { role?: string })['role'] === Role.DOCTOR &&
+        (userRole === Role.DOCTOR || userRole === Role.ASSISTANT_DOCTOR) &&
         cleanedData.specialization
       ) {
         await this.updateDoctorProfile(id, existingUser, cleanedData);
@@ -857,6 +858,7 @@ export class UsersService {
       const baseFields: Record<string, unknown> = {
         firstName: cleanedData.firstName,
         lastName: cleanedData.lastName,
+        email: cleanedData.email,
         phone: cleanedData.phone,
         dateOfBirth: cleanedData.dateOfBirth,
         gender: cleanedData.gender ? String(cleanedData.gender) : undefined,
@@ -2032,7 +2034,26 @@ export class UsersService {
         profileUpdateData['name'] = profileData['name'];
       }
       if (profileData['dateOfBirth']) {
-        profileUpdateData['dateOfBirth'] = profileData['dateOfBirth'];
+        // Convert ISO date string (e.g. "1993-04-16") to a Date instance.
+        // Prisma's DateTime column requires a full ISO-8601 DateTime; a date-only
+        // string causes "premature end of input. Expected ISO-8601 DateTime."
+        const dobValue = profileData['dateOfBirth'];
+        if (typeof dobValue === 'string' && dobValue.trim().length > 0) {
+          const parsedDob = new Date(dobValue);
+          if (!Number.isNaN(parsedDob.getTime())) {
+            profileUpdateData['dateOfBirth'] = parsedDob;
+          } else {
+            throw new BadRequestException(
+              `Invalid dateOfBirth value: "${dobValue}". Expected ISO-8601 date or datetime.`
+            );
+          }
+        } else if (dobValue instanceof Date) {
+          profileUpdateData['dateOfBirth'] = dobValue;
+        } else {
+          throw new BadRequestException(
+            'dateOfBirth must be an ISO-8601 date string or Date instance.'
+          );
+        }
       }
       if (profileData['gender']) {
         profileUpdateData['gender'] = profileData['gender'];
@@ -2066,16 +2087,41 @@ export class UsersService {
       );
 
       if (userRole === Role.PATIENT) {
-        await this.patientsService.createOrUpdatePatient({
-          userId,
-          ...(user.primaryClinicId ? { clinicId: user.primaryClinicId } : {}),
-          ...(typeof profileData['dateOfBirth'] === 'string'
-            ? { dateOfBirth: profileData['dateOfBirth'] }
-            : {}),
-          ...(typeof profileData['gender'] === 'string'
-            ? { gender: profileData['gender'] as 'MALE' | 'FEMALE' | 'OTHER' }
-            : {}),
-        });
+        // Build the patient payload with strict types matching the
+        // createOrUpdatePatient contract. Keeping it as a typed object instead
+        // of `Record<string, unknown>` prevents the "Property 'userId' is
+        // missing" type error and matches the existing call-site convention.
+        type PatientUpsertPayload = {
+          userId: string;
+          clinicId?: string;
+          dateOfBirth?: string;
+          gender?: 'MALE' | 'FEMALE' | 'OTHER';
+        };
+
+        const patientData: PatientUpsertPayload = { userId };
+
+        if (user.primaryClinicId) {
+          patientData.clinicId = user.primaryClinicId;
+        }
+
+        // Convert dateOfBirth to ISO-8601 string (Patient.dateOfBirth is
+        // also a DateTime column, so downstream code expects a string)
+        const dobValue = profileData['dateOfBirth'];
+        if (typeof dobValue === 'string' && dobValue.trim().length > 0) {
+          const parsedDob = new Date(dobValue);
+          if (!Number.isNaN(parsedDob.getTime())) {
+            patientData.dateOfBirth = parsedDob.toISOString();
+          }
+        } else if (dobValue instanceof Date && !Number.isNaN(dobValue.getTime())) {
+          patientData.dateOfBirth = dobValue.toISOString();
+        }
+
+        const genderValue = profileData['gender'];
+        if (typeof genderValue === 'string' && ['MALE', 'FEMALE', 'OTHER'].includes(genderValue)) {
+          patientData.gender = genderValue as 'MALE' | 'FEMALE' | 'OTHER';
+        }
+
+        await this.patientsService.createOrUpdatePatient(patientData);
       }
 
       // Emit profile completion event

@@ -10,7 +10,7 @@ import { LoggingService } from '@infrastructure/logging';
 import {
   CreateMedicineDto,
   UpdateInventoryDto,
-  CreatePrescriptionDto,
+  CreatePharmacyPrescriptionDto,
   DispensePrescriptionDto,
   PrescriptionStatus,
   CreateSupplierDto,
@@ -1102,7 +1102,7 @@ export class PharmacyService {
     return await this.enrichPrescriptionsWithPaymentState(result, clinicId);
   }
 
-  async createPrescription(dto: CreatePrescriptionDto, clinicId?: string) {
+  async createPrescription(dto: CreatePharmacyPrescriptionDto, clinicId?: string) {
     if (!clinicId) throw new BadRequestException('Clinic ID is required');
 
     const prescription = await this.databaseService.executeHealthcareWrite(
