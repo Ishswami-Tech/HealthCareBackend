@@ -868,6 +868,16 @@ export class UsersService {
         country: cleanedData.country,
         profilePicture: cleanedData.profilePicture,
       };
+      // Auto-populate name from firstName + lastName if either was provided
+      if (baseFields['firstName'] !== undefined || baseFields['lastName'] !== undefined) {
+        const newFirstName = (baseFields['firstName'] ??
+          (existingUser as Record<string, unknown>)['firstName'] ??
+          '') as string;
+        const newLastName = (baseFields['lastName'] ??
+          (existingUser as Record<string, unknown>)['lastName'] ??
+          '') as string;
+        baseFields['name'] = `${newFirstName} ${newLastName}`.trim();
+      }
 
       // Include phone verification fields when phone changes (phoneVerified reset)
       const phoneVerifiedValue = (cleanedData as Record<string, unknown>)['phoneVerified'];
@@ -2032,6 +2042,12 @@ export class UsersService {
       }
       if (profileData['name']) {
         profileUpdateData['name'] = profileData['name'];
+      }
+      // Auto-populate name from firstName + lastName if both are provided
+      if (profileUpdateData['firstName'] || profileUpdateData['lastName']) {
+        const newFirstName = (profileUpdateData['firstName'] || user.firstName || '') as string;
+        const newLastName = (profileUpdateData['lastName'] || user.lastName || '') as string;
+        profileUpdateData['name'] = `${newFirstName} ${newLastName}`.trim();
       }
       if (profileData['dateOfBirth']) {
         // Convert ISO date string (e.g. "1993-04-16") to a Date instance.
