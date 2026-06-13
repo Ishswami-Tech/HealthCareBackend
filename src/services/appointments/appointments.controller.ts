@@ -727,6 +727,16 @@ export class AppointmentsController {
     description: 'Filter by appointment date (YYYY-MM-DD)',
   })
   @ApiQuery({
+    name: 'startDate',
+    required: false,
+    description: 'Filter appointments from this date (inclusive, YYYY-MM-DD)',
+  })
+  @ApiQuery({
+    name: 'endDate',
+    required: false,
+    description: 'Filter appointments up to this date (inclusive, YYYY-MM-DD)',
+  })
+  @ApiQuery({
     name: 'page',
     required: false,
     description: 'Page number for pagination',
@@ -755,6 +765,8 @@ export class AppointmentsController {
     @Request() req: ClinicAuthenticatedRequest,
     @Query('status') status?: string,
     @Query('date') date?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
     @Query('page') page: number = 1,
     @Query('limit') limit: number = 10
   ): Promise<ServiceResponse<AppointmentListResponseDto>> {
@@ -788,6 +800,8 @@ export class AppointmentsController {
         clinicId: resolvedClinicId,
         ...this.parseStatusFilter(status),
         ...(date && { date }),
+        ...(startDate && { startDate }),
+        ...(endDate && { endDate }),
         page: Math.max(1, page),
         limit: Math.min(100, Math.max(1, limit)),
       };
