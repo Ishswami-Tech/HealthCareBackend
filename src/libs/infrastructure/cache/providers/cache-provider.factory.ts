@@ -79,6 +79,8 @@ export class CacheProviderFactory {
       get: () => Promise.resolve(null),
       set: () => Promise.resolve(undefined),
       del: () => Promise.resolve(0),
+      acquireLock: () => Promise.resolve(true),
+      releaseLock: () => Promise.resolve(true),
       exists: () => Promise.resolve(false),
       ttl: () => Promise.resolve(-1),
       expire: () => Promise.resolve(0),

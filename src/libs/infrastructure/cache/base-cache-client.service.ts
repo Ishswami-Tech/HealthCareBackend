@@ -321,6 +321,22 @@ export abstract class BaseCacheClientService {
     }
   }
 
+  async acquireLock(key: string, ttlSeconds: number, value: string = '1'): Promise<boolean> {
+    if (!this.client || this.client.status !== 'ready') {
+      return false;
+    }
+    try {
+      const result = await this.client.set(key, value, 'EX', ttlSeconds, 'NX');
+      return result === 'OK';
+    } catch {
+      return false;
+    }
+  }
+
+  async releaseLock(key: string): Promise<boolean> {
+    return (await this.del(key)) > 0;
+  }
+
   async exists(key: string): Promise<number> {
     if (!this.client || this.client.status !== 'ready') {
       return 0;

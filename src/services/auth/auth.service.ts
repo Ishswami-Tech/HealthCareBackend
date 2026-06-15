@@ -1169,9 +1169,23 @@ export class AuthService {
     sessionMetadata?: { userAgent?: string; ipAddress?: string },
     clinicIdFromHeader?: string
   ): Promise<{ success: boolean; message: string }> {
+    const isEmail = requestDto.identifier.includes('@');
+    const normalizedIdentifier = isEmail
+      ? requestDto.identifier.trim().toLowerCase()
+      : normalizeAuthPhoneNumber(requestDto.identifier);
+    const requestLockKey = `otp_request_lock:${normalizedIdentifier}`;
+    const lockValue = nowIso();
+
+    const lockAcquired = await this.cacheService.acquireLock(requestLockKey, 8, lockValue);
+    if (!lockAcquired) {
+      return {
+        success: false,
+        message: 'OTP request already in progress. Please wait a moment and try again.',
+      };
+    }
+
     try {
       // Determine if identifier is email or phone
-      const isEmail = requestDto.identifier.includes('@');
       let user: UserWithRelations | null = null;
 
       if (isEmail) {
@@ -1200,23 +1214,15 @@ export class AuthService {
       const userName = user
         ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User'
         : 'Future User';
-      const normalizedIdentifier = isEmail
-        ? requestDto.identifier.trim().toLowerCase()
-        : normalizeAuthPhoneNumber(requestDto.identifier);
-      const existingOtp = await this.otpService.peekOtp(normalizedIdentifier);
-      const otpCode = existingOtp || this.otpService.generateOtp();
+      const otpCode = this.otpService.generateOtp();
 
-      this.logOtp(
-        existingOtp ? 'Reusing existing OTP for requestOtp' : 'Generated OTP for requestOtp',
-        {
-          identifier: requestDto.identifier,
-          normalizedIdentifier,
-          flow: isEmail ? 'email' : 'phone',
-          otpLength: otpCode.length,
-          otp: this.maskOtp(otpCode),
-          reusedExistingOtp: Boolean(existingOtp),
-        }
-      );
+      this.logOtp('Generated OTP for requestOtp', {
+        identifier: requestDto.identifier,
+        normalizedIdentifier,
+        flow: isEmail ? 'email' : 'phone',
+        otpLength: otpCode.length,
+        otp: this.maskOtp(otpCode),
+      });
 
       let result;
       if (isEmail) {
@@ -1296,10 +1302,10 @@ export class AuthService {
         identifier: requestDto.identifier,
         normalizedIdentifier,
         otpKey: `otp:${normalizedIdentifier}`,
-        reusedExistingOtp: Boolean(existingOtp),
+        reusedExistingOtp: false,
         ...(clinicId && { clinicId }),
         isNewUser: !user,
-        otp: otpCode,
+        otp: result.otp || otpCode,
       });
 
       await this.logging.log(
@@ -1312,7 +1318,7 @@ export class AuthService {
           method: isEmail ? 'Email' : 'SMS',
           ipAddress: sessionMetadata?.ipAddress,
           userAgent: sessionMetadata?.userAgent,
-          otp: otpCode,
+          otp: result.otp || otpCode,
         }
       );
 
@@ -1333,6 +1339,8 @@ export class AuthService {
         }
       );
       throw _error;
+    } finally {
+      await this.cacheService.releaseLock(requestLockKey);
     }
   }
 
