@@ -88,6 +88,18 @@ type AppointmentPaymentLike = {
   paid?: boolean | null;
 };
 
+type AppointmentVideoNameSource = {
+  id: string;
+  date?: Date | string | null;
+  time?: string | null;
+  duration?: number | null;
+  patient?: unknown;
+  doctor?: unknown;
+  patientName?: unknown;
+  doctorName?: unknown;
+  clientName?: unknown;
+};
+
 // Type aliases for response data structures using existing ServiceResponse<T>
 type CreateVideoCallResponse = ServiceResponse<VideoCall>;
 type RecordingResponse = ServiceResponse<{
@@ -1040,19 +1052,24 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private buildPlaceholderConsultationSession(appointment: {
-    id: string;
-    date?: Date | string | null;
-    time?: string | null;
-    duration?: number | null;
-  }): VideoConsultationSession {
+  private buildPlaceholderConsultationSession(
+    appointment: {
+      id: string;
+      date?: Date | string | null;
+      time?: string | null;
+      duration?: number | null;
+    } & Partial<AppointmentVideoNameSource>
+  ): VideoConsultationSession {
     const scheduledWindow = this.resolveAppointmentVideoWindow(appointment);
+    const participantNames = this.resolveAppointmentParticipantNames(appointment);
     return {
       id: `video-session-${appointment.id}`,
       appointmentId: appointment.id,
       roomId: `appointment-${appointment.id}`,
       roomName: `appointment-${appointment.id}`,
       meetingUrl: `/video-appointments/${appointment.id}`,
+      patientName: participantNames.patientName,
+      doctorName: participantNames.doctorName,
       status: 'SCHEDULED',
       startTime: scheduledWindow?.startTime ?? null,
       endTime: scheduledWindow?.endTime ?? null,
@@ -1061,6 +1078,71 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       screenSharingEnabled: true,
       chatEnabled: true,
       waitingRoomEnabled: true,
+    };
+  }
+
+  private resolveAppointmentParticipantNames(
+    appointment: AppointmentVideoNameSource | null | undefined
+  ): { patientName: string; doctorName: string } {
+    const appointmentRecord = appointment as unknown as Record<string, unknown> | null | undefined;
+    const resolveText = (value: unknown, fallback: string): string =>
+      typeof value === 'string' && value.trim().length > 0 ? value.trim() : fallback;
+
+    const getNestedName = (candidate: unknown): string | undefined => {
+      if (!candidate || typeof candidate !== 'object') {
+        return undefined;
+      }
+      const candidateRecord = candidate as Record<string, unknown>;
+      const userRecord =
+        candidateRecord['user'] && typeof candidateRecord['user'] === 'object'
+          ? (candidateRecord['user'] as Record<string, unknown>)
+          : undefined;
+      const userName = typeof userRecord?.['name'] === 'string' ? userRecord['name'] : undefined;
+      const directName =
+        typeof candidateRecord['name'] === 'string' ? candidateRecord['name'] : undefined;
+      return userName ?? directName;
+    };
+
+    const patientRecord =
+      appointmentRecord?.['patient'] && typeof appointmentRecord['patient'] === 'object'
+        ? (appointmentRecord['patient'] as Record<string, unknown>)
+        : undefined;
+    const doctorRecord =
+      appointmentRecord?.['doctor'] && typeof appointmentRecord['doctor'] === 'object'
+        ? (appointmentRecord['doctor'] as Record<string, unknown>)
+        : undefined;
+
+    const patientName = resolveText(
+      getNestedName(patientRecord) ??
+        (typeof appointmentRecord?.['patientName'] === 'string'
+          ? appointmentRecord['patientName']
+          : undefined) ??
+        (typeof appointmentRecord?.['clientName'] === 'string'
+          ? appointmentRecord['clientName']
+          : undefined),
+      'Patient'
+    );
+
+    const doctorName = resolveText(
+      getNestedName(doctorRecord) ??
+        (typeof appointmentRecord?.['doctorName'] === 'string'
+          ? appointmentRecord['doctorName']
+          : undefined),
+      'Doctor'
+    );
+
+    return { patientName, doctorName };
+  }
+
+  private attachAppointmentNamesToSession(
+    session: VideoConsultationSession,
+    appointment: AppointmentVideoNameSource | null | undefined
+  ): VideoConsultationSession {
+    const participantNames = this.resolveAppointmentParticipantNames(appointment);
+    return {
+      ...session,
+      patientName: session.patientName ?? participantNames.patientName,
+      doctorName: session.doctorName ?? participantNames.doctorName,
     };
   }
 
@@ -1174,7 +1256,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         },
       });
 
-      return session;
+      return this.attachAppointmentNamesToSession(session, appointment);
     } catch (error: unknown) {
       const errorMessage: string = error instanceof Error ? error.message : 'Unknown error';
       const currentProvider: IVideoProvider | undefined = this.provider;
@@ -1355,7 +1437,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
             await provider.getConsultationSession(resolvedAppointmentId);
           if (session) {
             this.provider = provider;
-            return session;
+            const appointment =
+              await this.databaseService.findAppointmentByIdSafe(resolvedAppointmentId);
+            return this.attachAppointmentNamesToSession(session, appointment);
           }
         } catch (error) {
           void this.loggingService.log(
@@ -1482,6 +1566,8 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     return {
       appointmentId: session.appointmentId,
       roomName: session.roomName,
+      ...(session.patientName !== undefined && { patientName: session.patientName }),
+      ...(session.doctorName !== undefined && { doctorName: session.doctorName }),
       confirmedSlotIndex: session.confirmedSlotIndex ?? null,
       status: mappedStatus,
       startTime: session.startTime ?? undefined,

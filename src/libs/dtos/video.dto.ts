@@ -576,6 +576,22 @@ export class VideoConsultationSessionDto {
   @IsString({ message: 'Room name must be a string' })
   roomName!: string;
 
+  @ApiPropertyOptional({
+    example: 'Jane Doe',
+    description: 'Resolved patient name for the consultation',
+  })
+  @IsOptional()
+  @IsString({ message: 'Patient name must be a string' })
+  patientName?: string;
+
+  @ApiPropertyOptional({
+    example: 'Dr. Smith',
+    description: 'Resolved doctor name for the consultation',
+  })
+  @IsOptional()
+  @IsString({ message: 'Doctor name must be a string' })
+  doctorName?: string;
+
   @ApiProperty({
     example: 'https://video.example.com/room/appointment-123',
     description: 'Meeting URL',

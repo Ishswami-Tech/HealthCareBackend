@@ -21,6 +21,7 @@ import type { Role } from './enums.types';
  *   user: userData,
  *   tokens: { accessToken: "token123", refreshToken: "refresh456" },
  *   sessionId: "session-789",
+ *   redirectUrl: "/patient/dashboard",
  *   message: "Login successful"
  * };
  * ```
@@ -40,6 +41,8 @@ export interface AuthResponse {
   readonly message?: string;
   /** Optional error message */
   readonly error?: string;
+  /** Frontend redirect target returned by the backend */
+  readonly redirectUrl: string;
 }
 
 /**
