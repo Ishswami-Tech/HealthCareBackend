@@ -746,7 +746,6 @@ export class AuthService {
       );
 
       const profileStatus = await this.checkProfileCompletionStatus(user.id, user.role as Role);
-
       const loginResponseClinicName = await this.resolveClinicDisplayName(clinicUUID);
 
       return {
@@ -1496,11 +1495,19 @@ export class AuthService {
         user.phone || normalizedIdentifier || loginIdentifier
       );
       const existingPhoneUser = await this.databaseService.findUserByPhoneSafe(normalizedPhone);
+
       if (existingPhoneUser && existingPhoneUser.id !== user.id) {
-        throw this.errors.validationError(
-          'phone',
-          'Phone number already registered with another account. Please login with existing account or try a different number.',
-          'AuthService.verifyOtp'
+        await this.logging.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Duplicate phone record detected during OTP login; continuing with verified account',
+          'AuthService.verifyOtp',
+          {
+            requestedPhone: normalizedPhone,
+            verifiedUserId: user.id,
+            duplicateUserId: existingPhoneUser.id,
+            clinicId: clinicUUID,
+          }
         );
       }
 
