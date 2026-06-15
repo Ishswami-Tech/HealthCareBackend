@@ -22,12 +22,24 @@ type OtpCacheEntry = {
 export class OtpService {
   private readonly config: OtpConfig;
   private readonly otpDebugEnabled: boolean;
+  private readonly REQUESTS_PER_STAGE = 3;
 
   /**
-   * Progressive cooldown schedule (seconds) indexed by attempt count (0-based).
-   * First 3 OTP requests: no cooldown. Then: 1min, 3min, 5min, 10min.
+   * Progressive cooldown schedule (seconds) indexed by stage count.
+   * Each stage allows 3 OTP requests, then applies the next cooldown.
+   * Stages:
+   *   0 -> 0 min
+   *   1 -> 3 min
+   *   2 -> 5 min
+   *   3 -> 10 min
+   *   4 -> 15 min
+   *   5 -> 25 min
+   *   6 -> 30 min
+   *   7 -> 45 min
+   *   8 -> 60 min
+   * The final value is repeated for all later stages.
    */
-  private readonly PROGRESSIVE_COOLDOWNS = [0, 0, 0, 60, 180, 300, 600];
+  private readonly PROGRESSIVE_COOLDOWNS = [0, 180, 300, 600, 900, 1500, 1800, 2700, 3600];
 
   constructor(
     @Inject(forwardRef(() => CacheService))
@@ -133,12 +145,25 @@ export class OtpService {
   }
 
   /**
-   * Get progressive cooldown duration in seconds based on attempt count.
-   * First 3 attempts: 0s (no cooldown). Then escalates: 60s, 180s, 300s, 600s.
+   * Get progressive cooldown duration in seconds based on successful request count.
+   * Every 3 requests advance to the next cooldown stage.
    */
-  private getProgressiveCooldown(attemptCount: number): number {
-    const index = Math.min(attemptCount, this.PROGRESSIVE_COOLDOWNS.length - 1);
+  private getProgressiveCooldown(requestCount: number): number {
+    const stageIndex = Math.min(
+      Math.max(0, Math.floor(Math.max(0, requestCount - 1) / this.REQUESTS_PER_STAGE)),
+      this.PROGRESSIVE_COOLDOWNS.length - 1
+    );
+    const index = stageIndex;
     return this.PROGRESSIVE_COOLDOWNS[index] || 0;
+  }
+
+  private getRequestsRemainingInStage(requestCount: number): number {
+    if (requestCount <= 0) {
+      return this.REQUESTS_PER_STAGE;
+    }
+
+    const positionInStage = ((requestCount - 1) % this.REQUESTS_PER_STAGE) + 1;
+    return Math.max(0, this.REQUESTS_PER_STAGE - positionInStage);
   }
 
   async peekOtp(identifier: string): Promise<string | null> {
@@ -202,13 +227,6 @@ export class OtpService {
       const attemptsKey = `otp_attempts:${normalizedEmail}`;
       const attempts = await this.cacheService.get<string>(attemptsKey);
       const attemptCount = attempts ? parseInt(attempts) : 0;
-
-      if (attemptCount >= this.config.maxAttempts) {
-        return {
-          success: false,
-          message: 'Maximum OTP attempts exceeded. Please try again later.',
-        };
-      }
 
       // Generate and store OTP
       const otp = providedOtp || this.generateOtp();
@@ -311,7 +329,7 @@ export class OtpService {
         message: 'OTP sent successfully',
         otp,
         expiresIn: expirySeconds,
-        attemptsRemaining: this.config.maxAttempts - attemptCount - 1,
+        attemptsRemaining: this.getRequestsRemainingInStage(newAttemptCount),
       };
     } catch (_error) {
       void this.loggingService.log(
@@ -360,13 +378,6 @@ export class OtpService {
       const attemptsKey = `otp_attempts:${normalizedPhone}`;
       const attempts = await this.cacheService.get<string>(attemptsKey);
       const attemptCount = attempts ? parseInt(attempts) : 0;
-
-      if (attemptCount >= this.config.maxAttempts) {
-        return {
-          success: false,
-          message: 'Maximum OTP attempts exceeded. Please try again later.',
-        };
-      }
 
       // Generate and store OTP (reusing email logic logic but with phone key)
       const otp = providedOtp || this.generateOtp();
@@ -444,7 +455,7 @@ export class OtpService {
           message: 'Failed to send WhatsApp message. Please try again later.',
           otp,
           expiresIn: expirySeconds,
-          attemptsRemaining: this.config.maxAttempts - attemptCount - 1,
+          attemptsRemaining: this.getRequestsRemainingInStage(newAttemptCount),
         };
       }
 
@@ -453,7 +464,7 @@ export class OtpService {
         message: 'OTP sent successfully',
         otp,
         expiresIn: expirySeconds,
-        attemptsRemaining: this.config.maxAttempts - attemptCount - 1,
+        attemptsRemaining: this.getRequestsRemainingInStage(newAttemptCount),
       };
     } catch (_error) {
       void this.loggingService.log(
@@ -587,7 +598,7 @@ export class OtpService {
       const cooldown = cooldownData !== null;
 
       const attemptCount = attempts ? parseInt(attempts) : 0;
-      const attemptsRemaining = Math.max(0, this.config.maxAttempts - attemptCount);
+      const attemptsRemaining = this.getRequestsRemainingInStage(attemptCount + 1);
 
       return {
         exists: otpExists,

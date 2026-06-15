@@ -525,6 +525,14 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return deletedCount;
   }
 
+  async acquireLock(key: string, ttlSeconds: number, value: string = '1'): Promise<boolean> {
+    return this.getProvider().acquireLock(key, ttlSeconds, value);
+  }
+
+  async releaseLock(key: string): Promise<boolean> {
+    return this.getProvider().releaseLock(key);
+  }
+
   async exists(key: string): Promise<boolean> {
     return this.cacheRepository.exists(key);
   }

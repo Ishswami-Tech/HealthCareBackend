@@ -6,6 +6,7 @@ import { DatabaseModule } from '@infrastructure/database/database.module'; // Di
 import { PushNotificationService } from '@communication/channels/push/push.service';
 import { DeviceTokenService } from '@communication/channels/push/device-token.service';
 import { SNSBackupService } from '@communication/channels/push/sns-backup.service';
+import { DeviceTokenController } from '@communication/channels/push/device-token.controller';
 
 /**
  * Push Notification Module
@@ -20,6 +21,7 @@ import { SNSBackupService } from '@communication/channels/push/sns-backup.servic
  * - PushNotificationService: Primary service for sending push notifications
  * - DeviceTokenService: Manages device tokens (in-memory + optional database)
  * - SNSBackupService: AWS SNS backup for high availability
+ * - DeviceTokenController: REST API for mobile push-token registration
  */
 @Module({
   imports: [
@@ -27,6 +29,7 @@ import { SNSBackupService } from '@communication/channels/push/sns-backup.servic
     LoggingModule,
     DatabaseModule, // Optional: For device token persistence
   ],
+  controllers: [DeviceTokenController],
   providers: [PushNotificationService, DeviceTokenService, SNSBackupService],
   exports: [PushNotificationService, DeviceTokenService, SNSBackupService],
 })

@@ -535,6 +535,17 @@ export interface ICacheProvider {
   del(key: string): Promise<number>;
 
   /**
+   * Acquire a short-lived lock using an atomic cache write.
+   * Returns true only when the lock was created.
+   */
+  acquireLock(key: string, ttlSeconds: number, value?: string): Promise<boolean>;
+
+  /**
+   * Release a lock key.
+   */
+  releaseLock(key: string): Promise<boolean>;
+
+  /**
    * Check if key exists
    */
   exists(key: string): Promise<boolean>;

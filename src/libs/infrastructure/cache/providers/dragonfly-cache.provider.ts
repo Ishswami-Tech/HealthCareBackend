@@ -81,6 +81,22 @@ export class DragonflyCacheProvider implements IAdvancedCacheProvider {
     }
   }
 
+  async acquireLock(key: string, ttlSeconds: number, value: string = '1'): Promise<boolean> {
+    try {
+      return await this.dragonflyService.acquireLock(key, ttlSeconds, value);
+    } catch {
+      return false;
+    }
+  }
+
+  async releaseLock(key: string): Promise<boolean> {
+    try {
+      return await this.dragonflyService.releaseLock(key);
+    } catch {
+      return false;
+    }
+  }
+
   async exists(key: string): Promise<boolean> {
     try {
       const result = await this.dragonflyService.exists(key);
