@@ -809,6 +809,7 @@ export class InvalidateOtpDto {
  * const auth = new AuthResponse();
  * auth.accessToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...";
  * auth.refreshToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...";
+ * auth.redirectUrl = "/patient/dashboard";
  * ```
  */
 export class AuthResponse {
@@ -868,6 +869,13 @@ export class AuthResponse {
   @IsOptional()
   @IsBoolean()
   requiresProfileCompletion?: boolean;
+
+  @ApiProperty({
+    description: 'Frontend redirect target computed by the backend',
+    example: '/profile-completion',
+  })
+  @IsString()
+  redirectUrl!: string;
 }
 
 /**

@@ -45,6 +45,54 @@ import type { FastifyReply } from 'fastify';
 import { generateUserId } from '@utils/user-id.util';
 // import { ProfileCompletionService } from '@services/profile-completion/profile-completion.service';
 
+function getAuthRedirectUrl(role: Role | string, profileComplete: boolean): string {
+  const normalizedRole = (() => {
+    const candidate = String(role || '').toUpperCase();
+    return (Object.values(Role) as string[]).includes(candidate) ? (candidate as Role) : undefined;
+  })();
+
+  if (!normalizedRole) {
+    return '/';
+  }
+
+  if (normalizedRole === Role.PATIENT && !profileComplete) {
+    return '/profile-completion';
+  }
+
+  switch (normalizedRole) {
+    case Role.SUPER_ADMIN:
+      return '/super-admin/dashboard';
+    case Role.CLINIC_ADMIN:
+      return '/clinic-admin/dashboard';
+    case Role.DOCTOR:
+      return '/doctor/dashboard';
+    case Role.ASSISTANT_DOCTOR:
+      return '/assistant-doctor/dashboard';
+    case Role.RECEPTIONIST:
+      return '/receptionist/dashboard';
+    case Role.PHARMACIST:
+      return '/pharmacist/dashboard';
+    case Role.CLINIC_LOCATION_HEAD:
+      return '/clinic-location-head/dashboard';
+    case Role.THERAPIST:
+      return '/therapist/dashboard';
+    case Role.LAB_TECHNICIAN:
+      return '/lab-technician/dashboard';
+    case Role.SUPPORT_STAFF:
+      return '/support-staff/dashboard';
+    case Role.NURSE:
+      return '/nurse/dashboard';
+    case Role.FINANCE_BILLING:
+      return '/finance-billing/dashboard';
+    case Role.COUNSELOR:
+      return '/counselor/dashboard';
+    case Role.PATIENT:
+      return '/patient/dashboard';
+    default:
+      return '/';
+  }
+}
+
 @Injectable()
 export class AuthService {
   private readonly CACHE_TTL = 3600; // 1 hour
@@ -492,6 +540,7 @@ export class AuthService {
         requiresVerification: true,
         message:
           'Registration successful. Please verify your account with the OTP sent to your registered contact.',
+        redirectUrl: getAuthRedirectUrl(user.role, false),
       };
     } catch (error) {
       await this.logging.log(
@@ -704,6 +753,7 @@ export class AuthService {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
         sessionId: tokens.sessionId,
+        redirectUrl: getAuthRedirectUrl(user.role, profileStatus.isComplete),
         user: this.buildAuthUserPayload(user, {
           clinicId: clinicUUID || undefined,
           clinicName: loginResponseClinicName,
@@ -1533,6 +1583,7 @@ export class AuthService {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       sessionId: tokens.sessionId,
+      redirectUrl: getAuthRedirectUrl(verifiedUser.role, profileStatus.isComplete),
       user: this.buildAuthUserPayload(verifiedUser, {
         clinicId: clinicUUID || undefined,
         profileComplete: profileStatus.isComplete,
@@ -1726,6 +1777,7 @@ export class AuthService {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       sessionId: tokens.sessionId,
+      redirectUrl: getAuthRedirectUrl(user.role, false),
       user: this.buildAuthUserPayload(user, {
         clinicId: validatedClinicUUID || undefined,
         profileComplete: false,
@@ -2537,6 +2589,7 @@ export class AuthService {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
         sessionId: tokens.sessionId,
+        redirectUrl: getAuthRedirectUrl(fullUser.role, profileStatus.isComplete),
         user: this.buildAuthUserPayload(fullUser, {
           clinicId: finalClinicId || undefined,
           clinicName: googleResponseClinicName,

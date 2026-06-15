@@ -160,6 +160,7 @@ export class AuthController {
         data: {
           accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
           refreshToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+          redirectUrl: '/profile-completion',
           user: {
             id: 'user-123',
             email: 'user@example.com',
@@ -967,6 +968,7 @@ export class AuthController {
         data: {
           accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
           refreshToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+          redirectUrl: '/profile-completion',
           user: {
             id: 'user-123',
             email: 'user@example.com',
@@ -1255,6 +1257,7 @@ export class AuthController {
         data: {
           accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
           refreshToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+          redirectUrl: '/patient/dashboard',
           user: {
             id: 'user-123',
             email: 'user@gmail.com',

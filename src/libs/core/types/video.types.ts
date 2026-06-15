@@ -27,6 +27,8 @@ export interface VideoConsultationSession {
   roomId: string;
   roomName: string;
   meetingUrl: string;
+  patientName?: string;
+  doctorName?: string;
   provider?: VideoProviderType;
   confirmedSlotIndex?: number | null;
   status: 'SCHEDULED' | 'ACTIVE' | 'ENDED' | 'COMPLETED' | 'CANCELLED';

@@ -1250,6 +1250,8 @@ export interface AnalyticsResult {
 export interface VideoConsultationSession {
   appointmentId: string;
   roomName: string;
+  patientName?: string;
+  doctorName?: string;
   confirmedSlotIndex?: number | null;
   status: 'pending' | 'started' | 'ended' | 'cancelled';
   startTime?: Date | undefined;

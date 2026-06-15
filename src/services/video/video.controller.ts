@@ -402,6 +402,8 @@ export class VideoController {
     screenSharingEnabled: boolean,
     chatEnabled: boolean,
     waitingRoomEnabled: boolean,
+    patientName?: string,
+    doctorName?: string,
     accessState?: VideoConsultationAccessState
   ): VideoConsultationSessionDto {
     const dtoData: {
@@ -410,6 +412,8 @@ export class VideoController {
       roomId: string;
       roomName: string;
       meetingUrl: string;
+      patientName?: string;
+      doctorName?: string;
       status: 'SCHEDULED' | 'ACTIVE' | 'ENDED' | 'COMPLETED' | 'CANCELLED';
       startTime: Date | null;
       endTime: Date | null;
@@ -445,6 +449,12 @@ export class VideoController {
       chatEnabled,
       waitingRoomEnabled,
     };
+    if (patientName !== undefined) {
+      dtoData.patientName = patientName;
+    }
+    if (doctorName !== undefined) {
+      dtoData.doctorName = doctorName;
+    }
     if (accessState) {
       dtoData.canJoin = accessState.canJoin;
       dtoData.paymentRequired = accessState.paymentRequired;
@@ -687,7 +697,9 @@ export class VideoController {
         sessionRecordingEnabled,
         sessionScreenSharingEnabled,
         sessionChatEnabled,
-        sessionWaitingRoomEnabled
+        sessionWaitingRoomEnabled,
+        session.patientName,
+        session.doctorName
       );
       if (
         typeof sessionDtoResult !== 'object' ||
@@ -792,7 +804,9 @@ export class VideoController {
         sessionRecordingEnabled,
         sessionScreenSharingEnabled,
         sessionChatEnabled,
-        sessionWaitingRoomEnabled
+        sessionWaitingRoomEnabled,
+        session.patientName,
+        session.doctorName
       );
       if (
         typeof sessionDtoResult !== 'object' ||
@@ -934,6 +948,8 @@ export class VideoController {
         sessionScreenSharingEnabled,
         sessionChatEnabled,
         sessionWaitingRoomEnabled,
+        session.patientName,
+        session.doctorName,
         accessState
       );
       if (
