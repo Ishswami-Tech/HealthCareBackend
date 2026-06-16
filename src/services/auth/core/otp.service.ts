@@ -18,11 +18,17 @@ type OtpCacheEntry = {
   createdAt: string;
 };
 
+type VerifiedOtpCacheEntry = {
+  otp: string;
+  verifiedAt: string;
+};
+
 @Injectable()
 export class OtpService {
   private readonly config: OtpConfig;
   private readonly otpDebugEnabled: boolean;
   private readonly REQUESTS_PER_STAGE = 3;
+  private readonly VERIFIED_OTP_TTL_SECONDS = 60;
 
   /**
    * Progressive cooldown schedule (seconds) indexed by stage count.
@@ -107,6 +113,13 @@ export class OtpService {
     return {
       otp,
       createdAt: nowIso(),
+    };
+  }
+
+  private buildVerifiedOtpCacheEntry(otp: string): VerifiedOtpCacheEntry {
+    return {
+      otp,
+      verifiedAt: nowIso(),
     };
   }
 
@@ -245,6 +258,7 @@ export class OtpService {
       });
 
       const previousOtp = await this.cacheService.get<string>(otpKey);
+      await this.cacheService.del(`otp_verified:${normalizedEmail}`);
       this.logOtp('Email OTP cache snapshot before write', {
         normalizedEmail,
         otpKey,
@@ -396,6 +410,7 @@ export class OtpService {
       });
 
       const previousOtp = await this.cacheService.get<string>(otpKey);
+      await this.cacheService.del(`otp_verified:${normalizedPhone}`);
       this.logOtp('WhatsApp OTP cache snapshot before write', {
         normalizedPhone,
         otpKey,
@@ -493,7 +508,11 @@ export class OtpService {
       const normalizedIdentifier = this.normalizeIdentifier(identifier);
       const normalizedOtp = this.normalizeOtpValue(otp);
       const otpKey = `otp:${normalizedIdentifier}`;
+      const verifiedKey = `otp_verified:${normalizedIdentifier}`;
       const storedOtp = this.extractOtpValue(await this.cacheService.get<unknown>(otpKey));
+      const recentlyVerifiedOtp = this.extractOtpValue(
+        await this.cacheService.get<unknown>(verifiedKey)
+      );
       const cacheExists = await this.cacheService.exists(otpKey);
       const cacheTtl = await this.cacheService.ttl(otpKey);
       const hasValidStoredOtp = typeof storedOtp === 'string' && storedOtp.length > 0;
@@ -508,10 +527,25 @@ export class OtpService {
         storedOtpLength: hasValidStoredOtp ? storedOtp.length : 0,
         providedOtp: this.maskOtpValue(normalizedOtp),
         storedOtp: this.maskOtpValue(storedOtp),
+        recentlyVerifiedOtp: this.maskOtpValue(recentlyVerifiedOtp),
         otpMatches: hasValidStoredOtp && storedOtp === normalizedOtp,
       });
 
       if (!hasValidStoredOtp) {
+        if (recentlyVerifiedOtp === normalizedOtp) {
+          this.logOtp('OTP verification replay accepted', {
+            identifier: normalizedIdentifier,
+            otpKey,
+            verifiedKey,
+            providedOtp: this.maskOtpValue(normalizedOtp),
+          });
+
+          return {
+            success: true,
+            message: 'OTP already verified',
+          };
+        }
+
         return {
           success: false,
           message: 'OTP not found or expired',
@@ -538,7 +572,14 @@ export class OtpService {
       this.logOtp('OTP verification succeeded', {
         identifier: normalizedIdentifier,
         otpKey,
+        verifiedKey,
       });
+
+      await this.cacheService.set(
+        verifiedKey,
+        this.buildVerifiedOtpCacheEntry(normalizedOtp),
+        this.VERIFIED_OTP_TTL_SECONDS
+      );
 
       void this.loggingService.log(
         LogType.AUTH,
