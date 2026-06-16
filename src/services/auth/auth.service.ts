@@ -2056,16 +2056,14 @@ export class AuthService {
         ? true
         : undefined;
 
-    // For phone OTP login, don't include the fake temp email in the response
     const isPhoneOtpLogin = options.loginMethod === 'phone_otp';
-    const isFakeEmail = user.email && user.email.endsWith('@temp.com');
-    const shouldIncludeEmail = !isPhoneOtpLogin || !isFakeEmail;
 
     // Build name from available fields
     const userName = user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim();
 
-    // For phone OTP with fake email, don't include email at all
-    const emailToInclude = shouldIncludeEmail ? user.email : undefined;
+    // Phone OTP users should not carry email into the auth payload at all.
+    // This keeps the session/profile-completion flow aligned with phone-only login.
+    const emailToInclude = isPhoneOtpLogin ? undefined : user.email;
 
     return {
       id: user.id,
