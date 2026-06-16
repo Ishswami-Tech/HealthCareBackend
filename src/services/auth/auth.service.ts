@@ -93,6 +93,44 @@ function getAuthRedirectUrl(role: Role | string, profileComplete: boolean): stri
   }
 }
 
+function formatAuthIdentityForLog(
+  user:
+    | {
+        email?: string | null;
+        phone?: string | null;
+        name?: string | null;
+        firstName?: string | null;
+        lastName?: string | null;
+      }
+    | null
+    | undefined,
+  fallback = ''
+): string {
+  const email = user?.email?.trim();
+  if (email) {
+    return email;
+  }
+
+  const phone = user?.phone?.trim();
+  if (phone) {
+    return normalizeAuthPhoneNumber(phone);
+  }
+
+  const name = user?.name?.trim();
+  if (name) {
+    return name;
+  }
+
+  const firstName = user?.firstName?.trim() || '';
+  const lastName = user?.lastName?.trim() || '';
+  const combinedName = `${firstName} ${lastName}`.trim();
+  if (combinedName) {
+    return combinedName;
+  }
+
+  return fallback.trim();
+}
+
 @Injectable()
 export class AuthService {
   private readonly CACHE_TTL = 3600; // 1 hour
@@ -1578,11 +1616,13 @@ export class AuthService {
     await this.logging.log(
       LogType.AUDIT,
       LogLevel.INFO,
-      `OTP login successful for: ${verifiedUser.email}`,
+      `OTP login successful for: ${formatAuthIdentityForLog(verifiedUser, normalizedIdentifier)}`,
       'AuthService.verifyOtp',
       {
         userId: verifiedUser.id,
+        identity: formatAuthIdentityForLog(verifiedUser, normalizedIdentifier),
         email: verifiedUser.email,
+        phone: verifiedUser.phone,
         role: verifiedUser.role,
         clinicId: clinicUUID,
         isExistingUser: true,
@@ -1777,11 +1817,13 @@ export class AuthService {
     await this.logging.log(
       LogType.AUDIT,
       LogLevel.INFO,
-      `OTP login successful for new user: ${normalizedIdentifier}`,
+      `OTP login successful for new user: ${formatAuthIdentityForLog(user, normalizedIdentifier)}`,
       'AuthService.verifyOtp',
       {
         userId: user.id,
+        identity: formatAuthIdentityForLog(user, normalizedIdentifier),
         email: user.email,
+        phone: user.phone,
         role: user.role,
         clinicId: validatedClinicUUID,
         isNewUser: true,
