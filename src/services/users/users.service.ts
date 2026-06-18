@@ -835,8 +835,16 @@ export class UsersService {
 
       if (typeof cleanedData.phone === 'string' && cleanedData.phone.trim()) {
         const normalizedPhone = cleanedData.phone.trim();
+        const existingUserRecord = existingUser as unknown as Record<string, unknown>;
         const existingPhoneUser = await this.databaseService.findUserByPhoneSafe(normalizedPhone);
-        if (existingPhoneUser && existingPhoneUser.id !== id) {
+        const isPhoneOwnedByAnotherUser = existingPhoneUser && existingPhoneUser.id !== id;
+        const existingPhoneUserProfileComplete =
+          isPhoneOwnedByAnotherUser &&
+          ((existingPhoneUser as unknown as Record<string, unknown>)['isProfileComplete'] ===
+            true ||
+            (existingPhoneUser as unknown as Record<string, unknown>)['profileComplete'] === true);
+
+        if (isPhoneOwnedByAnotherUser && existingPhoneUserProfileComplete) {
           throw this.errors.validationError(
             'phone',
             'Phone number already registered with another account. Please login with existing account or try a different number.',
@@ -846,11 +854,66 @@ export class UsersService {
 
         cleanedData.phone = normalizedPhone as never;
 
-        // Only reset phone verification if the phone number actually changed
-        const currentPhone = (existingUser as Record<string, unknown>)['phone'] as string | null;
-        if (currentPhone !== normalizedPhone) {
-          (cleanedData as Record<string, unknown>)['phoneVerified'] = false;
-          (cleanedData as Record<string, unknown>)['phoneVerifiedAt'] = null;
+        // If the phone belongs to another incomplete account, transfer it.
+        if (isPhoneOwnedByAnotherUser && !existingPhoneUserProfileComplete) {
+          const currentPhone = existingUserRecord['phone'] as string | null;
+          const currentClinicId =
+            typeof existingUserRecord['primaryClinicId'] === 'string'
+              ? (existingUserRecord['primaryClinicId'] as string)
+              : '';
+          const currentRole = existingUserRecord['role'] as Role;
+          await this.databaseService.executeHealthcareWrite(
+            async client => {
+              const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+                user: {
+                  update: (args: PrismaDelegateArgs) => Promise<unknown>;
+                };
+              };
+
+              await typedClient.user.update({
+                where: { id: existingPhoneUser.id },
+                data: {
+                  phone: null,
+                  phoneVerified: false,
+                  phoneVerifiedAt: null,
+                } as never,
+              } as PrismaDelegateArgs);
+
+              await typedClient.user.update({
+                where: { id },
+                data: {
+                  phone: normalizedPhone,
+                  ...(currentPhone !== normalizedPhone
+                    ? {
+                        phoneVerified: true,
+                        phoneVerifiedAt: new Date(),
+                      }
+                    : {}),
+                } as never,
+              } as PrismaDelegateArgs);
+            },
+            {
+              userId: id,
+              clinicId: currentClinicId,
+              resourceType: 'USER',
+              operation: 'UPDATE',
+              resourceId: id,
+              userRole: currentRole,
+              details: {
+                source: 'UsersService.update',
+                action: 'transfer_phone_from_incomplete_profile',
+                claimedPhone: normalizedPhone,
+                existingPhoneUserId: existingPhoneUser.id,
+              },
+            }
+          );
+        } else {
+          // Only reset phone verification if the phone number actually changed
+          const currentPhone = existingUserRecord['phone'] as string | null;
+          if (currentPhone !== normalizedPhone) {
+            (cleanedData as Record<string, unknown>)['phoneVerified'] = false;
+            (cleanedData as Record<string, unknown>)['phoneVerifiedAt'] = null;
+          }
         }
       }
 

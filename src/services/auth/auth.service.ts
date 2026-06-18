@@ -1868,7 +1868,13 @@ export class AuthService {
     }
 
     const existingPhoneUser = await this.databaseService.findUserByPhoneSafe(normalizedInputPhone);
-    if (existingPhoneUser && existingPhoneUser.id !== user.id) {
+    const isExistingPhoneOwnedByAnotherUser = existingPhoneUser && existingPhoneUser.id !== user.id;
+    const existingPhoneUserProfileComplete =
+      isExistingPhoneOwnedByAnotherUser &&
+      ((existingPhoneUser as unknown as Record<string, unknown>)['isProfileComplete'] === true ||
+        (existingPhoneUser as unknown as Record<string, unknown>)['profileComplete'] === true);
+
+    if (isExistingPhoneOwnedByAnotherUser && existingPhoneUserProfileComplete) {
       throw this.errors.validationError(
         'phone',
         'Phone number already registered with another account. Please login with existing account or try a different number.',
@@ -1913,15 +1919,59 @@ export class AuthService {
       throw this.errors.otpInvalid('AuthService.verifyPhone', verificationResult.message);
     }
 
+    const verifiedAt = new Date();
+    if (isExistingPhoneOwnedByAnotherUser && !existingPhoneUserProfileComplete) {
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+            user: {
+              update: (args: PrismaDelegateArgs) => Promise<unknown>;
+            };
+          };
+
+          await typedClient.user.update({
+            where: { id: existingPhoneUser.id },
+            data: {
+              phone: null,
+              phoneVerified: false,
+              phoneVerifiedAt: null,
+            } as never,
+          } as PrismaDelegateArgs);
+
+          await typedClient.user.update({
+            where: { id: user.id },
+            data: {
+              phone: normalizedInputPhone,
+              phoneVerified: true,
+              phoneVerifiedAt: verifiedAt,
+            } as never,
+          } as PrismaDelegateArgs);
+        },
+        {
+          userId,
+          clinicId: user.primaryClinicId || '',
+          resourceType: 'USER',
+          operation: 'UPDATE',
+          resourceId: user.id,
+          userRole: user.role as Role,
+          details: {
+            source: 'AuthService.verifyPhone',
+            action: 'transfer_phone_from_incomplete_profile',
+            claimedPhone: normalizedInputPhone,
+            existingPhoneUserId: existingPhoneUser.id,
+          },
+        }
+      );
+    } else {
+      await this.databaseService.updateUserSafe(user.id, {
+        phone: normalizedInputPhone,
+        phoneVerified: true,
+        phoneVerifiedAt: verifiedAt,
+      } as never);
+    }
+
     // Consume OTP after successful verification (deferred deletion pattern)
     await this.otpService.consumeOtp(normalizedInputPhone);
-
-    const verifiedAt = new Date();
-    await this.databaseService.updateUserSafe(user.id, {
-      phone: normalizedInputPhone,
-      phoneVerified: true,
-      phoneVerifiedAt: verifiedAt,
-    } as never);
 
     return {
       success: true,
