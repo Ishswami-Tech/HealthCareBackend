@@ -78,7 +78,7 @@ proceeds with database rollback (line 1234+) -… Logs all errors for debugging
 -… Keeps most recent backup (line 599) -… Removes older backup images (line
 598-602) -… Prevents disk space issues
 
-## ðŸ“‹ Variable Scope Verification
+## ‹ Variable Scope Verification
 
 ### OLD_IMAGE_BACKUP_TAG
 
@@ -170,7 +170,7 @@ image restoration**: Multiple fallback strategies if primary fails
 - [x] Variable scope correct
 - [x] No breaking changes to existing flow
 
-## ðŸ“ Summary
+##  Summary
 
 **All functionality is preserved.** The deployment script maintains all original
 features while adding:

@@ -5,7 +5,7 @@
 
 ---
 
-## ðŸ“‹ Table of Contents
+## ‹ Table of Contents
 
 1. [Quick Start](#quick-start)
 2. [Architecture Overview](#architecture-overview)
@@ -395,7 +395,7 @@ async getAppointment(@Param('id') id: string) {
 
 ---
 
-## ðŸ“š Additional Resources
+## š Additional Resources
 
 - **API Documentation**: `docs/API_DOCUMENTATION.md`
 - **System Architecture**: `docs/architecture/SYSTEM_ARCHITECTURE.md`

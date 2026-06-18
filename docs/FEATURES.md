@@ -5,7 +5,7 @@
 
 ---
 
-## ðŸ“‹ Table of Contents
+## ‹ Table of Contents
 
 1. [Communication System](#communication-system)
 2. [Appointments](#appointments)
@@ -18,7 +18,7 @@
 
 ---
 
-## ðŸ“§ Communication System
+## § Communication System
 
 ### Overview
 
@@ -68,7 +68,7 @@ PUT /api/v1/clinics/{clinicId}/communication/config
 
 ---
 
-## ðŸ“… Appointments
+## … Appointments
 
 ### Overview
 
@@ -331,7 +331,7 @@ clinic.settings.communicationSettings = {
 
 ---
 
-## ðŸ“Š System Status Summary
+## Š System Status Summary
 
 | Feature           | Status  | Documentation                                                           |
 | ----------------- | ------- | ----------------------------------------------------------------------- |
@@ -378,7 +378,7 @@ PUT /api/v1/billing/config
 
 ---
 
-## ðŸ“š Related Documentation
+## š Related Documentation
 
 - [Communication System Guide](../guides/COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md) -
   Complete communication docs

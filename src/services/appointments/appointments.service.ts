@@ -4035,7 +4035,12 @@ export class AppointmentsService {
             const appointment = client['appointment'] as {
               findFirst: (args: {
                 where: { id: string; clinicId: string };
-                include: { patient: boolean; doctor: boolean; clinic: boolean; location: boolean };
+                include: {
+                  patient: { include: { user: true } };
+                  doctor: { include: { user: true } };
+                  clinic: boolean;
+                  location: boolean;
+                };
               }) => Promise<AppointmentWithRelations | null>;
             };
             return (await appointment.findFirst({
@@ -4044,8 +4049,16 @@ export class AppointmentsService {
                 clinicId,
               },
               include: {
-                patient: true,
-                doctor: true,
+                patient: {
+                  include: {
+                    user: true,
+                  },
+                },
+                doctor: {
+                  include: {
+                    user: true,
+                  },
+                },
                 clinic: true,
                 location: true,
               },
