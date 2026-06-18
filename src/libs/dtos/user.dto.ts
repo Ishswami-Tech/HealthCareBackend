@@ -870,6 +870,21 @@ export class UpdateUserProfileDto {
   phone?: string;
 
   @ApiPropertyOptional({
+    example: 'user@example.com',
+    description: 'User email address (optional)',
+  })
+  @IsOptional()
+  @IsEmail({}, { message: 'Please provide a valid email address' })
+  @Transform(({ value }): string | undefined => {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed.length === 0 ? undefined : trimmed.toLowerCase();
+    }
+    return value as string | undefined;
+  })
+  email?: string;
+
+  @ApiPropertyOptional({
     example: true,
     description: 'Whether the phone number has been verified',
   })
