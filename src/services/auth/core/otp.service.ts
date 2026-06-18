@@ -438,41 +438,32 @@ export class OtpService {
         await this.cacheService.set(cooldownKey, '1', cooldownSeconds);
       }
 
-      // Send via WhatsApp
-      const sent = await this.whatsAppService.sendOTP(
-        normalizedPhone,
-        otp,
-        this.config.expiryMinutes,
-        2, // retries
-        clinicId,
-        purpose
-      );
-
-      if (sent) {
+      // Fire-and-forget delivery so the request can complete immediately after
+      // the OTP is persisted. This prevents the login UI from hanging on slow
+      // WhatsApp/provider responses while still keeping the OTP available for
+      // verification as soon as the request succeeds.
+      void this.dispatchOtpSmsDelivery(normalizedPhone, otp, clinicId, purpose).catch(error => {
         void this.loggingService.log(
-          LogType.AUTH,
-          LogLevel.INFO,
-          `OTP sent via WhatsApp to ${normalizedPhone}`,
+          LogType.ERROR,
+          LogLevel.ERROR,
+          `Background WhatsApp OTP delivery failed for ${normalizedPhone}`,
           'OtpService',
-          { phone: normalizedPhone, purpose }
+          {
+            phone: normalizedPhone,
+            purpose,
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : 'No stack trace available',
+          }
         );
-      } else {
-        // Fallback logging if WhatsApp fails (since sendOTP acts as the primary sender now)
-        // Note: WhatsAppService has its own error logging, but we might want to log failure here too
-        void this.loggingService.log(
-          LogType.AUTH,
-          LogLevel.WARN,
-          `WhatsApp OTP send returned false for ${normalizedPhone}`,
-          'OtpService'
-        );
-        return {
-          success: false,
-          message: 'Failed to send WhatsApp message. Please try again later.',
-          otp,
-          expiresIn: expirySeconds,
-          attemptsRemaining: this.getRequestsRemainingInStage(newAttemptCount),
-        };
-      }
+      });
+
+      void this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.INFO,
+        `OTP delivery scheduled via WhatsApp for ${normalizedPhone}`,
+        'OtpService',
+        { phone: normalizedPhone, purpose }
+      );
 
       return {
         success: true,
@@ -498,6 +489,41 @@ export class OtpService {
         message: 'Failed to send WhatsApp message. Please try again later.',
       };
     }
+  }
+
+  private async dispatchOtpSmsDelivery(
+    normalizedPhone: string,
+    otp: string,
+    clinicId: string | undefined,
+    purpose: string
+  ): Promise<void> {
+    const sent = await this.whatsAppService.sendOTP(
+      normalizedPhone,
+      otp,
+      this.config.expiryMinutes,
+      2,
+      clinicId,
+      purpose
+    );
+
+    if (sent) {
+      void this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.INFO,
+        `OTP sent via WhatsApp to ${normalizedPhone}`,
+        'OtpService',
+        { phone: normalizedPhone, purpose }
+      );
+      return;
+    }
+
+    void this.loggingService.log(
+      LogType.AUTH,
+      LogLevel.WARN,
+      `WhatsApp OTP send returned false for ${normalizedPhone}`,
+      'OtpService',
+      { phone: normalizedPhone, purpose }
+    );
   }
 
   /**
