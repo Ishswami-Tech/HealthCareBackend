@@ -1,4 +1,4 @@
-﻿# ðŸ“Š Actual API Inventory - Complete Endpoint List
+﻿# Š Actual API Inventory - Complete Endpoint List
 
 **Date**: January 2025  
 **Source**: Direct code analysis (not documentation)  
@@ -17,7 +17,7 @@ authoritative route inventory.
 
 ---
 
-## ðŸ“‹ Executive Summary
+## ‹ Executive Summary
 
 ### Implementation Status
 
@@ -475,7 +475,7 @@ bounce/complaint handling per audit.
 
 ---
 
-## ðŸ“Š Postman Collection Gaps
+## Š Postman Collection Gaps
 
 ### Missing from Postman Collection
 
@@ -592,7 +592,7 @@ bounce/complaint handling per audit.
 
 ---
 
-## ðŸ“ Recommendations
+##  Recommendations
 
 ### Priority 1: Update Postman Collection
 

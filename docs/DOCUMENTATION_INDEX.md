@@ -20,7 +20,7 @@ route counts and exact endpoints.
 
 ---
 
-## ðŸ“‹ Quick Reference
+## ‹ Quick Reference
 
 | Category          | File                                                   | Description                                     |
 | ----------------- | ------------------------------------------------------ | ----------------------------------------------- |
@@ -33,7 +33,7 @@ route counts and exact endpoints.
 
 ---
 
-## ðŸ“š Core Documentation (5 files)
+## š Core Documentation (5 files)
 
 1. **[SYSTEM_COMPLETE.md](./SYSTEM_COMPLETE.md)**­
    - Complete system overview
@@ -112,8 +112,8 @@ route counts and exact endpoints.
 - Quick start guides for each feature
 - Status indicators for each feature
 
-2.… **[LOCATION_QR_CHECKIN.md](./features/LOCATION_QR_CHECKIN.md)**­
-**COMPLETE**
+  2.… **[LOCATION_QR_CHECKIN.md](./features/LOCATION_QR_CHECKIN.md)**­
+  **COMPLETE**
 
 - Static location-based QR code check-in
 - Patient journey, API reference, frontend integration
@@ -129,7 +129,7 @@ section below for implementation gaps
 
 ---
 
-## ðŸ“– Guides (7 files)
+## – Guides (7 files)
 
 ### Communication & Notifications
 
@@ -168,7 +168,7 @@ section below for implementation gaps
 
 ---
 
-## ðŸ“Š Verification & Status
+## Š Verification & Status
 
 - **[ACTUAL_API_INVENTORY.md](./ACTUAL_API_INVENTORY.md)**­ **COMPLETE ENDPOINT
   LIST**
@@ -184,7 +184,7 @@ section below for implementation gaps
 
 ## ðŸ” Documentation Analysis & Missing Implementation Checklist
 
-### ðŸ“Š Executive Summary
+### Š Executive Summary
 
 #### Documentation Status
 
@@ -262,7 +262,7 @@ documentation 8. Request body schemas
   `src/libs/communication/adapters/email/ses/webhooks/ses-webhook.controller.ts`
   (CREATE)
 
-2. **Complaint Handling Webhook** - CRITICAL
+  2. **Complaint Handling Webhook** - CRITICAL
 
 - SNS webhook handler for complaint notifications
 - Automatic removal of complainers
@@ -271,27 +271,27 @@ documentation 8. Request body schemas
   `src/libs/communication/adapters/email/ses/webhooks/ses-webhook.controller.ts`
   (CREATE)
 
-3. **Unsubscribe Links** - CRITICAL
+  3. **Unsubscribe Links** - CRITICAL
 
 - Unsubscribe links in all email templates
 - Unsubscribe endpoint
 - User preference management
 - **Status**: Partial - endpoint exists but templates need links
 
-4. **Suppression List Management** - CRITICAL
+  4. **Suppression List Management** - CRITICAL
 
 - Suppression list service
 - Database model for suppression list
 - Check before sending emails
 - **File**: `src/services/email/suppression-list.service.ts` (CREATE)
 
-5.š ï¸ **Configuration Sets** - RECOMMENDED
+  5.š ï¸ **Configuration Sets** - RECOMMENDED
 
 - Create configuration sets in AWS SES
 - Use configuration sets in SendEmailCommand
 - Configure event publishing per set
 
-6.š ï¸ **Enhanced Monitoring** - RECOMMENDED
+  6.š ï¸ **Enhanced Monitoring** - RECOMMENDED
 
 - Bounce/complaint rate tracking
 - CloudWatch integration
@@ -299,7 +299,7 @@ documentation 8. Request body schemas
 
 ---
 
-### ðŸ“ ACTION ITEMS CHECKLIST
+###  ACTION ITEMS CHECKLIST
 
 #### Priority 1: CRITICAL (Must Implement)
 
@@ -356,7 +356,7 @@ endpoints implemented 6.… **Security** - All controllers secured
 
 ---
 
-### ðŸ“‹ Implementation Priority Matrix
+### ‹ Implementation Priority Matrix
 
 | Item                       | Priority | Effort | Impact   | Status                                        |
 | -------------------------- | -------- | ------ | -------- | --------------------------------------------- |
@@ -394,7 +394,7 @@ endpoints implemented 6.… **Security** - All controllers secured
 
 ---
 
-## ðŸ“ Other Files
+##  Other Files
 
 - **[ENVIRONMENT_VARIABLES.md](./ENVIRONMENT_VARIABLES.md)** - Complete
   environment variables list
@@ -437,7 +437,7 @@ section above for complete checklist
 
 ---
 
-## ðŸ“š Consolidation History
+## š Consolidation History
 
 **Status**:… **Consolidation Complete** - Documentation reduced from 34 files to
 13 files (-62%)

@@ -5,7 +5,7 @@
 
 ---
 
-## ðŸ“‹ Table of Contents
+## ‹ Table of Contents
 
 1. [System Overview](#system-overview)
 2. [Core Services](#core-services)
@@ -36,7 +36,7 @@ recurring, video consultations
 
 ---
 
-## ðŸ“¦ Core Services
+## ¦ Core Services
 
 ### 1. **Billing & Subscription Service**
 
@@ -423,7 +423,7 @@ etc.
 
 ---
 
-## ðŸ“Š Performance & Scalability
+## Š Performance & Scalability
 
 ### Database Optimizations
 
@@ -567,7 +567,7 @@ POST /billing/subscriptions/:id/book-appointment/:appointmentId
 
 ---
 
-## ðŸ“š Related Documentation
+## š Related Documentation
 
 - **API Documentation**: `docs/API_DOCUMENTATION.md`
 - **Role Permissions**: `docs/ROLE_PERMISSIONS_COMPLETE.md`

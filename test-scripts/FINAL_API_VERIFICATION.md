@@ -7,7 +7,7 @@
 > coverage summary. For the most up-to-date test coverage information, refer to
 > this document.
 
-## ðŸ“Š Complete Coverage Verification
+## Š Complete Coverage Verification
 
 ### Controllers Analysis
 
@@ -112,14 +112,14 @@
     service calls this
     - Reason: Webhook endpoints, called by payment providers
 
-#### ðŸ“„ Public Pages (Not API Endpoints)
+#### „ Public Pages (Not API Endpoints)
 
 24. **AppController** (`/`) - 2 endpoints - Not Tested: HTML pages, not API
     endpoints
     - Endpoints: `GET /` (Dashboard), `GET /socket-test` (WebSocket test page)
     - Reason: These return HTML, not JSON API responses
 
-## ðŸ“ˆ Coverage Statistics
+## ˆ Coverage Statistics
 
 ### Total Endpoints
 
@@ -195,7 +195,7 @@ All services are included in `test-scripts/test-all-apis.js`:
 - [x] Internal admin tools identified (not tested by design)
 - [x] Public HTML pages identified (not API endpoints)
 
-## ðŸ“ Notes
+##  Notes
 
 1. **Webhook endpoints** are intentionally not tested as they are called by
    external services, not our API clients
