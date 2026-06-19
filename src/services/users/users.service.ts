@@ -917,6 +917,22 @@ export class UsersService {
         }
       }
 
+      if (typeof cleanedData.email === 'string') {
+        const normalizedEmail = cleanedData.email.trim().toLowerCase();
+        if (normalizedEmail.length > 0) {
+          const existingEmailUser = await this.databaseService.findUserByEmailSafe(normalizedEmail);
+          if (existingEmailUser && existingEmailUser.id !== id) {
+            throw this.errors.emailAlreadyExists(
+              normalizedEmail,
+              'UsersService.updateUserProfileWithValidation'
+            );
+          }
+          cleanedData.email = normalizedEmail;
+        } else {
+          delete (cleanedData as Record<string, unknown>)['email'];
+        }
+      }
+
       // Build base update fields
       const baseFields: Record<string, unknown> = {
         firstName: cleanedData.firstName,
