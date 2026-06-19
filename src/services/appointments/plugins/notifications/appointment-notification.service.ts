@@ -37,6 +37,50 @@ function resolveText(value: unknown, fallback = ''): string {
   return fallback;
 }
 
+function resolveClinicDisplayName(templateData: unknown): string {
+  const data = templateData as Record<string, unknown>;
+  const directClinicName = resolveText(data['clinicName'] || data['clinicDisplayName'], '');
+  if (directClinicName) {
+    return directClinicName;
+  }
+
+  const nestedClinic = data['clinic'];
+  if (nestedClinic && typeof nestedClinic === 'object' && !Array.isArray(nestedClinic)) {
+    const clinicRecord = nestedClinic as Record<string, unknown>;
+    const clinicName = resolveText(clinicRecord['name'] || clinicRecord['displayName'], '');
+    if (clinicName) {
+      return clinicName;
+    }
+  }
+
+  const nestedAppointment = data['appointment'];
+  if (
+    nestedAppointment &&
+    typeof nestedAppointment === 'object' &&
+    !Array.isArray(nestedAppointment)
+  ) {
+    const appointmentRecord = nestedAppointment as Record<string, unknown>;
+    const appointmentClinic = appointmentRecord['clinic'];
+    if (
+      appointmentClinic &&
+      typeof appointmentClinic === 'object' &&
+      !Array.isArray(appointmentClinic)
+    ) {
+      const clinicRecord = appointmentClinic as Record<string, unknown>;
+      const clinicName = resolveText(clinicRecord['name'] || clinicRecord['displayName'], '');
+      if (clinicName) {
+        return clinicName;
+      }
+    }
+    const clinicName = resolveText(appointmentRecord['clinicName'], '');
+    if (clinicName) {
+      return clinicName;
+    }
+  }
+
+  return resolveText(data['appName'], 'Healthcare App');
+}
+
 @Injectable()
 export class AppointmentNotificationService {
   private readonly NOTIFICATION_CACHE_TTL = 3600; // 1 hour
@@ -863,8 +907,7 @@ export class AppointmentNotificationService {
    * Get email subject based on notification type
    */
   private getEmailSubject(type: string, templateData: unknown): string {
-    const data = templateData as Record<string, unknown>;
-    const displayName = resolveText(data['clinicName'] || data['appName'], 'Healthcare App');
+    const displayName = resolveClinicDisplayName(templateData);
     const subjects = {
       reminder: `Appointment reminder from ${displayName}`,
       confirmation: `Appointment confirmed by ${displayName}`,
@@ -881,7 +924,7 @@ export class AppointmentNotificationService {
    */
   private getEmailBody(type: string, templateData: unknown): string {
     const data = templateData as Record<string, unknown>;
-    const displayName = resolveText(data['clinicName'] || data['appName'], 'Healthcare App');
+    const displayName = resolveClinicDisplayName(templateData);
     const patientName = resolveText(data['patientName'], 'there');
     const doctorName = resolveText(data['doctorName'], 'Doctor');
     const appointmentDate = resolveText(data['appointmentDate'], 'soon');

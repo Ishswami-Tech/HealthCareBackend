@@ -5,6 +5,47 @@ import { LoggingService } from '@infrastructure/logging';
 import type { NotificationData } from '@core/types/appointment.types';
 import { formatDateKeyInIST } from '../../../../libs/utils/date-time.util';
 
+function resolveText(value: unknown, fallback = ''): string {
+  if (typeof value === 'string') {
+    return value.trim() || fallback;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+  return fallback;
+}
+
+function resolveClinicName(pluginData: NotificationPluginData): string {
+  const direct = resolveText(pluginData.clinicName, '');
+  if (direct) {
+    return direct;
+  }
+
+  const appointment = pluginData as unknown as Record<string, unknown>;
+  const nestedAppointment = appointment['appointment'];
+  if (
+    nestedAppointment &&
+    typeof nestedAppointment === 'object' &&
+    !Array.isArray(nestedAppointment)
+  ) {
+    const nestedAppointmentRecord = nestedAppointment as Record<string, unknown>;
+    const clinic = nestedAppointmentRecord['clinic'];
+    if (clinic && typeof clinic === 'object' && !Array.isArray(clinic)) {
+      const clinicRecord = clinic as Record<string, unknown>;
+      const nestedClinicName = resolveText(clinicRecord['name'] || clinicRecord['displayName'], '');
+      if (nestedClinicName) {
+        return nestedClinicName;
+      }
+    }
+    const nestedClinicName = resolveText(nestedAppointmentRecord['clinicName'], '');
+    if (nestedClinicName) {
+      return nestedClinicName;
+    }
+  }
+
+  return 'Healthcare Clinic';
+}
+
 interface NotificationPluginData {
   operation: string;
   notificationData?: NotificationData;
@@ -187,7 +228,7 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
         appointmentDate: pluginData.appointmentDate || formatDateKeyInIST(new Date()),
         appointmentTime: pluginData.appointmentTime || '10:00',
         location: pluginData.location || 'Clinic',
-        clinicName: pluginData.clinicName || 'Healthcare Clinic',
+        clinicName: resolveClinicName(pluginData),
         appointmentType: pluginData.appointmentType || '',
         notes: pluginData.notes || '',
       },
@@ -223,7 +264,7 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
         appointmentDate: pluginData.appointmentDate || formatDateKeyInIST(new Date()),
         appointmentTime: pluginData.appointmentTime || '10:00',
         location: pluginData.location || 'Clinic',
-        clinicName: pluginData.clinicName || 'Healthcare Clinic',
+        clinicName: resolveClinicName(pluginData),
         appointmentType: pluginData.appointmentType || '',
         notes: pluginData.notes || '',
         cancellationReason: pluginData.reason || pluginData.cancellationReason || '',
@@ -261,7 +302,7 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
         appointmentDate: pluginData.appointmentDate || formatDateKeyInIST(new Date()),
         appointmentTime: pluginData.appointmentTime || '10:00',
         location: pluginData.location || 'Clinic',
-        clinicName: pluginData.clinicName || 'Healthcare Clinic',
+        clinicName: resolveClinicName(pluginData),
         appointmentType: pluginData.appointmentType || '',
         notes: pluginData.notes || '',
         rescheduleUrl: pluginData.rescheduleUrl || '',
@@ -298,7 +339,7 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
         appointmentDate: pluginData.appointmentDate || formatDateKeyInIST(new Date()),
         appointmentTime: pluginData.appointmentTime || '10:00',
         location: pluginData.location || 'Clinic',
-        clinicName: pluginData.clinicName || 'Healthcare Clinic',
+        clinicName: resolveClinicName(pluginData),
         appointmentType: pluginData.appointmentType || '',
         notes: pluginData.notes || '',
       },
@@ -334,7 +375,7 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
         appointmentDate: pluginData.appointmentDate || formatDateKeyInIST(new Date()),
         appointmentTime: pluginData.appointmentTime || '10:00',
         location: pluginData.location || 'Clinic',
-        clinicName: pluginData.clinicName || 'Healthcare Clinic',
+        clinicName: resolveClinicName(pluginData),
         appointmentType: pluginData.appointmentType || '',
         notes: pluginData.notes || '',
         changes: (pluginData.changes || {}) as Record<string, unknown>,
