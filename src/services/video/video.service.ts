@@ -799,6 +799,37 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
     await this.triggerAppointmentRefund(resolvedAppointmentId, clinicId, rejectionReason);
 
+    const appointmentRecord = updatedAppointment as unknown as Record<string, unknown>;
+    const resolvePersonName = (value: unknown, fallback: string): string => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return fallback;
+      }
+
+      const record = value as Record<string, unknown>;
+      const name = typeof record['name'] === 'string' ? record['name'].trim() : '';
+      if (name) {
+        return name;
+      }
+
+      const firstName = typeof record['firstName'] === 'string' ? record['firstName'].trim() : '';
+      const lastName = typeof record['lastName'] === 'string' ? record['lastName'].trim() : '';
+      const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
+      if (fullName) {
+        return fullName;
+      }
+
+      const email = typeof record['email'] === 'string' ? record['email'].trim() : '';
+      return email || fallback;
+    };
+    const patientRecord =
+      (appointmentRecord['patient'] as Record<string, unknown> | undefined) || undefined;
+    const doctorRecord =
+      (appointmentRecord['doctor'] as Record<string, unknown> | undefined) || undefined;
+    const patientUserRecord =
+      (patientRecord?.['user'] as Record<string, unknown> | undefined) || undefined;
+    const doctorUserRecord =
+      (doctorRecord?.['user'] as Record<string, unknown> | undefined) || undefined;
+
     await this.eventService.emitEnterprise('appointment.cancelled', {
       eventId: `appointment-cancelled-${resolvedAppointmentId}-${Date.now()}`,
       eventType: 'appointment.cancelled',
@@ -814,6 +845,11 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         userId: updatedAppointment.patientId,
         doctorId: updatedAppointment.doctorId,
         clinicId,
+        patientName: resolvePersonName(patientUserRecord ?? patientRecord, 'Patient'),
+        doctorName: resolvePersonName(doctorUserRecord ?? doctorRecord, 'Doctor'),
+        appointmentType: updatedAppointment.type,
+        appointmentDate: updatedAppointment.date,
+        appointmentTime: updatedAppointment.time,
         reason: rejectionReason,
         cancelledBy: userId,
         status: AppointmentStatus.CANCELLED,

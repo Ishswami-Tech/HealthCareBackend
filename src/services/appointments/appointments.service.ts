@@ -3064,6 +3064,37 @@ export class AppointmentsService {
 
     // Invalidate related cache entries
     if (result.success) {
+      const resultRecord = (result.data as Record<string, unknown>) || {};
+      const resolvePersonName = (value: unknown, fallback: string): string => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) {
+          return fallback;
+        }
+
+        const record = value as Record<string, unknown>;
+        const name = typeof record['name'] === 'string' ? record['name'].trim() : '';
+        if (name) {
+          return name;
+        }
+
+        const firstName = typeof record['firstName'] === 'string' ? record['firstName'].trim() : '';
+        const lastName = typeof record['lastName'] === 'string' ? record['lastName'].trim() : '';
+        const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
+        if (fullName) {
+          return fullName;
+        }
+
+        const email = typeof record['email'] === 'string' ? record['email'].trim() : '';
+        return email || fallback;
+      };
+      const patientRecord =
+        (resultRecord['patient'] as Record<string, unknown> | undefined) || undefined;
+      const doctorRecord =
+        (resultRecord['doctor'] as Record<string, unknown> | undefined) || undefined;
+      const patientUserRecord =
+        (patientRecord?.['user'] as Record<string, unknown> | undefined) || undefined;
+      const doctorUserRecord =
+        (doctorRecord?.['user'] as Record<string, unknown> | undefined) || undefined;
+
       await this.cacheService.invalidateAppointmentCache(
         appointmentId,
         (result.data as Record<string, unknown>)?.['patientId'] as string,
@@ -3103,6 +3134,11 @@ export class AppointmentsService {
           userId: (result.data as Record<string, unknown>)?.['patientId'] as string,
           doctorId: (result.data as Record<string, unknown>)?.['doctorId'] as string,
           clinicId,
+          patientName: resolvePersonName(patientUserRecord ?? patientRecord, 'Patient'),
+          doctorName: resolvePersonName(doctorUserRecord ?? doctorRecord, 'Doctor'),
+          appointmentType: (result.data as Record<string, unknown>)?.['type'] as string,
+          appointmentDate: (result.data as Record<string, unknown>)?.['date'] as string,
+          appointmentTime: (result.data as Record<string, unknown>)?.['time'] as string,
           reason,
           cancelledBy: userId,
           status: 'CANCELLED',
