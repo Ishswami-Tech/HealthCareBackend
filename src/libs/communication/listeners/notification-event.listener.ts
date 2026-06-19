@@ -1067,24 +1067,9 @@ export class NotificationEventListener implements OnModuleInit {
     const paymentId = resolveText(
       metadata?.['paymentId'] ?? record['paymentId'] ?? nestedPayload?.['paymentId'] ?? ''
     ).trim();
-    const status = resolveText(
-      metadata?.['status'] ?? record['status'] ?? nestedPayload?.['status'] ?? ''
-    )
-      .trim()
-      .toUpperCase();
-    const source = resolveText(
-      metadata?.['source'] ?? record['source'] ?? nestedPayload?.['source'] ?? ''
-    )
-      .trim()
-      .toLowerCase();
-
-    const dedupKey = [
-      eventType,
-      appointmentId || 'no-appointment',
-      paymentId || 'no-payment',
-      status || 'no-status',
-      source || 'no-source',
-    ].join('|');
+    const dedupKey = [eventType, appointmentId || 'no-appointment', paymentId || 'no-payment'].join(
+      '|'
+    );
     const now = Date.now();
     const lastSeen = this.appointmentNotificationDedup.get(dedupKey);
     if (lastSeen && now - lastSeen < this.appointmentNotificationDedupTtlMs) {
