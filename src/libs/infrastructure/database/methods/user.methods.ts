@@ -52,6 +52,31 @@ export class UserMethods extends DatabaseMethodsBase {
   }
 
   /**
+   * Find user by ID with full relations, bypassing cache.
+   * Use this when you need the absolute latest state right after a write
+   * (e.g. profile completion status check after PATCH).
+   */
+  async findUserByIdSafeFresh(id: string, clinicId?: string): Promise<UserWithRelations | null> {
+    return await this.executeRead<UserWithRelations | null>(
+      async prisma => {
+        return await prisma.user.findUnique({
+          where: { id },
+          include: this.userInclude,
+        });
+      },
+      this.queryOptionsBuilder
+        .where({ id })
+        .clinicId(clinicId || '')
+        .include(this.userInclude)
+        .useCache(false)
+        .priority('high')
+        .hipaaCompliant(true)
+        .rowLevelSecurity(!!clinicId)
+        .build()
+    );
+  }
+
+  /**
    * Find user by email with selective relation loading
    *
    * OPTIMIZED FOR 10M+ USERS: Only loads relations that are explicitly requested

@@ -2029,6 +2029,14 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     return this.userMethods.findUserByIdSafe(id, clinicId);
   }
 
+  /**
+   * Cache-bypassing user read for fresh post-write state.
+   * Use after PATCH/POST/PUT operations that update a user record.
+   */
+  async findUserByIdSafeFresh(id: string, clinicId?: string): Promise<UserWithRelations | null> {
+    return this.userMethods.findUserByIdSafeFresh(id, clinicId);
+  }
+
   async findUserByEmailSafe(
     email: string,
     includeRelations?: Partial<{

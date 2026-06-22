@@ -2229,7 +2229,10 @@ export class AuthService {
     role: Role
   ): Promise<{ isComplete: boolean; isProfileComplete?: boolean }> {
     try {
-      const user = await this.databaseService.findUserByIdSafe(userId);
+      // Use cache-bypassing read so we see the absolute latest state
+      // (the cached snapshot can lag behind recent PATCHes and produce
+      //  a stale "isComplete: false" right after a profile update).
+      const user = await this.databaseService.findUserByIdSafeFresh(userId);
 
       if (!user) {
         await this.logging.log(
