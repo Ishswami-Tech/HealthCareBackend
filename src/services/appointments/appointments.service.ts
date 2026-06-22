@@ -559,7 +559,7 @@ export class AppointmentsService {
         hour: '2-digit',
         minute: '2-digit',
       });
-      const reason = `Auto-cancelled: doctor did not confirm any proposed slot before ${formattedExpiry} IST.`;
+      const reason = `Auto-cancelled: payment/slot confirmation window expired at ${formattedExpiry} IST. The doctor did not confirm a slot within 3 hours, so the booking is void. Please retry the booking to continue.`;
 
       try {
         const cancellationResult = await this.cancelAppointment(
@@ -1696,6 +1696,49 @@ export class AppointmentsService {
         'Patient or doctor not found',
         'AppointmentsService.proposeVideoAppointment'
       );
+    }
+
+    // Deduplication: Reject creating a duplicate video appointment when the
+    // patient has already proposed the same slot (or any active appointment
+    // for the same doctor/time) within the last 10 minutes. This guards
+    // against retries from the payment flow that would otherwise create
+    // multiple rows for the same logical slot.
+    const dedupWindowStart = new Date(Date.now() - 10 * 60 * 1000);
+    const firstSlotForDedup = dto.proposedSlots[0];
+    if (firstSlotForDedup) {
+      const normalizedDedupDate = this.normalizeVideoSlotDate(firstSlotForDedup.date);
+      if (normalizedDedupDate) {
+        const existingRecent = (await this.databaseService.executeRead(async prisma => {
+          const tx = prisma as unknown as Prisma.TransactionClient;
+          return tx.appointment.findFirst({
+            where: {
+              patientId,
+              doctorId,
+              type: AppointmentType.VIDEO_CALL,
+              date: normalizedDedupDate,
+              time: firstSlotForDedup.time,
+              createdAt: { gte: dedupWindowStart },
+              status: { notIn: ['CANCELLED', 'NO_SHOW'] },
+            },
+            orderBy: { createdAt: 'desc' },
+          });
+        })) as { id: string } | null;
+
+        if (existingRecent) {
+          await this.loggingService.log(
+            LogType.BUSINESS,
+            LogLevel.WARN,
+            `Duplicate video appointment proposal detected; returning existing appointment ${existingRecent.id}`,
+            'AppointmentsService.proposeVideoAppointment',
+            { patientId, doctorId, existingId: existingRecent.id }
+          );
+          return {
+            success: true,
+            data: { id: existingRecent.id } as unknown as Record<string, unknown>,
+            message: 'An active video appointment already exists for this slot.',
+          };
+        }
+      }
     }
 
     const firstSlot = dto.proposedSlots[0];

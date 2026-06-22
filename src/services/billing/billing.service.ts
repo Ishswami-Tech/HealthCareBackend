@@ -2621,6 +2621,26 @@ export class BillingService implements OnModuleInit {
       );
     }
 
+    // Reject payment for appointments whose time slot has already passed.
+    // The 3-hour payment/slot confirmation cron cancels these, but a user
+    // could still attempt a retry via the UI; we must refuse at the
+    // payment-intent layer so the gateway is not invoked for a dead slot.
+    // Allow a small grace window (5 minutes) past `endTime` for late payment
+    // attempts only if the appointment is still CONFIRMED/SCHEDULED.
+    const now = new Date();
+    const appointmentEndTime = (appointment as { endTime?: Date | null }).endTime ?? null;
+    if (appointmentEndTime && appointmentEndTime instanceof Date) {
+      const graceMs = 5 * 60 * 1000;
+      if (
+        now.getTime() > appointmentEndTime.getTime() + graceMs &&
+        String(appointment.status) !== String('CONFIRMED')
+      ) {
+        throw new BadRequestException(
+          'This appointment time slot has already passed. Please book a new appointment.'
+        );
+      }
+    }
+
     const serviceMetadata = this.resolveVideoConsultationService(
       appointment.treatmentType as TreatmentType | string | null
     );

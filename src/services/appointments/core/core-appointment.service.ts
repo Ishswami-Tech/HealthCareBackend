@@ -308,6 +308,53 @@ export class CoreAppointmentService {
       const appointmentDateTime = this.resolveAppointmentDateTime(createDto);
       const { date: dateStr, time: timeStr } = this.getISTDateAndTime(appointmentDateTime);
 
+      // 4a. Idempotency: prevent creating a duplicate active appointment for the
+      // same (patient, doctor, date, time, location) tuple within a short window.
+      // Frontend payment-retry flows can otherwise create multiple rows for the
+      // same logical slot. For video appointments, this guards against the
+      // payment-retry race; for in-person, it protects against rapid double-clicks.
+      const dedupWindowStart = new Date(Date.now() - 10 * 60 * 1000);
+      const existingRecent = (await this.databaseService.executeRead(async prisma => {
+        const tx = prisma as unknown as PrismaTransactionClientWithDelegates;
+        return tx.appointment.findFirst({
+          where: {
+            patientId: resolvedIds.patientId,
+            doctorId: resolvedIds.doctorId,
+            ...(resolvedIds.locationId
+              ? { locationId: resolvedIds.locationId }
+              : { locationId: null }),
+            date: new Date(`${dateStr}T00:00:00.000+05:30`),
+            time: timeStr,
+            type: createDto.type,
+            createdAt: { gte: dedupWindowStart },
+            status: { notIn: ['CANCELLED', 'NO_SHOW'] },
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+      })) as { id: string } | null;
+
+      if (existingRecent) {
+        void this.loggingService.log(
+          LogType.BUSINESS,
+          LogLevel.WARN,
+          `Duplicate appointment creation detected; returning existing appointment ${existingRecent.id}`,
+          'CoreAppointmentService.createAppointment',
+          {
+            patientId: resolvedIds.patientId,
+            doctorId: resolvedIds.doctorId,
+            date: dateStr,
+            time: timeStr,
+            existingId: existingRecent.id,
+          }
+        );
+        return {
+          success: true,
+          data: { id: existingRecent.id } as unknown as Record<string, unknown>,
+          message: 'An active appointment already exists for this slot.',
+          metadata: { processingTime: Date.now() - startTime },
+        };
+      }
+
       if (isVideoCallAppointmentType(createDto.type)) {
         const clinicSettings = await this.databaseService.executeHealthcareRead(async client => {
           const typedClient = client as unknown as {
@@ -531,14 +578,48 @@ export class CoreAppointmentService {
         });
       }
 
+      // Deduplicate appointments that share the same doctor/patient/date/time/location.
+      // This guards against duplicate rows created by payment retries, webhook
+      // replays, or other retry paths that may produce the same logical slot
+      // more than once. The dedup key is stable across rows.
+      const dedupedAppointments: typeof sortedAppointments = [];
+      const dedupKeyToFirstId = new Map<string, string>();
+      for (const apt of sortedAppointments) {
+        const record = apt as unknown as {
+          id?: string;
+          doctorId?: string | null;
+          patientId?: string | null;
+          date?: Date | string | null;
+          time?: string | null;
+          locationId?: string | null;
+        };
+
+        const doctorKey = String(record.doctorId || 'doctor');
+        const patientKey = String(record.patientId || 'patient');
+        const dateKey = record.date ? new Date(record.date).toISOString().split('T')[0] : 'date';
+        const timeKey = String(record.time || 'time');
+        const locationKey = String(record.locationId || 'location');
+
+        const dedupKey = `${doctorKey}|${patientKey}|${dateKey}|${timeKey}|${locationKey}`;
+
+        if (!dedupKeyToFirstId.has(dedupKey)) {
+          dedupKeyToFirstId.set(dedupKey, String(record.id || ''));
+          dedupedAppointments.push(apt);
+        }
+      }
+
+      // Recalculate pagination using the deduplicated count so the page metadata
+      // remains consistent with the response payload.
+      const dedupedTotal = total - (sortedAppointments.length - dedupedAppointments.length);
+
       const result = {
-        appointments: sortedAppointments,
+        appointments: dedupedAppointments,
         pagination: {
           page,
           limit,
-          total,
-          totalPages: Math.ceil(total / limit),
-          hasNext: page * limit < total,
+          total: dedupedTotal,
+          totalPages: Math.ceil(dedupedTotal / limit),
+          hasNext: page * limit < dedupedTotal,
           hasPrev: page > 1,
         },
       };

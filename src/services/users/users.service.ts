@@ -2524,19 +2524,9 @@ export class UsersService {
 
       const userRole = user.role as Role;
 
-      // Validate profile data (non-blocking validation)
-      // SECURITY: Use DB values for phoneVerified/emailVerified, not frontend input
-      // Frontend can send these fields (to pass DTO whitelist), but we don't trust them for validation
-      const validationData = {
-        ...(user as unknown as Record<string, unknown>),
-        ...profileData,
-        // Override with DB truth for verification status
-        phoneVerified: (user as unknown as Record<string, unknown>)['phoneVerified'],
-        emailVerified: (user as unknown as Record<string, unknown>)['emailVerified'],
-      };
-      const validation = this.validateProfileCompletion(validationData, userRole);
-
-      // Update user with provided data
+      // Update user with provided data FIRST.
+      // Note: update() may reset phoneVerified to false if the phone number changed.
+      // We must re-read the user afterwards to get the actual post-update verification state.
       const updatedUser = await this.update(
         userId,
         profileData as UpdateUserDto,
@@ -2544,10 +2534,34 @@ export class UsersService {
         clinicId
       );
 
-      // If profile is now complete, mark it as such
-      if (validation.isComplete && !user.isProfileComplete) {
+      // Re-read user with fresh DB state (cache-bypassing) for the completion decision.
+      // The cached `user` loaded at line 2519 may be stale, especially for users
+      // completing their profile for the first time or submitting multiple PATCHes.
+      const freshUser = await this.databaseService.findUserByIdSafeFresh(userId);
+      if (!freshUser) {
+        throw new BadRequestException('User not found after update');
+      }
+
+      // Validate profile data using FRESH post-update state.
+      // SECURITY: Use DB values for phoneVerified/emailVerified, not frontend input.
+      // Frontend can send these fields (to pass DTO whitelist), but we don't trust them.
+      const validationData = {
+        ...(freshUser as unknown as Record<string, unknown>),
+        ...profileData,
+        // Override with DB truth for verification status
+        phoneVerified: (freshUser as unknown as Record<string, unknown>)['phoneVerified'],
+        emailVerified: (freshUser as unknown as Record<string, unknown>)['emailVerified'],
+      };
+      const validation = this.validateProfileCompletion(validationData, userRole);
+
+      // If profile is now complete, mark it as such.
+      // Use FRESH user state for the `wasIncomplete` check, not the stale cache.
+      if (
+        validation.isComplete &&
+        !(freshUser as unknown as Record<string, unknown>)['isProfileComplete']
+      ) {
         const completeResult = await this.completeUserProfile(userId, {
-          ...(user as unknown as Record<string, unknown>),
+          ...(freshUser as unknown as Record<string, unknown>),
           ...profileData,
         });
 
