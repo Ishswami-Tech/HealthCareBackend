@@ -45,6 +45,7 @@ import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { RbacService } from '@core/rbac/rbac.service';
 import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 import { PatientCache, InvalidatePatientCache } from '@core/decorators';
+import { DatabaseService } from '@infrastructure/database';
 
 @ApiTags('Users')
 @Controller('user')
@@ -56,7 +57,8 @@ export class UsersController {
     private readonly usersService: UsersService,
     private readonly authService: AuthService,
     private readonly rbacService: RbacService,
-    private readonly locationManagementService: LocationManagementService
+    private readonly locationManagementService: LocationManagementService,
+    private readonly databaseService: DatabaseService
   ) {}
 
   @Post()
@@ -283,14 +285,35 @@ export class UsersController {
     );
 
     // Check DB flag for profile completion since UserResponseDto doesn't include it
+    // Use direct DB read to bypass any caching and get the latest state
     const profileStatus = await this.authService.checkProfileCompletionStatus(
       id,
       updatedUser.role as Role
     );
 
+    // Also fetch the latest user data from DB to ensure response reflects current state
+    // (use cache-bypassing read so we get the absolute latest value)
+    const latestUser = await this.databaseService.findUserByIdSafeFresh(id);
+    const dbIsProfileComplete = latestUser?.isProfileComplete === true;
+
+    // Use the database flag as the authoritative source for the response
+    // (since the controller just persisted the update)
+    const finalProfileComplete = dbIsProfileComplete || profileStatus.isComplete;
+
     // If profile is complete, refresh the session tokens to reflect new user data
-    if (profileStatus.isComplete) {
-      const fullProfile = await this.authService.getUserProfile(id);
+    if (finalProfileComplete) {
+      // Use the fresh user data we already fetched (or fetch it fresh) to
+      // ensure the new JWT contains the updated profile fields (firstName/lastName/phone).
+      // getUserProfile() is cached for 30min and would return stale data.
+      const fullProfile = latestUser
+        ? {
+            id: latestUser.id,
+            email: latestUser.email,
+            name: `${latestUser.firstName ?? ''} ${latestUser.lastName ?? ''}`.trim(),
+            role: latestUser.role as Role,
+            ...(latestUser.primaryClinicId && { clinicId: latestUser.primaryClinicId }),
+          }
+        : await this.authService.getUserProfile(id);
       const sessionId = (req.user as JwtGuardUser)?.sessionId || 'unknown';
       const tokens = await this.authService.generateTokens(
         fullProfile,
@@ -304,9 +327,9 @@ export class UsersController {
 
     return {
       ...updatedUser,
-      profileComplete: profileStatus.isComplete,
-      isProfileComplete: profileStatus.isComplete,
-      requiresProfileCompletion: !profileStatus.isComplete,
+      profileComplete: finalProfileComplete,
+      isProfileComplete: finalProfileComplete,
+      requiresProfileCompletion: !finalProfileComplete,
     };
   }
 
