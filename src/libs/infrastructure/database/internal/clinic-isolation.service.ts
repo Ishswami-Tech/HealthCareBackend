@@ -398,14 +398,23 @@ export class ClinicIsolationService implements OnModuleInit, OnModuleDestroy {
         };
       }
 
+      // Resolve to canonical clinic UUID. getClinicContext accepts both UUIDs
+      // and public codes (e.g. "CL0002"), but the rest of the function — and
+      // the database — stores the canonical UUID on User.primaryClinicId,
+      // UserRole.clinicId, and ClinicAdmin.clinicId. Without this normalization,
+      // a public code would be matched as a string literal against the UUID
+      // column and silently return zero rows, denying access to users that
+      // legitimately own the clinic.
+      const resolvedClinicId = clinicResult.data?.clinicId || clinicId;
+
       // Check if user has access to this clinic
       const userClinics = this.userClinicCache.get(userId);
-      if (!userClinics || !userClinics.includes(clinicId)) {
+      if (!userClinics || !userClinics.includes(resolvedClinicId)) {
         // Load from database if not in cache
         void this.loggingService.log(
           LogType.SECURITY,
           LogLevel.INFO,
-          `validateClinicAccess: User ${userId} accessing clinic ${clinicId} - checking database`,
+          `validateClinicAccess: User ${userId} accessing clinic ${resolvedClinicId} (input: ${clinicId}) - checking database`,
           this.serviceName
         );
 
@@ -422,11 +431,11 @@ export class ClinicIsolationService implements OnModuleInit, OnModuleDestroy {
           where: {
             id: userId,
             OR: [
-              { primaryClinicId: clinicId }, // Primary clinic assignment
+              { primaryClinicId: resolvedClinicId }, // Primary clinic assignment
               {
                 clinics: {
                   some: {
-                    id: clinicId,
+                    id: resolvedClinicId,
                   },
                 },
               }, // Many-to-many clinic association
@@ -442,7 +451,7 @@ export class ClinicIsolationService implements OnModuleInit, OnModuleDestroy {
         const userRoleAssignment = await this.prismaService.userRole.findFirst({
           where: {
             userId,
-            clinicId,
+            clinicId: resolvedClinicId,
             isActive: true,
             OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
             revokedAt: null,
@@ -454,7 +463,7 @@ export class ClinicIsolationService implements OnModuleInit, OnModuleDestroy {
         const clinicAdminAssignment = await this.prismaService.clinicAdmin.findFirst({
           where: {
             userId,
-            clinicId,
+            clinicId: resolvedClinicId,
           },
           select: { id: true },
         });
@@ -464,13 +473,13 @@ export class ClinicIsolationService implements OnModuleInit, OnModuleDestroy {
           void this.loggingService.log(
             LogType.SECURITY,
             LogLevel.WARN,
-            `validateClinicAccess: User ${userId} denied access to clinic ${clinicId}. ` +
+            `validateClinicAccess: User ${userId} denied access to clinic ${resolvedClinicId} (input: ${clinicId}). ` +
               `hasDirectAccess: ${!!userClinicAccess}, hasUserRole: ${!!userRoleAssignment}, isClinicAdmin: ${!!clinicAdminAssignment}`,
             this.serviceName
           );
           return {
             success: false,
-            error: `User ${userId} does not have access to clinic ${clinicId}`,
+            error: `User ${userId} does not have access to clinic ${resolvedClinicId}`,
             ...(clinicResult.data && { clinicContext: clinicResult.data }),
           };
         }
@@ -478,15 +487,15 @@ export class ClinicIsolationService implements OnModuleInit, OnModuleDestroy {
         void this.loggingService.log(
           LogType.SECURITY,
           LogLevel.INFO,
-          `validateClinicAccess: User ${userId} granted access to clinic ${clinicId}. ` +
+          `validateClinicAccess: User ${userId} granted access to clinic ${resolvedClinicId} (input: ${clinicId}). ` +
             `hasDirectAccess: ${!!userClinicAccess}, hasUserRole: ${!!userRoleAssignment}, isClinicAdmin: ${!!clinicAdminAssignment}`,
           this.serviceName
         );
 
         // Update cache
         const currentClinics = this.userClinicCache.get(userId) || [];
-        if (!currentClinics.includes(clinicId)) {
-          currentClinics.push(clinicId);
+        if (!currentClinics.includes(resolvedClinicId)) {
+          currentClinics.push(resolvedClinicId);
           this.userClinicCache.set(userId, currentClinics);
         }
       }
