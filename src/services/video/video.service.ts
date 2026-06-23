@@ -136,7 +136,7 @@ type VideoProviderSettingRow = {
 
 @Injectable()
 export class VideoService implements OnModuleInit, OnModuleDestroy {
-  private static readonly VIDEO_ACTIVE_WINDOW_MINUTES = 180;
+  private static readonly VIDEO_ACTIVE_WINDOW_MINUTES = 300;
   private provider: IVideoProvider | undefined;
   private readonly VIDEO_CACHE_TTL = 1800; // 30 minutes
   private readonly CALL_CACHE_TTL = 300; // 5 minutes
@@ -1035,7 +1035,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       String(appointment.type || '').toUpperCase() === 'VIDEO_CALL' && !paymentCompleted;
     const scheduledWindow = this.resolveAppointmentVideoWindow(appointment);
     const joinWindowStart = scheduledWindow?.startTime
-      ? new Date(scheduledWindow.startTime.getTime() - 10 * 60_000)
+      ? new Date(scheduledWindow.startTime.getTime() - 20 * 60_000)
       : null;
     const joinWindowEnd = scheduledWindow?.endTime ?? null;
     const confirmedSlotIndex = (
@@ -1070,7 +1070,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       const now = new Date();
       if (now < joinWindowStart || now > joinWindowEnd) {
         joinBlockedReason =
-          'Join opens 10 minutes before your visit and stays open for 3 hours after start.';
+          'Join opens 20 minutes before your visit and stays open for 5 hours after start.';
       }
     }
 
