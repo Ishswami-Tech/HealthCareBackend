@@ -142,7 +142,14 @@ export interface AppointmentEvent extends EnterpriseEventPayload {
   doctorId: string;
   appointmentDate: string;
   appointmentTime: string;
-  status: 'SCHEDULED' | 'CONFIRMED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW';
+  status:
+    | 'SCHEDULED'
+    | 'CONFIRMED'
+    | 'IN_PROGRESS'
+    | 'COMPLETED'
+    | 'CANCELLED'
+    | 'NO_SHOW'
+    | 'EXPIRED';
   appointmentType: string;
   duration: number;
   notes?: string;

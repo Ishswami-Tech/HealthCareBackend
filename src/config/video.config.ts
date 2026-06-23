@@ -51,6 +51,24 @@ export function getVideoPaymentWindowMinutes(): number {
 }
 
 /**
+ * Video appointment active/join window in minutes.
+ *
+ * The join window stays open this long after the scheduled start time.
+ * The scheduler uses the same source of truth to expire confirmed video
+ * appointments that never started.
+ *
+ * Defaults to 300 minutes.
+ */
+export function getVideoActiveWindowMinutes(): number {
+  const raw = getEnv('VIDEO_ACTIVE_WINDOW_MINUTES');
+  const parsed = raw ? Number(raw) : NaN;
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return Math.min(Math.max(Math.floor(parsed), 1), 720);
+  }
+  return 300;
+}
+
+/**
  * Get video provider type
  * @returns 'cloudflare' | 'daily' | 'google-meet'
  */

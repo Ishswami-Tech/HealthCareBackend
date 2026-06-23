@@ -284,7 +284,7 @@ export class AppointmentEligibilityService {
             appointments: {
               where: {
                 status: {
-                  in: ['COMPLETED', 'CANCELLED', 'NO_SHOW'],
+                  in: ['COMPLETED', 'CANCELLED', 'NO_SHOW', 'EXPIRED'],
                 },
               },
               orderBy: {

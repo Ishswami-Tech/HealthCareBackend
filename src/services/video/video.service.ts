@@ -26,6 +26,7 @@ import {
 } from '@nestjs/common';
 import { ModuleRef as _ModuleRef } from '@nestjs/core';
 import { ConfigService } from '@config/config.service';
+import { getVideoActiveWindowMinutes } from '@config/video.config';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { Prisma } from '@infrastructure/database/prisma/generated/client';
 import { JobType, JobPriorityLevel } from '@core/types/queue.types';
@@ -136,7 +137,7 @@ type VideoProviderSettingRow = {
 
 @Injectable()
 export class VideoService implements OnModuleInit, OnModuleDestroy {
-  private static readonly VIDEO_ACTIVE_WINDOW_MINUTES = 300;
+  private static readonly VIDEO_ACTIVE_WINDOW_MINUTES = getVideoActiveWindowMinutes();
   private provider: IVideoProvider | undefined;
   private readonly VIDEO_CACHE_TTL = 1800; // 30 minutes
   private readonly CALL_CACHE_TTL = 300; // 5 minutes
@@ -934,6 +935,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     if (appointmentStatus === String(AppointmentStatus.COMPLETED)) {
       throw new NotFoundException('This appointment has already been completed.');
     }
+    if (appointmentStatus === String(AppointmentStatus.EXPIRED)) {
+      throw new NotFoundException('This appointment has expired.');
+    }
     if (
       this.configService.isVideoNoShowEnabled() &&
       appointmentStatus === String(AppointmentStatus.NO_SHOW)
@@ -1050,6 +1054,8 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       joinBlockedReason = 'This appointment has been cancelled.';
     } else if (appointmentStatus === String(AppointmentStatus.COMPLETED)) {
       joinBlockedReason = 'This appointment has already been completed.';
+    } else if (appointmentStatus === String(AppointmentStatus.EXPIRED)) {
+      joinBlockedReason = 'This appointment has expired.';
     } else if (
       this.configService.isVideoNoShowEnabled() &&
       appointmentStatus === String(AppointmentStatus.NO_SHOW)
