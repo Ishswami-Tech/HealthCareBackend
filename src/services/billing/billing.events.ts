@@ -376,18 +376,43 @@ export class BillingEventsListener {
 
           await this.databaseService.executeHealthcareWrite(
             async client => {
-              const appointmentClient = client as unknown as {
-                appointment: {
-                  update: (args: {
-                    where: { id: string };
-                    data: { status: string };
-                  }) => Promise<unknown>;
-                };
-              };
-              return await appointmentClient.appointment.update({
+              // VIDEO_CALL appointments start in PENDING with a payment
+              // window. Now that payment has succeeded, transition them
+              // through SCHEDULED → CONFIRMED in two steps so the UI can
+              // tell apart "payment received, awaiting doctor confirmation"
+              // from "fully confirmed by the clinic". We also clear
+              // `paymentExpiresAt` so the auto-cancel scheduler ignores
+              // this row going forward.
+              //
+              // IN_PERSON appointments skip PENDING (they use the clinic's
+              // subscription model), so for them we go straight to CONFIRMED
+              // exactly like the legacy flow did.
+              const currentAppointmentStatus = String(appointment.status || '').toUpperCase();
+              const isPendingPaymentState =
+                currentAppointmentStatus === String(AppointmentStatus.PENDING) ||
+                currentAppointmentStatus === 'PENDING_PAYMENT' ||
+                currentAppointmentStatus === 'AWAITING_PAYMENT';
+
+              const nextStatus = isPendingPaymentState
+                ? AppointmentStatus.SCHEDULED
+                : AppointmentStatus.CONFIRMED;
+
+              const appointmentDelegate = (
+                client as unknown as {
+                  appointment: {
+                    update: (args: {
+                      where: { id: string };
+                      data: { status: string; paymentExpiresAt: null };
+                    }) => Promise<unknown>;
+                  };
+                }
+              ).appointment;
+
+              return await appointmentDelegate.update({
                 where: { id: appointmentId },
                 data: {
-                  status: AppointmentStatus.CONFIRMED,
+                  status: nextStatus,
+                  paymentExpiresAt: null,
                 },
               });
             },
@@ -401,9 +426,54 @@ export class BillingEventsListener {
               details: {
                 reason: 'Payment completed',
                 paymentId: payload.paymentId,
+                transition: 'PENDING→SCHEDULED',
               },
             }
           );
+
+          // After settling the appointment to SCHEDULED, immediately
+          // confirm it. VIDEO_CALL appointments that just paid are
+          // doctor-confirmed by virtue of payment (per product spec);
+          // they don't need a separate receptionist confirmation step.
+          // Re-read so we always work with fresh data.
+          const settledAppointment =
+            (await this.databaseService.findAppointmentByIdSafe(appointmentId)) || appointment;
+          if (
+            settledAppointment &&
+            String(settledAppointment.status).toUpperCase() === String(AppointmentStatus.SCHEDULED)
+          ) {
+            await this.databaseService.executeHealthcareWrite(
+              async client => {
+                const appointmentDelegate = (
+                  client as unknown as {
+                    appointment: {
+                      update: (args: {
+                        where: { id: string };
+                        data: { status: string };
+                      }) => Promise<unknown>;
+                    };
+                  }
+                ).appointment;
+                return await appointmentDelegate.update({
+                  where: { id: appointmentId },
+                  data: { status: AppointmentStatus.CONFIRMED },
+                });
+              },
+              {
+                userId: 'system',
+                clinicId: resolvedClinicId,
+                resourceType: 'APPOINTMENT',
+                operation: 'UPDATE',
+                resourceId: appointmentId,
+                userRole: 'system',
+                details: {
+                  reason: 'Auto-confirm after payment',
+                  paymentId: payload.paymentId,
+                  transition: 'SCHEDULED→CONFIRMED',
+                },
+              }
+            );
+          }
 
           const refreshedAppointment =
             await this.databaseService.findAppointmentByIdSafe(appointmentId);

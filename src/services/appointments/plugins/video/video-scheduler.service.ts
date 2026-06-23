@@ -289,6 +289,92 @@ export class VideoAppointmentSchedulerService {
     return new Date(Date.now() - this.gracePeriodMinutes * 60_000);
   }
 
+  /**
+   * Auto-cancel VIDEO_CALL appointments that are still in PENDING status
+   * (i.e. created but never paid) once their payment window has expired.
+   *
+   * Runs every minute. Cheap query: scoped to PENDING + VIDEO_CALL +
+   * paymentExpiresAt < now(). Each cancelled appointment is routed through
+   * AppointmentsService.updateStatus so all status-transition side-effects
+   * (events, notifications, audit) fire normally.
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async handleExpiredPaymentWindows(): Promise<void> {
+    try {
+      const now = new Date();
+      const expired = await this.databaseService.executeHealthcareRead<
+        Array<{ id: string; clinicId: string; paymentExpiresAt: Date | null }>
+      >(async client => {
+        return (
+          client as unknown as {
+            appointment: {
+              findMany: (args: {
+                where: Record<string, unknown>;
+                select: Record<string, boolean>;
+                take: number;
+              }) => Promise<
+                Array<{
+                  id: string;
+                  clinicId: string;
+                  paymentExpiresAt: Date | null;
+                }>
+              >;
+            };
+          }
+        ).appointment.findMany({
+          where: {
+            type: 'VIDEO_CALL',
+            status: AppointmentStatus.PENDING,
+            paymentExpiresAt: { not: null, lt: now },
+          },
+          select: {
+            id: true,
+            clinicId: true,
+            paymentExpiresAt: true,
+          },
+          take: 100, // batch — anything still left next minute is picked up too
+        });
+      });
+
+      if (!expired || expired.length === 0) return;
+
+      for (const row of expired as Array<{
+        id: string;
+        clinicId: string;
+        paymentExpiresAt: Date | null;
+      }>) {
+        try {
+          await this.appointmentsService.updateStatus(
+            row.id,
+            {
+              status: AppointmentStatus.CANCELLED,
+              reason: 'Payment window expired before payment was completed.',
+              notes: 'Auto-cancelled: patient did not complete payment in time.',
+            } as UpdateAppointmentStatusDto,
+            'system',
+            row.clinicId,
+            'SYSTEM'
+          );
+
+          await this.loggingService.log(
+            LogType.BUSINESS,
+            LogLevel.WARN,
+            `Auto-cancelled video appointment ${row.id} — payment window expired`,
+            'VideoAppointmentSchedulerService.handleExpiredPaymentWindows',
+            { appointmentId: row.id, paymentExpiresAt: row.paymentExpiresAt }
+          );
+        } catch (innerError) {
+          this.logger.error(
+            `Failed to auto-cancel expired video appointment ${row.id}`,
+            innerError instanceof Error ? innerError.stack : String(innerError)
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.error('Error handling expired payment windows', error);
+    }
+  }
+
   /** Builds the standard system audit object — single source of truth */
   private buildSystemAudit(): AuditInfo {
     return {

@@ -29,6 +29,28 @@ export function isVideoNoShowEnabled(): boolean {
 }
 
 /**
+ * Video appointment payment window in minutes.
+ *
+ * When a patient books a VIDEO_CALL appointment, they have this many minutes
+ * to complete the payment. If the timer expires without a successful payment,
+ * the appointment is auto-cancelled by the scheduler.
+ *
+ * - VIDEO_CALL appointments require upfront payment (per-appointment pricing).
+ * - IN_PERSON appointments use the clinic's subscription model and are not
+ *   affected by this window.
+ *
+ * Defaults to 15 minutes.
+ */
+export function getVideoPaymentWindowMinutes(): number {
+  const raw = getEnv('VIDEO_PAYMENT_WINDOW_MINUTES');
+  const parsed = raw ? Number(raw) : NaN;
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return Math.min(Math.max(Math.floor(parsed), 1), 60);
+  }
+  return 15;
+}
+
+/**
  * Get video provider type
  * @returns 'cloudflare' | 'daily' | 'google-meet'
  */
