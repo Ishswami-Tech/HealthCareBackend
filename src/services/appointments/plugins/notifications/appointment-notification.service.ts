@@ -566,16 +566,21 @@ export class AppointmentNotificationService {
       return;
     }
 
-    const subject = this.getEmailSubject(type, templateData);
-    const body = this.getEmailBody(type, templateData);
-    const emailTemplate =
-      type === 'confirmation'
-        ? EmailTemplate.APPOINTMENT_CONFIRMATION
-        : EmailTemplate.APPOINTMENT_REMINDER;
     const appointmentType = this.normalizeAppointmentType(templateData.appointmentType);
     const detailsUrl = appointmentId
       ? this.buildAppointmentDetailsUrl(appointmentId, appointmentType)
       : undefined;
+    const enrichedTemplateData = {
+      ...(templateData as Record<string, unknown>),
+      appointmentType,
+      detailsUrl,
+    };
+    const subject = this.getEmailSubject(type, enrichedTemplateData);
+    const body = this.getEmailBody(type, enrichedTemplateData);
+    const emailTemplate =
+      type === 'confirmation'
+        ? EmailTemplate.APPOINTMENT_CONFIRMATION
+        : EmailTemplate.APPOINTMENT_REMINDER;
 
     await this.emailService.sendEmail({
       to: patientEmail,
@@ -936,6 +941,17 @@ export class AppointmentNotificationService {
     const detailsUrl = resolveText(data['detailsUrl'], '');
     const cancellationReason = resolveText(data['cancellationReason'], '');
     const cancelledBy = resolveText(data['cancelledBy'], '');
+    const isVideoAppointment = appointmentType === 'video';
+    const locationRow = isVideoAppointment ? '' : `<p><strong>Location:</strong> ${location}</p>`;
+    const joinLinkRow =
+      isVideoAppointment && detailsUrl
+        ? `
+        <p><a href="${detailsUrl}">Join video appointment</a></p>
+        <p>${detailsUrl}</p>
+      `
+        : detailsUrl
+          ? `<p><a href="${detailsUrl}">View appointment details</a></p>`
+          : '';
     const typeLabel =
       appointmentType === 'video' ? 'video appointment' : `${appointmentType} appointment`;
     const bodies = {
@@ -945,7 +961,8 @@ export class AppointmentNotificationService {
         <p>This is a reminder for your ${typeLabel} with ${doctorName} at ${displayName}.</p>
         <p><strong>Date:</strong> ${appointmentDate}</p>
         <p><strong>Time:</strong> ${appointmentTime}</p>
-        <p><strong>Location:</strong> ${location}</p>
+        ${locationRow}
+        ${isVideoAppointment ? joinLinkRow : ''}
         <p>Please arrive 15 minutes early and bring any required documents.</p>
       `,
       confirmation: `
@@ -954,9 +971,9 @@ export class AppointmentNotificationService {
         <p>Your ${typeLabel} with ${doctorName} at ${displayName} has been confirmed.</p>
         <p><strong>Date:</strong> ${appointmentDate}</p>
         <p><strong>Time:</strong> ${appointmentTime}</p>
-        <p><strong>Location:</strong> ${location}</p>
-        ${detailsUrl ? `<p><a href="${detailsUrl}">View appointment details</a></p>` : ''}
-        <p>${appointmentType === 'video' ? 'Please open your appointment details in the app for the video join link.' : 'Please open your appointment details in the app for location or join link.'}</p>
+        ${locationRow}
+        ${joinLinkRow}
+        <p>${isVideoAppointment ? 'Please use the video join link above at the scheduled time.' : 'Please open your appointment details in the app for location or join link.'}</p>
       `,
       cancellation: `
         <h2>Appointment Cancelled</h2>
@@ -977,7 +994,8 @@ export class AppointmentNotificationService {
         <p>Your ${typeLabel} with ${doctorName} at ${displayName} has been rescheduled.</p>
         <p><strong>New Date:</strong> ${appointmentDate}</p>
         <p><strong>New Time:</strong> ${appointmentTime}</p>
-        <p><strong>Location:</strong> ${location}</p>
+        ${locationRow}
+        ${isVideoAppointment ? joinLinkRow : ''}
       `,
     };
 
