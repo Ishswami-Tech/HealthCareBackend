@@ -372,13 +372,20 @@ export class QueueController {
         );
         return { success: true, data: { jobId: job.id }, message: 'Queue status update enqueued' };
       }
-      if (status === 'COMPLETED' || status === 'CANCELLED' || status === 'NO_SHOW') {
+      if (
+        status === 'COMPLETED' ||
+        status === 'CANCELLED' ||
+        status === 'NO_SHOW' ||
+        status === 'EXPIRED'
+      ) {
         const action =
           status === 'CANCELLED'
             ? 'queue.cancel'
             : status === 'NO_SHOW'
               ? 'queue.no_show'
-              : 'queue.complete';
+              : status === 'EXPIRED'
+                ? 'queue.expired'
+                : 'queue.complete';
         const job = await this.queueService.addJob(JobType.APPOINTMENT, action, {
           patientId,
           doctorId: context.doctorId,

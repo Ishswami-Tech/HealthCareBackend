@@ -2761,6 +2761,22 @@ export class AppointmentsService {
           role
         );
 
+      case AppointmentStatus.EXPIRED: {
+        const expiredResult = await this.updateAppointment(
+          appointmentId,
+          {
+            status: normalizedStatus,
+            ...(updateDto.reason && { reason: updateDto.reason }),
+            ...(updateDto.notes && { notes: updateDto.notes }),
+          },
+          userId,
+          clinicId,
+          role
+        );
+
+        return expiredResult;
+      }
+
       case AppointmentStatus.CANCELLED:
         // Production policy: enforce 4-hour cancellation notice for patients.
         // Temporarily disabled for testing so near-term appointments can be cancelled.

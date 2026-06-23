@@ -2108,6 +2108,7 @@ enum AppointmentStatus {
   COMPLETED
   CANCELLED
   NO_SHOW
+  EXPIRED
   PENDING
   FOLLOW_UP_SCHEDULED
   AWAITING_SLOT_CONFIRMATION /// Video flow: patient proposed slots, awaiting doctor selection

@@ -2559,6 +2559,7 @@ export class AppointmentsController {
           String(AppointmentStatus.COMPLETED),
           String(AppointmentStatus.CANCELLED),
           String(AppointmentStatus.NO_SHOW),
+          String(AppointmentStatus.EXPIRED),
           'DISCHARGED',
           'TRANSFERRED',
         ].includes(currentStatus)

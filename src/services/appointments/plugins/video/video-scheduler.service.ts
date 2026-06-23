@@ -3,6 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { ConfigService } from '@config/config.service';
+import { getVideoActiveWindowMinutes } from '@config/video.config';
 import { LogType, LogLevel } from '@core/types';
 import { AppointmentStatus, UpdateAppointmentStatusDto } from '@dtos/appointment.dto';
 import {
@@ -21,6 +22,7 @@ import {
   ParticipantStatus,
 } from '@services/video/video-consultation-tracker.service';
 import { AppointmentsService } from '@services/appointments/appointments.service';
+import { parseIstDateTime, formatDateTimeInIST } from '../../../../libs/utils/date-time.util';
 
 /** Represents the join-status of both parties for a single appointment */
 interface ParticipationStatus {
@@ -46,6 +48,11 @@ interface VideoConsultationWithAppointment extends VideoConsultationDbModel {
 @Injectable()
 export class VideoAppointmentSchedulerService {
   private readonly logger = new Logger(VideoAppointmentSchedulerService.name);
+
+  /** Minutes after scheduled start before a confirmed video appointment expires */
+  private get confirmedExpiryWindowMinutes(): number {
+    return getVideoActiveWindowMinutes();
+  }
 
   /** Minutes after scheduled start before a session is flagged as no-show */
   private get gracePeriodMinutes(): number {
@@ -188,6 +195,115 @@ export class VideoAppointmentSchedulerService {
       }, audit);
     } catch (error) {
       this.logger.error('Error handling patient no-shows', error);
+    }
+  }
+
+  /**
+   * Expire confirmed video appointments that never started within the join
+   * window. This keeps them from lingering in CONFIRMED forever when nobody
+   * joins the room.
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async handleExpiredConfirmedVideoAppointments(): Promise<void> {
+    try {
+      const now = new Date();
+      const cutoff = new Date(now.getTime() - this.confirmedExpiryWindowMinutes * 60_000);
+
+      const candidates = await this.databaseService.executeHealthcareRead<
+        Array<{
+          id: string;
+          clinicId: string;
+          date: Date;
+          time: string;
+          type: string;
+        }>
+      >(async client => {
+        const delegate = getVideoConsultationDelegate(client);
+        const records = (await delegate.findMany({
+          where: {
+            status: VideoCallStatus.SCHEDULED,
+            appointment: {
+              status: AppointmentStatus.CONFIRMED,
+            },
+          },
+          include: { appointment: true },
+        })) as unknown as Array<{
+          appointment?: {
+            id: string;
+            clinicId: string;
+            date: Date;
+            time: string;
+            type: string;
+          } | null;
+        }>;
+
+        return records
+          .map(record => record.appointment)
+          .filter(
+            (
+              appointment
+            ): appointment is {
+              id: string;
+              clinicId: string;
+              date: Date;
+              time: string;
+              type: string;
+            } => appointment != null && appointment.type === 'VIDEO_CALL'
+          );
+      });
+
+      if (!candidates.length) {
+        return;
+      }
+
+      for (const appointment of candidates) {
+        const scheduledStart = parseIstDateTime(appointment.date.toISOString(), appointment.time);
+        if (!scheduledStart) {
+          continue;
+        }
+
+        const expiryAt = new Date(
+          scheduledStart.getTime() + this.confirmedExpiryWindowMinutes * 60_000
+        );
+        if (expiryAt.getTime() > cutoff.getTime()) {
+          continue;
+        }
+
+        const participation = await this.resolveParticipation(appointment.id, appointment.clinicId);
+        if (participation === null || participation.doctorJoined || participation.patientJoined) {
+          continue;
+        }
+
+        const formattedExpiry = formatDateTimeInIST(expiryAt, {
+          year: 'numeric',
+          month: 'short',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+
+        await this.appointmentsService.updateStatus(
+          appointment.id,
+          {
+            status: AppointmentStatus.EXPIRED,
+            reason: `Confirmed video appointment expired after the join window elapsed at ${formattedExpiry} IST.`,
+            notes: 'Auto-expired by scheduler because neither participant joined in time.',
+          } as UpdateAppointmentStatusDto,
+          'system',
+          appointment.clinicId,
+          'SYSTEM'
+        );
+
+        await this.loggingService.log(
+          LogType.BUSINESS,
+          LogLevel.WARN,
+          `Auto-expired confirmed video appointment ${appointment.id} — join window elapsed`,
+          'VideoAppointmentSchedulerService.handleExpiredConfirmedVideoAppointments',
+          { appointmentId: appointment.id, expiredAt: expiryAt }
+        );
+      }
+    } catch (error) {
+      this.logger.error('Error handling expired confirmed video appointments', error);
     }
   }
 

@@ -328,7 +328,7 @@ export class CoreAppointmentService {
             time: timeStr,
             type: createDto.type,
             createdAt: { gte: dedupWindowStart },
-            status: { notIn: ['CANCELLED', 'NO_SHOW'] },
+            status: { notIn: ['CANCELLED', 'NO_SHOW', 'EXPIRED'] },
           },
           orderBy: { createdAt: 'desc' },
         });
