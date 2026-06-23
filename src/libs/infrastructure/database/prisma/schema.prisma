@@ -482,6 +482,10 @@ model Appointment {
   metadata            Json?
   cancelledBy         String?
   cancelledAt         DateTime?
+  // ─── Payment window (VIDEO_CALL only) ───────────────────────────
+  // When set, the patient must complete payment before this time or
+  // the appointment will be auto-cancelled. NULL for in-person / non-payable.
+  paymentExpiresAt    DateTime?
   createdAt           DateTime          @default(now())
   updatedAt           DateTime          @updatedAt
   therapyId           String?

@@ -32,6 +32,7 @@ import {
   isHomeVisitAppointmentType,
 } from '@core/types/appointment-guards.types';
 import { resolveClinicUUID } from '@utils/clinic.utils';
+import { getVideoPaymentWindowMinutes } from '@config/video.config';
 // PaymentStatus, PaymentMethod, Language removed - not used in this service
 import type {
   AppointmentContext,
@@ -393,11 +394,33 @@ export class CoreAppointmentService {
         ...(resolvedIds.locationId && { locationId: resolvedIds.locationId }),
         userId: context.userId, // Add required userId
         clinicId: context.clinicId, // Enforce context clinic ID
-        status: AppointmentStatus.SCHEDULED,
         priority: createDto.priority || AppointmentPriority.NORMAL,
         date: new Date(`${dateStr}T00:00:00.000+05:30`),
         time: timeStr,
       };
+
+      // VIDEO_CALL appointments require upfront per-appointment payment.
+      // Start them in PENDING with a payment-expiry window so that:
+      //   - the UI can show a countdown timer
+      //   - the scheduler can auto-cancel unpaid appointments
+      // IN_PERSON appointments are subscription-based, so they go straight
+      // to SCHEDULED (and then CONFIRMED by the receptionist).
+      const appointmentType = String(createDto.type || '').toUpperCase();
+      if (appointmentType === 'VIDEO_CALL') {
+        const windowMinutes = getVideoPaymentWindowMinutes();
+        const expiresAt = new Date(Date.now() + windowMinutes * 60_000);
+        appointmentData['status'] = AppointmentStatus.PENDING;
+        appointmentData['paymentExpiresAt'] = expiresAt;
+        // Surface the window in metadata so the frontend can render a
+        // countdown without having to know the exact expiry timestamp yet.
+        appointmentData['metadata'] = {
+          ...((createDto as { metadata?: Record<string, unknown> }).metadata || {}),
+          paymentWindowMinutes: windowMinutes,
+          paymentWindowStartedAt: new Date().toISOString(),
+        };
+      } else {
+        appointmentData['status'] = AppointmentStatus.SCHEDULED;
+      }
       // Remove appointmentDate as it's not part of AppointmentCreateInput
       delete appointmentData['appointmentDate'];
 
