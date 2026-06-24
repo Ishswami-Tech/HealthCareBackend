@@ -900,6 +900,15 @@ export class NotificationEventListener implements OnModuleInit {
       if (normalizedEventType.startsWith('appointment.')) {
         const notificationData = this.buildAppointmentConfirmationNotificationData(eventPayload);
         if (notificationData && this.appointmentNotificationService) {
+          const appointmentRecord = asRecord(
+            (eventPayload as unknown as Record<string, unknown>)['appointment']
+          );
+          const statusText = resolveText(
+            appointmentRecord?.['status'] ||
+              (eventPayload as unknown as Record<string, unknown>)['status'] ||
+              eventPayload.metadata?.['status'],
+            ''
+          ).toUpperCase();
           const rawPayloadRecord = eventPayload as unknown as Record<string, unknown>;
           const nestedPayload = asRecord(rawPayloadRecord['payload']);
           const eventContext =
@@ -917,11 +926,14 @@ export class NotificationEventListener implements OnModuleInit {
               ? 'confirmation'
               : normalizedEventType === 'appointment.cancelled'
                 ? 'cancellation'
-                : normalizedEventType === 'appointment.rescheduled'
-                  ? 'reschedule'
-                  : normalizedEventType === 'appointment.created'
-                    ? 'reminder'
-                    : 'updated';
+                : normalizedEventType === 'appointment.expired' ||
+                    (normalizedEventType === 'appointment.updated' && statusText === 'EXPIRED')
+                  ? 'expired'
+                  : normalizedEventType === 'appointment.rescheduled'
+                    ? 'reschedule'
+                    : normalizedEventType === 'appointment.created'
+                      ? 'reminder'
+                      : 'updated';
 
           const nextChannels: NotificationData['channels'] =
             normalizedEventType === 'appointment.confirmed'
@@ -929,7 +941,8 @@ export class NotificationEventListener implements OnModuleInit {
                 ? ['email', 'whatsapp', 'push', 'socket']
                 : ['push', 'socket']
               : normalizedEventType === 'appointment.cancelled' ||
-                  normalizedEventType === 'appointment.rescheduled'
+                  normalizedEventType === 'appointment.rescheduled' ||
+                  nextType === 'expired'
                 ? ['email', 'push', 'socket']
                 : ['push', 'socket'];
 
@@ -1285,6 +1298,9 @@ export class NotificationEventListener implements OnModuleInit {
       } else if (eventType.includes('.cancelled')) {
         title = 'APPOINTMENT CANCELLED';
         body = `YOUR APPOINTMENT HAS BEEN CANCELLED AT ${displayName}.`;
+      } else if (eventType.includes('.expired')) {
+        title = 'APPOINTMENT EXPIRED';
+        body = `YOUR APPOINTMENT HAS EXPIRED AT ${displayName}.`;
       } else if (eventType.includes('.rescheduled')) {
         title = 'APPOINTMENT RESCHEDULED';
         body = `YOUR APPOINTMENT HAS BEEN RESCHEDULED AT ${displayName}.`;

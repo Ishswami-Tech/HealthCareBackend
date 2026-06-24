@@ -917,6 +917,7 @@ export class AppointmentNotificationService {
       reminder: `Appointment reminder from ${displayName}`,
       confirmation: `Appointment confirmed by ${displayName}`,
       cancellation: `Appointment cancellation notice from ${displayName}`,
+      expired: `Appointment expired from ${displayName}`,
       reschedule: `Appointment rescheduled by ${displayName}`,
       follow_up: `Follow-up required from ${displayName}`,
     };
@@ -943,6 +944,7 @@ export class AppointmentNotificationService {
     const cancelledBy = resolveText(data['cancelledBy'], '');
     const isVideoAppointment = appointmentType === 'video';
     const locationRow = isVideoAppointment ? '' : `<p><strong>Location:</strong> ${location}</p>`;
+    const appointmentVenueText = isVideoAppointment ? '' : ` at ${displayName}`;
     const joinLinkRow =
       isVideoAppointment && detailsUrl
         ? `
@@ -954,21 +956,22 @@ export class AppointmentNotificationService {
           : '';
     const typeLabel =
       appointmentType === 'video' ? 'video appointment' : `${appointmentType} appointment`;
+    const videoScheduledLine = `scheduled for ${appointmentDate} at ${appointmentTime}`;
     const bodies = {
       reminder: `
         <h2>Appointment Reminder</h2>
         <p>Hello ${patientName},</p>
-        <p>This is a reminder for your ${typeLabel} with ${doctorName} at ${displayName}.</p>
+        <p>This is a reminder for your ${typeLabel} with ${doctorName}${appointmentVenueText}.</p>
         <p><strong>Date:</strong> ${appointmentDate}</p>
         <p><strong>Time:</strong> ${appointmentTime}</p>
         ${locationRow}
         ${isVideoAppointment ? joinLinkRow : ''}
-        <p>Please arrive 15 minutes early and bring any required documents.</p>
+        <p>${isVideoAppointment ? 'Please use the join link above at the scheduled time.' : 'Please arrive 15 minutes early and bring any required documents.'}</p>
       `,
       confirmation: `
         <h2>Appointment Confirmed</h2>
         <p>Hello ${patientName},</p>
-        <p>Your ${typeLabel} with ${doctorName} at ${displayName} has been confirmed.</p>
+        <p>Your ${typeLabel} with ${doctorName}${appointmentVenueText} has been confirmed.</p>
         <p><strong>Date:</strong> ${appointmentDate}</p>
         <p><strong>Time:</strong> ${appointmentTime}</p>
         ${locationRow}
@@ -978,7 +981,13 @@ export class AppointmentNotificationService {
       cancellation: `
         <h2>Appointment Cancelled</h2>
         <p>Hello ${patientName},</p>
-        <p>Your ${typeLabel} with ${doctorName} at ${displayName} scheduled for ${appointmentDate} at ${appointmentTime} has been cancelled.</p>
+        <p>
+          ${
+            isVideoAppointment
+              ? `Your ${typeLabel} with ${doctorName} ${videoScheduledLine} has been cancelled.`
+              : `Your ${typeLabel} with ${doctorName} at ${displayName} ${videoScheduledLine} has been cancelled.`
+          }
+        </p>
         ${cancellationReason ? `<p><strong>Reason:</strong> ${cancellationReason}</p>` : ''}
         ${cancelledBy ? `<p><strong>Cancelled by:</strong> ${cancelledBy}</p>` : ''}
         ${
@@ -988,10 +997,27 @@ export class AppointmentNotificationService {
         }
         <p>Please contact the clinic if you need to reschedule or have any questions.</p>
       `,
+      expired: `
+        <h2>Appointment Expired</h2>
+        <p>Hello ${patientName},</p>
+        <p>
+          ${
+            isVideoAppointment
+              ? `Your ${typeLabel} with ${doctorName} ${videoScheduledLine} has expired because nobody joined within the allowed video window.`
+              : `Your ${typeLabel} with ${doctorName} at ${displayName} ${videoScheduledLine} has expired.`
+          }
+        </p>
+        ${
+          isVideoAppointment
+            ? '<p>The video consultation link for this appointment is no longer active.</p>'
+            : ''
+        }
+        <p>Please contact the clinic if you need help rescheduling.</p>
+      `,
       reschedule: `
         <h2>Appointment Rescheduled</h2>
         <p>Hello ${patientName},</p>
-        <p>Your ${typeLabel} with ${doctorName} at ${displayName} has been rescheduled.</p>
+        <p>Your ${typeLabel} with ${doctorName}${appointmentVenueText} has been rescheduled.</p>
         <p><strong>New Date:</strong> ${appointmentDate}</p>
         <p><strong>New Time:</strong> ${appointmentTime}</p>
         ${locationRow}
@@ -1012,6 +1038,7 @@ export class AppointmentNotificationService {
       reminder: `Appointment Reminder - ${displayName}`,
       confirmation: `Appointment Confirmed`,
       cancellation: `Appointment Cancelled`,
+      expired: `Appointment Expired`,
       reschedule: `Appointment Rescheduled`,
       follow_up: `Follow-up Required`,
     };
@@ -1028,6 +1055,7 @@ export class AppointmentNotificationService {
       reminder: `Your appointment with ${data['doctorName'] as string} is scheduled for ${data['appointmentDate'] as string} at ${data['appointmentTime'] as string}`,
       confirmation: `Your appointment with ${data['doctorName'] as string} has been confirmed`,
       cancellation: `Your appointment has been cancelled`,
+      expired: `Your appointment has expired`,
       reschedule: `Your appointment has been rescheduled`,
       follow_up: `Please schedule a follow-up appointment`,
     };

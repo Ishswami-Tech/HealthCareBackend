@@ -954,9 +954,18 @@ export class CoreAppointmentService {
         (patientRecord?.['user'] as Record<string, unknown> | undefined) || undefined;
       const doctorUserRecord =
         (doctorRecord?.['user'] as Record<string, unknown> | undefined) || undefined;
+      const clinicRecord = (existingAppointment as unknown as Record<string, unknown>)['clinic'] as
+        | Record<string, unknown>
+        | undefined;
+      const clinicName =
+        (typeof clinicRecord?.['name'] === 'string' && clinicRecord['name'].trim()) ||
+        (typeof clinicRecord?.['displayName'] === 'string' && clinicRecord['displayName'].trim()) ||
+        'Healthcare Clinic';
       await this.eventService.emit('appointment.cancelled', {
         appointmentId: cancelledAppointment.id,
         clinicId: cancelledAppointment.clinicId,
+        clinicName,
+        clinicDisplayName: clinicName,
         doctorId: cancelledAppointment.doctorId,
         patientId: cancelledAppointment.patientId,
         patientName: resolvePersonName(patientUserRecord ?? patientRecord, 'Patient'),
