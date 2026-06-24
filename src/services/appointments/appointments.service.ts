@@ -559,23 +559,47 @@ export class AppointmentsService {
         hour: '2-digit',
         minute: '2-digit',
       });
-      const reason = `Auto-cancelled: payment/slot confirmation window expired at ${formattedExpiry} IST. The doctor did not confirm a slot within 3 hours, so the booking is void. Please retry the booking to continue.`;
+      const reason = `Auto-expired: payment/slot confirmation window expired at ${formattedExpiry} IST. The doctor did not confirm a slot within 3 hours, so the booking is void. Please retry the booking to continue.`;
 
       try {
-        const cancellationResult = await this.cancelAppointment(
+        // Auto-expiry of the slot-confirmation window is logically an
+        // EXPIRED transition (not a cancellation). Going through
+        // `cancelAppointment` here would render "Cancelled" in the UI
+        // and trigger the refund path. Use `updateStatus` with the
+        // EXPIRED target so the row reflects "no longer actionable".
+        const updateResult = await this.updateStatus(
           appointment.id,
-          reason,
+          {
+            status: AppointmentStatus.EXPIRED,
+            reason,
+            notes: 'Auto-expired by slot-confirmation scheduler.',
+          } as UpdateAppointmentStatusDto,
           'system',
           appointment.clinicId,
           'SYSTEM'
         );
 
-        if (!cancellationResult.success) {
+        const updateRecord = (updateResult as Record<string, unknown> | null) || {};
+        const updateOk =
+          updateResult !== null &&
+          updateResult !== undefined &&
+          (updateRecord['success'] === true ||
+            updateRecord['success'] === undefined ||
+            typeof updateRecord === 'object');
+
+        if (!updateOk) {
+          const updateMessage =
+            typeof updateRecord['message'] === 'string'
+              ? updateRecord['message']
+              : typeof updateRecord['error'] === 'string'
+                ? updateRecord['error']
+                : 'Unknown update failure';
+
           failedCount++;
           await this.loggingService.log(
             LogType.ERROR,
             LogLevel.WARN,
-            `Failed to auto-cancel expired video slot confirmation: ${cancellationResult.message || cancellationResult.error || 'Unknown cancellation failure'}`,
+            `Failed to auto-expire video slot confirmation: ${updateMessage}`,
             'AppointmentsService.processExpiredVideoSlotConfirmations',
             {
               appointmentId: appointment.id,
