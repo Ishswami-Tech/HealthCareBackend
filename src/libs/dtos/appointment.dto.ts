@@ -664,6 +664,29 @@ export class AppointmentResponseDto {
   paymentPending?: boolean;
 
   @ApiPropertyOptional({
+    example: '2026-05-05T11:30:00.000Z',
+    description:
+      'Computed timestamp at which a CONFIRMED appointment will be auto-expired by the backend ' +
+      'scheduler if not completed. Mirrors VIDEO_ACTIVE_WINDOW_MINUTES (default 5h after scheduled ' +
+      'start). The frontend uses this to render a live countdown. Only set when the appointment ' +
+      'is in a status that the scheduler can expire (CONFIRMED / SCHEDULED).',
+  })
+  @IsOptional()
+  @IsDateString({}, { message: 'Confirmation expires at must be a valid date string' })
+  confirmationExpiresAt?: string | null;
+
+  @ApiPropertyOptional({
+    example: 300,
+    description:
+      'Window (in minutes) after the scheduled start before a confirmed appointment is auto-expired. ' +
+      'Reflects the backend VIDEO_ACTIVE_WINDOW_MINUTES value. Frontend uses it to drive the ' +
+      '"Expires in" countdown without re-reading the env config.',
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Confirmation window minutes must be a number' })
+  confirmationWindowMinutes?: number | null;
+
+  @ApiPropertyOptional({
     example: 500,
     description: 'Appointment payment amount in base currency units',
   })

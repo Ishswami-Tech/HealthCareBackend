@@ -13,6 +13,7 @@ import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { DatabaseService } from '@infrastructure/database';
 import { AppointmentType, AppointmentStatus } from '@core/types/enums.types';
+import { getVideoActiveWindowMinutes } from '@config/video.config';
 import {
   isVideoCallAppointment,
   isInPersonAppointment,
@@ -264,6 +265,13 @@ export class CheckInService {
               status: 'CONFIRMED',
               checkedInAt: now,
               updatedAt: now,
+              // Stamped at confirmation so the backend scheduler can
+              // auto-expire the appointment at this time if no one
+              // completes the visit. Mirrors the scheduler's
+              // VIDEO_ACTIVE_WINDOW_MINUTES window (default 5h).
+              confirmationExpiresAt: new Date(
+                now.getTime() + getVideoActiveWindowMinutes() * 60_000
+              ),
             },
           });
 
@@ -517,6 +525,13 @@ export class CheckInService {
               status: 'CONFIRMED',
               checkedInAt: now,
               updatedAt: now,
+              // Stamped at confirmation so the backend scheduler can
+              // auto-expire the appointment at this time if no one
+              // completes the visit. Mirrors the scheduler's
+              // VIDEO_ACTIVE_WINDOW_MINUTES window (default 5h).
+              confirmationExpiresAt: new Date(
+                now.getTime() + getVideoActiveWindowMinutes() * 60_000
+              ),
             },
           });
 
