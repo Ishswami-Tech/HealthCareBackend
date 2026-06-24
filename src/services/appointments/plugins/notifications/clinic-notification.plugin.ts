@@ -1,6 +1,7 @@
 import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { AppointmentNotificationService } from './appointment-notification.service';
+import { ClinicTemplateService } from '@communication/services/clinic-template.service';
 import { LoggingService } from '@infrastructure/logging';
 import type { NotificationData } from '@core/types/appointment.types';
 import { formatDateKeyInIST } from '../../../../libs/utils/date-time.util';
@@ -15,7 +16,7 @@ function resolveText(value: unknown, fallback = ''): string {
   return fallback;
 }
 
-function resolveClinicName(pluginData: NotificationPluginData): string {
+function resolveClinicNameFromPayload(pluginData: NotificationPluginData): string {
   const direct = resolveText(pluginData.clinicName, '');
   if (direct) {
     return direct;
@@ -43,7 +44,7 @@ function resolveClinicName(pluginData: NotificationPluginData): string {
     }
   }
 
-  return 'Healthcare Clinic';
+  return '';
 }
 
 interface NotificationPluginData {
@@ -86,10 +87,29 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
   constructor(
     private readonly notificationService: AppointmentNotificationService,
     @Optional()
+    @Inject(forwardRef(() => ClinicTemplateService))
+    private readonly clinicTemplateService?: ClinicTemplateService,
+    @Optional()
     @Inject(forwardRef(() => LoggingService))
     loggingService?: LoggingService
   ) {
     super(loggingService);
+  }
+
+  private async resolveClinicName(pluginData: NotificationPluginData): Promise<string> {
+    const fromPayload = resolveClinicNameFromPayload(pluginData);
+    if (fromPayload) {
+      return fromPayload;
+    }
+
+    if (pluginData.clinicId && this.clinicTemplateService) {
+      const clinicName = await this.clinicTemplateService.getClinicName(pluginData.clinicId);
+      if (clinicName && clinicName !== 'Healthcare Clinic') {
+        return clinicName;
+      }
+    }
+
+    return 'Healthcare App';
   }
 
   async process(data: unknown): Promise<unknown> {
@@ -228,7 +248,7 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
         appointmentDate: pluginData.appointmentDate || formatDateKeyInIST(new Date()),
         appointmentTime: pluginData.appointmentTime || '10:00',
         location: pluginData.location || 'Clinic',
-        clinicName: resolveClinicName(pluginData),
+        clinicName: await this.resolveClinicName(pluginData),
         appointmentType: pluginData.appointmentType || '',
         notes: pluginData.notes || '',
       },
@@ -264,7 +284,7 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
         appointmentDate: pluginData.appointmentDate || formatDateKeyInIST(new Date()),
         appointmentTime: pluginData.appointmentTime || '10:00',
         location: pluginData.location || 'Clinic',
-        clinicName: resolveClinicName(pluginData),
+        clinicName: await this.resolveClinicName(pluginData),
         appointmentType: pluginData.appointmentType || '',
         notes: pluginData.notes || '',
         cancellationReason: pluginData.reason || pluginData.cancellationReason || '',
@@ -302,7 +322,7 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
         appointmentDate: pluginData.appointmentDate || formatDateKeyInIST(new Date()),
         appointmentTime: pluginData.appointmentTime || '10:00',
         location: pluginData.location || 'Clinic',
-        clinicName: resolveClinicName(pluginData),
+        clinicName: await this.resolveClinicName(pluginData),
         appointmentType: pluginData.appointmentType || '',
         notes: pluginData.notes || '',
         rescheduleUrl: pluginData.rescheduleUrl || '',
@@ -339,7 +359,7 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
         appointmentDate: pluginData.appointmentDate || formatDateKeyInIST(new Date()),
         appointmentTime: pluginData.appointmentTime || '10:00',
         location: pluginData.location || 'Clinic',
-        clinicName: resolveClinicName(pluginData),
+        clinicName: await this.resolveClinicName(pluginData),
         appointmentType: pluginData.appointmentType || '',
         notes: pluginData.notes || '',
       },
@@ -375,7 +395,7 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
         appointmentDate: pluginData.appointmentDate || formatDateKeyInIST(new Date()),
         appointmentTime: pluginData.appointmentTime || '10:00',
         location: pluginData.location || 'Clinic',
-        clinicName: resolveClinicName(pluginData),
+        clinicName: await this.resolveClinicName(pluginData),
         appointmentType: pluginData.appointmentType || '',
         notes: pluginData.notes || '',
         changes: (pluginData.changes || {}) as Record<string, unknown>,
