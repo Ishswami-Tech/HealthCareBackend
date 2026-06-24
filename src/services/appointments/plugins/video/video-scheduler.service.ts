@@ -500,9 +500,13 @@ export class VideoAppointmentSchedulerService {
           await this.appointmentsService.updateStatus(
             row.id,
             {
-              status: AppointmentStatus.CANCELLED,
+              // Auto-expiry of an unpaid payment window is logically an
+              // EXPIRED transition, not a cancellation — the user can no
+              // longer pay for this row. Setting status to CANCELLED here
+              // would show "Cancelled" in the UI instead of "Expired".
+              status: AppointmentStatus.EXPIRED,
               reason: 'Payment window expired before payment was completed.',
-              notes: 'Auto-cancelled: patient did not complete payment in time.',
+              notes: 'Auto-expired: patient did not complete payment in time.',
             } as UpdateAppointmentStatusDto,
             'system',
             row.clinicId,
