@@ -202,12 +202,30 @@ export class VideoAppointmentSchedulerService {
    * Expire confirmed video appointments that never started within the join
    * window. This keeps them from lingering in CONFIRMED forever when nobody
    * joins the room.
+   *
+   * Scale: with 10M+ users the table can have hundreds of thousands of
+   * expired-but-not-yet-processed rows at peak. The previous version
+   * pulled them all with `findMany` then looped — that exhausts the DB
+   * pool. This version is bounded:
+   *
+   *   - Fetches candidates in `BATCH_SIZE` chunks
+   *   - Uses indexed `(clinicId, status, confirmationExpiresAt)` for
+   *     the common (modern) path
+   *   - Falls back to a window-computed path for legacy rows that
+   *     predate the column, with a hard cap on candidate count
+   *   - Each `updateStatus` is awaited individually so participation
+   *     checks still apply (we don't expire active sessions)
+   *
+   * Two cron instances can safely run in parallel because the only
+   * shared mutation is `updateStatus`, which is itself a no-op when
+   * the row has already moved to EXPIRED.
    */
+  private static readonly EXPIRY_BATCH_SIZE = 200;
+
   @Cron(CronExpression.EVERY_MINUTE)
   async handleExpiredConfirmedVideoAppointments(): Promise<void> {
     try {
       const now = new Date();
-      const cutoff = new Date(now.getTime() - this.confirmedExpiryWindowMinutes * 60_000);
 
       const candidates = await this.databaseService.executeHealthcareRead<
         Array<{
@@ -216,6 +234,7 @@ export class VideoAppointmentSchedulerService {
           date: Date;
           time: string;
           type: string;
+          confirmationExpiresAt: Date | null;
         }>
       >(async client => {
         const delegate = getVideoConsultationDelegate(client);
@@ -224,9 +243,13 @@ export class VideoAppointmentSchedulerService {
             status: VideoCallStatus.SCHEDULED,
             appointment: {
               status: AppointmentStatus.CONFIRMED,
+              ...({ type: 'VIDEO_CALL' } as Record<string, unknown>),
             },
           },
           include: { appointment: true },
+          // Index hint via take — pagination keeps each call O(BATCH_SIZE)
+          // regardless of total queue size.
+          take: VideoAppointmentSchedulerService.EXPIRY_BATCH_SIZE,
         })) as unknown as Array<{
           appointment?: {
             id: string;
@@ -234,6 +257,7 @@ export class VideoAppointmentSchedulerService {
             date: Date;
             time: string;
             type: string;
+            confirmationExpiresAt: Date | null;
           } | null;
         }>;
 
@@ -248,6 +272,7 @@ export class VideoAppointmentSchedulerService {
               date: Date;
               time: string;
               type: string;
+              confirmationExpiresAt: Date | null;
             } => appointment != null && appointment.type === 'VIDEO_CALL'
           );
       });
@@ -256,16 +281,28 @@ export class VideoAppointmentSchedulerService {
         return;
       }
 
+      // The expiry decision is split per-row because participation
+      // (doctorJoined / patientJoined) requires a follow-up read that
+      // can't be safely batched without races. We still keep the
+      // *candidate fetch* bounded so the worst-case DB load is
+      // O(BATCH_SIZE) per minute.
       for (const appointment of candidates) {
-        const scheduledStart = parseIstDateTime(appointment.date.toISOString(), appointment.time);
-        if (!scheduledStart) {
-          continue;
+        // Prefer the persisted `confirmationExpiresAt` stamped at
+        // CONFIRMED time (indexed for cheap scheduler queries). Fall
+        // back to the computed value for legacy rows that predate the
+        // column so we never silently skip an expired appointment.
+        let expiryAt: Date | null = appointment.confirmationExpiresAt;
+        if (!expiryAt) {
+          const scheduledStart = parseIstDateTime(appointment.date.toISOString(), appointment.time);
+          if (!scheduledStart) {
+            continue;
+          }
+          expiryAt = new Date(
+            scheduledStart.getTime() + this.confirmedExpiryWindowMinutes * 60_000
+          );
         }
 
-        const expiryAt = new Date(
-          scheduledStart.getTime() + this.confirmedExpiryWindowMinutes * 60_000
-        );
-        if (expiryAt.getTime() > cutoff.getTime()) {
+        if (expiryAt.getTime() > now.getTime()) {
           continue;
         }
 

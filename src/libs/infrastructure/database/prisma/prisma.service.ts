@@ -23,6 +23,7 @@ import { LogType, LogLevel } from '@core/types/logging.types';
 import { HealthcareError } from '@core/errors/healthcare-error.class';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { getEnv, getEnvNumber, isProduction } from '@config/environment/utils';
+import { getVideoActiveWindowMinutes } from '@config/video.config';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
@@ -258,6 +259,61 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private static isCircuitOpen = false;
   private static readonly STARTUP_GRACE_PERIOD = 60000; // 60 seconds grace period during startup (increased)
   private static readonly serviceStartTime = Date.now(); // Track when service started
+
+  /**
+   * Auto-stamp `confirmationExpiresAt` on any Appointment write that
+   * transitions status to CONFIRMED. Centralized here so every code path
+   * (check-in, admin override, video slot confirmation, etc.) picks up
+   * the same expiry behaviour without each call site needing to know
+   * about it.
+   *
+   * The scheduler reads the same `VIDEO_ACTIVE_WINDOW_MINUTES` value
+   * to expire rows at this timestamp, so the frontend countdown
+   * rendered from this field is always in lockstep with the server.
+   *
+   * Returns the (possibly modified) args unchanged.
+   */
+  private static stampConfirmationExpiryIfNeeded(
+    args: Record<string, unknown>
+  ): Record<string, unknown> {
+    const dataField = args['data'];
+    if (!dataField || typeof dataField !== 'object') return args;
+
+    const isStatusConfirm = (payload: Record<string, unknown>): boolean => {
+      const status = payload['status'];
+      if (typeof status !== 'string') return false;
+      const normalized = status.toUpperCase();
+      return normalized === 'CONFIRMED';
+    };
+
+    const stamp = (payload: Record<string, unknown>): void => {
+      if (payload['confirmationExpiresAt'] != null) return;
+      payload['confirmationExpiresAt'] = new Date(
+        Date.now() + getVideoActiveWindowMinutes() * 60_000
+      );
+    };
+
+    if (Array.isArray(dataField)) {
+      dataField.forEach(entry => {
+        if (
+          entry &&
+          typeof entry === 'object' &&
+          isStatusConfirm(entry as Record<string, unknown>)
+        ) {
+          stamp(entry as Record<string, unknown>);
+        }
+      });
+    } else if (typeof dataField === 'object') {
+      // `update` calls surface as `{ where, data }`; `create` calls as
+      // `{ data }`. Either way, the mutation payload lives on `data`.
+      const dataObj = dataField as Record<string, unknown>;
+      if (isStatusConfirm(dataObj)) {
+        stamp(dataObj);
+      }
+    }
+
+    return args;
+  }
 
   /**
    * Load PrismaClient from the fixed app-local directory.
@@ -940,7 +996,8 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
           // Add query timeout in production
           if (isProduction()) {
-            const productionQueryArgs: Record<string, unknown> = operationArgs;
+            const productionQueryArgs: Record<string, unknown> =
+              PrismaService.stampConfirmationExpiryIfNeeded(operationArgs);
             const productionQueryResultPromise = productionQueryFn(productionQueryArgs);
             const productionQueryResult: Promise<Record<string, never>> =
               productionQueryResultPromise;
@@ -952,7 +1009,8 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
             ]);
           }
 
-          const nonProductionQueryArgs: Record<string, unknown> = operationArgs;
+          const nonProductionQueryArgs: Record<string, unknown> =
+            PrismaService.stampConfirmationExpiryIfNeeded(operationArgs);
           const nonProductionQueryResultPromise = productionQueryFn(nonProductionQueryArgs);
           const nonProductionQueryResult: Promise<Record<string, never>> =
             nonProductionQueryResultPromise;

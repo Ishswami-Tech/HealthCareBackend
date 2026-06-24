@@ -33,6 +33,7 @@ import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { CreatePatientDto, UpdatePatientDto } from '@dtos/patient.dto';
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
 import { PatientsService } from '../patients.service';
+import { PatientDashboardSummaryDto } from '../dashboard-summary.dto';
 
 interface MulterFile {
   buffer: Buffer;
@@ -214,6 +215,50 @@ export class PatientsController {
     }
 
     return await this.patientsService.getInsurance(patientId, clinicId);
+  }
+
+  /**
+   * Self-served patient dashboard summary — composed in a single
+   * round-trip from appointments, EHR, prescriptions, invoices, and
+   * payments. Cached server-side for 60 seconds. See
+   * `PatientsService.getDashboardSummary` for resilience details.
+   *
+   * Patient-only. Clinic staff should hit the staff analytics endpoint
+   * (`/api/analytics/dashboard`) instead.
+   */
+  @Get('me/dashboard-summary')
+  @Roles(Role.PATIENT)
+  @RequireResourcePermission('patients', 'read', { requireOwnership: true })
+  @ApiOperation({
+    summary: 'Get current patient dashboard summary',
+    description:
+      'Composed single-round-trip view of appointments, prescriptions, ' +
+      'EHR summary, invoices, and payments for the authenticated patient. ' +
+      'Cached server-side for 60 seconds; invalidated on relevant lifecycle ' +
+      'events. Sub-calls are best-effort: a failing sub-call returns empty ' +
+      'data for that field plus an `errors` map; the endpoint never throws ' +
+      'on a partial failure.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Summary composed successfully (possibly partial)',
+    type: PatientDashboardSummaryDto,
+  })
+  @ApiResponse({ status: 401, description: 'Unauthenticated' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden — patient-only or profile incomplete',
+  })
+  @ApiResponse({ status: 400, description: 'Bad request — no user id in token' })
+  async getMyDashboardSummary(
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<PatientDashboardSummaryDto> {
+    const userId = req.user?.sub || req.user?.id;
+    if (!userId) {
+      throw new BadRequestException('User ID not found in token');
+    }
+    const clinicId = req.clinicContext?.clinicId;
+    return this.patientsService.getDashboardSummary(userId, clinicId);
   }
 
   @Get()

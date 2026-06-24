@@ -32,7 +32,7 @@ import {
   isHomeVisitAppointmentType,
 } from '@core/types/appointment-guards.types';
 import { resolveClinicUUID } from '@utils/clinic.utils';
-import { getVideoPaymentWindowMinutes } from '@config/video.config';
+import { getVideoPaymentWindowMinutes, getVideoActiveWindowMinutes } from '@config/video.config';
 // PaymentStatus, PaymentMethod, Language removed - not used in this service
 import type {
   AppointmentContext,
@@ -2297,5 +2297,117 @@ export class CoreAppointmentService {
       default:
         return 'regular';
     }
+  }
+
+  // ─── Idempotent status transitions ──────────────────────────
+  // At 10M-user scale, network retries on state transitions are
+  // common (TCP RST, client reload, idempotency-key dedup). A naive
+  // read-then-write that runs twice would re-stamp
+  // `confirmationExpiresAt`, effectively resetting the patient's
+  // countdown — a real correctness bug. We centralise the
+  // CONFIRMED transition here as a single atomic compare-and-set
+  // (`UPDATE ... WHERE status = $expected`) so retries are safe.
+  //
+  // Returns:
+  //   - the post-update row on success
+  //   - `null` when the row doesn't exist or has already moved
+  //     past CONFIRMED (treated as a successful no-op, NOT an error)
+
+  /**
+   * Atomically transition an appointment to CONFIRMED.
+   *
+   * Only succeeds if the row is currently in one of
+   * `expectedFromStatuses` (default `[SCHEDULED]`). If the row was
+   * already CONFIRMED, the existing row is returned and no fields
+   * are touched (idempotent — preserves the original confirmation
+   * window). Any other status is rejected.
+   *
+   * NOTE: this uses Prisma's `updateMany` (which compiles to a
+   * single SQL statement with a `WHERE status IN (...)` clause) so
+   * the entire check-and-set happens atomically at the DB level.
+   * Two concurrent retries cannot both win because the WHERE
+   * clause prevents the second transition from matching.
+   */
+  async confirmAppointmentIdempotent(
+    appointmentId: string,
+    expectedFromStatuses: AppointmentStatus[] = [AppointmentStatus.SCHEDULED],
+    auditContext: Record<string, unknown> = {}
+  ): Promise<Appointment | null> {
+    const expiryTimestamp = new Date(Date.now() + getVideoActiveWindowMinutes() * 60_000);
+
+    // 1. Fast path: already CONFIRMED. Return the row without
+    //    touching `confirmationExpiresAt` (idempotent — preserves
+    //    the original countdown).
+    const alreadyConfirmed = await this.databaseService.findAppointmentsSafe({
+      id: appointmentId,
+      status: AppointmentStatus.CONFIRMED,
+    });
+
+    if (alreadyConfirmed.length > 0) {
+      // `findAppointmentsSafe` returns rows with relations, but our
+      // `Appointment` alias is `AppointmentBase` — narrow to that.
+      return alreadyConfirmed[0] as unknown as Appointment;
+    }
+
+    // 2. Atomic compare-and-set. `updateMany` with a where-clause
+    //    is the entire correctness guarantee: retries from a stale
+    //    read will simply not match and the update becomes a no-op
+    //    returning `count = 0`.
+    const transitioned = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        // We use the raw prisma client here (via the transaction
+        // wrapper) for `updateMany` with a NOT-status equality;
+        // `updateAppointmentSafe` only supports equality `where`.
+        return (await (
+          client as unknown as {
+            appointment: {
+              updateMany: (args: {
+                where: Record<string, unknown>;
+                data: Record<string, unknown>;
+              }) => Promise<{ count: number }>;
+            };
+          }
+        ).appointment.updateMany({
+          where: {
+            id: appointmentId,
+            status: { in: expectedFromStatuses as unknown as string[] },
+          },
+          data: {
+            status: AppointmentStatus.CONFIRMED,
+            confirmationExpiresAt: expiryTimestamp,
+            updatedAt: new Date(),
+          },
+        })) as { count: number };
+      },
+      {
+        userId: 'system',
+        clinicId: '',
+        resourceType: 'APPOINTMENT',
+        operation: 'UPDATE',
+        resourceId: appointmentId,
+        userRole: 'system',
+        details: {
+          status: AppointmentStatus.CONFIRMED,
+          ...auditContext,
+          confirmationExpiresAt: expiryTimestamp.toISOString(),
+          idempotent: true,
+        },
+      }
+    );
+
+    if (!transitioned.count) {
+      // Row moved to a different terminal state (CANCELLED,
+      // EXPIRED, COMPLETED) — caller decides whether to retry or
+      // surface a domain error.
+      return null;
+    }
+
+    // 3. Return the post-update row so callers don't need a second
+    //    round trip.
+    const postUpdate = await this.databaseService.findAppointmentsSafe({
+      id: appointmentId,
+    });
+
+    return (postUpdate[0] as unknown as Appointment) ?? null;
   }
 }

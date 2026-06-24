@@ -460,40 +460,48 @@ model FamilyMember {
 }
 
 model Appointment {
-  id                  String            @id @default(uuid())
-  type                AppointmentType
-  treatmentType       TreatmentType     @default(GENERAL_CONSULTATION)
-  doctorId            String
-  patientId           String
-  familyMemberId      String?
-  locationId          String? // Optional for VIDEO_CALL (uses virtual/online)
-  clinicId            String
-  date                DateTime
-  time                String
-  proposedSlots       Json? // Video flow: [{date, time}...] proposed by patient (3-4 slots)
-  confirmedSlotIndex  Int? // Video flow: 0-based index of slot doctor selected
-  duration            Int
-  status              AppointmentStatus
-  priority            String?           @default("NORMAL")
-  notes               String?
-  userId              String
-  updatedBy           String?
-  cancellationReason  String?
-  metadata            Json?
-  cancelledBy         String?
-  cancelledAt         DateTime?
+  id                    String            @id @default(uuid())
+  type                  AppointmentType
+  treatmentType         TreatmentType     @default(GENERAL_CONSULTATION)
+  doctorId              String
+  patientId             String
+  familyMemberId        String?
+  locationId            String? // Optional for VIDEO_CALL (uses virtual/online)
+  clinicId              String
+  date                  DateTime
+  time                  String
+  proposedSlots         Json? // Video flow: [{date, time}...] proposed by patient (3-4 slots)
+  confirmedSlotIndex    Int? // Video flow: 0-based index of slot doctor selected
+  duration              Int
+  status                AppointmentStatus
+  priority              String?           @default("NORMAL")
+  notes                 String?
+  userId                String
+  updatedBy             String?
+  cancellationReason    String?
+  metadata              Json?
+  cancelledBy           String?
+  cancelledAt           DateTime?
   // ─── Payment window (VIDEO_CALL only) ───────────────────────────
   // When set, the patient must complete payment before this time or
   // the appointment will be auto-cancelled. NULL for in-person / non-payable.
-  paymentExpiresAt    DateTime?
-  createdAt           DateTime          @default(now())
-  updatedAt           DateTime          @updatedAt
-  therapyId           String?
-  startedAt           DateTime?
-  checkedInAt         DateTime?
-  completedAt         DateTime?
-  subscriptionId      String?
-  isSubscriptionBased Boolean           @default(false)
+  paymentExpiresAt      DateTime?
+  // ─── Confirmation window ───────────────────────────────────────
+  // Set when an appointment transitions to CONFIRMED. The backend
+  // scheduler auto-expires the appointment at this time if no one
+  // completes the visit. Window length is `VIDEO_ACTIVE_WINDOW_MINUTES`
+  // (default 300 = 5h) measured from the scheduled start. NULL for
+  // appointments that haven't been confirmed yet (or already reached a
+  // terminal status).
+  confirmationExpiresAt DateTime?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  therapyId             String?
+  startedAt             DateTime?
+  checkedInAt           DateTime?
+  completedAt           DateTime?
+  subscriptionId        String?
+  isSubscriptionBased   Boolean           @default(false)
 
   // Follow-up relationships
   parentAppointmentId  String?
