@@ -1095,6 +1095,7 @@ export interface NotificationData {
     | 'reminder'
     | 'confirmation'
     | 'cancellation'
+    | 'expired'
     | 'reschedule'
     | 'follow_up'
     | 'created'
