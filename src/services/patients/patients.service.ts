@@ -888,10 +888,17 @@ export class PatientsService {
       20
     );
 
-    const raw =
-      (result as unknown as { data?: unknown }).data ??
-      (result as unknown as { appointments?: unknown }).appointments ??
-      [];
+    const response = result as unknown as {
+      data?: unknown[] | { appointments?: unknown[] };
+      appointments?: unknown[];
+    };
+    const raw = Array.isArray(response.data)
+      ? response.data
+      : Array.isArray(response.data?.appointments)
+        ? response.data.appointments
+        : Array.isArray(response.appointments)
+          ? response.appointments
+          : [];
 
     // De-duplicate by id defensively (some upstream queries can return
     // duplicates due to joined relations).
