@@ -228,7 +228,6 @@ export class PatientsController {
    */
   @Get('me/dashboard-summary')
   @Roles(Role.PATIENT)
-  @RequireResourcePermission('patients', 'read', { requireOwnership: true })
   @ApiOperation({
     summary: 'Get current patient dashboard summary',
     description:
