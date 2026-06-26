@@ -6,6 +6,7 @@ import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { DatabaseService } from '@infrastructure/database';
 import { ClinicLocationService } from '@services/clinic/services/clinic-location.service';
+import type { ClinicLocationResponseDto } from '@core/types/clinic.types';
 
 import type {
   AppointmentLocation,
@@ -38,7 +39,7 @@ export class AppointmentLocationService {
     const startTime = Date.now();
 
     try {
-      // If clinicId provided, use LocationCacheService for shared cache
+      // If clinicId provided, use shared cache and clinic service first
       if (clinicId && this.locationCacheService) {
         const cached = await this.locationCacheService.getLocationsByClinic(clinicId, false);
         if (cached) {
@@ -50,7 +51,7 @@ export class AppointmentLocationService {
             { domain, clinicId, responseTime: Date.now() - startTime }
           );
           return {
-            locations: cached,
+            locations: cached.map(location => this.toAppointmentLocation(location, domain)),
             total: cached.length,
             domain,
             retrievedAt: nowIso(),
@@ -61,7 +62,7 @@ export class AppointmentLocationService {
         if (this.clinicLocationService) {
           const locations = await this.clinicLocationService.getLocations(clinicId, false);
           const result = {
-            locations,
+            locations: locations.map(location => this.toAppointmentLocation(location, domain)),
             total: locations.length,
             domain,
             retrievedAt: nowIso(),
@@ -82,7 +83,7 @@ export class AppointmentLocationService {
         }
       }
 
-      // Fallback to original implementation if no clinicId or services not available
+      // Direct database read when clinic-scoped services are unavailable
       const cacheKey = `locations:${domain}`;
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
@@ -96,8 +97,7 @@ export class AppointmentLocationService {
         return JSON.parse(cached as string);
       }
 
-      // Get locations from database (placeholder implementation)
-      const locations = this.fetchLocationsFromDatabase(domain);
+      const locations = await this.fetchLocationsFromDatabase(clinicId, domain);
 
       const result = {
         locations,
@@ -154,7 +154,7 @@ export class AppointmentLocationService {
             { locationId, domain, clinicId, responseTime: Date.now() - startTime }
           );
           return {
-            location: cached,
+            location: this.toAppointmentLocation(cached, domain),
             domain,
             retrievedAt: nowIso(),
           };
@@ -172,7 +172,7 @@ export class AppointmentLocationService {
           }
 
           const result = {
-            location,
+            location: this.toAppointmentLocation(location, domain),
             domain,
             retrievedAt: nowIso(),
           };
@@ -196,8 +196,8 @@ export class AppointmentLocationService {
         return JSON.parse(cached as string);
       }
 
-      // Get location from database (placeholder implementation)
-      const location = this.fetchLocationFromDatabase(locationId, domain);
+      // Get location from database
+      const location = await this.fetchLocationFromDatabase(locationId, clinicId, domain);
 
       if (!location) {
         throw new NotFoundException(`Location not found: ${locationId}`);
@@ -249,8 +249,8 @@ export class AppointmentLocationService {
         return JSON.parse(cached as string);
       }
 
-      // Get doctors from database (placeholder implementation)
-      const doctors = this.fetchDoctorsFromDatabase(locationId, domain);
+      // Get doctors from database
+      const doctors = await this.fetchDoctorsFromDatabase(locationId);
 
       const result = {
         doctors,
@@ -304,8 +304,7 @@ export class AppointmentLocationService {
         return JSON.parse(cached as string);
       }
 
-      // Calculate location statistics (placeholder implementation)
-      const stats = this.calculateLocationStats();
+      const stats = await this.calculateLocationStats(locationId);
 
       const result = {
         locationId,
@@ -428,115 +427,362 @@ export class AppointmentLocationService {
     }
   }
 
-  // Helper methods (placeholder implementations that would integrate with actual database)
-  private fetchLocationsFromDatabase(domain: string): Location[] {
-    // This would integrate with the actual database service
-    // For now, return mock data
-    const mockLocations: Location[] = [
-      {
-        id: 'loc-1',
-        name: 'Main Clinic',
-        address: '123 Healthcare Ave',
-        city: 'Mumbai',
-        state: 'Maharashtra',
-        country: 'India',
-        postalCode: '400001',
-        phone: '+91-22-12345678',
-        email: 'main@clinic.com',
-        type: domain === 'healthcare' ? 'clinic' : 'studio',
-        capacity: 50,
-        isActive: true,
-        coordinates: {
-          latitude: 19.076,
-          longitude: 72.8777,
-        },
-        amenities: ['Parking', 'Wheelchair Access', 'WiFi', 'Cafeteria'],
-        operatingHours: {
-          monday: { open: '09:00', close: '18:00', isOpen: true },
-          tuesday: { open: '09:00', close: '18:00', isOpen: true },
-          wednesday: { open: '09:00', close: '18:00', isOpen: true },
-          thursday: { open: '09:00', close: '18:00', isOpen: true },
-          friday: { open: '09:00', close: '18:00', isOpen: true },
-          saturday: { open: '09:00', close: '14:00', isOpen: true },
-          sunday: { open: '00:00', close: '00:00', isOpen: false },
-        },
-      },
-      {
-        id: 'loc-2',
-        name: 'Downtown Branch',
-        address: '456 Business District',
-        city: 'Mumbai',
-        state: 'Maharashtra',
-        country: 'India',
-        postalCode: '400002',
-        phone: '+91-22-87654321',
-        email: 'downtown@clinic.com',
-        type: domain === 'healthcare' ? 'clinic' : 'studio',
-        capacity: 30,
-        isActive: true,
-        coordinates: {
-          latitude: 19.017,
-          longitude: 72.8478,
-        },
-        amenities: ['Parking', 'WiFi'],
-        operatingHours: {
-          monday: { open: '08:00', close: '20:00', isOpen: true },
-          tuesday: { open: '08:00', close: '20:00', isOpen: true },
-          wednesday: { open: '08:00', close: '20:00', isOpen: true },
-          thursday: { open: '08:00', close: '20:00', isOpen: true },
-          friday: { open: '08:00', close: '20:00', isOpen: true },
-          saturday: { open: '08:00', close: '16:00', isOpen: true },
-          sunday: { open: '00:00', close: '00:00', isOpen: false },
-        },
-      },
-    ];
-
-    return mockLocations;
-  }
-
-  private fetchLocationFromDatabase(locationId: string, domain: string): Location | null {
-    const locations = this.fetchLocationsFromDatabase(domain);
-    return locations.find(loc => loc.id === locationId) || null;
-  }
-
-  private fetchDoctorsFromDatabase(
-    locationId: string,
+  private async fetchLocationsFromDatabase(
+    clinicId: string | undefined,
     domain: string
-  ): AppointmentLocationDoctor[] {
-    // This would integrate with the actual database service
-    // For now, return mock data
-    const mockDoctors: AppointmentLocationDoctor[] = [
-      {
-        id: 'doc-1',
-        name: 'Dr. John Smith',
-        specialization: domain === 'healthcare' ? 'Cardiology' : 'Fashion Design',
-        licenseNumber: 'MED123456',
-        experience: 15,
-        rating: 4.8,
-      },
-      {
-        id: 'doc-2',
-        name: 'Dr. Sarah Johnson',
-        specialization: domain === 'healthcare' ? 'Dermatology' : 'Fashion Styling',
-        licenseNumber: 'MED789012',
-        experience: 12,
-        rating: 4.9,
-      },
-    ];
+  ): Promise<Location[]> {
+    const rows = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as {
+        clinicLocation: {
+          findMany: (args: unknown) => Promise<
+            Array<{
+              id: string;
+              locationId: string;
+              name: string;
+              address: string;
+              city: string;
+              state: string;
+              country: string;
+              zipCode: string | null;
+              phone: string | null;
+              email: string | null;
+              isActive: boolean;
+              clinicId: string;
+              latitude: number | null;
+              longitude: number | null;
+              timezone: string | null;
+              workingHours: unknown;
+              settings: Record<string, unknown> | null;
+            }>
+          >;
+        };
+      };
 
-    return mockDoctors;
+      return await typedClient.clinicLocation.findMany({
+        where: {
+          ...(clinicId ? { clinicId } : {}),
+          isActive: true,
+        },
+        orderBy: { name: 'asc' },
+      });
+    });
+
+    return rows.map(location => this.toAppointmentLocation(location, domain));
   }
 
-  private calculateLocationStats(): LocationStats {
-    // This would integrate with the actual database service
-    // For now, return mock statistics
-    return {
-      totalAppointments: 150,
-      totalDoctors: 8,
-      averageWaitTime: 12,
-      efficiency: 0.85,
-      utilization: 0.75,
-      patientSatisfaction: 4.6,
+  private async fetchLocationFromDatabase(
+    locationId: string,
+    clinicId: string | undefined,
+    domain: string
+  ): Promise<Location | null> {
+    const location = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as {
+        clinicLocation: {
+          findFirst: (args: unknown) => Promise<{
+            id: string;
+            locationId: string;
+            name: string;
+            address: string;
+            city: string;
+            state: string;
+            country: string;
+            zipCode: string | null;
+            phone: string | null;
+            email: string | null;
+            isActive: boolean;
+            clinicId: string;
+            latitude: number | null;
+            longitude: number | null;
+            timezone: string | null;
+            workingHours: unknown;
+            settings: Record<string, unknown> | null;
+          } | null>;
+        };
+      };
+
+      return await typedClient.clinicLocation.findFirst({
+        where: {
+          locationId,
+          ...(clinicId ? { clinicId } : {}),
+          isActive: true,
+        },
+      });
+    });
+
+    return location ? this.toAppointmentLocation(location, domain) : null;
+  }
+
+  private async fetchDoctorsFromDatabase(locationId: string): Promise<AppointmentLocationDoctor[]> {
+    const location = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as {
+        clinicLocation: {
+          findFirst: (args: unknown) => Promise<{
+            doctorClinic: Array<{
+              doctor: {
+                id: string;
+                specialization: string;
+                experience: number;
+                qualification: string | null;
+                rating: number | null;
+                user: { name: string };
+              };
+            }>;
+          } | null>;
+        };
+      };
+
+      return await typedClient.clinicLocation.findFirst({
+        where: { locationId, isActive: true },
+        include: {
+          doctorClinic: {
+            include: {
+              doctor: {
+                include: {
+                  user: {
+                    select: { name: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+    });
+
+    const doctorClinics = location?.doctorClinic || [];
+    return doctorClinics.map(entry => ({
+      id: entry.doctor.id,
+      name: entry.doctor.user?.name || `Doctor ${entry.doctor.id}`,
+      specialization: entry.doctor.specialization,
+      ...(entry.doctor.qualification ? { licenseNumber: entry.doctor.qualification } : {}),
+      experience: entry.doctor.experience,
+      rating: entry.doctor.rating ?? 0,
+    }));
+  }
+
+  private async calculateLocationStats(locationId: string): Promise<LocationStats> {
+    const location = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as {
+        appointment: {
+          findMany: (args: unknown) => Promise<
+            Array<{
+              status: string;
+              date: Date;
+              checkedInAt: Date | null;
+            }>
+          >;
+        };
+        clinicLocation: {
+          findFirst: (args: unknown) => Promise<{
+            doctorClinic: Array<{
+              doctor: {
+                rating: number | null;
+              };
+            }>;
+          } | null>;
+        };
+      };
+
+      const [appointments, clinicLocation] = await Promise.all([
+        typedClient.appointment.findMany({
+          where: { locationId },
+          select: {
+            status: true,
+            date: true,
+            checkedInAt: true,
+          },
+        }),
+        typedClient.clinicLocation.findFirst({
+          where: { locationId, isActive: true },
+          include: {
+            doctorClinic: {
+              include: {
+                doctor: {
+                  select: {
+                    rating: true,
+                  },
+                },
+              },
+            },
+          },
+        }),
+      ]);
+
+      const totalAppointments = appointments.length;
+      const completedAppointments = appointments.filter(app => app.status === 'COMPLETED').length;
+      const waitTimes = appointments
+        .filter(app => app.checkedInAt)
+        .map(app => Math.max(0, (app.checkedInAt as Date).getTime() - app.date.getTime()) / 60000);
+      const averageWaitTime =
+        waitTimes.length > 0
+          ? Math.round(waitTimes.reduce((sum, value) => sum + value, 0) / waitTimes.length)
+          : 0;
+      const totalDoctors = clinicLocation?.doctorClinic?.length || 0;
+      const ratingValues =
+        clinicLocation?.doctorClinic
+          ?.map(entry => entry.doctor.rating)
+          .filter(
+            (rating): rating is number => typeof rating === 'number' && Number.isFinite(rating)
+          )
+          .filter(rating => rating > 0) || [];
+      const patientSatisfaction =
+        ratingValues.length > 0
+          ? Number(
+              (ratingValues.reduce((sum, rating) => sum + rating, 0) / ratingValues.length).toFixed(
+                1
+              )
+            )
+          : 0;
+
+      return {
+        totalAppointments,
+        totalDoctors,
+        averageWaitTime,
+        efficiency:
+          totalAppointments > 0
+            ? Number((completedAppointments / totalAppointments).toFixed(2))
+            : 0,
+        utilization:
+          totalDoctors > 0
+            ? Number(Math.min(1, totalAppointments / Math.max(1, totalDoctors * 20)).toFixed(2))
+            : 0,
+        patientSatisfaction,
+      } as LocationStats;
+    });
+
+    return location;
+  }
+
+  private toAppointmentLocation(
+    location:
+      | ClinicLocationResponseDto
+      | {
+          id: string;
+          locationId: string;
+          name: string;
+          address: string;
+          city: string;
+          state: string;
+          country: string;
+          zipCode: string | null;
+          phone: string | null;
+          email: string | null;
+          isActive: boolean;
+          clinicId: string;
+          latitude: number | null;
+          longitude: number | null;
+          timezone: string | null;
+          workingHours: unknown;
+          settings: Record<string, unknown> | null;
+        },
+    domain: string
+  ): Location {
+    const rawLocation = location as unknown as {
+      id: string;
+      locationId?: string;
+      name: string;
+      address: string;
+      city: string;
+      state: string;
+      country: string;
+      zipCode?: string | null;
+      phone?: string | null;
+      email?: string | null;
+      isActive: boolean;
+      latitude?: number | null;
+      longitude?: number | null;
+      workingHours?: unknown;
+      settings?: Record<string, unknown> | null;
     };
+    const operatingHours = this.toOperatingHours(rawLocation.workingHours);
+
+    return {
+      id: rawLocation.id,
+      name: rawLocation.name,
+      address: rawLocation.address,
+      city: rawLocation.city,
+      state: rawLocation.state,
+      country: rawLocation.country,
+      postalCode: rawLocation.zipCode || '',
+      phone: rawLocation.phone || '',
+      type: this.resolveLocationType(domain),
+      capacity: this.getLocationCapacity(rawLocation.settings || null),
+      isActive: rawLocation.isActive,
+      ...(rawLocation.email ? { email: rawLocation.email } : {}),
+      ...(rawLocation.latitude !== null &&
+      rawLocation.longitude !== null &&
+      rawLocation.latitude !== undefined &&
+      rawLocation.longitude !== undefined
+        ? {
+            coordinates: {
+              latitude: rawLocation.latitude,
+              longitude: rawLocation.longitude,
+            },
+          }
+        : {}),
+      amenities: this.getAmenities(rawLocation.settings || null),
+      operatingHours,
+    };
+  }
+
+  private resolveLocationType(domain: string): Location['type'] {
+    const normalizedDomain = domain.trim().toLowerCase();
+
+    switch (normalizedDomain) {
+      case 'studio':
+        return 'studio';
+      case 'hospital':
+        return 'hospital';
+      case 'outpatient':
+        return 'outpatient';
+      case 'healthcare':
+      case 'clinic':
+      default:
+        return 'clinic';
+    }
+  }
+
+  private toOperatingHours(workingHours: unknown): Location['operatingHours'] {
+    const defaultHours = {
+      monday: { open: '09:00', close: '17:00', isOpen: true },
+      tuesday: { open: '09:00', close: '17:00', isOpen: true },
+      wednesday: { open: '09:00', close: '17:00', isOpen: true },
+      thursday: { open: '09:00', close: '17:00', isOpen: true },
+      friday: { open: '09:00', close: '17:00', isOpen: true },
+      saturday: { open: '09:00', close: '13:00', isOpen: true },
+      sunday: { open: '00:00', close: '00:00', isOpen: false },
+    };
+
+    if (!workingHours || typeof workingHours !== 'object') {
+      return defaultHours;
+    }
+
+    return {
+      ...defaultHours,
+      ...(workingHours as Record<string, { open?: string; close?: string; isOpen?: boolean }>),
+    };
+  }
+
+  private getLocationCapacity(settings: Record<string, unknown> | null): number {
+    const rawCapacity = settings?.['capacity'];
+    if (typeof rawCapacity === 'number' && Number.isFinite(rawCapacity)) {
+      return rawCapacity;
+    }
+
+    const fallbackCapacity = settings?.['maxAppointments'];
+    if (typeof fallbackCapacity === 'number' && Number.isFinite(fallbackCapacity)) {
+      return fallbackCapacity;
+    }
+
+    return 0;
+  }
+
+  private getAmenities(settings: Record<string, unknown> | null): string[] {
+    const amenities = settings?.['amenities'];
+    if (Array.isArray(amenities)) {
+      return amenities.filter((item): item is string => typeof item === 'string');
+    }
+
+    return [];
   }
 }

@@ -173,6 +173,22 @@ export interface HttpRequestOptions extends Partial<AxiosRequestConfig> {
    * Additional headers to merge
    */
   headers?: Record<string, string>;
+  /**
+   * Optional bulkhead partition key. Defaults to the request origin.
+   */
+  bulkheadKey?: string;
+  /**
+   * Maximum concurrent requests allowed for this bulkhead partition.
+   */
+  bulkheadLimit?: number;
+  /**
+   * Maximum queued requests allowed before failing fast.
+   */
+  bulkheadQueueLimit?: number;
+  /**
+   * Maximum time in milliseconds a request may wait for a bulkhead slot.
+   */
+  bulkheadTimeout?: number;
 }
 
 /**

@@ -53,6 +53,7 @@ type HandshakeQueryValue = string | string[] | null | undefined;
 
 interface SocketHandshakeHeaders {
   authorization?: string | string[];
+  cookie?: string;
 }
 
 interface SocketHandshake {
@@ -233,6 +234,11 @@ export class SocketAuthMiddleware {
   private extractToken(client: Socket): string | null {
     const handshake = client.handshake as SocketHandshake;
 
+    const cookieToken = this.extractCookieToken(handshake.headers?.cookie);
+    if (cookieToken) {
+      return cookieToken;
+    }
+
     const authToken = this.normalizeTokenValue(handshake.auth?.token ?? null);
     if (authToken) {
       return authToken;
@@ -246,6 +252,30 @@ export class SocketAuthMiddleware {
     const headerToken = this.normalizeAuthorizationHeader(handshake.headers?.authorization);
     if (headerToken) {
       return headerToken;
+    }
+
+    return null;
+  }
+
+  private extractCookieToken(cookieHeader?: string): string | null {
+    if (!cookieHeader) {
+      return null;
+    }
+
+    const cookiePairs = cookieHeader.split(';');
+    for (const pair of cookiePairs) {
+      const [rawName, ...rawValueParts] = pair.split('=');
+      if (!rawName || rawValueParts.length === 0) {
+        continue;
+      }
+
+      const name = rawName.trim();
+      if (name !== 'access_token') {
+        continue;
+      }
+
+      const value = rawValueParts.join('=').trim();
+      return value.length > 0 ? decodeURIComponent(value) : null;
     }
 
     return null;
