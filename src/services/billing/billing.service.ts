@@ -2992,7 +2992,7 @@ export class BillingService implements OnModuleInit {
     paymentId: string,
     orderId: string,
     provider?: PaymentProvider
-  ): Promise<{ payment: unknown; invoice?: unknown }> {
+  ): Promise<{ payment: unknown; invoice?: unknown; appointment?: unknown }> {
     try {
       const normalizedProvider = this.normalizePaymentProvider(provider);
 
@@ -3150,7 +3150,11 @@ export class BillingService implements OnModuleInit {
         ...(payment.subscriptionId ? { subscriptionId: payment.subscriptionId } : {}),
       });
 
-      return { payment: updatedPayment, ...(invoice ? { invoice } : {}) };
+      return {
+        payment: updatedPayment,
+        ...(invoice ? { invoice } : {}),
+        ...(completedAppointment ? { appointment: completedAppointment } : {}),
+      };
     } catch (error) {
       await this.loggingService.log(
         LogType.PAYMENT,

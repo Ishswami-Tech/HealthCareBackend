@@ -1158,6 +1158,46 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Get('permissions')
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Get current user permissions',
+    description:
+      'Return the effective permission set for the authenticated user. Used by the frontend for RBAC-aware UI state.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'User permissions retrieved successfully',
+  })
+  async getCurrentUserPermissions(
+    @Query('clinicId') clinicIdQuery: string | undefined,
+    @Request() req: FastifyRequestWithUser
+  ) {
+    const userId = req.user?.sub || req.user?.id;
+    const clinicId =
+      clinicIdQuery ||
+      (req as { clinicContext?: { clinicId?: string } }).clinicContext?.clinicId ||
+      (req.user as { clinicId?: string })?.clinicId ||
+      (req.headers['x-clinic-id'] as string);
+
+    if (!userId) {
+      return new DataResponseDto(
+        { permissions: [], reason: 'Missing authenticated user' },
+        'Permission list retrieved'
+      );
+    }
+
+    const permissions = await this.authService.getUserPermissions(userId, clinicId ?? '');
+    return new DataResponseDto(
+      {
+        permissions,
+        clinicId: clinicId ?? undefined,
+      },
+      'Permission list retrieved'
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Get('sessions')
   @PatientCache({
     keyTemplate: 'user:{userId}:sessions',

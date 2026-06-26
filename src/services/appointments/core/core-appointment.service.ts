@@ -774,8 +774,27 @@ export class CoreAppointmentService {
       }
 
       // 4. Update appointment
-      // Handle date conversion properly for exactOptionalPropertyTypes
+      // Handle date conversion properly for exactOptionalPropertyTypes.
+      // `reason` is part of the status DTO, but it is not a column on the
+      // Appointment model. Map it onto the canonical appointment fields so
+      // Prisma never receives an unknown property.
       const updateData: Record<string, unknown> = { ...updateDto };
+      const updateDtoRecord = updateDto as Record<string, unknown>;
+      const updateReason =
+        typeof updateDtoRecord['reason'] === 'string'
+          ? String(updateDtoRecord['reason']).trim()
+          : '';
+      delete updateData['reason'];
+      if (updateReason) {
+        if (
+          updateDto.status === AppointmentStatus.EXPIRED ||
+          updateDto.status === AppointmentStatus.CANCELLED
+        ) {
+          updateData['cancellationReason'] = updateReason;
+        } else if (!updateDto.notes) {
+          updateData['notes'] = updateReason;
+        }
+      }
       if (updateDto.appointmentDate) {
         const appointmentDateTime = this.resolveAppointmentDateTime(
           updateDto as CreateAppointmentDto & { time?: string }

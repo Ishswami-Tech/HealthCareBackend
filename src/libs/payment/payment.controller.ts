@@ -524,7 +524,7 @@ export class PaymentController {
     @Query('paymentId') paymentId: string,
     @Query('orderId') orderId: string,
     @Query('provider') provider?: string
-  ): Promise<{ success: boolean }> {
+  ): Promise<{ success: boolean; payment?: unknown; invoice?: unknown; appointment?: unknown }> {
     try {
       if (!paymentId || !orderId) {
         throw new Error('Payment ID and Order ID are required');
@@ -538,14 +538,23 @@ export class PaymentController {
 
       const paymentProvider = this.parsePaymentProvider(provider);
 
-      await this.getBillingService().handlePaymentCallback(
+      const result = (await this.getBillingService().handlePaymentCallback(
         resolvedClinicId,
         paymentId,
         orderId,
         paymentProvider
-      );
+      )) as {
+        payment?: unknown;
+        invoice?: unknown;
+        appointment?: unknown;
+      };
 
-      return { success: true };
+      return {
+        success: true,
+        ...(result.payment ? { payment: result.payment } : {}),
+        ...(result.invoice ? { invoice: result.invoice } : {}),
+        ...(result.appointment ? { appointment: result.appointment } : {}),
+      };
     } catch (error) {
       await this.loggingService.log(
         LogType.PAYMENT,

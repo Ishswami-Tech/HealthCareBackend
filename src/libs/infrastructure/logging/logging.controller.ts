@@ -2,6 +2,8 @@
 import {
   Controller,
   Get,
+  Post,
+  Body,
   Query,
   Res,
   Inject,
@@ -9,15 +11,17 @@ import {
   VERSION_NEUTRAL,
   UsePipes,
   ValidationPipe,
+  UseGuards,
 } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@logging';
 
 // Internal imports - Types
 import { LogType, LogLevel } from '@core/types';
+import { JwtAuthGuard } from '@core/guards';
 
 // Internal imports - DTOs
 import { GetLogsQueryDto, GetEventsQueryDto } from '@dtos/logging.dto';
@@ -28,6 +32,20 @@ import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 // Internal imports - Public decorator
 import { Public } from '@core/decorators';
 import { formatDateTimeInIST, IST_TIMEZONE } from '../../utils/date-time.util';
+
+interface CreateAuditLogBody {
+  userId: string;
+  action: string;
+  resource: string;
+  resourceId?: string;
+  result: 'SUCCESS' | 'FAILURE' | 'PENDING';
+  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  ipAddress?: string;
+  userAgent?: string;
+  sessionId?: string;
+  metadata?: Record<string, unknown>;
+  timestamp?: string;
+}
 
 @ApiTags('logging')
 @Controller({ path: 'logger', version: VERSION_NEUTRAL })
@@ -733,6 +751,51 @@ export class LoggingController {
         message: error instanceof Error ? error.message : 'Failed to retrieve logs',
       };
     }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('audit')
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Create audit log entry',
+    description: 'Persist an audit event and surface it in the logging dashboard.',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Audit log stored successfully',
+  })
+  async createAuditLog(@Body() body: CreateAuditLogBody): Promise<{
+    success: boolean;
+    data: { logId: string };
+    message: string;
+  }> {
+    const logId = `audit_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+    await this.loggingService.log(
+      LogType.AUDIT,
+      body.result === 'FAILURE' ? LogLevel.WARN : LogLevel.INFO,
+      `${body.action} on ${body.resource}`,
+      'LoggingController.createAuditLog',
+      {
+        logId,
+        userId: body.userId,
+        action: body.action,
+        resource: body.resource,
+        resourceId: body.resourceId,
+        result: body.result,
+        riskLevel: body.riskLevel,
+        ipAddress: body.ipAddress,
+        userAgent: body.userAgent,
+        sessionId: body.sessionId,
+        ...body.metadata,
+        timestamp: body.timestamp || new Date().toISOString(),
+      }
+    );
+
+    return {
+      success: true,
+      data: { logId },
+      message: 'Audit log stored successfully',
+    };
   }
 
   @Get('events')

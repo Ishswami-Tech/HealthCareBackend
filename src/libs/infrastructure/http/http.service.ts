@@ -40,6 +40,17 @@ import { LogType, LogLevel } from '@core/types/logging.types';
 import type { HttpRequestOptions, HttpResponse, RetryConfig } from '@core/types/http.types';
 import { DEFAULT_RETRY_CONFIG } from '@core/types/http.types';
 
+interface BulkheadSlot {
+  active: number;
+  queue: BulkheadWaiter[];
+}
+
+interface BulkheadWaiter {
+  resolve: (release: () => void) => void;
+  reject: (error: Error) => void;
+  timer?: NodeJS.Timeout;
+}
+
 /**
  * Centralized HTTP Service for making HTTP requests
  *
@@ -54,6 +65,10 @@ import { DEFAULT_RETRY_CONFIG } from '@core/types/http.types';
 export class HttpService {
   private readonly defaultTimeout: number;
   private readonly defaultRetries: number;
+  private readonly defaultBulkheadLimit: number;
+  private readonly defaultBulkheadQueueLimit: number;
+  private readonly defaultBulkheadTimeout: number;
+  private readonly bulkheadSlots = new Map<string, BulkheadSlot>();
 
   constructor(
     @Inject(forwardRef(() => NestHttpService))
@@ -70,6 +85,21 @@ export class HttpService {
     // Get default retries from environment or config (default: 0)
     const retriesEnv = process.env['http.retries'] || process.env['HTTP_RETRIES'];
     this.defaultRetries = retriesEnv ? Number.parseInt(retriesEnv, 10) : 0;
+
+    const bulkheadLimitEnv =
+      process.env['http.bulkhead.limit'] || process.env['HTTP_BULKHEAD_LIMIT'];
+    const bulkheadQueueLimitEnv =
+      process.env['http.bulkhead.queueLimit'] || process.env['HTTP_BULKHEAD_QUEUE_LIMIT'];
+    const bulkheadTimeoutEnv =
+      process.env['http.bulkhead.timeout'] || process.env['HTTP_BULKHEAD_TIMEOUT'];
+
+    this.defaultBulkheadLimit = bulkheadLimitEnv ? Number.parseInt(bulkheadLimitEnv, 10) : 20;
+    this.defaultBulkheadQueueLimit = bulkheadQueueLimitEnv
+      ? Number.parseInt(bulkheadQueueLimitEnv, 10)
+      : 100;
+    this.defaultBulkheadTimeout = bulkheadTimeoutEnv
+      ? Number.parseInt(bulkheadTimeoutEnv, 10)
+      : 15000;
   }
 
   /**
@@ -157,6 +187,10 @@ export class HttpService {
       suppressErrorLogging: _suppressErrorLogging,
       headers: _customHeaders,
       timeout: _customTimeout,
+      bulkheadKey: _bulkheadKey,
+      bulkheadLimit: _bulkheadLimit,
+      bulkheadQueueLimit: _bulkheadQueueLimit,
+      bulkheadTimeout: _bulkheadTimeout,
       ...axiosConfigBase
     } = options || {};
 
@@ -189,127 +223,139 @@ export class HttpService {
       );
     }
 
-    // Create observable with retry logic
-    const request$ = this.nestHttpService.request<T>(axiosConfig).pipe(
-      catchError((error: unknown) => {
-        // Log error with detailed information
-        const axiosError = error as {
-          code?: string;
-          errno?: string;
-          syscall?: string;
-          address?: string;
-          port?: number;
-          message?: string;
-          config?: { url?: string };
-          response?: { status?: number; statusText?: string; data?: unknown };
-        };
-        const errorCode = axiosError.code || (error as { code?: string })?.code;
-        const errorMessage =
-          axiosError.message || (error instanceof Error ? error.message : String(error));
-
-        // Use original requested URL, not the URL from error.config (which might be after redirects)
-        // This ensures we log the URL that was actually requested, not a redirected URL
-        const loggedUrl = url; // Always use the original URL parameter
-
-        // Determine log level based on error type and context
-        // Health check failures and connection errors are less critical than application errors
-        // Also check if this is a logger endpoint check (should use localhost, not external URL)
-        const isHealthCheck = url.includes('/health') || url.includes('/api/health');
-        const isLoggerCheck = url.includes('/logger') && !url.includes('localhost');
-        const isConnectionError =
-          errorCode === 'ECONNREFUSED' ||
-          errorCode === 'ENOTFOUND' ||
-          errorCode === 'ETIMEDOUT' ||
-          errorCode === 'EHOSTUNREACH' ||
-          errorCode === 'ENETUNREACH';
-        const isExpectedFailure = isHealthCheck || isConnectionError || isLoggerCheck;
-        const logLevel = isExpectedFailure ? LogLevel.WARN : LogLevel.ERROR;
-        const logType = isExpectedFailure ? LogType.SYSTEM : LogType.ERROR;
-        const responseData = axiosError.response?.data;
-
-        if (!options?.suppressErrorLogging && this.loggingService) {
-          void this.loggingService.log(
-            logType,
-            logLevel,
-            `HTTP ${method} ${loggedUrl} failed: ${errorMessage}${errorCode ? ` (${errorCode})` : ''}`,
-            'HttpService',
-            {
-              requestId,
-              method,
-              url: loggedUrl, // Use original URL, not redirected URL
-              originalUrl: url, // Keep original for reference
-              errorUrl: axiosError.config?.url, // Show if different (redirect happened)
-              error: errorMessage,
-              errorCode,
-              errno: axiosError.errno,
-              syscall: axiosError.syscall,
-              address: axiosError.address,
-              port: axiosError.port,
-              responseStatus: axiosError.response?.status,
-              responseStatusText: axiosError.response?.statusText,
-              responseData,
-              responseDataKeys:
-                responseData && typeof responseData === 'object' ? Object.keys(responseData) : [],
-              isHealthCheck,
-              isLoggerCheck,
-              isConnectionError,
-            }
-          );
-          errorAlreadyLogged = true;
-        }
-        return throwError(() => error);
-      })
+    const bulkheadKey = options?.bulkheadKey || this.getBulkheadKey(method, url);
+    const bulkheadLimit = options?.bulkheadLimit ?? this.defaultBulkheadLimit;
+    const bulkheadQueueLimit = options?.bulkheadQueueLimit ?? this.defaultBulkheadQueueLimit;
+    const bulkheadTimeout = options?.bulkheadTimeout ?? this.defaultBulkheadTimeout;
+    const bulkhead = await this.acquireBulkheadSlot(
+      bulkheadKey,
+      bulkheadLimit,
+      bulkheadQueueLimit,
+      bulkheadTimeout,
+      requestId
     );
 
-    // Apply retry logic if configured
-    const retryableRequest$ =
-      retryConfig.maxRetries > 0
-        ? request$.pipe(
-            retryWhen(errors =>
-              errors.pipe(
-                scan((retryCount: number, error: unknown) => {
-                  // Check if we should retry
-                  if (!retryConfig.shouldRetry(error) || retryCount >= retryConfig.maxRetries) {
-                    throw error;
-                  }
+    try {
+      // Create observable with retry logic
+      const request$ = this.nestHttpService.request<T>(axiosConfig).pipe(
+        catchError((error: unknown) => {
+          // Log error with detailed information
+          const axiosError = error as {
+            code?: string;
+            errno?: string;
+            syscall?: string;
+            address?: string;
+            port?: number;
+            message?: string;
+            config?: { url?: string };
+            response?: { status?: number; statusText?: string; data?: unknown };
+          };
+          const errorCode = axiosError.code || (error as { code?: string })?.code;
+          const errorMessage =
+            axiosError.message || (error instanceof Error ? error.message : String(error));
 
-                  // Calculate delay
-                  const delayMs = retryConfig.exponentialBackoff
-                    ? retryConfig.delay * Math.pow(2, retryCount)
-                    : retryConfig.delay;
+          // Use original requested URL, not the URL from error.config (which might be after redirects)
+          // This ensures we log the URL that was actually requested, not a redirected URL
+          const loggedUrl = url; // Always use the original URL parameter
 
-                  // Log retry
-                  if (this.loggingService) {
-                    void this.loggingService.log(
-                      LogType.SYSTEM,
-                      LogLevel.WARN,
-                      `HTTP ${method} ${url} retry ${retryCount + 1}/${retryConfig.maxRetries}`,
-                      'HttpService',
-                      {
-                        requestId,
-                        method,
-                        url,
-                        retryCount: retryCount + 1,
-                        delayMs,
-                      }
-                    );
-                  }
+          // Determine log level based on error type and context
+          // Health check failures and connection errors are less critical than application errors
+          // Also check if this is a logger endpoint check (should use localhost, not external URL)
+          const isHealthCheck = url.includes('/health') || url.includes('/api/health');
+          const isLoggerCheck = url.includes('/logger') && !url.includes('localhost');
+          const isConnectionError =
+            errorCode === 'ECONNREFUSED' ||
+            errorCode === 'ENOTFOUND' ||
+            errorCode === 'ETIMEDOUT' ||
+            errorCode === 'EHOSTUNREACH' ||
+            errorCode === 'ENETUNREACH';
+          const isExpectedFailure = isHealthCheck || isConnectionError || isLoggerCheck;
+          const logLevel = isExpectedFailure ? LogLevel.WARN : LogLevel.ERROR;
+          const logType = isExpectedFailure ? LogType.SYSTEM : LogType.ERROR;
+          const responseData = axiosError.response?.data;
 
-                  return retryCount + 1;
-                }, 0),
-                mergeMap((retryCount: number) => {
-                  // Calculate delay for this retry
-                  const delayMs = retryConfig.exponentialBackoff
-                    ? retryConfig.delay * Math.pow(2, retryCount - 1)
-                    : retryConfig.delay;
-                  return timer(delayMs);
-                })
+          if (!options?.suppressErrorLogging && this.loggingService) {
+            void this.loggingService.log(
+              logType,
+              logLevel,
+              `HTTP ${method} ${loggedUrl} failed: ${errorMessage}${errorCode ? ` (${errorCode})` : ''}`,
+              'HttpService',
+              {
+                requestId,
+                method,
+                url: loggedUrl, // Use original URL, not redirected URL
+                originalUrl: url, // Keep original for reference
+                errorUrl: axiosError.config?.url, // Show if different (redirect happened)
+                error: errorMessage,
+                errorCode,
+                errno: axiosError.errno,
+                syscall: axiosError.syscall,
+                address: axiosError.address,
+                port: axiosError.port,
+                responseStatus: axiosError.response?.status,
+                responseStatusText: axiosError.response?.statusText,
+                responseData,
+                responseDataKeys:
+                  responseData && typeof responseData === 'object' ? Object.keys(responseData) : [],
+                isHealthCheck,
+                isLoggerCheck,
+                isConnectionError,
+              }
+            );
+            errorAlreadyLogged = true;
+          }
+          return throwError(() => error);
+        })
+      );
+
+      // Apply retry logic if configured
+      const retryableRequest$ =
+        retryConfig.maxRetries > 0
+          ? request$.pipe(
+              retryWhen(errors =>
+                errors.pipe(
+                  scan((retryCount: number, error: unknown) => {
+                    // Check if we should retry
+                    if (!retryConfig.shouldRetry(error) || retryCount >= retryConfig.maxRetries) {
+                      throw error;
+                    }
+
+                    // Calculate delay
+                    const delayMs = retryConfig.exponentialBackoff
+                      ? retryConfig.delay * Math.pow(2, retryCount)
+                      : retryConfig.delay;
+
+                    // Log retry
+                    if (this.loggingService) {
+                      void this.loggingService.log(
+                        LogType.SYSTEM,
+                        LogLevel.WARN,
+                        `HTTP ${method} ${url} retry ${retryCount + 1}/${retryConfig.maxRetries}`,
+                        'HttpService',
+                        {
+                          requestId,
+                          method,
+                          url,
+                          retryCount: retryCount + 1,
+                          delayMs,
+                        }
+                      );
+                    }
+
+                    return retryCount + 1;
+                  }, 0),
+                  mergeMap((retryCount: number) => {
+                    // Calculate delay for this retry
+                    const delayMs = retryConfig.exponentialBackoff
+                      ? retryConfig.delay * Math.pow(2, retryCount - 1)
+                      : retryConfig.delay;
+                    return timer(delayMs);
+                  })
+                )
               )
             )
-          )
-        : request$;
+          : request$;
 
-    try {
       const response: AxiosResponse<T> = await firstValueFrom(retryableRequest$);
       const requestDuration = Date.now() - startTime;
 
@@ -429,7 +475,105 @@ export class HttpService {
         errorDetails,
         'HttpService.request'
       );
+    } finally {
+      bulkhead.release();
     }
+  }
+
+  /**
+   * Resolve the default bulkhead key for a request.
+   */
+  private getBulkheadKey(method: string, url: string): string {
+    try {
+      const parsedUrl = new URL(url);
+      return `${parsedUrl.origin}`;
+    } catch {
+      return `${method}:${url}`;
+    }
+  }
+
+  /**
+   * Acquire a bulkhead slot with bounded queueing.
+   */
+  private async acquireBulkheadSlot(
+    key: string,
+    limit: number,
+    queueLimit: number,
+    timeoutMs: number,
+    requestId: string
+  ): Promise<{ release: () => void }> {
+    const slot = this.bulkheadSlots.get(key) || { active: 0, queue: [] };
+    this.bulkheadSlots.set(key, slot);
+
+    if (slot.active < limit) {
+      slot.active += 1;
+      return {
+        release: () => this.releaseBulkheadSlot(key),
+      };
+    }
+
+    if (slot.queue.length >= queueLimit) {
+      throw new HealthcareError(
+        ErrorCode.EXTERNAL_SERVICE_UNAVAILABLE,
+        `HTTP bulkhead saturated for ${key}`,
+        undefined,
+        { key, limit, queueLimit, requestId },
+        'HttpService.acquireBulkheadSlot'
+      );
+    }
+
+    return await new Promise<{ release: () => void }>((resolve, reject) => {
+      const waiter: BulkheadWaiter = {
+        resolve: (release: () => void) => resolve({ release }),
+        reject: (error: Error) => reject(error),
+      };
+
+      if (timeoutMs > 0) {
+        waiter.timer = setTimeout(() => {
+          const currentSlot = this.bulkheadSlots.get(key);
+          if (currentSlot) {
+            currentSlot.queue = currentSlot.queue.filter(item => item !== waiter);
+          }
+          reject(
+            new HealthcareError(
+              ErrorCode.EXTERNAL_SERVICE_UNAVAILABLE,
+              `HTTP bulkhead wait timed out for ${key}`,
+              undefined,
+              { key, limit, queueLimit, timeoutMs, requestId },
+              'HttpService.acquireBulkheadSlot'
+            )
+          );
+        }, timeoutMs);
+      }
+
+      slot.queue.push(waiter);
+    });
+  }
+
+  /**
+   * Release a bulkhead slot and wake the next queued request.
+   */
+  private releaseBulkheadSlot(key: string): void {
+    const slot = this.bulkheadSlots.get(key);
+    if (!slot) {
+      return;
+    }
+
+    slot.active = Math.max(0, slot.active - 1);
+    const next = slot.queue.shift();
+    if (!next) {
+      if (slot.active === 0 && slot.queue.length === 0) {
+        this.bulkheadSlots.delete(key);
+      }
+      return;
+    }
+
+    if (next.timer) {
+      clearTimeout(next.timer);
+    }
+
+    slot.active += 1;
+    next.resolve(() => this.releaseBulkheadSlot(key));
   }
 
   /**

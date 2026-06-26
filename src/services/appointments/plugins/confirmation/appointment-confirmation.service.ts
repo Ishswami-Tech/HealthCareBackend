@@ -3,9 +3,11 @@ import { Injectable, Logger, BadRequestException, Inject } from '@nestjs/common'
 import { ConfigService } from '@config/config.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
+import { DatabaseService } from '@infrastructure/database';
 import { LogType, LogLevel } from '@core/types';
 import { QrService } from '@utils/QR';
 import * as crypto from 'crypto';
+import { NotFoundException } from '@nestjs/common';
 
 import type { AppointmentQRCodeData, ConfirmationResult } from '@core/types/appointment.types';
 import { EHRService } from '@services/ehr/ehr.service';
@@ -32,6 +34,7 @@ export class AppointmentConfirmationService {
     @Inject(ConfigService) private readonly configService: ConfigService,
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
+    private readonly databaseService: DatabaseService,
     private readonly qrService: QrService,
     private readonly ehrService: EHRService
   ) {}
@@ -460,26 +463,85 @@ export class AppointmentConfirmationService {
     }
   }
 
-  private performCheckIn(_appointmentId: string, _domain: string): Promise<unknown> {
-    // This would integrate with the actual appointment service
-    // For now, return a placeholder implementation
-    return Promise.resolve({
+  private async performCheckIn(appointmentId: string, domain: string): Promise<unknown> {
+    const now = new Date();
+    const appointment = await this.getAppointmentContext(appointmentId);
+
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as {
+          appointment: {
+            update: (args: unknown) => Promise<unknown>;
+          };
+        };
+
+        await typedClient.appointment.update({
+          where: { id: appointmentId },
+          data: {
+            status: 'CONFIRMED',
+            checkedInAt: now,
+            updatedAt: now,
+          },
+        });
+      },
+      {
+        userId: 'system',
+        clinicId: appointment.clinicId,
+        resourceType: 'APPOINTMENT',
+        operation: 'UPDATE',
+        resourceId: appointmentId,
+        userRole: 'system',
+        details: { status: 'CONFIRMED', domain },
+      }
+    );
+
+    return {
       success: true,
-      appointmentId: _appointmentId,
-      domain: _domain,
+      appointmentId,
+      domain,
       checkedInAt: nowIso(),
-    });
+      clinicId: appointment.clinicId,
+    };
   }
 
-  private performConfirmation(_appointmentId: string, _domain: string): Promise<unknown> {
-    // This would integrate with the actual appointment service
-    // For now, return a placeholder implementation
-    return Promise.resolve({
+  private async performConfirmation(appointmentId: string, domain: string): Promise<unknown> {
+    const now = new Date();
+    const appointment = await this.getAppointmentContext(appointmentId);
+
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as {
+          appointment: {
+            update: (args: unknown) => Promise<unknown>;
+          };
+        };
+
+        await typedClient.appointment.update({
+          where: { id: appointmentId },
+          data: {
+            status: 'CONFIRMED',
+            updatedAt: now,
+          },
+        });
+      },
+      {
+        userId: 'system',
+        clinicId: appointment.clinicId,
+        resourceType: 'APPOINTMENT',
+        operation: 'UPDATE',
+        resourceId: appointmentId,
+        userRole: 'system',
+        details: { status: 'CONFIRMED', domain },
+      }
+    );
+
+    return {
       success: true,
-      appointmentId: _appointmentId,
-      domain: _domain,
+      appointmentId,
+      domain,
       confirmedAt: nowIso(),
-    });
+      clinicId: appointment.clinicId,
+    };
   }
 
   private async performCompletion(
@@ -494,6 +556,7 @@ export class AppointmentConfirmationService {
       userId?: string | undefined;
     }
   ): Promise<unknown> {
+    const appointment = await this.getAppointmentContext(appointmentId);
     const normalizedMedications = clinicalData?.medications
       ?.map((medication: ClinicalMedicationInput) => this.normalizeClinicalMedication(medication))
       .filter(
@@ -512,7 +575,7 @@ export class AppointmentConfirmationService {
       void this.ehrService
         .createPrescription({
           userId: clinicalData.userId,
-          clinicId: clinicalData.clinicId,
+          clinicId: appointment.clinicId,
           doctorId: doctorId,
           diagnosis: clinicalData.diagnosis,
           treatmentPlan: clinicalData.treatmentPlan,
@@ -532,29 +595,124 @@ export class AppointmentConfirmationService {
         });
     }
 
-    // 2. Placeholder for appointment status update (handled by CoreAppointmentService usually)
-    return Promise.resolve({
+    const now = new Date();
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as {
+          appointment: {
+            update: (args: unknown) => Promise<unknown>;
+          };
+        };
+
+        await typedClient.appointment.update({
+          where: { id: appointmentId },
+          data: {
+            status: 'COMPLETED',
+            completedAt: now,
+            updatedAt: now,
+          },
+        });
+      },
+      {
+        userId: clinicalData?.userId || 'system',
+        clinicId: appointment.clinicId,
+        resourceType: 'APPOINTMENT',
+        operation: 'UPDATE',
+        resourceId: appointmentId,
+        userRole: 'system',
+        details: {
+          status: 'COMPLETED',
+          doctorId,
+          domain,
+          hasClinicalData: Boolean(clinicalData?.userId),
+        },
+      }
+    );
+
+    return {
       success: true,
-      appointmentId: appointmentId,
-      doctorId: doctorId,
-      domain: domain,
+      appointmentId,
+      doctorId,
+      domain,
       completedAt: nowIso(),
-    });
+      clinicId: appointment.clinicId,
+    };
   }
 
-  private verifyAppointment(
-    _appointmentId: string,
-    _clinicId: string,
-    _domain: string
-  ): Promise<unknown> {
-    // This would integrate with the actual appointment service
-    // For now, return a placeholder implementation
-    return Promise.resolve({
-      id: _appointmentId,
-      clinicId: _clinicId,
-      domain: _domain,
-      status: 'CONFIRMED',
+  private async getAppointmentContext(appointmentId: string): Promise<{
+    id: string;
+    clinicId: string;
+    status: string;
+  }> {
+    const appointment = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as {
+        appointment: {
+          findFirst: (args: unknown) => Promise<{
+            id: string;
+            clinicId: string;
+            status: string;
+          } | null>;
+        };
+      };
+
+      return await typedClient.appointment.findFirst({
+        where: { id: appointmentId },
+        select: { id: true, clinicId: true, status: true },
+      });
     });
+
+    if (!appointment) {
+      throw new NotFoundException(`Appointment not found: ${appointmentId}`);
+    }
+
+    return appointment;
+  }
+
+  private async verifyAppointment(
+    appointmentId: string,
+    clinicId: string,
+    domain: string
+  ): Promise<unknown> {
+    const appointment = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as {
+        appointment: {
+          findFirst: (args: unknown) => Promise<{
+            id: string;
+            clinicId: string;
+            status: string;
+            checkedInAt: Date | null;
+            completedAt: Date | null;
+          } | null>;
+        };
+      };
+
+      return await typedClient.appointment.findFirst({
+        where: {
+          id: appointmentId,
+          clinicId,
+        },
+        select: {
+          id: true,
+          clinicId: true,
+          status: true,
+          checkedInAt: true,
+          completedAt: true,
+        },
+      });
+    });
+
+    if (!appointment) {
+      throw new NotFoundException(`Appointment not found: ${appointmentId}`);
+    }
+
+    return {
+      id: appointment.id,
+      clinicId: appointment.clinicId,
+      domain,
+      status: appointment.status,
+      checkedInAt: appointment.checkedInAt?.toISOString() || null,
+      completedAt: appointment.completedAt?.toISOString() || null,
+    };
   }
 
   private normalizeClinicalMedication(
