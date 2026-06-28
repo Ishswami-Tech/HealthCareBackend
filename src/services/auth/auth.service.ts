@@ -736,7 +736,7 @@ export class AuthService {
       const userForTokens: UserProfile = {
         id: user.id,
         email: user.email,
-        name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
+        name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || '',
         role: user.role as Role,
         ...(user.phone && { phone: user.phone }),
         ...(clinicUUID && { clinicId: clinicUUID }),
@@ -1691,11 +1691,10 @@ export class AuthService {
     );
 
     // Create new user (OTP already verified above)
-    // For phone-only login, don't create a fake email
-    // Null-safe name resolution: default to normalizedIdentifier if firstName/lastName are empty
-    const resolvedFirstName = verifyDto.firstName?.trim() || '';
-    const resolvedLastName = verifyDto.lastName?.trim() || '';
-    const resolvedName = `${resolvedFirstName} ${resolvedLastName}`.trim() || normalizedIdentifier;
+    // OTP verify is identity proof only; names are collected in profile completion.
+    const resolvedFirstName = '';
+    const resolvedLastName = '';
+    const resolvedName = '';
 
     // Generate meaningful user ID from identifier (with fallback for safety)
     const safeIdentifier = normalizedIdentifier || verifyDto.identifier || uuidv4();
@@ -1777,7 +1776,7 @@ export class AuthService {
     const userForTokens: UserProfile = {
       id: user.id,
       email: user.email || '',
-      name: user.name || normalizedIdentifier,
+      name: user.name || '',
       role: user.role as Role,
       ...(user.phone && { phone: user.phone }),
       ...(validatedClinicUUID && { clinicId: validatedClinicUUID }),
@@ -2118,7 +2117,7 @@ export class AuthService {
     return {
       id: user.id,
       ...(emailToInclude ? { email: emailToInclude } : {}),
-      name: userName || emailToInclude || '',
+      name: userName || '',
       ...(user.firstName ? { firstName: user.firstName } : {}),
       ...(user.lastName ? { lastName: user.lastName } : {}),
       role: user.role as Role,
@@ -2290,10 +2289,33 @@ export class AuthService {
   public isProfileComplete(user: object): boolean {
     if (!user || typeof user !== 'object') return false;
     const profileRecord = user as Record<string, unknown>;
-    return profileRecord['isProfileComplete'] === true;
+    const roleValue = profileRecord['role'];
+    const normalizedRole = typeof roleValue === 'string' ? roleValue.toUpperCase() : '';
+    const firstName = profileRecord['firstName'] ?? profileRecord['first_name'];
+    const lastName = profileRecord['lastName'] ?? profileRecord['last_name'];
+    const phone = profileRecord['phone'] ?? profileRecord['mobile'];
+    const hasVerifiedPhone =
+      typeof phone === 'string' &&
+      phone.trim().length > 0 &&
+      profileRecord['phoneVerified'] === true;
+
+    if (normalizedRole !== 'PATIENT') {
+      return profileRecord['isProfileComplete'] === true;
+    }
+
+    return (
+      typeof firstName === 'string' &&
+      firstName.trim().length > 0 &&
+      typeof lastName === 'string' &&
+      lastName.trim().length > 0 &&
+      hasVerifiedPhone
+    );
   }
 
   private calculateProfileCompletionFromUser(user: Record<string, unknown>, role: Role): boolean {
+    const hasVerifiedPhone =
+      this.isProfileFieldPresent(user['phone']) && user['phoneVerified'] === true;
+
     if (role !== Role.PATIENT) {
       return true;
     }
@@ -2306,9 +2328,6 @@ export class AuthService {
     const hasRequiredFields = requiredFields.every(field =>
       this.isProfileFieldPresent(user[field])
     );
-    const hasVerifiedPhone =
-      !this.isProfileFieldPresent(user['phone']) || user['phoneVerified'] === true;
-
     return hasRequiredFields && hasVerifiedPhone;
   }
 
@@ -2506,6 +2525,7 @@ export class AuthService {
         | {
             id: string;
             email: string;
+            name?: string;
             firstName?: string;
             lastName?: string;
             role?: string;
@@ -2521,6 +2541,17 @@ export class AuthService {
 
       const userEmail: string = socialUser.email;
       const userId: string = socialUser.id;
+      const resolvedName =
+        socialUser.name || `${socialUser.firstName || ''} ${socialUser.lastName || ''}`.trim();
+      const resolvedNameParts = (() => {
+        if (!resolvedName) {
+          return { firstName: '', lastName: '' };
+        }
+        const [firstName = '', ...rest] = resolvedName.split(/\s+/);
+        return { firstName, lastName: rest.join(' ').trim() };
+      })();
+      const resolvedFirstName = socialUser.firstName || resolvedNameParts.firstName;
+      const resolvedLastName = socialUser.lastName || resolvedNameParts.lastName;
 
       // Find the full user record - auto-register if not found (NEW USERS)
       let fullUser = await this.databaseService.findUserByEmailSafe(userEmail);
@@ -2552,9 +2583,9 @@ export class AuthService {
         fullUser = await this.databaseService.createUserSafe({
           email: userEmail,
           password: await bcrypt.hash(uuidv4(), 12),
-          firstName: socialUser.firstName || '',
-          lastName: socialUser.lastName || '',
-          name: `${socialUser.firstName || ''} ${socialUser.lastName || ''}`.trim() || userEmail,
+          firstName: resolvedFirstName,
+          lastName: resolvedLastName,
+          name: resolvedName || `${resolvedFirstName} ${resolvedLastName}`.trim(),
           googleId: userId,
           isVerified: true,
           role: 'PATIENT',
@@ -2579,6 +2610,33 @@ export class AuthService {
           'AuthService.authenticateWithGoogle',
           { userId: fullUser.id, email: fullUser.email }
         );
+      }
+
+      if (
+        fullUser &&
+        ((resolvedFirstName && !fullUser.firstName) ||
+          (resolvedLastName && !fullUser.lastName) ||
+          (resolvedName && !fullUser.name))
+      ) {
+        try {
+          fullUser = await this.databaseService.updateUserSafe(fullUser.id, {
+            ...(resolvedFirstName && !fullUser.firstName ? { firstName: resolvedFirstName } : {}),
+            ...(resolvedLastName && !fullUser.lastName ? { lastName: resolvedLastName } : {}),
+            ...(resolvedName && !fullUser.name ? { name: resolvedName } : {}),
+          });
+        } catch (_error) {
+          void this.logging.log(
+            LogType.AUTH,
+            LogLevel.WARN,
+            'Failed to persist normalized Google name fields; continuing with session payload',
+            'AuthService.authenticateWithGoogle',
+            {
+              userId: fullUser.id,
+              email: fullUser.email,
+              error: _error instanceof Error ? _error.message : String(_error),
+            }
+          );
+        }
       }
 
       // Persist the clinic association for Google users so subsequent guarded
@@ -2636,6 +2694,7 @@ export class AuthService {
         email: fullUser.email,
         name:
           fullUser.name ||
+          resolvedName ||
           `${fullUser.firstName || ''} ${fullUser.lastName || ''}`.trim() ||
           fullUser.email,
         role: fullUser.role as Role,

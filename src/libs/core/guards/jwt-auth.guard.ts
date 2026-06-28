@@ -21,6 +21,35 @@ import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogLevel, LogType } from '@core/types';
 import { Role } from '@core/types/enums.types';
 
+import { JwtAuthService } from '@services/auth/core/jwt.service';
+import * as crypto from 'crypto';
+import type { FastifyRequestWithUser, JwtPayload } from '@core/types/guard.types';
+import type { RedisSessionData as SessionData, LockoutStatus } from '@core/types/session.types';
+import { SessionManagementService } from '@core/session/session-management.service';
+import { RateLimitService } from '@security/rate-limit/rate-limit.service';
+import { DatabaseService } from '@infrastructure/database';
+
+function isNonEmptyTrimmedString(value: unknown): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function hasVerifiedPhone(user: Record<string, unknown>): boolean {
+  const phone = user['phone'] ?? user['mobile'];
+
+  return isNonEmptyTrimmedString(phone) && user['phoneVerified'] === true;
+}
+
+function hasCompletePatientProfileFields(user: Record<string, unknown>): boolean {
+  const firstName = user['firstName'] ?? user['first_name'];
+  const lastName = user['lastName'] ?? user['last_name'];
+
+  return (
+    isNonEmptyTrimmedString(firstName) &&
+    isNonEmptyTrimmedString(lastName) &&
+    hasVerifiedPhone(user)
+  );
+}
+
 /**
  * Staff operational roles that are pre-validated by clinic admin.
  * Profile completion enforcement only applies to PATIENT onboarding.
@@ -45,13 +74,6 @@ const STAFF_ROLES: ReadonlySet<string> = new Set([
  * Profile completion enforcement currently applies to patient onboarding only.
  */
 const PROFILE_COMPLETION_ENFORCED_ROLES: ReadonlySet<string> = new Set([Role.PATIENT]);
-import { JwtAuthService } from '@services/auth/core/jwt.service';
-import * as crypto from 'crypto';
-import type { FastifyRequestWithUser, JwtPayload } from '@core/types/guard.types';
-import type { RedisSessionData as SessionData, LockoutStatus } from '@core/types/session.types';
-import { SessionManagementService } from '@core/session/session-management.service';
-import { RateLimitService } from '@security/rate-limit/rate-limit.service';
-import { DatabaseService } from '@infrastructure/database';
 
 /**
  * JWT Authentication Guard for Healthcare Applications
@@ -342,13 +364,12 @@ export class JwtAuthGuard implements CanActivate {
 
         // Cast user record for profile completion check
         const dbUser = user as Record<string, unknown> | null;
-        const profileCompleteValue = dbUser?.['isProfileComplete'];
-        const profileCompletedAtValue = dbUser?.['profileCompletedAt'];
-        // Profile is complete if the DB flag is true OR if profileCompletedAt is set (one-time permanent flag)
-        const isProfileComplete = profileCompleteValue === true || profileCompletedAtValue != null;
         const roleValue = dbUser?.['role'];
         const userRole = typeof roleValue === 'string' ? roleValue : '';
         const normalizedUserRole = userRole.toUpperCase();
+        const isProfileComplete =
+          !PROFILE_COMPLETION_ENFORCED_ROLES.has(normalizedUserRole) ||
+          (dbUser ? hasCompletePatientProfileFields(dbUser) : false);
         if (
           dbUser &&
           !isProfileComplete &&
