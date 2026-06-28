@@ -219,6 +219,7 @@ export interface SocialAuthProvider {
 export interface SocialUser {
   id: string;
   email: string;
+  name?: string;
   firstName?: string;
   lastName?: string;
   profilePicture?: string;

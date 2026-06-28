@@ -16,6 +16,29 @@ import { Role } from '@core/types/enums.types';
 import { REQUIRES_PROFILE_COMPLETION_KEY } from '@core/decorators/profile-completion.decorator';
 import { IS_PUBLIC_KEY } from '@core/decorators/public.decorator';
 
+function isNonEmptyTrimmedString(value: unknown): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function hasCompleteLoginProfileFields(user: Record<string, unknown>): boolean {
+  const phone = user['phone'] ?? user['mobile'];
+  const roleValue = user['role'];
+  const normalizedRole = typeof roleValue === 'string' ? roleValue.toUpperCase() : '';
+
+  if (normalizedRole === 'PATIENT') {
+    const firstName = user['firstName'] ?? user['first_name'];
+    const lastName = user['lastName'] ?? user['last_name'];
+    return (
+      isNonEmptyTrimmedString(firstName) &&
+      isNonEmptyTrimmedString(lastName) &&
+      isNonEmptyTrimmedString(phone) &&
+      user['phoneVerified'] === true
+    );
+  }
+
+  return isNonEmptyTrimmedString(phone) && user['phoneVerified'] === true;
+}
+
 /**
  * Staff operational roles that are pre-validated by clinic admin.
  * Profile completion enforcement only applies to PATIENT onboarding.
@@ -125,8 +148,11 @@ export class ProfileCompletionGuard implements CanActivate {
         return true;
       }
 
-      // Database flag is the authoritative source for profile completion in auth flows.
-      if (!dbUser.isProfileComplete) {
+      const isProfileComplete =
+        !PROFILE_COMPLETION_ENFORCED_ROLES.has(normalizedUserRole) ||
+        hasCompleteLoginProfileFields(dbUser as unknown as Record<string, unknown>);
+
+      if (!isProfileComplete) {
         await this.logging.log(
           LogType.AUDIT,
           LogLevel.DEBUG,

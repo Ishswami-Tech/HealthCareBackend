@@ -294,11 +294,7 @@ export class UsersController {
     // Also fetch the latest user data from DB to ensure response reflects current state
     // (use cache-bypassing read so we get the absolute latest value)
     const latestUser = await this.databaseService.findUserByIdSafeFresh(id);
-    const dbIsProfileComplete = latestUser?.isProfileComplete === true;
-
-    // Use the database flag as the authoritative source for the response
-    // (since the controller just persisted the update)
-    const finalProfileComplete = dbIsProfileComplete || profileStatus.isComplete;
+    const finalProfileComplete = profileStatus.isComplete;
 
     // If profile is complete, refresh the session tokens to reflect new user data
     if (finalProfileComplete) {

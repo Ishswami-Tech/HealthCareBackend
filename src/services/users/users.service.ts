@@ -2294,13 +2294,17 @@ export class UsersService {
         user as unknown as Record<string, unknown>,
         user.role as Role
       );
-      const isComplete = dbIsComplete || calculatedIsComplete;
+      const isComplete = calculatedIsComplete;
       const profileCompletedAt = user.profileCompletedAt || null;
 
       if (!dbIsComplete && calculatedIsComplete) {
         await this.databaseService.updateUserSafe(userId, {
           isProfileComplete: true,
           profileCompletedAt: new Date(),
+        } as never);
+      } else if (dbIsComplete && !calculatedIsComplete) {
+        await this.databaseService.updateUserSafe(userId, {
+          isProfileComplete: false,
         } as never);
       }
 
@@ -2635,7 +2639,7 @@ export class UsersService {
     // Validate field formats
     this.validateFieldFormats(profile, role, errors);
 
-    // phoneVerified IS required before completing profile
+    // phoneVerified IS required before completing profile for every role
     const phone = profile['phone'] as string | undefined;
     if (phone && phone.trim() && profile['phoneVerified'] !== true) {
       errors.push({

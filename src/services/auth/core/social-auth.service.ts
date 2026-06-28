@@ -10,6 +10,25 @@ import { resolveClinicUUID } from '@utils/clinic.utils';
 import { generateSocialUserId } from '@utils/user-id.util';
 import { OAuth2Client } from 'google-auth-library';
 
+function splitDisplayName(displayName?: string | null): {
+  firstName: string;
+  lastName: string;
+  name: string;
+} {
+  const trimmed = typeof displayName === 'string' ? displayName.trim() : '';
+  if (!trimmed) {
+    return { firstName: '', lastName: '', name: '' };
+  }
+
+  const [firstName = '', ...rest] = trimmed.split(/\s+/);
+  const lastName = rest.join(' ').trim();
+  return {
+    firstName,
+    lastName,
+    name: trimmed,
+  };
+}
+
 @Injectable()
 export class SocialAuthService {
   private readonly providers: Map<string, SocialAuthProvider> = new Map();
@@ -105,12 +124,24 @@ export class SocialAuthService {
   async authenticateWithGoogle(googleToken: string, clinicId?: string): Promise<SocialAuthResult> {
     try {
       const googleUser = await this.verifyGoogleToken(googleToken);
+      const nameParts = splitDisplayName(
+        [
+          (googleUser as Record<string, unknown>)['name'] as string | undefined,
+          (googleUser as Record<string, unknown>)['given_name'] as string | undefined,
+          (googleUser as Record<string, unknown>)['family_name'] as string | undefined,
+        ]
+          .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+          .join(' ')
+      );
 
       return await this.processSocialUser({
         id: (googleUser as Record<string, unknown>)['id'] as string,
         email: (googleUser as Record<string, unknown>)['email'] as string,
-        firstName: (googleUser as Record<string, unknown>)['given_name'] as string,
-        lastName: (googleUser as Record<string, unknown>)['family_name'] as string,
+        name: nameParts.name,
+        firstName:
+          ((googleUser as Record<string, unknown>)['given_name'] as string) || nameParts.firstName,
+        lastName:
+          ((googleUser as Record<string, unknown>)['family_name'] as string) || nameParts.lastName,
         profilePicture: (googleUser as Record<string, unknown>)['picture'] as string,
         provider: 'google',
         ...(clinicId ? { clinicId } : {}),
@@ -214,8 +245,7 @@ export class SocialAuthService {
         const userData: Record<string, unknown> = {
           userid: generateSocialUserId(socialUser.email, socialUser.provider),
           email: socialUser.email,
-          name:
-            `${socialUser.firstName || ''} ${socialUser.lastName || ''}`.trim() || socialUser.email,
+          name: `${socialUser.firstName || ''} ${socialUser.lastName || ''}`.trim(),
           age: 12, // Temporary default - MUST be updated with actual DOB during profile completion
           firstName: socialUser.firstName || '',
           lastName: socialUser.lastName || '',
@@ -272,6 +302,7 @@ export class SocialAuthService {
         user: {
           id: user.id,
           email: user.email,
+          name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim(),
           firstName: user.firstName,
           lastName: user.lastName,
           role: user.role,
