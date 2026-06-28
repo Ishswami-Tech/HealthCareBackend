@@ -222,16 +222,15 @@ export class InvoicePDFService {
       .fillColor(this.c.white)
       .text(initials, x, y + 14, { width: logoSize, align: 'center' });
 
-    doc
-      .font('Helvetica-Bold')
-      .fontSize(19)
-      .fillColor(this.c.dark)
-      .text(data.clinicName, x + 60, y + 2, { width: w - 220 });
+    doc.font('Helvetica-Bold').fontSize(19);
+    const clinicNameHeight = doc.heightOfString(data.clinicName, { width: w - 220 });
+    doc.fillColor(this.c.dark).text(data.clinicName, x + 60, y + 2, { width: w - 220 });
+
     doc
       .font('Helvetica')
       .fontSize(11)
       .fillColor(this.c.gray)
-      .text(tagline, x + 60, y + 24, { width: w - 220 });
+      .text(tagline, x + 60, y + 2 + clinicNameHeight + 4, { width: w - 220 });
 
     doc
       .font('Helvetica-Bold')
@@ -259,7 +258,10 @@ export class InvoicePDFService {
         });
     }
 
-    return y + 82;
+    doc.font('Helvetica-Bold').fontSize(19);
+    const finalClinicNameHeight = doc.heightOfString(data.clinicName, { width: w - 220 });
+    const contentY = y + 2 + finalClinicNameHeight + 4 + 14;
+    return Math.max(y + 82, contentY + 16);
   }
 
   private drawInfoRow(
@@ -311,21 +313,18 @@ export class InvoicePDFService {
     footerReserve: number
   ): number {
     const leftDetails = this.buildPartyDetails([data.userEmail, data.userPhone, data.userAddress]);
-    const rightDetails = this.buildPartyDetails([
-      data.clinicAddress,
-      data.clinicPhone,
-      data.clinicEmail,
-    ]);
-    const leftHeight = this.measurePartyCard(doc, data.userName, leftDetails);
-    const rightHeight = this.measurePartyCard(doc, data.clinicName, rightDetails);
+    const rightDetails = this.buildPartyDetails([data.clinicAddress, data.clinicPhone]);
+    const gap = 16;
+    const cardW = (w - gap) / 2;
+
+    const leftHeight = this.measurePartyCard(doc, data.userName, leftDetails, cardW);
+    const rightHeight = this.measurePartyCard(doc, data.clinicName, rightDetails, cardW);
     const cardH = Math.max(leftHeight, rightHeight);
 
     if (y + cardH > doc.page.height - footerReserve) {
       y = this.addPageAndBackground(doc);
     }
 
-    const gap = 16;
-    const cardW = (w - gap) / 2;
     const leftX = x;
     const rightX = x + cardW + gap;
 
@@ -348,15 +347,23 @@ export class InvoicePDFService {
     return values.map(value => String(value || '').trim()).filter(Boolean);
   }
 
-  private measurePartyCard(doc: PDFDocumentInstance, name: string, details: string[]): number {
+  private measurePartyCard(
+    doc: PDFDocumentInstance,
+    name: string,
+    details: string[],
+    w: number
+  ): number {
+    doc.font('Helvetica-Bold').fontSize(14);
+    const nameHeight = doc.heightOfString(name || 'N/A', { width: w - 32 });
+
     const body = details.length ? details.join('\n') : 'N/A';
     doc.font('Helvetica');
     doc.fontSize(11);
     const bodyHeight = doc.heightOfString(body, {
-      width: 300,
+      width: w - 32,
       lineGap: 3,
     });
-    return Math.max(96, 56 + bodyHeight);
+    return Math.max(96, 30 + nameHeight + 10 + bodyHeight + 16);
   }
 
   private drawPartyCard(
@@ -377,16 +384,16 @@ export class InvoicePDFService {
       .fontSize(9.5)
       .fillColor(this.c.grayLight)
       .text(label, x + 16, y + 14, { characterSpacing: 0.8 });
-    doc
-      .font('Helvetica-Bold')
-      .fontSize(14)
-      .fillColor(this.c.dark)
-      .text(name || 'N/A', x + 16, y + 30, { width: w - 32 });
+    doc.font('Helvetica-Bold').fontSize(14);
+    const nameHeight = doc.heightOfString(name || 'N/A', { width: w - 32 });
+
+    doc.fillColor(this.c.dark).text(name || 'N/A', x + 16, y + 30, { width: w - 32 });
+
     doc
       .font('Helvetica')
       .fontSize(11)
       .fillColor(this.c.gray)
-      .text(details.length ? details.join('\n') : 'N/A', x + 16, y + 54, {
+      .text(details.length ? details.join('\n') : 'N/A', x + 16, y + 30 + nameHeight + 10, {
         width: w - 32,
         lineGap: 3,
       });
