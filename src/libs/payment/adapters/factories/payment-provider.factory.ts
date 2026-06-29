@@ -66,6 +66,30 @@ export class PaymentProviderFactory {
         );
       }
 
+      case PaymentProvider.EASEBUZZ: {
+        await import('@nestjs/axios');
+        await import('@payment/adapters/easebuzz/easebuzz-payment.adapter');
+        throw new Error(
+          'Easebuzz adapter requires HttpService. Use createAdapterWithHttpService() method instead.'
+        );
+      }
+
+      case PaymentProvider.PAYTM: {
+        await import('@nestjs/axios');
+        await import('@payment/adapters/paytm/paytm-payment.adapter');
+        throw new Error(
+          'Paytm adapter requires HttpService. Use createAdapterWithHttpService() method instead.'
+        );
+      }
+
+      case PaymentProvider.PAYU: {
+        await import('@nestjs/axios');
+        await import('@payment/adapters/payu/payu-payment.adapter');
+        throw new Error(
+          'PayU adapter requires HttpService. Use createAdapterWithHttpService() method instead.'
+        );
+      }
+
       default:
         throw new Error(`Unsupported payment provider: ${config.provider}`);
     }
@@ -77,7 +101,7 @@ export class PaymentProviderFactory {
   }
 
   /**
-   * Create payment provider adapter with HttpService (for Cashfree, PhonePe)
+   * Create payment provider adapter with HttpService (for Cashfree, PhonePe, Easebuzz, Paytm)
    */
   async createAdapterWithHttpService(
     config: PaymentProviderConfig,
@@ -105,6 +129,26 @@ export class PaymentProviderFactory {
         const { PhonePePaymentAdapter } =
           await import('@payment/adapters/phonepe/phonepe-payment.adapter');
         adapter = new PhonePePaymentAdapter(this.loggingService, httpService);
+        break;
+      }
+
+      case PaymentProvider.EASEBUZZ: {
+        const { EasebuzzPaymentAdapter } =
+          await import('@payment/adapters/easebuzz/easebuzz-payment.adapter');
+        adapter = new EasebuzzPaymentAdapter(this.loggingService, httpService);
+        break;
+      }
+
+      case PaymentProvider.PAYTM: {
+        const { PaytmBusinessPaymentAdapter } =
+          await import('@payment/adapters/paytm/paytm-payment.adapter');
+        adapter = new PaytmBusinessPaymentAdapter(this.loggingService, httpService);
+        break;
+      }
+
+      case PaymentProvider.PAYU: {
+        const { PayUPaymentAdapter } = await import('@payment/adapters/payu/payu-payment.adapter');
+        adapter = new PayUPaymentAdapter(this.loggingService, httpService);
         break;
       }
 

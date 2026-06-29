@@ -242,24 +242,21 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
         redirectUrl:
           (options.metadata?.['redirectUrl'] as string) ||
           (() => {
-            const baseUrl = options.metadata?.['baseUrl'] as string | undefined;
-            if (!baseUrl) {
-              throw new Error(
-                'Missing baseUrl in payment metadata. BASE_URL or API_URL must be set in environment configuration.'
-              );
-            }
+            const baseUrl =
+              (options.metadata?.['baseUrl'] as string) ||
+              process.env['FRONTEND_URL'] ||
+              'http://localhost:3000';
             return `${baseUrl}/payment/callback`;
           })(),
         redirectMode: 'REDIRECT',
         callbackUrl:
           (options.metadata?.['callbackUrl'] as string) ||
           (() => {
-            const baseUrl = options.metadata?.['baseUrl'] as string | undefined;
-            if (!baseUrl) {
-              throw new Error(
-                'Missing baseUrl in payment metadata. BASE_URL or API_URL must be set in environment configuration.'
-              );
-            }
+            const baseUrl =
+              (options.metadata?.['baseUrl'] as string) ||
+              process.env['API_URL'] ||
+              process.env['BASE_URL'] ||
+              'http://localhost:8088';
             return `${baseUrl}/api/v1/payments/phonepe/webhook`;
           })(),
         ...(options.customerPhone && { mobileNumber: options.customerPhone }),

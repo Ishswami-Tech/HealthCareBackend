@@ -137,36 +137,182 @@ export class PaymentConfigService implements OnModuleInit {
    * Get default configuration (fallback)
    */
   private getDefaultConfig(clinicId: string): ClinicPaymentConfig {
-    // Read Cashfree credentials from environment variables as a global fallback
     const cashfreeAppId = this.configService.getEnv('CASHFREE_APP_ID') || '';
     const cashfreeSecretKey = this.configService.getEnv('CASHFREE_SECRET_KEY') || '';
     const cashfreeEnv = this.configService.getEnv('CASHFREE_ENVIRONMENT', 'sandbox');
     const cashfreeEnabled = cashfreeAppId.length > 0 && cashfreeSecretKey.length > 0;
 
+    const razorpayKeyId = this.configService.getEnv('RAZORPAY_KEY_ID') || '';
+    const razorpayKeySecret = this.configService.getEnv('RAZORPAY_KEY_SECRET') || '';
+    const razorpayEnabled = razorpayKeyId.length > 0 && razorpayKeySecret.length > 0;
+
+    const phonepeMerchantId = this.configService.getEnv('PHONEPE_MERCHANT_ID') || '';
+    const phonepeSaltKey = this.configService.getEnv('PHONEPE_SALT_KEY') || '';
+    const phonepeSaltIndex = this.configService.getEnv('PHONEPE_SALT_INDEX', '1') || '1';
+    const phonepeEnv = this.configService.getEnv('PHONEPE_ENVIRONMENT', 'sandbox');
+    const phonepeEnabled = phonepeMerchantId.length > 0 && phonepeSaltKey.length > 0;
+
+    const easebuzzMerchantKey = this.configService.getEnv('EASEBUZZ_MERCHANT_KEY') || '';
+    const easebuzzMerchantSalt = this.configService.getEnv('EASEBUZZ_MERCHANT_SALT') || '';
+    const easebuzzEnv = this.configService.getEnv('EASEBUZZ_ENVIRONMENT', 'TEST');
+    const easebuzzEnabled = easebuzzMerchantKey.length > 0 && easebuzzMerchantSalt.length > 0;
+
+    const paytmMerchantId = this.configService.getEnv('PAYTM_MERCHANT_ID') || '';
+    const paytmMerchantKey = this.configService.getEnv('PAYTM_MERCHANT_KEY') || '';
+    const paytmWebsite = this.configService.getEnv('PAYTM_WEBSITE', 'WEBSTAGING') || 'WEBSTAGING';
+    const paytmIndustryType =
+      this.configService.getEnv('PAYTM_INDUSTRY_TYPE_ID', 'Retail') || 'Retail';
+    const paytmEnv = this.configService.getEnv('PAYTM_ENVIRONMENT', 'staging');
+    const paytmEnabled = paytmMerchantId.length > 0 && paytmMerchantKey.length > 0;
+
+    const payuMerchantKey = this.configService.getEnv('PAYU_MERCHANT_KEY') || '';
+    const payuMerchantSalt = this.configService.getEnv('PAYU_MERCHANT_SALT') || '';
+    const payuClientId = this.configService.getEnv('PAYU_CLIENT_ID') || '';
+    const payuClientSecret = this.configService.getEnv('PAYU_CLIENT_SECRET') || '';
+    const payuEnv = this.configService.getEnv('PAYU_ENVIRONMENT', 'test');
+    const payuEnabled = payuMerchantKey.length > 0 && payuMerchantSalt.length > 0;
+
+    // Determine primary provider (priority: Cashfree > Razorpay > PhonePe > Easebuzz > Paytm > PayU)
+    let primary: ClinicPaymentConfig['payment']['primary'];
+    if (cashfreeEnabled) {
+      primary = {
+        provider: PaymentProvider.CASHFREE,
+        enabled: true,
+        credentials: {
+          appId: cashfreeAppId,
+          secretKey: cashfreeSecretKey,
+          environment: cashfreeEnv || 'sandbox',
+          baseUrl:
+            cashfreeEnv === 'production'
+              ? 'https://api.cashfree.com/pg'
+              : 'https://sandbox.cashfree.com/pg',
+          apiVersion:
+            this.configService.getEnv('CASHFREE_API_VERSION', '2025-01-01') || '2025-01-01',
+        },
+        priority: 1,
+      };
+    } else if (razorpayEnabled) {
+      primary = {
+        provider: PaymentProvider.RAZORPAY,
+        enabled: true,
+        credentials: {
+          keyId: razorpayKeyId,
+          keySecret: razorpayKeySecret,
+        },
+        priority: 1,
+      };
+    } else if (phonepeEnabled) {
+      primary = {
+        provider: PaymentProvider.PHONEPE,
+        enabled: true,
+        credentials: {
+          merchantId: phonepeMerchantId,
+          saltKey: phonepeSaltKey,
+          saltIndex: phonepeSaltIndex,
+          environment: phonepeEnv || 'sandbox',
+          baseUrl:
+            phonepeEnv === 'production'
+              ? 'https://api.phonepe.com/apis/hermes'
+              : 'https://api-preprod.phonepe.com/apis/pg-sandbox',
+        },
+        priority: 1,
+      };
+    } else {
+      primary = {
+        provider: PaymentProvider.CASHFREE,
+        enabled: false,
+        credentials: {},
+        priority: 1,
+      };
+    }
+
+    // Build fallback providers
+    const fallback: ClinicPaymentConfig['payment']['fallback'] = [];
+    if (razorpayEnabled && primary.provider !== PaymentProvider.RAZORPAY) {
+      fallback.push({
+        provider: PaymentProvider.RAZORPAY,
+        enabled: true,
+        credentials: {
+          keyId: razorpayKeyId,
+          keySecret: razorpayKeySecret,
+        },
+        priority: 2,
+      });
+    }
+    if (phonepeEnabled && primary.provider !== PaymentProvider.PHONEPE) {
+      fallback.push({
+        provider: PaymentProvider.PHONEPE,
+        enabled: true,
+        credentials: {
+          merchantId: phonepeMerchantId,
+          saltKey: phonepeSaltKey,
+          saltIndex: phonepeSaltIndex,
+          environment: phonepeEnv || 'sandbox',
+          baseUrl:
+            phonepeEnv === 'production'
+              ? 'https://api.phonepe.com/apis/hermes'
+              : 'https://api-preprod.phonepe.com/apis/pg-sandbox',
+        },
+        priority: 3,
+      });
+    }
+    if (easebuzzEnabled && primary.provider !== PaymentProvider.EASEBUZZ) {
+      fallback.push({
+        provider: PaymentProvider.EASEBUZZ,
+        enabled: true,
+        credentials: {
+          merchantKey: easebuzzMerchantKey,
+          merchantSalt: easebuzzMerchantSalt,
+          environment: easebuzzEnv || 'TEST',
+          baseUrl:
+            easebuzzEnv === 'PRODUCTION'
+              ? 'https://dashboard.easebuzz.in'
+              : 'https://test.easebuzz.in',
+        },
+        priority: 4,
+      });
+    }
+    if (paytmEnabled && primary.provider !== PaymentProvider.PAYTM) {
+      fallback.push({
+        provider: PaymentProvider.PAYTM,
+        enabled: true,
+        credentials: {
+          merchantId: paytmMerchantId,
+          merchantKey: paytmMerchantKey,
+          website: paytmWebsite,
+          industryTypeId: paytmIndustryType,
+          environment: paytmEnv || 'staging',
+          baseUrl:
+            paytmEnv === 'production'
+              ? 'https://securegw.paytm.in'
+              : 'https://securegw-stage.paytm.in',
+        },
+        priority: 5,
+      });
+    }
+    if (payuEnabled && primary.provider !== PaymentProvider.PAYU) {
+      fallback.push({
+        provider: PaymentProvider.PAYU,
+        enabled: true,
+        credentials: {
+          merchantKey: payuMerchantKey,
+          merchantSalt: payuMerchantSalt,
+          clientId: payuClientId,
+          clientSecret: payuClientSecret,
+          environment: payuEnv || 'test',
+          baseUrl: payuEnv === 'production' ? 'https://info.payu.in' : 'https://test.payu.in',
+        },
+        priority: 6,
+      });
+    }
+
     return {
       clinicId,
       payment: {
-        primary: {
-          provider: PaymentProvider.CASHFREE,
-          enabled: cashfreeEnabled,
-          credentials: cashfreeEnabled
-            ? {
-                appId: cashfreeAppId,
-                secretKey: cashfreeSecretKey,
-                environment: cashfreeEnv || 'sandbox',
-                baseUrl:
-                  cashfreeEnv === 'production'
-                    ? 'https://api.cashfree.com/pg'
-                    : 'https://sandbox.cashfree.com/pg',
-                apiVersion:
-                  this.configService.getEnv('CASHFREE_API_VERSION', '2025-01-01') || '2025-01-01',
-              }
-            : {},
-          priority: 1,
-        },
-        fallback: [],
+        primary,
+        fallback,
         defaultCurrency: this.configService.getEnv('PAYMENT_DEFAULT_CURRENCY', 'INR') || 'INR',
-        defaultProvider: PaymentProvider.CASHFREE,
+        defaultProvider: primary.provider,
       },
       createdAt: new Date(),
       updatedAt: new Date(),
