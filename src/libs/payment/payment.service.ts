@@ -181,14 +181,6 @@ export class PaymentService {
       const demoProvider = provider || config.payment.primary.provider;
       const demoResult = this.createDemoPaymentResult(clinicId, paymentOptions, demoProvider);
 
-      await this.loggingService.log(
-        LogType.PAYMENT,
-        LogLevel.INFO,
-        `Demo payment intent created with provider: ${demoProvider}`,
-        'PaymentService',
-        { clinicId, provider: demoProvider, paymentId: demoResult.paymentId }
-      );
-
       const demoEventPayload: EnterpriseEventPayload = {
         eventId: `payment-intent-${demoResult.paymentId}`,
         eventType: 'payment.intent.created',
@@ -210,7 +202,16 @@ export class PaymentService {
           demoMode: true,
         },
       };
-      await this.eventService.emitEnterprise('payment.intent.created', demoEventPayload);
+      void Promise.allSettled([
+        this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.INFO,
+          `Demo payment intent created with provider: ${demoProvider}`,
+          'PaymentService',
+          { clinicId, provider: demoProvider, paymentId: demoResult.paymentId }
+        ),
+        this.eventService.emitEnterprise('payment.intent.created', demoEventPayload),
+      ]);
 
       return demoResult;
     }
@@ -225,14 +226,6 @@ export class PaymentService {
       try {
         const adapter = await this.getProviderAdapter(clinicId, p);
         const result = await adapter.createPaymentIntent(paymentOptions);
-
-        await this.loggingService.log(
-          LogType.PAYMENT,
-          LogLevel.INFO,
-          `Payment intent created with provider: ${result.provider}`,
-          'PaymentService',
-          { clinicId, provider: result.provider, paymentId: result.paymentId }
-        );
 
         const eventPayload: EnterpriseEventPayload = {
           eventId: `payment-intent-${result.paymentId || Date.now()}`,
@@ -254,7 +247,16 @@ export class PaymentService {
             isSubscription: options.isSubscription,
           },
         };
-        await this.eventService.emitEnterprise('payment.intent.created', eventPayload);
+        void Promise.allSettled([
+          this.loggingService.log(
+            LogType.PAYMENT,
+            LogLevel.INFO,
+            `Payment intent created with provider: ${result.provider}`,
+            'PaymentService',
+            { clinicId, provider: result.provider, paymentId: result.paymentId }
+          ),
+          this.eventService.emitEnterprise('payment.intent.created', eventPayload),
+        ]);
 
         return result;
       } catch (error) {

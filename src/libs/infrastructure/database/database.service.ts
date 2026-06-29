@@ -726,7 +726,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
       void this.loggingService.log(
         LogType.DATABASE,
-        isStartupConnectionIssue ? LogLevel.WARN : LogLevel.ERROR,
+        isStartupConnectionIssue ? LogLevel.DEBUG : LogLevel.ERROR,
         `Read operation failed: ${dbError.message}`,
         this.serviceName,
         {
@@ -983,7 +983,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
       void this.loggingService.log(
         LogType.DATABASE,
-        isStartupConnectionIssue ? LogLevel.WARN : LogLevel.ERROR,
+        isStartupConnectionIssue ? LogLevel.DEBUG : LogLevel.ERROR,
         `Write operation failed: ${dbError.message}`,
         this.serviceName,
         {

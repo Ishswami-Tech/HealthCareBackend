@@ -837,8 +837,8 @@ export class JwtAuthGuard implements CanActivate {
   }
 
   private async checkConcurrentSessions(userId: string): Promise<void> {
-    const activeSessions = await this.cacheService.sMembers(`user:${userId}:sessions`);
-    if (activeSessions.length >= this.MAX_CONCURRENT_SESSIONS) {
+    const activeSessions = await this.sessionManagementService.getUserSessions(userId);
+    if (activeSessions.length > this.MAX_CONCURRENT_SESSIONS) {
       await this.trackSecurityEvent(userId, 'MAX_SESSIONS_REACHED', {
         activeSessionCount: activeSessions.length,
       });
@@ -858,22 +858,24 @@ export class JwtAuthGuard implements CanActivate {
       const clientIp = request.ip || 'unknown';
       const userAgent = (request.headers['user-agent'] as string) || 'unknown';
 
-      // Update session with latest activity and info
-      const updatedSession = {
-        ...sessionData,
-        lastActivityAt: new Date(),
-        ipAddress: clientIp,
-        deviceInfo: {
-          ...sessionData.deviceInfo,
-          userAgent: userAgent,
-        },
-      };
-
-      await this.cacheService.set(
-        `session:${userId}:${sessionData.sessionId}`,
-        JSON.stringify(updatedSession),
-        3600 // Keep session alive for another hour
+      const updated = await this.sessionManagementService.updateSessionActivity(
+        sessionData.sessionId,
+        {
+          ipAddress: clientIp,
+          userAgent,
+          updatedBy: 'JwtAuthGuard',
+        }
       );
+
+      if (!updated) {
+        void this.loggingService.log(
+          LogType.AUTH,
+          LogLevel.DEBUG,
+          'Session activity update skipped because session was unavailable',
+          'JwtAuthGuard',
+          { userId, sessionId: sessionData.sessionId }
+        );
+      }
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,

@@ -1322,59 +1322,71 @@ export class BillingService implements OnModuleInit {
         const invoice = await this.createInvoiceRecordAtomically(data, totalAmount);
         const invoiceNumber = invoice.invoiceNumber;
 
-        await this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.INFO,
-          'Invoice created',
-          'BillingService',
-          { invoiceId: invoice.id, invoiceNumber }
-        );
+        // Non-blocking: fire and forget all post-creation operations
+        // These MUST NOT block the invoice creation response
+        setImmediate(() => {
+          const postCreationTasks: Promise<unknown>[] = [
+            this.loggingService.log(
+              LogType.SYSTEM,
+              LogLevel.INFO,
+              'Invoice created',
+              'BillingService',
+              { invoiceId: invoice.id, invoiceNumber }
+            ),
+            this.eventService.emit('billing.invoice.created', {
+              invoiceId: invoice.id,
+              invoice,
+            }),
+            this.invalidateUserInvoiceCaches(data.userId),
+          ];
 
-        await this.eventService.emit('billing.invoice.created', {
-          invoiceId: invoice.id,
-          invoice,
-        });
-        await this.invalidateUserInvoiceCaches(data.userId);
-
-        // Queue PDF generation (heavy operation) asynchronously
-        if (this.queueService) {
-          void this.queueService
-            .addJob(
-              JobType.INVOICE_PDF,
-              'generate_pdf',
-              {
-                invoiceId: invoice.id,
-                clinicId: invoice.clinicId || '',
-                userId: invoice.userId,
-                action: 'generate_pdf',
-                metadata: {
-                  invoiceNumber: invoice.invoiceNumber,
-                  amount:
-                    typeof invoice.amount === 'number' ? invoice.amount : Number(invoice.amount),
-                  totalAmount:
-                    typeof invoice.totalAmount === 'number'
-                      ? invoice.totalAmount
-                      : Number(invoice.totalAmount),
-                },
-              },
-              {
-                priority: 5, // NORMAL priority (QueueService.PRIORITIES.NORMAL)
-                attempts: 3,
-              }
-            )
-            .catch((error: unknown) => {
-              void this.loggingService.log(
-                LogType.QUEUE,
-                LogLevel.WARN,
-                'Failed to queue invoice PDF generation',
-                'BillingService',
+          if (this.queueService) {
+            postCreationTasks.push(
+              this.queueService.addJob(
+                JobType.INVOICE_PDF,
+                'generate_pdf',
                 {
                   invoiceId: invoice.id,
-                  error: error instanceof Error ? error.message : String(error),
+                  clinicId: invoice.clinicId || '',
+                  userId: invoice.userId,
+                  action: 'generate_pdf',
+                  metadata: {
+                    invoiceNumber: invoice.invoiceNumber,
+                    amount:
+                      typeof invoice.amount === 'number' ? invoice.amount : Number(invoice.amount),
+                    totalAmount:
+                      typeof invoice.totalAmount === 'number'
+                        ? invoice.totalAmount
+                        : Number(invoice.totalAmount),
+                  },
+                },
+                {
+                  priority: 5, // NORMAL priority
+                  attempts: 3,
                 }
-              );
+              )
+            );
+          }
+
+          void Promise.allSettled(postCreationTasks)
+            .then(results => {
+              const rejected = results.filter(result => result.status === 'rejected');
+              if (rejected.length > 0) {
+                console.error('[BillingService] Invoice post-processing completed with failures', {
+                  invoiceId: invoice.id,
+                  invoiceNumber,
+                  failedTasks: rejected.length,
+                });
+              }
+            })
+            .catch(() => {
+              // This should never fire (Promise.allSettled never rejects),
+              // but we guard it to prevent any unhandled rejection
+              console.error('[BillingService] Invoice post-processing promise chain failed', {
+                invoiceId: invoice.id,
+              });
             });
-        }
+        });
 
         return invoice;
       } catch (error) {
@@ -1421,9 +1433,8 @@ export class BillingService implements OnModuleInit {
           $queryRawUnsafe: <T = unknown>(query: string, ...values: unknown[]) => Promise<T>;
         };
 
-        // Serialize invoice-number allocation even when cache is unavailable.
-        await typedClient.$executeRawUnsafe('SELECT pg_advisory_xact_lock($1)', 2026032901);
-
+        // Allocate invoice number within transaction - uses advisory lock internally
+        // to serialize concurrent requests and prevent duplicate invoice numbers
         const invoiceNumber = await this.allocateInvoiceNumberInTransaction(typedClient);
 
         return typedClient.invoice.create({
@@ -1462,9 +1473,15 @@ export class BillingService implements OnModuleInit {
 
   private async allocateInvoiceNumberInTransaction(
     typedClient: PrismaTransactionClientWithDelegates & {
+      $executeRawUnsafe: (query: string, ...values: unknown[]) => Promise<number>;
       $queryRawUnsafe: <T = unknown>(query: string, ...values: unknown[]) => Promise<T>;
     }
   ): Promise<string> {
+    // Serialize invoice number allocation within the transaction using advisory lock
+    // This prevents race conditions when multiple invoices are created concurrently
+    await typedClient.$executeRawUnsafe('SELECT pg_advisory_xact_lock($1)', 2026032901);
+
+    // Now safe to query - no other transaction can be allocating at the same time
     const rows = await typedClient.$queryRawUnsafe<Array<{ maxSequence: number | string | null }>>(
       `
         SELECT COALESCE(
@@ -1480,8 +1497,8 @@ export class BillingService implements OnModuleInit {
     const maxSequence = Number(maxSequenceRaw);
     const nextSequence = Number.isNaN(maxSequence) ? 1 : maxSequence + 1;
 
-    // Keep the shared cache warm for the fast path after the transaction commits.
-    await this.cacheService.set('invoice:counter', nextSequence.toString());
+    // Update cache after commit (fire and forget, safe since lock guarantees uniqueness)
+    void this.cacheService.set('invoice:counter', nextSequence.toString());
 
     return this.formatInvoiceNumber(nextSequence);
   }
@@ -2422,19 +2439,20 @@ export class BillingService implements OnModuleInit {
       });
     }
 
-    await this.loggingService.log(
-      LogType.SYSTEM,
-      LogLevel.INFO,
-      'Appointment booked with subscription',
-      'BillingService',
-      { subscriptionId, appointmentId }
-    );
-
-    await this.eventService.emit('billing.appointment.booked', {
-      subscriptionId,
-      appointmentId,
-    });
-    await this.invalidateUserSubscriptionCaches(subscription.userId);
+    void Promise.allSettled([
+      this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Appointment booked with subscription',
+        'BillingService',
+        { subscriptionId, appointmentId }
+      ),
+      this.eventService.emit('billing.appointment.booked', {
+        subscriptionId,
+        appointmentId,
+      }),
+      this.invalidateUserSubscriptionCaches(subscription.userId),
+    ]);
   }
 
   // ============ Payment Processing ============
@@ -2569,18 +2587,20 @@ export class BillingService implements OnModuleInit {
       },
     });
 
-    await this.loggingService.log(
-      LogType.PAYMENT,
-      LogLevel.INFO,
-      'Subscription payment intent created',
-      'BillingService',
-      {
-        subscriptionId,
-        invoiceId: invoice.id,
-        paymentId: payment.id,
-        amount: subscription.plan.amount,
-      }
-    );
+    void Promise.allSettled([
+      this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        'Subscription payment intent created',
+        'BillingService',
+        {
+          subscriptionId,
+          invoiceId: invoice.id,
+          paymentId: payment.id,
+          amount: subscription.plan.amount,
+        }
+      ),
+    ]);
 
     return {
       invoice,
@@ -2817,26 +2837,27 @@ export class BillingService implements OnModuleInit {
         });
       }
 
-      await this.loggingService.log(
-        LogType.PAYMENT,
-        LogLevel.INFO,
-        'Reused existing appointment payment record',
-        'BillingService',
-        {
-          appointmentId,
+      void Promise.allSettled([
+        this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.INFO,
+          'Reused existing appointment payment record',
+          'BillingService',
+          {
+            appointmentId,
+            paymentId: payment.id,
+            previousInvoiceId: supersededInvoiceId,
+            newInvoiceId: invoice.id,
+          }
+        ),
+        this.emitBillingPaymentStateEvents({
           paymentId: payment.id,
-          previousInvoiceId: supersededInvoiceId,
-          newInvoiceId: invoice.id,
-        }
-      );
-
-      await this.emitBillingPaymentStateEvents({
-        paymentId: payment.id,
-        clinicId: appointment.clinicId,
-        appointmentId: appointment.id,
-        status: PaymentStatus.PENDING.toLowerCase(),
-      });
-      await this.invalidateUserPaymentCaches(billingUserId || appointment.patientId);
+          clinicId: appointment.clinicId,
+          appointmentId: appointment.id,
+          status: PaymentStatus.PENDING.toLowerCase(),
+        }),
+        this.invalidateUserPaymentCaches(billingUserId || appointment.patientId),
+      ]);
     } else {
       payment = await this.createPayment({
         amount,
@@ -2850,21 +2871,23 @@ export class BillingService implements OnModuleInit {
       });
     }
 
-    await this.loggingService.log(
-      LogType.PAYMENT,
-      LogLevel.INFO,
-      'Appointment payment intent created',
-      'BillingService',
-      {
-        appointmentId,
-        invoiceId: invoice.id,
-        paymentId: payment.id,
-        amount,
-        appointmentType,
-        treatmentType: appointment.treatmentType,
-        serviceLabel: serviceMetadata.label,
-      }
-    );
+    void Promise.allSettled([
+      this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        'Appointment payment intent created',
+        'BillingService',
+        {
+          appointmentId,
+          invoiceId: invoice.id,
+          paymentId: payment.id,
+          amount,
+          appointmentType,
+          treatmentType: appointment.treatmentType,
+          serviceLabel: serviceMetadata.label,
+        }
+      ),
+    ]);
 
     return {
       invoice,
@@ -2965,17 +2988,19 @@ export class BillingService implements OnModuleInit {
       },
     });
 
-    await this.loggingService.log(
-      LogType.PAYMENT,
-      LogLevel.INFO,
-      'Invoice payment intent created',
-      'BillingService',
-      {
-        invoiceId,
-        amount: invoiceAmount,
-        provider: providerName || provider || 'default',
-      }
-    );
+    void Promise.allSettled([
+      this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        'Invoice payment intent created',
+        'BillingService',
+        {
+          invoiceId,
+          amount: invoiceAmount,
+          provider: providerName || provider || 'default',
+        }
+      ),
+    ]);
 
     return {
       invoice,
