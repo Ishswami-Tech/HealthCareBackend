@@ -172,6 +172,20 @@ export class LoggingService {
   private lastLogRetentionCleanupAt = 0;
   private logRetentionCleanupPromise: Promise<void> | null = null;
 
+  private isInStartupGracePeriod(): boolean {
+    return Date.now() - this.serviceStartTime < this.STARTUP_GRACE_PERIOD;
+  }
+
+  private isBootstrapDependencyError(errorMessage: string): boolean {
+    return (
+      errorMessage.includes('not initialized') ||
+      errorMessage.includes('providerFactory') ||
+      errorMessage.includes('getProvider') ||
+      errorMessage.includes('Cannot read properties of undefined') ||
+      errorMessage.includes('Prisma client is initialized but not connected')
+    );
+  }
+
   constructor(
     @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
@@ -343,6 +357,10 @@ export class LoggingService {
         this.lastLogRetentionCleanupAt = Date.now();
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
+        if (this.isInStartupGracePeriod() && this.isBootstrapDependencyError(errorMessage)) {
+          this.lastLogRetentionCleanupAt = Date.now();
+          return;
+        }
         console.warn(`[LoggingService] Failed to clean up expired logs: ${errorMessage}`);
       } finally {
         this.logRetentionCleanupPromise = null;
@@ -359,6 +377,10 @@ export class LoggingService {
    */
   private async getCachedSystemUser(): Promise<{ id: string } | null> {
     if (!this.databaseService) {
+      return null;
+    }
+
+    if (this.isInStartupGracePeriod() && !this.configuredSystemUserId) {
       return null;
     }
 
@@ -575,16 +597,10 @@ export class LoggingService {
 
       // Suppress initialization errors during bootstrap grace period
       // These are expected when CacheService hasn't finished initializing yet
-      const isInitializationError =
-        errorMessage.includes('not initialized') ||
-        errorMessage.includes('providerFactory') ||
-        errorMessage.includes('getProvider') ||
-        errorMessage.includes('Cannot read properties of undefined');
-
-      const isDuringGracePeriod = Date.now() - this.serviceStartTime < this.STARTUP_GRACE_PERIOD;
+      const isInitializationError = this.isBootstrapDependencyError(errorMessage);
 
       // Only log errors if they're not initialization errors during grace period
-      if (!isInitializationError || !isDuringGracePeriod) {
+      if (!isInitializationError || !this.isInStartupGracePeriod()) {
         // Log cache errors but don't break - continue with other logging operations
         console.error(`[LoggingService] Failed to store log in cache: ${errorMessage}`);
       }

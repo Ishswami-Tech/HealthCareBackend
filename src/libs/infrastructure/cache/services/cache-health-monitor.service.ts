@@ -42,12 +42,16 @@ export class CacheHealthMonitorService implements OnModuleInit, OnModuleDestroy 
   private cachedHealthStatus: CacheHealthMonitorStatus | null = null;
   private lastHealthCheckTime = 0;
   private readonly CACHE_TTL_MS = 10000; // Cache health status for 10 seconds to avoid excessive queries
+  private readonly STALE_HEALTH_TTL_MS = 2 * 60 * 1000;
   private readonly HEALTH_CHECK_TIMEOUT_MS = 2000; // Max 2 seconds for health check (non-blocking)
   private lastExpensiveCheckTime = 0;
   private readonly EXPENSIVE_CHECK_INTERVAL_MS = 60000; // Run expensive checks every 60 seconds only
   private isHealthCheckInProgress = false; // Prevent concurrent health checks
   // Circuit breaker name for health checks (prevents CPU load when cache is down)
   private readonly HEALTH_CHECK_CIRCUIT_BREAKER_NAME = 'cache-health-check';
+  private lastUnhealthyLogAt = 0;
+  private lastLoggedHealthy = true;
+  private readonly UNHEALTHY_LOG_THROTTLE_MS = 5 * 60 * 1000;
 
   constructor(
     @Inject(forwardRef(() => ConfigService))
@@ -111,7 +115,23 @@ export class CacheHealthMonitorService implements OnModuleInit, OnModuleDestroy 
         }, this.HEALTH_CHECK_TIMEOUT_MS);
       });
 
+      const previousStatus = this.cachedHealthStatus;
+      const previousStatusAgeMs = previousStatus ? Date.now() - this.lastHealthCheckTime : Infinity;
       const status = await Promise.race([healthCheckPromise, timeoutPromise]);
+      const shouldUseRecentHealthyStatus =
+        !status.healthy &&
+        previousStatus?.healthy === true &&
+        previousStatusAgeMs < this.STALE_HEALTH_TTL_MS;
+
+      if (shouldUseRecentHealthyStatus) {
+        return {
+          ...previousStatus,
+          issues: [
+            ...(previousStatus.issues || []),
+            ...(status.issues || ['Transient cache health miss']),
+          ],
+        };
+      }
 
       // Update cache
       this.cachedHealthStatus = status;
@@ -427,11 +447,21 @@ export class CacheHealthMonitorService implements OnModuleInit, OnModuleDestroy 
     // Circuit breaker prevents excessive checks when unhealthy (saves CPU)
     void this.getHealthStatus()
       .then(status => {
+        if (status.healthy) {
+          this.lastLoggedHealthy = true;
+          return;
+        }
+
+        const now = Date.now();
+        const shouldLogUnhealthy =
+          this.lastLoggedHealthy || now - this.lastUnhealthyLogAt >= this.UNHEALTHY_LOG_THROTTLE_MS;
+
         if (
-          !status.healthy &&
+          shouldLogUnhealthy &&
           this.circuitBreakerService.canExecute(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME)
         ) {
-          // Only log if circuit breaker is not open (avoid log spam)
+          this.lastLoggedHealthy = false;
+          this.lastUnhealthyLogAt = now;
           void this.loggingService?.log(
             LogType.CACHE,
             LogLevel.WARN,

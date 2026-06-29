@@ -43,6 +43,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
   private readonly BACKGROUND_CHECK_INTERVAL_HEALTHY = 300000; // 5 minutes when all services healthy (Socket.IO handles real-time updates)
   private readonly BACKGROUND_CHECK_INTERVAL_UNHEALTHY = 30000; // 30 seconds when services unhealthy (need frequent checks)
   private readonly DB_CHECK_INTERVAL = 10000; // 10 seconds - DB connection monitoring interval
+  private readonly RECENT_HEALTHY_CACHE_STATUS_TTL_MS = 2 * 60 * 1000;
   private readonly serviceStartTime = Date.now(); // Track when service started
   private readonly EXTERNAL_SERVICE_STARTUP_GRACE_PERIOD = 90000; // 90 seconds - allow external services time to start
 
@@ -899,6 +900,20 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 // Health check failed - log through LoggingService
                 const errorMessage =
                   result.reason instanceof Error ? result.reason.message : 'Unknown error';
+                const recentHealthyStatus = useCachedStatus(
+                  serviceKey,
+                  serviceKey === 'cache'
+                    ? this.RECENT_HEALTHY_CACHE_STATUS_TTL_MS
+                    : this.MAX_CACHE_AGE_MS
+                );
+                if (recentHealthyStatus?.status === 'healthy') {
+                  services[serviceKey] = {
+                    ...recentHealthyStatus,
+                    details: `${recentHealthyStatus.details || `${serviceKey} status from background monitoring`} (recent healthy status retained after transient check failure: ${errorMessage})`,
+                  };
+                  continue;
+                }
+
                 void this.loggingService?.log(
                   LogType.SYSTEM,
                   LogLevel.ERROR,

@@ -1541,13 +1541,15 @@ export class AppointmentsService {
       Role.ASSISTANT_DOCTOR,
     ].includes(normalizedRole as Role);
 
-    await this.loggingService.log(
-      LogType.APPOINTMENT,
-      LogLevel.INFO,
-      `Checking subscription for role: ${normalizedRole}, isAdministrative: ${isAdministrativeRole}`,
-      'AppointmentsService',
-      { role: normalizedRole, isAdministrativeRole }
-    );
+    void Promise.allSettled([
+      this.loggingService.log(
+        LogType.APPOINTMENT,
+        LogLevel.INFO,
+        `Checking subscription for role: ${normalizedRole}, isAdministrative: ${isAdministrativeRole}`,
+        'AppointmentsService',
+        { role: normalizedRole, isAdministrativeRole }
+      ),
+    ]);
 
     let resolvedInPersonCoverage: { subscriptionId: string; patientUserId: string } | null = null;
     if (shouldResolveInPersonCoverageBeforeCreate) {
@@ -1571,19 +1573,21 @@ export class AppointmentsService {
 
     // Log security event for appointment creation
     if (result.success) {
-      await this.loggingService.log(
-        LogType.SECURITY,
-        LogLevel.INFO,
-        'Appointment created successfully',
-        'AppointmentsService',
-        {
-          appointmentId: (result.data as Record<string, unknown>)?.['id'] as string,
-          doctorId: createDto.doctorId,
-          patientId: createDto.patientId,
-          userId,
-          clinicId,
-        }
-      );
+      void Promise.allSettled([
+        this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.INFO,
+          'Appointment created successfully',
+          'AppointmentsService',
+          {
+            appointmentId: (result.data as Record<string, unknown>)?.['id'] as string,
+            doctorId: createDto.doctorId,
+            patientId: createDto.patientId,
+            userId,
+            clinicId,
+          }
+        ),
+      ]);
 
       // Invalidate related cache entries
       void this.cacheService.invalidateAppointmentCache(

@@ -186,7 +186,11 @@ export class AuthService {
   }
 
   private logOtp(message: string, context: Record<string, unknown> = {}): void {
-    void this.logging.log(LogType.AUTH, LogLevel.WARN, message, 'AuthService', context);
+    if (!this.otpDebugEnabled) {
+      return;
+    }
+
+    void this.logging.log(LogType.AUTH, LogLevel.DEBUG, message, 'AuthService', context);
     void this.eventService.emit('auth.otp.diagnostic', {
       source: 'AuthService',
       message,
