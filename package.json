@@ -158,6 +158,7 @@
     "pg": "^8.20.0",
     "postcss": "8.5.15",
     "qrcode": "^1.5.4",
+    "razorpay": "^2.9.6",
     "redis": "^6.0.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",

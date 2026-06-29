@@ -174,8 +174,10 @@ export enum PaymentProvider {
   RAZORPAY = 'razorpay',
   CASHFREE = 'cashfree',
   PHONEPE = 'phonepe',
+  EASEBUZZ = 'easebuzz',
+  PAYTM = 'paytm',
+  PAYU = 'payu',
   STRIPE = 'stripe', // For future use
-  PAYU = 'payu', // For future use
 }
 
 /**

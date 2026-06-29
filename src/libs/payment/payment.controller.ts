@@ -22,7 +22,6 @@ import { ModuleRef } from '@nestjs/core';
 import { ApiTags, ApiOperation, ApiResponse, ApiHeader } from '@nestjs/swagger';
 import { DatabaseService } from '@infrastructure/database';
 import { PaymentService } from './payment.service';
-// Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel, PaymentProvider } from '@core/types';
 import { Public } from '@core/decorators/public.decorator';
@@ -196,7 +195,6 @@ export class PaymentController {
         return { success: false };
       }
 
-      // Extract payment details from webhook payload
       const event = body['event'] as string;
       const payload = body['payload'] as Record<string, unknown>;
       const paymentEntity = payload?.['payment'] as Record<string, unknown>;
@@ -213,7 +211,6 @@ export class PaymentController {
         throw new Error('Razorpay webhook signature is required');
       }
 
-      // Verify webhook signature
       const isValid = await this.paymentService.verifyWebhook(
         resolvedClinicId,
         {
@@ -277,6 +274,7 @@ export class PaymentController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Handle Cashfree webhook' })
   @ApiHeader({ name: 'x-webhook-signature', description: 'Cashfree webhook signature' })
+  @ApiHeader({ name: 'x-cf-signature', description: 'Cashfree legacy signature' })
   @ApiHeader({ name: 'x-webhook-timestamp', description: 'Cashfree webhook timestamp' })
   @ApiResponse({ status: 200, description: 'Webhook processed successfully' })
   async handleCashfreeWebhook(
@@ -295,21 +293,11 @@ export class PaymentController {
           : Buffer.isBuffer(request.rawBody)
             ? request.rawBody.toString('utf8')
             : JSON.stringify(body);
-      // Cashfree final status is payment_status=SUCCESS and cf_payment_id is unique per attempt.
       const dataObj = (
         typeof body['data'] === 'object' && body['data'] !== null ? body['data'] : body
       ) as Record<string, unknown>;
-      const orderEntity =
-        typeof dataObj['order'] === 'object' && dataObj['order'] !== null
-          ? (dataObj['order'] as Record<string, unknown>)
-          : null;
       const orderIdRaw =
-        dataObj['orderId'] ??
-        dataObj['order_id'] ??
-        orderEntity?.['order_id'] ??
-        orderEntity?.['id'] ??
-        body['orderId'] ??
-        body['order_id'];
+        dataObj['orderId'] ?? dataObj['order_id'] ?? body['orderId'] ?? body['order_id'];
       const appointmentIdRaw =
         dataObj['appointmentId'] ??
         dataObj['appointment_id'] ??
@@ -429,7 +417,6 @@ export class PaymentController {
         return { success: false };
       }
 
-      // Extract payment details from webhook payload first so we can resolve the clinic
       const base64Payload = body['request'] as string;
       let merchantTransactionId = '';
       let transactionId = '';
@@ -456,7 +443,6 @@ export class PaymentController {
         throw new Error('PhonePe webhook signature is required');
       }
 
-      // Verify webhook signature
       const isValid = await this.paymentService.verifyWebhook(
         resolvedClinicId,
         {
@@ -478,7 +464,6 @@ export class PaymentController {
       }
 
       if (merchantTransactionId && transactionId) {
-        // Handle payment callback
         await this.getBillingService().handlePaymentCallback(
           resolvedClinicId,
           transactionId,
@@ -501,6 +486,287 @@ export class PaymentController {
         LogType.PAYMENT,
         LogLevel.ERROR,
         `Failed to process PhonePe webhook: ${error instanceof Error ? error.message : String(error)}`,
+        'PaymentController',
+        {
+          clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+      return { success: false };
+    }
+  }
+
+  /**
+   * Easebuzz webhook handler
+   */
+  @Post('easebuzz/webhook')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Handle Easebuzz webhook' })
+  @ApiHeader({ name: 'X-Easebuzz-Signature', description: 'Easebuzz webhook signature' })
+  @ApiResponse({ status: 200, description: 'Webhook processed successfully' })
+  async handleEasebuzzWebhook(
+    @Body() body: Record<string, unknown>,
+    @Headers('x-easebuzz-signature') signature: string,
+    @Query('clinicId') clinicId: string
+  ): Promise<{ success: boolean }> {
+    try {
+      if (!this.isProviderEnabled(PaymentProvider.EASEBUZZ)) {
+        await this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.WARN,
+          'Easebuzz webhook received but provider is disabled',
+          'PaymentController',
+          { clinicId }
+        );
+        return { success: false };
+      }
+
+      const merchantTxnId =
+        typeof body['merchant_txnid'] === 'string' ? body['merchant_txnid'] : '';
+      const paymentId = typeof body['payment_id'] === 'string' ? body['payment_id'] : '';
+      const status = typeof body['status'] === 'string' ? body['status'] : '';
+      const resolvedClinicId =
+        clinicId || (await this.resolveClinicIdFromPaymentReferences(paymentId, merchantTxnId));
+
+      if (!resolvedClinicId) {
+        throw new Error('Clinic ID is required');
+      }
+      if (!signature) {
+        throw new Error('Easebuzz webhook signature is required');
+      }
+
+      const isValid = await this.paymentService.verifyWebhook(
+        resolvedClinicId,
+        {
+          payload: body,
+          signature: signature || '',
+        },
+        PaymentProvider.EASEBUZZ
+      );
+
+      if (!isValid) {
+        await this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.WARN,
+          'Invalid Easebuzz webhook signature',
+          'PaymentController',
+          { clinicId: resolvedClinicId }
+        );
+        return { success: false };
+      }
+
+      if ((status === 'success' || status === 'SUCCESS') && paymentId && merchantTxnId) {
+        await this.getBillingService().handlePaymentCallback(
+          resolvedClinicId,
+          paymentId,
+          merchantTxnId,
+          PaymentProvider.EASEBUZZ
+        );
+      }
+
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        'Easebuzz webhook processed',
+        'PaymentController',
+        { clinicId: resolvedClinicId, status, merchantTxnId }
+      );
+
+      return { success: true };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.ERROR,
+        `Failed to process Easebuzz webhook: ${error instanceof Error ? error.message : String(error)}`,
+        'PaymentController',
+        {
+          clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+      return { success: false };
+    }
+  }
+
+  /**
+   * Paytm Business webhook handler
+   */
+  @Post('paytm/webhook')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Handle Paytm Business webhook' })
+  @ApiHeader({ name: 'X-Paytm-Signature', description: 'Paytm webhook checksum' })
+  @ApiResponse({ status: 200, description: 'Webhook processed successfully' })
+  async handlePaytmWebhook(
+    @Body() body: Record<string, unknown>,
+    @Headers('x-paytm-signature') signature: string,
+    @Query('clinicId') clinicId: string
+  ): Promise<{ success: boolean }> {
+    try {
+      if (!this.isProviderEnabled(PaymentProvider.PAYTM)) {
+        await this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.WARN,
+          'Paytm webhook received but provider is disabled',
+          'PaymentController',
+          { clinicId }
+        );
+        return { success: false };
+      }
+
+      const paytmBody = body['body'] as Record<string, unknown> | undefined;
+      const orderId =
+        typeof paytmBody?.['orderId'] === 'string' ? String(paytmBody['orderId']) : '';
+      const paymentId = typeof paytmBody?.['txnId'] === 'string' ? String(paytmBody['txnId']) : '';
+      const resultInfo = paytmBody?.['resultInfo'] as Record<string, unknown> | null | undefined;
+      const resultStatus =
+        typeof resultInfo?.['resultStatus'] === 'string' ? String(resultInfo['resultStatus']) : '';
+      const resolvedClinicId =
+        clinicId || (await this.resolveClinicIdFromPaymentReferences(paymentId, orderId));
+
+      if (!resolvedClinicId) {
+        throw new Error('Clinic ID is required');
+      }
+      if (!signature) {
+        throw new Error('Paytm webhook signature is required');
+      }
+
+      const isValid = await this.paymentService.verifyWebhook(
+        resolvedClinicId,
+        {
+          payload: body,
+          signature: signature || '',
+        },
+        PaymentProvider.PAYTM
+      );
+
+      if (!isValid) {
+        await this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.WARN,
+          'Invalid Paytm webhook signature',
+          'PaymentController',
+          { clinicId: resolvedClinicId }
+        );
+        return { success: false };
+      }
+
+      if (resultStatus === 'TXN_SUCCESS' && paymentId && orderId) {
+        await this.getBillingService().handlePaymentCallback(
+          resolvedClinicId,
+          paymentId,
+          orderId,
+          PaymentProvider.PAYTM
+        );
+      }
+
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        'Paytm webhook processed',
+        'PaymentController',
+        { clinicId: resolvedClinicId, resultStatus, orderId }
+      );
+
+      return { success: true };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.ERROR,
+        `Failed to process Paytm webhook: ${error instanceof Error ? error.message : String(error)}`,
+        'PaymentController',
+        {
+          clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+      return { success: false };
+    }
+  }
+
+  /**
+   * PayU webhook handler
+   */
+  @Post('payu/webhook')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Handle PayU webhook' })
+  @ApiHeader({ name: 'X-PayU-Signature', description: 'PayU webhook signature' })
+  @ApiResponse({ status: 200, description: 'Webhook processed successfully' })
+  async handlePayUWebhook(
+    @Body() body: Record<string, unknown>,
+    @Headers('x-payu-signature') signature: string,
+    @Query('clinicId') clinicId: string
+  ): Promise<{ success: boolean }> {
+    try {
+      if (!this.isProviderEnabled(PaymentProvider.PAYU)) {
+        await this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.WARN,
+          'PayU webhook received but provider is disabled',
+          'PaymentController',
+          { clinicId }
+        );
+        return { success: false };
+      }
+
+      const orderId = typeof body['orderId'] === 'string' ? body['orderId'] : '';
+      const status = typeof body['status'] === 'string' ? body['status'] : '';
+      const txnId = typeof body['txnId'] === 'string' ? body['txnId'] : '';
+      const resolvedClinicId =
+        clinicId || (await this.resolveClinicIdFromPaymentReferences(txnId, orderId));
+
+      if (!resolvedClinicId) {
+        throw new Error('Clinic ID is required');
+      }
+      if (!signature) {
+        throw new Error('PayU webhook signature is required');
+      }
+
+      const isValid = await this.paymentService.verifyWebhook(
+        resolvedClinicId,
+        {
+          payload: body,
+          signature: signature || '',
+        },
+        PaymentProvider.PAYU
+      );
+
+      if (!isValid) {
+        await this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.WARN,
+          'Invalid PayU webhook signature',
+          'PaymentController',
+          { clinicId: resolvedClinicId }
+        );
+        return { success: false };
+      }
+
+      if ((status === 'success' || status === 'SUCCESS') && txnId) {
+        await this.getBillingService().handlePaymentCallback(
+          resolvedClinicId,
+          txnId,
+          orderId,
+          PaymentProvider.PAYU
+        );
+      }
+
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        'PayU webhook processed',
+        'PaymentController',
+        { clinicId: resolvedClinicId, status, orderId }
+      );
+
+      return { success: true };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.ERROR,
+        `Failed to process PayU webhook: ${error instanceof Error ? error.message : String(error)}`,
         'PaymentController',
         {
           clinicId,
