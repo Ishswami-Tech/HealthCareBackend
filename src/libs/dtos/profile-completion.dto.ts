@@ -8,6 +8,7 @@ import {
   IsEnum,
   IsIn,
   IsObject,
+  IsEmail,
   ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -47,6 +48,14 @@ export class EmergencyContactDto {
  * Complete Profile Request DTO
  */
 export class CompleteProfileRequestDto {
+  @ApiPropertyOptional({
+    description: 'Email address for notifications and account communication',
+    example: 'john.doe@example.com',
+  })
+  @IsEmail({}, { message: 'Please enter a valid email address' })
+  @IsOptional()
+  email?: string;
+
   @ApiProperty({
     description: 'First name',
     example: 'John',
