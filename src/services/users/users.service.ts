@@ -2122,6 +2122,12 @@ export class UsersService {
       if (profileData['name']) {
         profileUpdateData['name'] = profileData['name'];
       }
+      if (profileData['email']) {
+        const emailValue = profileData['email'];
+        if (typeof emailValue === 'string' && emailValue.trim().length > 0) {
+          profileUpdateData['email'] = emailValue.trim().toLowerCase();
+        }
+      }
       // Auto-populate name from firstName + lastName if both are provided
       if (profileUpdateData['firstName'] || profileUpdateData['lastName']) {
         const newFirstName = (profileUpdateData['firstName'] || user.firstName || '') as string;
