@@ -1338,18 +1338,31 @@ export class AuthService {
       }
 
       // Emit OTP requested event
-      await this.eventService.emit('user.otp_requested', {
-        userId: user?.id || 'new-user',
-        identifier: requestDto.identifier,
-        normalizedIdentifier,
-        otpKey: `otp:${normalizedIdentifier}`,
-        reusedExistingOtp: false,
-        ...(clinicId && { clinicId }),
-        isNewUser: !user,
-        otp: result.otp || otpCode,
-      });
+      void this.eventService
+        .emit('user.otp_requested', {
+          userId: user?.id || 'new-user',
+          identifier: requestDto.identifier,
+          normalizedIdentifier,
+          otpKey: `otp:${normalizedIdentifier}`,
+          reusedExistingOtp: false,
+          ...(clinicId && { clinicId }),
+          isNewUser: !user,
+          otp: result.otp || otpCode,
+        })
+        .catch(error => {
+          void this.logging.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `OTP requested event emission failed for ${requestDto.identifier}`,
+            'AuthService.requestOtp',
+            {
+              identifier: requestDto.identifier,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          );
+        });
 
-      await this.logging.log(
+      void this.logging.log(
         LogType.AUDIT,
         LogLevel.INFO,
         `OTP requested for: ${requestDto.identifier}`,
