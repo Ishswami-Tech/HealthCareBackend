@@ -5,7 +5,12 @@
  */
 
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
-import type { ICacheRepository, ICacheProvider, CacheOperationOptions } from '@core/types';
+import type {
+  ICacheRepository,
+  ICacheProvider,
+  IAdvancedCacheProvider,
+  CacheOperationOptions,
+} from '@core/types';
 import { CacheStrategyManager } from '@infrastructure/cache/strategies/cache-strategy.manager';
 import { CacheMiddlewareChain } from '@infrastructure/cache/middleware/cache-middleware.chain';
 import { CacheVersioningService } from '@infrastructure/cache/services/cache-versioning.service';
@@ -60,6 +65,43 @@ export class CacheRepository implements ICacheRepository {
   }
 
   /**
+   * Tag indexes map logical cache tags to the versioned keys that were written with them.
+   * This makes invalidateByTags() deterministic instead of relying on key naming conventions.
+   */
+  private getTagIndexKey(tag: string): string {
+    return `cache:tag:${tag}`;
+  }
+
+  private getAdvancedCacheProvider(): IAdvancedCacheProvider {
+    return this.getCacheProvider() as IAdvancedCacheProvider;
+  }
+
+  private async registerTags(
+    versionedKey: string,
+    tags: readonly string[] | undefined,
+    ttl: number
+  ): Promise<void> {
+    if (!tags || tags.length === 0) {
+      return;
+    }
+
+    const provider = this.getAdvancedCacheProvider();
+    const uniqueTags = [...new Set(tags.filter(Boolean))];
+
+    await Promise.all(
+      uniqueTags.map(async tag => {
+        try {
+          const tagKey = this.getTagIndexKey(tag);
+          await provider.sAdd(tagKey, versionedKey);
+          await provider.expire(tagKey, ttl + 60);
+        } catch {
+          // Cache tag bookkeeping must never fail the source operation.
+        }
+      })
+    );
+  }
+
+  /**
    * Cache data with automatic fetch on miss
    */
   async cache<T>(
@@ -81,7 +123,13 @@ export class CacheRepository implements ICacheRepository {
       const result = await this.strategyManager.execute(context.key, fetchFn, context.options);
 
       // Execute middleware after
-      return await this.middlewareChain.executeAfter(context, result);
+      const processedResult = await this.middlewareChain.executeAfter(context, result);
+      await this.registerTags(
+        context.key,
+        context.options.tags,
+        this.calculateTTL(context.options)
+      );
+      return processedResult;
     } catch (error) {
       // Execute middleware on error
       const processedError = await this.middlewareChain.executeError(
@@ -109,6 +157,7 @@ export class CacheRepository implements ICacheRepository {
     const ttl = this.calculateTTL(options);
     const provider = this.getCacheProvider();
     await provider.set(versionedKey, value, ttl);
+    await this.registerTags(versionedKey, options.tags, ttl);
   }
 
   /**
@@ -188,10 +237,18 @@ export class CacheRepository implements ICacheRepository {
    * Invalidate by tags
    */
   async invalidateByTags(tags: readonly string[]): Promise<number> {
-    // This would require tag tracking - simplified for now
     let total = 0;
-    const provider = this.getCacheProvider();
+    const provider = this.getAdvancedCacheProvider();
     for (const tag of tags) {
+      const tagKey = this.getTagIndexKey(tag);
+      const keys = await provider.sMembers(tagKey);
+
+      if (keys.length > 0) {
+        total += await provider.delMultiple(keys);
+        total += await provider.del(tagKey);
+      }
+
+      // Legacy fallback for any older tag-encoded keys.
       const pattern = `*:tag:${tag}:*`;
       total += await provider.clearByPattern(pattern);
     }
