@@ -227,9 +227,13 @@ export class OtpService {
   ): Promise<OtpResult> {
     try {
       const normalizedEmail = this.normalizeIdentifier(email);
-      // Check cooldown
+      // Read cooldown + attempts in parallel to avoid extra round-trips.
       const cooldownKey = `otp_cooldown:${normalizedEmail}`;
-      const cooldown = await this.cacheService.get<string>(cooldownKey);
+      const attemptsKey = `otp_attempts:${normalizedEmail}`;
+      const [cooldown, attempts] = await Promise.all([
+        this.cacheService.get<string>(cooldownKey),
+        this.cacheService.get<string>(attemptsKey),
+      ]);
 
       if (cooldown) {
         const remainingTtl = await this.cacheService.ttl(cooldownKey);
@@ -240,9 +244,6 @@ export class OtpService {
         };
       }
 
-      // Check attempts
-      const attemptsKey = `otp_attempts:${normalizedEmail}`;
-      const attempts = await this.cacheService.get<string>(attemptsKey);
       const attemptCount = attempts ? parseInt(attempts) : 0;
 
       // Generate and store OTP
@@ -261,33 +262,28 @@ export class OtpService {
           : null,
       });
 
-      const previousOtp = await this.cacheService.get<string>(otpKey);
-      await this.cacheService.del(`otp_verified:${normalizedEmail}`);
-      this.logOtp('Email OTP cache snapshot before write', {
-        normalizedEmail,
-        otpKey,
-        previousOtpExists: Boolean(previousOtp),
-        previousOtp: previousOtp?.length
-          ? `${previousOtp.slice(0, 1)}${'*'.repeat(Math.max(previousOtp.length - 2, 0))}${previousOtp.slice(-1)}`
-          : null,
-        replacingExistingOtp: Boolean(previousOtp),
-      });
-
-      await this.cacheService.set(otpKey, otpEntry, expirySeconds);
-      const storedOtp = this.extractOtpValue(await this.cacheService.get<unknown>(otpKey));
-      this.logOtp('Email OTP stored in cache', {
-        normalizedEmail,
-        otpKey,
-        expirySeconds,
-        otpLength: otp.length,
-        storedOtp: this.maskOtpValue(storedOtp),
-        storedOtpMatches: storedOtp === otp,
-      });
       const newAttemptCount = attemptCount + 1;
-      await this.cacheService.set(attemptsKey, newAttemptCount.toString(), 60 * 60); // 1 hour
       const cooldownSeconds = this.getProgressiveCooldown(newAttemptCount);
-      if (cooldownSeconds > 0) {
-        await this.cacheService.set(cooldownKey, '1', cooldownSeconds);
+
+      await Promise.all([
+        this.cacheService.del(`otp_verified:${normalizedEmail}`),
+        this.cacheService.set(otpKey, otpEntry, expirySeconds),
+        this.cacheService.set(attemptsKey, newAttemptCount.toString(), 60 * 60), // 1 hour
+        cooldownSeconds > 0
+          ? this.cacheService.set(cooldownKey, '1', cooldownSeconds)
+          : Promise.resolve(),
+      ]);
+
+      if (this.otpDebugEnabled) {
+        const storedOtp = this.extractOtpValue(await this.cacheService.get<unknown>(otpKey));
+        this.logOtp('Email OTP stored in cache', {
+          normalizedEmail,
+          otpKey,
+          expirySeconds,
+          otpLength: otp.length,
+          storedOtp: this.maskOtpValue(storedOtp),
+          storedOtpMatches: storedOtp === otp,
+        });
       }
 
       const emailJobData = {
@@ -379,9 +375,13 @@ export class OtpService {
   ): Promise<OtpResult> {
     try {
       const normalizedPhone = this.normalizeIdentifier(phone);
-      // Check cooldown
+      // Read cooldown + attempts in parallel to avoid extra round-trips.
       const cooldownKey = `otp_cooldown:${normalizedPhone}`;
-      const cooldown = await this.cacheService.get<string>(cooldownKey);
+      const attemptsKey = `otp_attempts:${normalizedPhone}`;
+      const [cooldown, attempts] = await Promise.all([
+        this.cacheService.get<string>(cooldownKey),
+        this.cacheService.get<string>(attemptsKey),
+      ]);
 
       if (cooldown) {
         const remainingTtl = await this.cacheService.ttl(cooldownKey);
@@ -392,9 +392,6 @@ export class OtpService {
         };
       }
 
-      // Check attempts
-      const attemptsKey = `otp_attempts:${normalizedPhone}`;
-      const attempts = await this.cacheService.get<string>(attemptsKey);
       const attemptCount = attempts ? parseInt(attempts) : 0;
 
       // Generate and store OTP (reusing email logic logic but with phone key)
@@ -413,33 +410,28 @@ export class OtpService {
           : null,
       });
 
-      const previousOtp = await this.cacheService.get<string>(otpKey);
-      await this.cacheService.del(`otp_verified:${normalizedPhone}`);
-      this.logOtp('WhatsApp OTP cache snapshot before write', {
-        normalizedPhone,
-        otpKey,
-        previousOtpExists: Boolean(previousOtp),
-        previousOtp: previousOtp?.length
-          ? `${previousOtp.slice(0, 1)}${'*'.repeat(Math.max(previousOtp.length - 2, 0))}${previousOtp.slice(-1)}`
-          : null,
-        replacingExistingOtp: Boolean(previousOtp),
-      });
-
-      await this.cacheService.set(otpKey, otpEntry, expirySeconds);
-      const storedOtp = this.extractOtpValue(await this.cacheService.get<unknown>(otpKey));
-      this.logOtp('WhatsApp OTP stored in cache', {
-        normalizedPhone,
-        otpKey,
-        expirySeconds,
-        otpLength: otp.length,
-        storedOtp: this.maskOtpValue(storedOtp),
-        storedOtpMatches: storedOtp === otp,
-      });
       const newAttemptCount = attemptCount + 1;
-      await this.cacheService.set(attemptsKey, newAttemptCount.toString(), 60 * 60); // 1 hour
       const cooldownSeconds = this.getProgressiveCooldown(newAttemptCount);
-      if (cooldownSeconds > 0) {
-        await this.cacheService.set(cooldownKey, '1', cooldownSeconds);
+
+      await Promise.all([
+        this.cacheService.del(`otp_verified:${normalizedPhone}`),
+        this.cacheService.set(otpKey, otpEntry, expirySeconds),
+        this.cacheService.set(attemptsKey, newAttemptCount.toString(), 60 * 60), // 1 hour
+        cooldownSeconds > 0
+          ? this.cacheService.set(cooldownKey, '1', cooldownSeconds)
+          : Promise.resolve(),
+      ]);
+
+      if (this.otpDebugEnabled) {
+        const storedOtp = this.extractOtpValue(await this.cacheService.get<unknown>(otpKey));
+        this.logOtp('WhatsApp OTP stored in cache', {
+          normalizedPhone,
+          otpKey,
+          expirySeconds,
+          otpLength: otp.length,
+          storedOtp: this.maskOtpValue(storedOtp),
+          storedOtpMatches: storedOtp === otp,
+        });
       }
 
       // Fire-and-forget delivery so the request can complete immediately after
