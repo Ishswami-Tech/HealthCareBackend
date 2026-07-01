@@ -3145,7 +3145,7 @@ export class BillingService implements OnModuleInit {
       }
 
       if (incomingStatusLower === 'completed' && payment.appointmentId) {
-        await this.syncAppointmentAfterPayment({
+        void this.syncAppointmentAfterPayment({
           appointmentId: payment.appointmentId,
           clinicId: completedAppointment?.clinicId || clinicId,
           paymentId: payment.id,
@@ -3154,6 +3154,20 @@ export class BillingService implements OnModuleInit {
           appointment: completedAppointment,
           userId: payment.userId ?? null,
           emitAppointmentUpdated: true, // Emit so frontend dashboards refresh via WebSocket
+        }).catch((error: unknown) => {
+          void this.loggingService.log(
+            LogType.PAYMENT,
+            LogLevel.WARN,
+            `Failed to sync appointment after payment: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            'BillingService.handlePaymentCallback',
+            {
+              clinicId,
+              paymentId: payment.id,
+              appointmentId: payment.appointmentId,
+            }
+          );
         });
       }
 
@@ -3162,7 +3176,7 @@ export class BillingService implements OnModuleInit {
         await this.prepareLedgerForSubscriptionPayment(payment.id, clinicId);
       }
 
-      await this.emitPaymentLifecycleEvents({
+      void this.emitPaymentLifecycleEvents({
         clinicId,
         paymentId: payment.id,
         status: paymentStatus.status,
@@ -3173,6 +3187,19 @@ export class BillingService implements OnModuleInit {
           ? { appointment: completedAppointment }
           : {}),
         ...(payment.subscriptionId ? { subscriptionId: payment.subscriptionId } : {}),
+      }).catch((error: unknown) => {
+        void this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.WARN,
+          `Failed to emit payment lifecycle events: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          'BillingService.handlePaymentCallback',
+          {
+            clinicId,
+            paymentId: payment.id,
+          }
+        );
       });
 
       return {

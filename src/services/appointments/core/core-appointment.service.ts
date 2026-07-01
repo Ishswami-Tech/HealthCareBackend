@@ -473,7 +473,7 @@ export class CoreAppointmentService {
       });
 
       // 8. Invalidate cache
-      await Promise.all([
+      void Promise.all([
         this.invalidateAppointmentCache(context.clinicId),
         resolvedIds.patientUserId
           ? this.cacheService.invalidateMyAppointmentsCache(resolvedIds.patientUserId)
@@ -484,7 +484,20 @@ export class CoreAppointmentService {
         resolvedIds.doctorUserId
           ? this.cacheService.invalidateDoctorCache(resolvedIds.doctorUserId, context.clinicId)
           : Promise.resolve(0),
-      ]);
+      ]).catch((error: unknown) => {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Failed to invalidate appointment cache after create',
+          'CoreAppointmentService.createAppointment',
+          {
+            clinicId: context.clinicId,
+            patientUserId: resolvedIds.patientUserId,
+            doctorUserId: resolvedIds.doctorUserId,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
+      });
 
       const processingTime = Date.now() - startTime;
       void this.loggingService.log(
