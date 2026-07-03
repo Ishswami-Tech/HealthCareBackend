@@ -48,11 +48,12 @@ export class VideoUserInfoDto {
 
   @ApiProperty({
     example: 'john.doe@example.com',
-    description: 'User email address',
+    description: 'Optional user email address for provider metadata',
+    required: false,
   })
+  @IsOptional()
   @IsEmail({}, { message: 'Email must be a valid email address' })
-  @IsNotEmpty({ message: 'Email is required' })
-  email!: string;
+  email?: string;
 
   @ApiPropertyOptional({
     example: 'https://example.com/avatar.jpg',
