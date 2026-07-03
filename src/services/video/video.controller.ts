@@ -552,7 +552,7 @@ export class VideoController {
         authenticatedUser.userRole,
         {
           displayName: body.userInfo.displayName,
-          email: body.userInfo.email,
+          email: body.userInfo.email || '',
           ...(body.userInfo.avatar && { avatar: body.userInfo.avatar }),
         }
       );
