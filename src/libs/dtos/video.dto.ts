@@ -51,6 +51,11 @@ export class VideoUserInfoDto {
     description: 'Optional user email address for provider metadata',
     required: false,
   })
+  @Transform(({ value }: { value: unknown }): string | undefined => {
+    if (typeof value !== 'string') return undefined;
+    const email = value.trim();
+    return email.length > 0 ? email : undefined;
+  })
   @IsOptional()
   @IsEmail({}, { message: 'Email must be a valid email address' })
   email?: string;
