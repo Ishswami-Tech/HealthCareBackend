@@ -50,7 +50,8 @@ type BillingServiceLike = {
 export class PaymentController {
   private billingServiceRef: BillingServiceLike | null = null;
   private readonly enabledProviders = (
-    process.env['PAYMENT_ENABLED_PROVIDERS'] || PaymentProvider.CASHFREE
+    process.env['PAYMENT_ENABLED_PROVIDERS'] ||
+    [PaymentProvider.CASHFREE, PaymentProvider.RAZORPAY, PaymentProvider.PHONEPE].join(',')
   )
     .split(',')
     .map(value => value.trim().toLowerCase())
@@ -81,7 +82,10 @@ export class PaymentController {
     }
 
     const normalizedProvider = provider.trim().toLowerCase();
-    const enabledProviders = (process.env['PAYMENT_ENABLED_PROVIDERS'] || PaymentProvider.CASHFREE)
+    const enabledProviders = (
+      process.env['PAYMENT_ENABLED_PROVIDERS'] ||
+      [PaymentProvider.CASHFREE, PaymentProvider.RAZORPAY, PaymentProvider.PHONEPE].join(',')
+    )
       .split(',')
       .map(value => value.trim().toLowerCase())
       .filter(Boolean);
