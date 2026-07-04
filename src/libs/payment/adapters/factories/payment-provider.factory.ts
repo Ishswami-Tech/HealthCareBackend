@@ -22,7 +22,8 @@ import { PaymentProvider } from '@core/types/payment.types';
 export class PaymentProviderFactory {
   constructor(private readonly loggingService: LoggingService) {}
   private readonly enabledProviders = (
-    process.env['PAYMENT_ENABLED_PROVIDERS'] || PaymentProvider.CASHFREE
+    process.env['PAYMENT_ENABLED_PROVIDERS'] ||
+    [PaymentProvider.CASHFREE, PaymentProvider.RAZORPAY, PaymentProvider.PHONEPE].join(',')
   )
     .split(',')
     .map(provider => provider.trim().toLowerCase())
