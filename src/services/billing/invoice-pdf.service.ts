@@ -890,13 +890,7 @@ export class InvoicePDFService {
 
   private getPublicInvoiceUrlBase(): string {
     const appConfig = this.configService.getAppConfig();
-    return (
-      appConfig.apiUrl ||
-      appConfig.baseUrl ||
-      this.configService.getEnv('API_URL') ||
-      this.configService.getEnv('BASE_URL') ||
-      ''
-    );
+    return appConfig.apiUrl || appConfig.baseUrl || '';
   }
 
   getPublicInvoiceUrl(fileName: string): string {

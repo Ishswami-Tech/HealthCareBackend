@@ -529,15 +529,10 @@ export class AppController {
   async getSocketTestPage(@Res() res: FastifyReply) {
     const appConfig = this.configService.getAppConfig();
     // Get baseUrl from ConfigService - NO HARDCODED FALLBACKS
-    const baseUrl: string =
-      appConfig.apiUrl ||
-      appConfig.baseUrl ||
-      this.configService.getEnv('API_URL') ||
-      this.configService.getEnv('BASE_URL') ||
-      '';
+    const baseUrl: string = appConfig.apiUrl || appConfig.baseUrl || '';
 
     if (!baseUrl) {
-      throw new Error('API_URL or BASE_URL must be configured in environment variables or config');
+      throw new Error('API URL is not configured in application config');
     }
 
     const html = `

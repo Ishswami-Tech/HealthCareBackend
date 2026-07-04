@@ -40,6 +40,13 @@ function validateProductionConfig(): void {
 export default function createProductionConfig(): ProductionConfig {
   // Validate required environment variables
   validateProductionConfig();
+
+  const host = getEnv(ENV_VARS.HOST) || 'localhost';
+  const resolvedApiUrl = removeTrailingSlash(
+    getEnv(ENV_VARS.API_URL) || getEnv(ENV_VARS.BASE_URL) || `https://${host}`
+  );
+  const resolvedBaseUrl = removeTrailingSlash(getEnv(ENV_VARS.BASE_URL) || resolvedApiUrl);
+
   return {
     app: {
       // Use helper functions (which use dotenv) for environment variable access
@@ -47,33 +54,12 @@ export default function createProductionConfig(): ProductionConfig {
       apiPrefix: DEFAULT_CONFIG.API_PREFIX,
       environment: 'production' as const,
       isDev: false,
-      host:
-        getEnv(ENV_VARS.HOST) ||
-        (() => {
-          throw new Error(
-            `Missing required environment variable: ${ENV_VARS.HOST}. Please set HOST in .env.production`
-          );
-        })(),
+      host,
       bindAddress: '0.0.0.0',
       // CRITICAL: baseUrl should NOT include trailing slashes for proper URL concatenation
-      // CRITICAL: Must be set via BASE_URL or API_URL environment variable (no hardcoded defaults)
-      baseUrl: removeTrailingSlash(
-        getEnv(ENV_VARS.BASE_URL) ||
-          getEnv(ENV_VARS.API_URL) ||
-          (() => {
-            throw new Error(
-              `Missing required environment variable: ${ENV_VARS.BASE_URL} or ${ENV_VARS.API_URL}. ` +
-                `Please set BASE_URL or API_URL in .env.production`
-            );
-          })()
-      ),
-      apiUrl:
-        getEnv(ENV_VARS.API_URL) ||
-        (() => {
-          throw new Error(
-            `Missing required environment variable: ${ENV_VARS.API_URL}. Please set API_URL in .env.production`
-          );
-        })(),
+      // Production can derive a safe public origin from HOST when API_URL / BASE_URL are not supplied.
+      baseUrl: resolvedBaseUrl,
+      apiUrl: resolvedApiUrl,
     },
     urls: {
       // Use helper functions (which use dotenv) for environment variable access
@@ -223,7 +209,7 @@ export default function createProductionConfig(): ProductionConfig {
     video: videoConfig(),
     domains: {
       // Extract domain from environment variables (no hardcoded defaults)
-      // These will throw if FRONTEND_URL or API_URL are not set (validated above)
+      // FRONTEND_URL is required; API_URL now falls back to the resolved base URL.
       main: (() => {
         const url = getEnv(ENV_VARS.FRONTEND_URL);
         if (!url) {
@@ -239,7 +225,7 @@ export default function createProductionConfig(): ProductionConfig {
         );
       })(),
       api: (() => {
-        const url = getEnv(ENV_VARS.API_URL);
+        const url = getEnv(ENV_VARS.API_URL) || resolvedApiUrl;
         if (!url) {
           throw new Error(`Missing required environment variable: ${ENV_VARS.API_URL}`);
         }

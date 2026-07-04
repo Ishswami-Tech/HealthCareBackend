@@ -3485,17 +3485,10 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     try {
       // Get baseUrl from ConfigService - NO HARDCODED FALLBACKS
       const appConfig = this.config?.getAppConfig();
-      const baseUrl =
-        appConfig?.apiUrl ||
-        appConfig?.baseUrl ||
-        this.config?.getEnv('API_URL') ||
-        this.config?.getEnv('BASE_URL') ||
-        '';
+      const baseUrl = appConfig?.apiUrl || appConfig?.baseUrl || '';
 
       if (!baseUrl) {
-        throw new Error(
-          'API_URL or BASE_URL must be configured in environment variables or config'
-        );
+        throw new Error('API URL is not configured in application config');
       }
 
       // HttpService removed - use alternative check method
