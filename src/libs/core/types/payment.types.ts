@@ -136,6 +136,11 @@ export interface PaymentProviderAdapter {
   refund(options: RefundOptions): Promise<RefundResult>;
 
   /**
+   * Fetch refund status by refund identifier
+   */
+  getRefundStatus?(refundId: string): Promise<RefundResult>;
+
+  /**
    * Verify webhook signature
    */
   verifyWebhook(options: WebhookVerificationOptions): Promise<boolean>;

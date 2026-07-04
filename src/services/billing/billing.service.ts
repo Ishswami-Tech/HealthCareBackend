@@ -52,6 +52,7 @@ import type {
   PaymentIntentOptions,
   PaymentResult,
   PaymentStatusResult,
+  RefundResult,
 } from '@core/types/payment.types';
 import { PaymentProvider } from '@core/types/payment.types';
 import { formatDateInIST, nowIso } from '../../libs/utils/date-time.util';
@@ -586,6 +587,28 @@ export class BillingService implements OnModuleInit {
 
   private roundToTwo(value: number): number {
     return Math.round(value * 100) / 100;
+  }
+
+  private getGstRatePercent(): number {
+    const configuredRate =
+      Number(this.configService.getEnv('BILLING_GST_RATE_PERCENT')) ||
+      Number(this.configService.getEnv('GST_RATE_PERCENT')) ||
+      0;
+
+    return Number.isFinite(configuredRate) && configuredRate >= 0 ? configuredRate : 0;
+  }
+
+  private calculateGstAmount(amount: number): number {
+    return this.roundToTwo((amount * this.getGstRatePercent()) / 100);
+  }
+
+  private getInvoiceTotalAmount(invoice: unknown, fallbackAmount: number): number {
+    const invoiceRecord = invoice as Record<string, unknown>;
+    const totalAmount = Number(invoiceRecord['totalAmount']);
+
+    return Number.isFinite(totalAmount) && totalAmount > 0
+      ? this.roundToTwo(totalAmount)
+      : this.roundToTwo(fallbackAmount);
   }
 
   private asRecord(value: unknown): Record<string, unknown> | null {
@@ -2472,13 +2495,16 @@ export class BillingService implements OnModuleInit {
       throw new BadRequestException('Subscription plan not found');
     }
 
+    const subscriptionAmount = this.roundToTwo(subscription.plan.amount);
+    const subscriptionTax = this.calculateGstAmount(subscriptionAmount);
+
     // Create invoice for subscription renewal
     const invoice = await this.createInvoice({
       userId: subscription.userId,
       clinicId: subscription.clinicId,
       subscriptionId: subscription.id,
-      amount: subscription.plan.amount,
-      tax: 0,
+      amount: subscriptionAmount,
+      tax: subscriptionTax,
       discount: 0,
       dueDate: new Date(subscription.currentPeriodEnd).toISOString(),
       description: `Subscription renewal for ${subscription.plan.name}`,
@@ -2486,7 +2512,7 @@ export class BillingService implements OnModuleInit {
         items: [
           {
             description: subscription.plan.name,
-            amount: subscription.plan.amount,
+            amount: subscriptionAmount,
             quantity: 1,
           },
         ],
@@ -2494,6 +2520,7 @@ export class BillingService implements OnModuleInit {
       metadata: {
         subscriptionId: subscription.id,
         planId: subscription.planId,
+        gstRatePercent: this.getGstRatePercent(),
         periodStart: subscription.currentPeriodStart.toISOString(),
         periodEnd: subscription.currentPeriodEnd.toISOString(),
       },
@@ -2512,8 +2539,9 @@ export class BillingService implements OnModuleInit {
           'Missing required environment variable: BASE_URL or API_URL. Please set BASE_URL or API_URL in environment configuration.'
         );
       })();
+    const subscriptionTotalAmount = this.getInvoiceTotalAmount(invoice, subscriptionAmount);
     const paymentIntentOptions: PaymentIntentOptions = {
-      amount: subscription.plan.amount * 100, // Convert to paise
+      amount: Math.round(subscriptionTotalAmount * 100),
       currency: subscription.plan.currency || 'INR',
       orderId: this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id),
       customerId: subscription.userId,
@@ -2535,6 +2563,10 @@ export class BillingService implements OnModuleInit {
         invoiceNumber: invoice.invoiceNumber,
         subscriptionId: subscription.id,
         planId: subscription.planId,
+        subtotal: subscriptionAmount,
+        tax: subscriptionTax,
+        totalAmount: subscriptionTotalAmount,
+        gstRatePercent: this.getGstRatePercent(),
         baseUrl,
         redirectUrl: this.buildPaymentCallbackUrl(
           subscription.clinicId,
@@ -2570,7 +2602,7 @@ export class BillingService implements OnModuleInit {
 
     // Create payment record
     const payment = await this.createPayment({
-      amount: subscription.plan.amount,
+      amount: subscriptionTotalAmount,
       clinicId: subscription.clinicId,
       userId: subscription.userId,
       invoiceId: invoice.id,
@@ -2583,6 +2615,10 @@ export class BillingService implements OnModuleInit {
         provider: providerName,
         revenueModel: 'SUBSCRIPTION',
         serviceType: 'SUBSCRIPTION_PLAN',
+        subtotal: subscriptionAmount,
+        tax: subscriptionTax,
+        totalAmount: subscriptionTotalAmount,
+        gstRatePercent: this.getGstRatePercent(),
         redirectUrl,
       },
     });
@@ -2696,13 +2732,15 @@ export class BillingService implements OnModuleInit {
       Boolean(existingInvoice) &&
       existingInvoiceStatus !== String(InvoiceStatus.PAID) &&
       existingInvoiceStatus !== String(InvoiceStatus.VOID);
+    const appointmentAmount = this.roundToTwo(amount);
+    const appointmentTax = this.calculateGstAmount(appointmentAmount);
 
     const createAppointmentInvoice = async () =>
       this.createInvoice({
         userId: billingUserId || appointment.patientId,
         clinicId: appointment.clinicId,
-        amount,
-        tax: 0,
+        amount: appointmentAmount,
+        tax: appointmentTax,
         discount: 0,
         // Appointment invoices are paid immediately through the gateway, so a future due date
         // is misleading in payment history. Keep a due date for schema requirements, but make it immediate.
@@ -2712,7 +2750,7 @@ export class BillingService implements OnModuleInit {
           items: [
             {
               description: `${serviceMetadata.label} Appointment`,
-              amount,
+              amount: appointmentAmount,
               quantity: 1,
             },
           ],
@@ -2720,6 +2758,7 @@ export class BillingService implements OnModuleInit {
         metadata: {
           appointmentId: appointment.id,
           appointmentType,
+          gstRatePercent: this.getGstRatePercent(),
           ...(existingPayment ? { retriedPaymentId: existingPayment.id } : {}),
         },
       });
@@ -2740,6 +2779,8 @@ export class BillingService implements OnModuleInit {
         : await createAppointmentInvoice();
     const gatewayOrderId =
       existingGatewayOrderId || this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id);
+    const appointmentTotalAmount = this.getInvoiceTotalAmount(invoice, appointmentAmount);
+    const resolvedAppointmentTax = this.roundToTwo(appointmentTotalAmount - appointmentAmount);
 
     // Create payment intent via payment service
     // SECURITY: Use ConfigService instead of hardcoded URL
@@ -2752,7 +2793,7 @@ export class BillingService implements OnModuleInit {
         );
       })();
     const paymentIntentOptions: PaymentIntentOptions = {
-      amount: amount * 100, // Convert to paise
+      amount: Math.round(appointmentTotalAmount * 100),
       currency: 'INR',
       orderId: gatewayOrderId,
       customerId: billingUserId || appointment.patientId,
@@ -2768,6 +2809,10 @@ export class BillingService implements OnModuleInit {
         invoiceNumber: invoice.invoiceNumber,
         appointmentId: appointment.id,
         appointmentType,
+        subtotal: appointmentAmount,
+        tax: resolvedAppointmentTax,
+        totalAmount: appointmentTotalAmount,
+        gstRatePercent: this.getGstRatePercent(),
         baseUrl,
         redirectUrl: this.buildPaymentCallbackUrl(
           appointment.clinicId,
@@ -2803,6 +2848,10 @@ export class BillingService implements OnModuleInit {
       invoiceId: invoice.id,
       appointmentId: appointment.id,
       appointmentType,
+      subtotal: appointmentAmount,
+      tax: resolvedAppointmentTax,
+      totalAmount: appointmentTotalAmount,
+      gstRatePercent: this.getGstRatePercent(),
       redirectUrl,
     };
 
@@ -2822,6 +2871,7 @@ export class BillingService implements OnModuleInit {
         status: PaymentStatus.PENDING,
         invoiceId: invoice.id,
         ...(paymentId ? { transactionId: paymentId } : {}),
+        amount: appointmentTotalAmount,
         description: `Payment for ${serviceMetadata.label} appointment`,
         metadata: paymentMetadata,
       });
@@ -2860,7 +2910,7 @@ export class BillingService implements OnModuleInit {
       ]);
     } else {
       payment = await this.createPayment({
-        amount,
+        amount: appointmentTotalAmount,
         clinicId: appointment.clinicId,
         userId: billingUserId || appointment.patientId,
         appointmentId: appointment.id,
@@ -2881,7 +2931,8 @@ export class BillingService implements OnModuleInit {
           appointmentId,
           invoiceId: invoice.id,
           paymentId: payment.id,
-          amount,
+          amount: appointmentTotalAmount,
+          tax: resolvedAppointmentTax,
           appointmentType,
           treatmentType: appointment.treatmentType,
           serviceLabel: serviceMetadata.label,
@@ -3848,6 +3899,172 @@ export class BillingService implements OnModuleInit {
         {
           paymentId,
           clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Handle refund callback/webhook
+   */
+  async handleRefundCallback(
+    clinicId: string,
+    paymentId: string,
+    refundId: string,
+    orderId?: string,
+    provider?: PaymentProvider,
+    callbackState?: string,
+    callbackAmount?: number
+  ): Promise<{ payment: unknown; refund?: unknown }> {
+    try {
+      const normalizedProvider = this.normalizePaymentProvider(provider);
+
+      let payment = await this.databaseService.findPaymentByIdSafe(paymentId);
+      if (!payment && paymentId) {
+        const byPaymentIdTx = await this.databaseService.findPaymentsSafe({
+          transactionId: paymentId,
+        });
+        payment = byPaymentIdTx[0] || null;
+      }
+      if (!payment && orderId) {
+        const byOrderIdTx = await this.databaseService.findPaymentsSafe({ transactionId: orderId });
+        payment = byOrderIdTx[0] || null;
+      }
+      if (!payment) {
+        throw new NotFoundException('Payment record not found');
+      }
+
+      const existingRefundAmount = Number(payment.refundAmount || 0);
+      const resolvedCallbackState = String(callbackState || '')
+        .trim()
+        .toLowerCase();
+      let providerRefundStatus: RefundResult | null = null;
+
+      if (refundId && normalizedProvider) {
+        try {
+          providerRefundStatus = await this.paymentService.getRefundStatus(
+            clinicId,
+            refundId,
+            normalizedProvider
+          );
+        } catch (error) {
+          await this.loggingService.log(
+            LogType.PAYMENT,
+            LogLevel.WARN,
+            'Refund status lookup failed; falling back to webhook payload',
+            'BillingService',
+            {
+              clinicId,
+              paymentId: payment.id,
+              refundId,
+              provider: normalizedProvider,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          );
+        }
+      }
+
+      const statusSource = providerRefundStatus?.status || resolvedCallbackState;
+      const refundAmountFromProvider =
+        typeof providerRefundStatus?.amount === 'number' &&
+        Number.isFinite(providerRefundStatus.amount)
+          ? providerRefundStatus.amount
+          : Number.isFinite(callbackAmount || NaN)
+            ? Number(callbackAmount)
+            : 0;
+      const normalizedStatus = statusSource
+        ? statusSource.toLowerCase()
+        : existingRefundAmount >= payment.amount
+          ? 'completed'
+          : 'processing';
+
+      const shouldStoreRefundAmount =
+        existingRefundAmount <= 0 &&
+        Number.isFinite(refundAmountFromProvider) &&
+        refundAmountFromProvider > 0;
+      const computedRefundAmount = shouldStoreRefundAmount
+        ? refundAmountFromProvider
+        : existingRefundAmount;
+      const fullyRefunded =
+        computedRefundAmount > 0 && computedRefundAmount >= Number(payment.amount || 0);
+
+      const metadata = this.asRecord(payment.metadata)
+        ? { ...(payment.metadata as Record<string, unknown>) }
+        : {};
+      metadata['refundCallbackAudit'] = {
+        provider: normalizedProvider || 'unknown',
+        paymentId: payment.id,
+        refundId,
+        orderId: orderId || null,
+        callbackState: normalizedStatus,
+        receivedAt: nowIso(),
+        amount: refundAmountFromProvider || null,
+      };
+      metadata['refund'] = {
+        refundId,
+        orderId: orderId || payment.transactionId || payment.id,
+        provider: normalizedProvider || 'unknown',
+        state: normalizedStatus,
+        amount: refundAmountFromProvider || null,
+        processedAt: nowIso(),
+      };
+
+      const updateData: UpdatePaymentDto = {
+        metadata,
+      };
+      if (shouldStoreRefundAmount) {
+        updateData.refundAmount = refundAmountFromProvider;
+      }
+      if (normalizedStatus === 'completed' || normalizedStatus === 'confirmed') {
+        updateData.status = fullyRefunded ? PaymentStatus.REFUNDED : PaymentStatus.COMPLETED;
+      }
+
+      const updatedPayment = await this.updatePayment(payment.id, updateData);
+
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        'Refund callback processed successfully',
+        'BillingService',
+        {
+          clinicId,
+          paymentId: payment.id,
+          refundId,
+          provider: normalizedProvider || 'unknown',
+          state: normalizedStatus,
+          fullyRefunded,
+        }
+      );
+
+      return {
+        payment: updatedPayment,
+        refund: providerRefundStatus || {
+          success: normalizedStatus !== 'failed',
+          refundId,
+          paymentId: payment.id,
+          amount: refundAmountFromProvider || 0,
+          status:
+            normalizedStatus === 'failed'
+              ? 'failed'
+              : normalizedStatus === 'completed' || normalizedStatus === 'confirmed'
+                ? 'completed'
+                : 'processing',
+          provider: normalizedProvider || 'unknown',
+          timestamp: new Date(),
+        },
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.ERROR,
+        `Failed to process refund callback: ${error instanceof Error ? error.message : String(error)}`,
+        'BillingService',
+        {
+          clinicId,
+          paymentId,
+          refundId,
           error: error instanceof Error ? error.stack : undefined,
         }
       );

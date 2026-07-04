@@ -34,16 +34,29 @@ CASHFREE_SECRET_KEY=your_cashfree_secret_key
 ```bash
 RAZORPAY_KEY_ID=your_razorpay_key_id
 RAZORPAY_KEY_SECRET=your_razorpay_key_secret
+RAZORPAY_WEBHOOK_SECRET=your_razorpay_webhook_secret
 ```
 
 **PhonePe (Business Gateway):**
 
 ```bash
-PHONEPE_MERCHANT_ID=your_merchant_id
-PHONEPE_SALT_KEY=your_salt_key
-PHONEPE_SALT_INDEX=1
+PHONEPE_CLIENT_ID=your_client_id
+PHONEPE_CLIENT_SECRET=your_client_secret
+PHONEPE_CLIENT_VERSION=1
 PHONEPE_ENVIRONMENT=sandbox
+PHONEPE_WEBHOOK_USERNAME=your_webhook_username
+PHONEPE_WEBHOOK_PASSWORD=your_webhook_password
+PHONEPE_WEBHOOK_AUTHORIZATION_HASH=your_webhook_authorization_hash
 ```
+
+**Frontend split:**
+
+- Frontend exposes only public payment IDs such as `NEXT_PUBLIC_RAZORPAY_KEY_ID`
+- Backend keeps all gateway secrets and webhook secrets
+- Never place `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`,
+  `PHONEPE_CLIENT_SECRET`, or PhonePe webhook credentials in frontend env files
+- PhonePe SDK initialization uses `PHONEPE_CLIENT_ID`, `PHONEPE_CLIENT_SECRET`,
+  and `PHONEPE_CLIENT_VERSION`
 
 ### 3. Get Credentials
 
@@ -62,6 +75,11 @@ All providers have webhook endpoints configured:
 | Cashfree | `POST /api/v1/payments/cashfree/webhook` |
 | Razorpay | `POST /api/v1/payments/razorpay/webhook` |
 | PhonePe  | `POST /api/v1/payments/phonepe/webhook`  |
+
+Webhook signatures and auth are verified server-side using the provider-specific
+secret or auth headers, so the frontend never needs access to those values.
+PhonePe webhook handling covers both order and refund callbacks, and the backend
+uses the raw request body for callback validation.
 
 ## API Usage
 

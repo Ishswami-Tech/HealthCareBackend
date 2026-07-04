@@ -47,7 +47,7 @@ export default function createStagingConfig(): Config {
     app: {
       // Use helper functions (which use dotenv) for environment variable access
       port: parseInteger(getEnv(ENV_VARS.PORT), DEFAULT_CONFIG.PORT, 1, 65535),
-      apiPrefix: getEnvWithDefault('API_PREFIX', DEFAULT_CONFIG.API_PREFIX),
+      apiPrefix: DEFAULT_CONFIG.API_PREFIX,
       environment: 'production' as const, // Use production type for staging (same security level)
       isDev: false, // Not development mode
       host:
@@ -57,7 +57,7 @@ export default function createStagingConfig(): Config {
             `Missing required environment variable: ${ENV_VARS.HOST}. Please set HOST in .env.staging`
           );
         })(),
-      bindAddress: getEnvWithDefault(ENV_VARS.BIND_ADDRESS, '0.0.0.0'),
+      bindAddress: '0.0.0.0',
       // CRITICAL: Must be set via BASE_URL or API_URL environment variable (no hardcoded defaults)
       baseUrl: removeTrailingSlash(
         getEnv(ENV_VARS.BASE_URL) ||
@@ -79,7 +79,7 @@ export default function createStagingConfig(): Config {
     },
     urls: {
       // Use helper functions (which use dotenv) for environment variable access
-      swagger: getEnvWithDefault(ENV_VARS.SWAGGER_URL, '/docs'),
+      swagger: '/docs',
       bullBoard: getEnvWithDefault(ENV_VARS.BULL_BOARD_URL, '/queue-dashboard'),
       socket: getEnvWithDefault(ENV_VARS.SOCKET_URL, '/socket.io'),
       redisCommander: getEnvWithDefault(ENV_VARS.REDIS_COMMANDER_URL, ''),
@@ -200,7 +200,7 @@ export default function createStagingConfig(): Config {
       rateLimit: getEnvBoolean('SECURITY_RATE_LIMIT', true),
       rateLimitMax: parseInteger(getEnv('SECURITY_RATE_LIMIT_MAX'), 1000, 1),
       rateLimitWindowMs: parseInteger(getEnv('SECURITY_RATE_LIMIT_WINDOW_MS'), 15000, 1000),
-      trustProxy: parseInteger(getEnv('TRUST_PROXY'), 1, 0, 2),
+      trustProxy: 1,
     },
     whatsapp: {
       // Use helper functions (which use dotenv) for environment variable access

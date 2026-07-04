@@ -10,6 +10,7 @@
 
 import { Injectable } from '@nestjs/common';
 import { createRequire } from 'module';
+import * as crypto from 'crypto';
 import { LoggingService } from '@logging';
 import { LogType, LogLevel } from '@core/types';
 import { BasePaymentAdapter } from '../base/base-payment-adapter';
@@ -36,9 +37,6 @@ interface RazorpayInstance {
   };
   refunds: {
     create(options: RazorpayRefundOptions): Promise<RazorpayRefund>;
-  };
-  utility: {
-    verifyPaymentSignature(params: RazorpayWebhookParams): boolean;
   };
 }
 
@@ -92,12 +90,6 @@ interface RazorpayRefund {
   created_at: number;
 }
 
-interface RazorpayWebhookParams {
-  razorpay_order_id: string;
-  razorpay_payment_id: string;
-  razorpay_signature: string;
-}
-
 let RazorpayClass: (new (keyId: string, keySecret: string) => RazorpayInstance) | null = null;
 
 /**
@@ -134,6 +126,7 @@ export class RazorpayPaymentAdapter extends BasePaymentAdapter {
   private razorpay: RazorpayInstance | null = null;
   private keyId: string = '';
   private keySecret: string = '';
+  private webhookSecret: string = '';
 
   constructor(loggingService: LoggingService) {
     super(loggingService);
@@ -167,6 +160,7 @@ export class RazorpayPaymentAdapter extends BasePaymentAdapter {
 
     this.keyId = credentials['keyId'] || credentials['key_id'] || '';
     this.keySecret = credentials['keySecret'] || credentials['key_secret'] || '';
+    this.webhookSecret = credentials['webhookSecret'] || credentials['webhook_secret'] || '';
 
     if (!this.keyId || !this.keySecret) {
       throw new Error('Razorpay keyId and keySecret are required');
@@ -462,57 +456,29 @@ export class RazorpayPaymentAdapter extends BasePaymentAdapter {
   }
 
   /**
-   * Extract and normalize webhook parameters from payload
-   */
-  private extractWebhookParams(payload: Record<string, unknown>): {
-    orderId: string;
-    paymentId: string;
-  } {
-    const orderId = payload['razorpay_order_id'];
-    const paymentId = payload['razorpay_payment_id'];
-
-    // Safely convert to string, avoiding object stringification
-    const orderIdStr =
-      typeof orderId === 'string'
-        ? orderId
-        : typeof orderId === 'number' || typeof orderId === 'boolean'
-          ? String(orderId)
-          : '';
-    const paymentIdStr =
-      typeof paymentId === 'string'
-        ? paymentId
-        : typeof paymentId === 'number' || typeof paymentId === 'boolean'
-          ? String(paymentId)
-          : '';
-
-    return { orderId: orderIdStr, paymentId: paymentIdStr };
-  }
-
-  /**
    * Verify webhook signature from Razorpay
    */
   async verifyWebhook(options: WebhookVerificationOptions): Promise<boolean> {
-    if (!this.razorpay) {
+    if (!this.webhookSecret) {
       return false;
     }
 
     try {
-      // Razorpay webhook verification
-      // The payload should contain razorpay_order_id, razorpay_payment_id, razorpay_signature
       const payload =
-        typeof options.payload === 'string'
-          ? (JSON.parse(options.payload) as Record<string, unknown>)
-          : options.payload;
+        typeof options.payload === 'string' ? options.payload : JSON.stringify(options.payload);
+      const expectedSignature = crypto
+        .createHmac('sha256', this.webhookSecret)
+        .update(payload)
+        .digest('hex');
 
-      const { orderId, paymentId } = this.extractWebhookParams(payload);
+      if (options.signature.length !== expectedSignature.length) {
+        return false;
+      }
 
-      const webhookParams: RazorpayWebhookParams = {
-        razorpay_order_id: orderId,
-        razorpay_payment_id: paymentId,
-        razorpay_signature: options.signature,
-      };
-
-      return this.razorpay.utility.verifyPaymentSignature(webhookParams);
+      return crypto.timingSafeEqual(
+        Buffer.from(options.signature, 'utf8'),
+        Buffer.from(expectedSignature, 'utf8')
+      );
     } catch (error) {
       await this.logger.log(
         LogType.PAYMENT,
