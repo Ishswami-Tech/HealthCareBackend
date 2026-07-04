@@ -54,12 +54,15 @@ export class PaymentConfigService implements OnModuleInit {
     const cacheKey = `payment:config:${clinicId}`;
 
     try {
+      const defaultConfig = this.getDefaultConfig(clinicId);
+
       // Try cache first
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
         const config = JSON.parse(cached as string) as ClinicPaymentConfig;
         // Decrypt credentials
-        return await this.decryptConfig(config);
+        const decryptedCachedConfig = await this.decryptConfig(config);
+        return this.mergePaymentConfigWithDefaults(decryptedCachedConfig, defaultConfig);
       }
 
       // Fetch from database
@@ -75,7 +78,7 @@ export class PaymentConfigService implements OnModuleInit {
       // Cache for future use
       await this.cacheService.set(cacheKey, JSON.stringify(config), this.cacheTTL);
 
-      return decryptedConfig;
+      return this.mergePaymentConfigWithDefaults(decryptedConfig, defaultConfig);
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
@@ -310,6 +313,45 @@ export class PaymentConfigService implements OnModuleInit {
       },
       createdAt: new Date(),
       updatedAt: new Date(),
+    };
+  }
+
+  private mergePaymentConfigWithDefaults(
+    config: ClinicPaymentConfig,
+    defaults: ClinicPaymentConfig
+  ): ClinicPaymentConfig {
+    const primary = config.payment.primary || defaults.payment.primary;
+    const fallbackByProvider = new Map<
+      PaymentProvider,
+      NonNullable<ClinicPaymentConfig['payment']['fallback']>[number]
+    >();
+
+    for (const fallback of config.payment.fallback || []) {
+      fallbackByProvider.set(fallback.provider, fallback);
+    }
+
+    for (const fallback of defaults.payment.fallback || []) {
+      if (!fallbackByProvider.has(fallback.provider) && fallback.provider !== primary?.provider) {
+        fallbackByProvider.set(fallback.provider, fallback);
+      }
+    }
+
+    return {
+      ...config,
+      payment: {
+        ...defaults.payment,
+        ...config.payment,
+        fallback: Array.from(fallbackByProvider.values()),
+        ...(primary ? { primary } : {}),
+        ...(config.payment.defaultProvider || primary?.provider || defaults.payment.defaultProvider
+          ? {
+              defaultProvider:
+                config.payment.defaultProvider ||
+                primary?.provider ||
+                defaults.payment.defaultProvider,
+            }
+          : {}),
+      },
     };
   }
 
