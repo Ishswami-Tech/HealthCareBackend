@@ -43,6 +43,12 @@ export default function createStagingConfig(): Config {
   // Validate required environment variables
   validateStagingConfig();
 
+  const host = getEnv(ENV_VARS.HOST) || 'localhost';
+  const resolvedApiUrl = removeTrailingSlash(
+    getEnv(ENV_VARS.API_URL) || getEnv(ENV_VARS.BASE_URL) || `https://${host}`
+  );
+  const resolvedBaseUrl = removeTrailingSlash(getEnv(ENV_VARS.BASE_URL) || resolvedApiUrl);
+
   return {
     app: {
       // Use helper functions (which use dotenv) for environment variable access
@@ -50,32 +56,11 @@ export default function createStagingConfig(): Config {
       apiPrefix: DEFAULT_CONFIG.API_PREFIX,
       environment: 'production' as const, // Use production type for staging (same security level)
       isDev: false, // Not development mode
-      host:
-        getEnv(ENV_VARS.HOST) ||
-        (() => {
-          throw new Error(
-            `Missing required environment variable: ${ENV_VARS.HOST}. Please set HOST in .env.staging`
-          );
-        })(),
+      host,
       bindAddress: '0.0.0.0',
-      // CRITICAL: Must be set via BASE_URL or API_URL environment variable (no hardcoded defaults)
-      baseUrl: removeTrailingSlash(
-        getEnv(ENV_VARS.BASE_URL) ||
-          getEnv(ENV_VARS.API_URL) ||
-          (() => {
-            throw new Error(
-              `Missing required environment variable: ${ENV_VARS.BASE_URL} or ${ENV_VARS.API_URL}. ` +
-                `Please set BASE_URL or API_URL in .env.staging`
-            );
-          })()
-      ),
-      apiUrl:
-        getEnv(ENV_VARS.API_URL) ||
-        (() => {
-          throw new Error(
-            `Missing required environment variable: ${ENV_VARS.API_URL}. Please set API_URL in .env.staging`
-          );
-        })(),
+      // Staging can derive a safe public origin from HOST when API_URL / BASE_URL are not supplied.
+      baseUrl: resolvedBaseUrl,
+      apiUrl: resolvedApiUrl,
     },
     urls: {
       // Use helper functions (which use dotenv) for environment variable access
