@@ -216,9 +216,10 @@ export class PaymentService {
       return demoResult;
     }
 
+    const fallbackProviders = config.payment.fallback?.map(f => f.provider) || [];
     const providersToTry: PaymentProvider[] = provider
       ? [provider]
-      : [config.payment.primary.provider, ...(config.payment.fallback?.map(f => f.provider) || [])];
+      : [config.payment.primary.provider, ...fallbackProviders];
 
     let lastError: Error | null = null;
 
