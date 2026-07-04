@@ -551,6 +551,8 @@ export class BillingService implements OnModuleInit {
     const frontendBaseUrl =
       this.configService.getEnv('FRONTEND_URL') ||
       this.configService.getEnv('NEXT_PUBLIC_APP_URL') ||
+      this.configService.getAppConfig().baseUrl ||
+      this.configService.getAppConfig().apiUrl ||
       'http://localhost:3000';
 
     const normalizedFrontendUrl = frontendBaseUrl.replace(/\/+$/, '');
@@ -570,6 +572,17 @@ export class BillingService implements OnModuleInit {
       callbackUrl.searchParams.set('appointmentType', appointmentType);
     }
     return callbackUrl.toString();
+  }
+
+  private getResolvedBackendBaseUrl(): string {
+    const appConfig = this.configService.getAppConfig();
+    return (
+      appConfig.apiUrl ||
+      appConfig.baseUrl ||
+      this.configService.getEnv('BASE_URL') ||
+      this.configService.getEnv('API_URL') ||
+      ''
+    );
   }
 
   private buildGatewayOrderId(baseOrderId: string, uniqueKey: string): string {
@@ -2531,14 +2544,10 @@ export class BillingService implements OnModuleInit {
 
     // Create payment intent via payment service
     // SECURITY: Use ConfigService instead of hardcoded URL
-    const baseUrl =
-      this.configService.getEnv('BASE_URL') ||
-      this.configService.getEnv('API_URL') ||
-      (() => {
-        throw new Error(
-          'Missing required environment variable: BASE_URL or API_URL. Please set BASE_URL or API_URL in environment configuration.'
-        );
-      })();
+    const baseUrl = this.getResolvedBackendBaseUrl();
+    if (!baseUrl) {
+      throw new Error('API URL is not configured in application config');
+    }
     const subscriptionTotalAmount = this.getInvoiceTotalAmount(invoice, subscriptionAmount);
     const paymentIntentOptions: PaymentIntentOptions = {
       amount: Math.round(subscriptionTotalAmount * 100),
@@ -2784,14 +2793,10 @@ export class BillingService implements OnModuleInit {
 
     // Create payment intent via payment service
     // SECURITY: Use ConfigService instead of hardcoded URL
-    const baseUrl =
-      this.configService.getEnv('BASE_URL') ||
-      this.configService.getEnv('API_URL') ||
-      (() => {
-        throw new Error(
-          'Missing required environment variable: BASE_URL or API_URL. Please set BASE_URL or API_URL in environment configuration.'
-        );
-      })();
+    const baseUrl = this.getResolvedBackendBaseUrl();
+    if (!baseUrl) {
+      throw new Error('API URL is not configured in application config');
+    }
     const paymentIntentOptions: PaymentIntentOptions = {
       amount: Math.round(appointmentTotalAmount * 100),
       currency: 'INR',
@@ -2969,14 +2974,10 @@ export class BillingService implements OnModuleInit {
     const invoiceRecord = invoice as unknown as Record<string, unknown>;
     const currency =
       typeof invoiceRecord['currency'] === 'string' ? String(invoiceRecord['currency']) : 'INR';
-    const baseUrl =
-      this.configService.getEnv('BASE_URL') ||
-      this.configService.getEnv('API_URL') ||
-      (() => {
-        throw new Error(
-          'Missing required environment variable: BASE_URL or API_URL. Please set BASE_URL or API_URL in environment configuration.'
-        );
-      })();
+    const baseUrl = this.getResolvedBackendBaseUrl();
+    if (!baseUrl) {
+      throw new Error('API URL is not configured in application config');
+    }
 
     const paymentIntentOptions: PaymentIntentOptions = {
       amount: invoiceAmount * 100,
