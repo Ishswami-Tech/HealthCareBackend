@@ -26,17 +26,17 @@ export default function createTestConfig(): Config {
     app: {
       // Use helper functions (which use dotenv) for environment variable access
       port: parseInteger(getEnv(ENV_VARS.PORT), 0, 0, 65535), // Port 0 = random port for tests
-      apiPrefix: getEnvWithDefault('API_PREFIX', DEFAULT_CONFIG.API_PREFIX),
+      apiPrefix: DEFAULT_CONFIG.API_PREFIX,
       environment: 'test' as const,
       isDev: true, // Test mode is like development
       host: getEnvWithDefault('HOST', 'localhost'),
-      bindAddress: getEnvWithDefault('BIND_ADDRESS', '127.0.0.1'),
+      bindAddress: '127.0.0.1',
       baseUrl: getEnvWithDefault('BASE_URL', 'http://localhost:0'),
       apiUrl: getEnvWithDefault('API_URL', 'http://localhost:0'),
     },
     urls: {
       // Use helper functions (which use dotenv) for environment variable access
-      swagger: getEnvWithDefault('SWAGGER_URL', '/docs'),
+      swagger: '/docs',
       bullBoard: getEnvWithDefault('BULL_BOARD_URL', '/queue-dashboard'),
       socket: getEnvWithDefault('SOCKET_URL', '/socket.io'),
       redisCommander: getEnvWithDefault('REDIS_COMMANDER_URL', 'http://localhost:8082'),
@@ -124,7 +124,7 @@ export default function createTestConfig(): Config {
       rateLimit: getEnvBoolean('SECURITY_RATE_LIMIT', false), // Disabled for tests
       rateLimitMax: parseInteger(getEnv('SECURITY_RATE_LIMIT_MAX'), 10000, 1), // High limit
       rateLimitWindowMs: parseInteger(getEnv('SECURITY_RATE_LIMIT_WINDOW_MS'), 1000, 100),
-      trustProxy: parseInteger(getEnv('TRUST_PROXY'), 0, 0, 2), // No proxy in tests
+      trustProxy: 0, // No proxy in tests
     },
     whatsapp: {
       // Use helper functions (which use dotenv) for environment variable access

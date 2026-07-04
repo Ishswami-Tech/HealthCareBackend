@@ -34,6 +34,15 @@ type BillingServiceLike = {
     orderId: string,
     provider?: PaymentProvider
   ) => Promise<unknown>;
+  handleRefundCallback: (
+    clinicId: string,
+    paymentId: string,
+    refundId: string,
+    orderId?: string,
+    provider?: PaymentProvider,
+    callbackState?: string,
+    callbackAmount?: number
+  ) => Promise<unknown>;
 };
 
 @ApiTags('payments')
@@ -90,6 +99,50 @@ export class PaymentController {
     return this.enabledProviders.includes(provider);
   }
 
+  private getRecord(value: unknown): Record<string, unknown> | null {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  }
+
+  private getStringAtPath(source: unknown, path: string[]): string {
+    let current: unknown = source;
+    for (const segment of path) {
+      const record = this.getRecord(current);
+      if (!record) {
+        return '';
+      }
+      current = record[segment];
+    }
+
+    return typeof current === 'string' ? current : '';
+  }
+
+  private getFirstStringAtPath(source: unknown, paths: string[][]): string {
+    for (const path of paths) {
+      const value = this.getStringAtPath(source, path);
+      if (value) {
+        return value;
+      }
+    }
+    return '';
+  }
+
+  private asMetadata(value: unknown): Record<string, unknown> {
+    return this.getRecord(value) || {};
+  }
+
+  private getFirstArrayRecordAtPath(source: unknown, path: string[]): Record<string, unknown> {
+    const value = path.reduce<unknown>((current, segment) => {
+      if (Array.isArray(current)) {
+        return current[Number(segment) || 0];
+      }
+      return this.getRecord(current)?.[segment];
+    }, source);
+
+    return this.getRecord(value) || {};
+  }
+
   private async resolveClinicIdFromPaymentReferences(
     paymentId?: string,
     orderId?: string
@@ -105,15 +158,11 @@ export class PaymentController {
         (await this.databaseService.findPaymentsSafe({ transactionId: reference }))[0] ??
         null;
 
+      const metadata = this.asMetadata(payment?.metadata);
       const resolvedClinicId =
         payment?.clinicId ||
         payment?.invoice?.clinicId ||
-        (typeof payment?.metadata === 'object' &&
-        payment?.metadata !== null &&
-        !Array.isArray(payment.metadata) &&
-        typeof (payment.metadata as Record<string, unknown>)['clinicId'] === 'string'
-          ? String((payment.metadata as Record<string, unknown>)['clinicId'])
-          : '');
+        (typeof metadata['clinicId'] === 'string' ? metadata['clinicId'] : '');
 
       if (resolvedClinicId) {
         return resolvedClinicId;
@@ -179,6 +228,7 @@ export class PaymentController {
   @ApiHeader({ name: 'X-Razorpay-Signature', description: 'Razorpay webhook signature' })
   @ApiResponse({ status: 200, description: 'Webhook processed successfully' })
   async handleRazorpayWebhook(
+    @Req() request: FastifyRequest & { rawBody?: string | Buffer },
     @Body() body: Record<string, unknown>,
     @Headers('x-razorpay-signature') signature: string,
     @Query('clinicId') clinicId: string
@@ -196,11 +246,21 @@ export class PaymentController {
       }
 
       const event = body['event'] as string;
-      const payload = body['payload'] as Record<string, unknown>;
-      const paymentEntity = payload?.['payment'] as Record<string, unknown>;
-      const orderEntity = payload?.['order'] as Record<string, unknown>;
-      const paymentId = typeof paymentEntity?.['id'] === 'string' ? paymentEntity['id'] : '';
-      const orderId = typeof orderEntity?.['id'] === 'string' ? orderEntity['id'] : '';
+      const rawPayload =
+        typeof request.rawBody === 'string'
+          ? request.rawBody
+          : Buffer.isBuffer(request.rawBody)
+            ? request.rawBody.toString('utf8')
+            : JSON.stringify(body);
+      const paymentId = this.getFirstStringAtPath(body, [
+        ['payload', 'payment', 'entity', 'id'],
+        ['payload', 'payment', 'id'],
+      ]);
+      const orderId = this.getFirstStringAtPath(body, [
+        ['payload', 'payment', 'entity', 'order_id'],
+        ['payload', 'order', 'entity', 'id'],
+        ['payload', 'order', 'id'],
+      ]);
       const resolvedClinicId =
         clinicId || (await this.resolveClinicIdFromPaymentReferences(paymentId, orderId));
 
@@ -214,7 +274,7 @@ export class PaymentController {
       const isValid = await this.paymentService.verifyWebhook(
         resolvedClinicId,
         {
-          payload: body,
+          payload: rawPayload,
           signature: signature || '',
         },
         PaymentProvider.RAZORPAY
@@ -296,32 +356,29 @@ export class PaymentController {
       const dataObj = (
         typeof body['data'] === 'object' && body['data'] !== null ? body['data'] : body
       ) as Record<string, unknown>;
-      const orderIdRaw =
-        dataObj['orderId'] ?? dataObj['order_id'] ?? body['orderId'] ?? body['order_id'];
-      const appointmentIdRaw =
-        dataObj['appointmentId'] ??
-        dataObj['appointment_id'] ??
-        body['appointmentId'] ??
-        body['appointment_id'];
-      const paymentIdRaw =
-        dataObj['cf_payment_id'] ??
-        dataObj['paymentId'] ??
-        dataObj['payment_id'] ??
-        body['paymentId'] ??
-        body['payment_id'] ??
-        body['cf_payment_id'] ??
-        orderIdRaw;
-      const paymentStatusRaw =
-        dataObj['payment_status'] ??
-        dataObj['paymentStatus'] ??
-        body['payment_status'] ??
-        body['paymentStatus'] ??
-        '';
-      const orderId = typeof orderIdRaw === 'string' ? orderIdRaw : '';
-      const appointmentId = typeof appointmentIdRaw === 'string' ? appointmentIdRaw : '';
-      const paymentId = typeof paymentIdRaw === 'string' ? paymentIdRaw : '';
-      const paymentStatus =
-        typeof paymentStatusRaw === 'string' ? paymentStatusRaw.toUpperCase() : '';
+      const orderId = this.getFirstStringAtPath(dataObj, [
+        ['order', 'order_id'],
+        ['orderId'],
+        ['order_id'],
+      ]);
+      const appointmentId = this.getFirstStringAtPath(dataObj, [
+        ['order', 'order_tags', 'appointmentId'],
+        ['appointmentId'],
+        ['appointment_id'],
+      ]);
+      const paymentId =
+        this.getFirstStringAtPath(dataObj, [
+          ['payment', 'cf_payment_id'],
+          ['payment', 'payment_id'],
+          ['cf_payment_id'],
+          ['paymentId'],
+          ['payment_id'],
+        ]) || orderId;
+      const paymentStatus = this.getFirstStringAtPath(dataObj, [
+        ['payment', 'payment_status'],
+        ['payment_status'],
+        ['paymentStatus'],
+      ]).toUpperCase();
       const resolvedClinicId =
         clinicId ||
         (await this.resolveClinicIdFromPaymentReferences(paymentId, orderId)) ||
@@ -399,10 +456,13 @@ export class PaymentController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Handle PhonePe webhook' })
   @ApiHeader({ name: 'X-VERIFY', description: 'PhonePe webhook signature' })
+  @ApiHeader({ name: 'Authorization', description: 'PhonePe webhook SHA256 auth header' })
   @ApiResponse({ status: 200, description: 'Webhook processed successfully' })
   async handlePhonePeWebhook(
+    @Req() request: FastifyRequest & { rawBody?: string | Buffer },
     @Body() body: Record<string, unknown>,
     @Headers('x-verify') signature: string,
+    @Headers('authorization') authorization: string,
     @Query('clinicId') clinicId: string
   ): Promise<{ success: boolean }> {
     try {
@@ -418,18 +478,54 @@ export class PaymentController {
       }
 
       const base64Payload = body['request'] as string;
+      let callbackType = this.getFirstStringAtPath(body, [['type'], ['event']]);
       let merchantTransactionId = '';
       let transactionId = '';
+      let refundId = '';
+      let callbackAmount = 0;
+      let state = '';
+
       if (base64Payload) {
         const decodedPayload = Buffer.from(base64Payload, 'base64').toString('utf-8');
-        const paymentData = JSON.parse(decodedPayload) as Record<string, unknown>;
+        const parsedPayload = JSON.parse(decodedPayload) as Record<string, unknown>;
 
-        merchantTransactionId =
-          typeof paymentData['merchantTransactionId'] === 'string'
-            ? paymentData['merchantTransactionId']
-            : '';
+        callbackType =
+          this.getFirstStringAtPath(parsedPayload, [['type'], ['event']]) || callbackType;
+        merchantTransactionId = this.getFirstStringAtPath(parsedPayload, [
+          ['merchantOrderId'],
+          ['merchantTransactionId'],
+          ['originalMerchantOrderId'],
+        ]);
+        transactionId = this.getFirstStringAtPath(parsedPayload, [['transactionId']]);
+        refundId = this.getFirstStringAtPath(parsedPayload, [['refundId'], ['merchantRefundId']]);
+        callbackAmount = Number(parsedPayload['amount'] || 0);
+        state = this.getFirstStringAtPath(parsedPayload, [['state']]).toUpperCase();
+      } else {
+        const payload = this.getRecord(body['payload']) || {};
+        const paymentDetail = this.getFirstArrayRecordAtPath(body, ['payload', 'paymentDetails']);
+        callbackType = this.getFirstStringAtPath(body, [['type'], ['event']]);
+        merchantTransactionId = this.getFirstStringAtPath(body, [
+          ['payload', 'merchantOrderId'],
+          ['payload', 'orderId'],
+          ['payload', 'originalMerchantOrderId'],
+        ]);
         transactionId =
-          typeof paymentData['transactionId'] === 'string' ? paymentData['transactionId'] : '';
+          this.getFirstStringAtPath(paymentDetail, [['transactionId']]) ||
+          this.getFirstStringAtPath(body, [['payload', 'orderId']]) ||
+          this.getFirstStringAtPath(payload, [['transactionId']]);
+        refundId = this.getFirstStringAtPath(body, [
+          ['payload', 'refundId'],
+          ['payload', 'merchantRefundId'],
+          ['payload', 'paymentDetails', '0', 'refundId'],
+        ]);
+        callbackAmount = Number(
+          typeof payload['amount'] === 'number'
+            ? payload['amount']
+            : typeof payload['amount'] === 'string'
+              ? payload['amount']
+              : 0
+        );
+        state = this.getFirstStringAtPath(body, [['payload', 'state']]).toUpperCase();
       }
 
       const resolvedClinicId =
@@ -439,18 +535,32 @@ export class PaymentController {
       if (!resolvedClinicId) {
         throw new Error('Clinic ID is required');
       }
-      if (!signature) {
-        throw new Error('PhonePe webhook signature is required');
-      }
 
-      const isValid = await this.paymentService.verifyWebhook(
-        resolvedClinicId,
-        {
-          payload: body,
-          signature: signature || '',
-        },
-        PaymentProvider.PHONEPE
-      );
+      const responseBody =
+        typeof request.rawBody === 'string'
+          ? request.rawBody
+          : Buffer.isBuffer(request.rawBody)
+            ? request.rawBody.toString('utf8')
+            : JSON.stringify(body);
+      const isValid = authorization
+        ? await this.paymentService.verifyWebhook(
+            resolvedClinicId,
+            {
+              payload: responseBody,
+              signature: authorization,
+            },
+            PaymentProvider.PHONEPE
+          )
+        : signature
+          ? await this.paymentService.verifyWebhook(
+              resolvedClinicId,
+              {
+                payload: body,
+                signature: signature || '',
+              },
+              PaymentProvider.PHONEPE
+            )
+          : false;
 
       if (!isValid) {
         await this.loggingService.log(
@@ -463,10 +573,27 @@ export class PaymentController {
         return { success: false };
       }
 
-      if (merchantTransactionId && transactionId) {
+      const normalizedCallbackType = callbackType.trim().toUpperCase();
+      const isRefundCallback = normalizedCallbackType.includes('REFUND');
+      const isOrderCallback =
+        !normalizedCallbackType ||
+        normalizedCallbackType.includes('ORDER') ||
+        normalizedCallbackType.includes('TRANSACTION');
+
+      if (isRefundCallback && (refundId || merchantTransactionId)) {
+        await this.getBillingService().handleRefundCallback(
+          resolvedClinicId,
+          merchantTransactionId || transactionId || refundId,
+          refundId || merchantTransactionId || transactionId,
+          merchantTransactionId || transactionId || undefined,
+          PaymentProvider.PHONEPE,
+          state || normalizedCallbackType,
+          callbackAmount
+        );
+      } else if (isOrderCallback && merchantTransactionId) {
         await this.getBillingService().handlePaymentCallback(
           resolvedClinicId,
-          transactionId,
+          merchantTransactionId,
           merchantTransactionId,
           PaymentProvider.PHONEPE
         );
@@ -477,7 +604,14 @@ export class PaymentController {
         LogLevel.INFO,
         'PhonePe webhook processed',
         'PaymentController',
-        { clinicId: resolvedClinicId }
+        {
+          clinicId: resolvedClinicId,
+          event: callbackType,
+          state,
+          merchantTransactionId,
+          transactionId,
+          refundId,
+        }
       );
 
       return { success: true };

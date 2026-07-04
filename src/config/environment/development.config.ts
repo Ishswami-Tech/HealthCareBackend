@@ -27,11 +27,11 @@ export default function createDevelopmentConfig(): Config {
     app: {
       // Use helper functions (which use dotenv) for environment variable access
       port: parseInteger(getEnv(ENV_VARS.PORT), DEFAULT_CONFIG.PORT, 1, 65535),
-      apiPrefix: getEnvWithDefault(ENV_VARS.API_PREFIX, DEFAULT_CONFIG.API_PREFIX),
+      apiPrefix: DEFAULT_CONFIG.API_PREFIX,
       environment: 'development' as const,
       isDev: getEnvBoolean(ENV_VARS.IS_DEV, true),
       host: getEnvWithDefault(ENV_VARS.HOST, 'localhost'),
-      bindAddress: getEnvWithDefault(ENV_VARS.BIND_ADDRESS, '0.0.0.0'),
+      bindAddress: '0.0.0.0',
       // CRITICAL: baseUrl and apiUrl should NOT include trailing slashes for proper URL concatenation
       // The swagger URL uses ${baseUrl}${swagger} pattern, so baseUrl must not end with /
       baseUrl: removeTrailingSlash(
@@ -46,7 +46,7 @@ export default function createDevelopmentConfig(): Config {
     },
     urls: {
       // Use helper functions (which use dotenv) for environment variable access
-      swagger: getEnvWithDefault(ENV_VARS.SWAGGER_URL, '/docs'),
+      swagger: '/docs',
       bullBoard: getEnvWithDefault(ENV_VARS.BULL_BOARD_URL, '/queue-dashboard'),
       socket: getEnvWithDefault(ENV_VARS.SOCKET_URL, '/socket.io'),
       redisCommander: getEnvWithDefault(ENV_VARS.REDIS_COMMANDER_URL, 'http://localhost:8082'),
@@ -135,7 +135,7 @@ export default function createDevelopmentConfig(): Config {
       rateLimit: getEnvBoolean('SECURITY_RATE_LIMIT', true),
       rateLimitMax: parseInteger(getEnv('SECURITY_RATE_LIMIT_MAX'), 1000, 1),
       rateLimitWindowMs: parseInteger(getEnv('SECURITY_RATE_LIMIT_WINDOW_MS'), 15000, 1000),
-      trustProxy: parseInteger(getEnv('TRUST_PROXY'), 1, 0, 2),
+      trustProxy: 1,
     },
     whatsapp: {
       // Use helper functions (which use dotenv) for environment variable access

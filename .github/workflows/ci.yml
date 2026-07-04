@@ -1007,9 +1007,7 @@ jobs:
           REDIS_ENABLED=${{ vars.REDIS_ENABLED }}
           REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
           PORT=${{ vars.PORT }}
-          API_PREFIX=${{ vars.API_PREFIX }}
           HOST=${{ vars.HOST }}
-          BIND_ADDRESS=${{ vars.BIND_ADDRESS }}
           BASE_URL=${{ vars.BASE_URL }}
           API_URL=${{ vars.API_URL }}
           FRONTEND_URL=${{ vars.FRONTEND_URL }}
@@ -1039,7 +1037,6 @@ jobs:
           SECURITY_RATE_LIMIT=${{ vars.SECURITY_RATE_LIMIT }}
           SECURITY_RATE_LIMIT_MAX=${{ vars.SECURITY_RATE_LIMIT_MAX }}
           SECURITY_RATE_LIMIT_WINDOW_MS=${{ vars.SECURITY_RATE_LIMIT_WINDOW_MS }}
-          TRUST_PROXY=${{ vars.TRUST_PROXY }}
           EMAIL_PROVIDER=${{ vars.EMAIL_PROVIDER }}
           ZEPTOMAIL_ENABLED=${{ vars.ZEPTOMAIL_ENABLED }}
           ZEPTOMAIL_SEND_MAIL_TOKEN=${{ secrets.ZEPTOMAIL_SEND_MAIL_TOKEN }}
@@ -1084,7 +1081,6 @@ jobs:
           CORS_ORIGIN=${{ vars.CORS_ORIGIN }}
           CORS_CREDENTIALS=${{ vars.CORS_CREDENTIALS }}
           CORS_METHODS=${{ vars.CORS_METHODS }}
-          SWAGGER_URL=${{ vars.SWAGGER_URL }}
           ENABLE_BULL_BOARD=${{ vars.ENABLE_BULL_BOARD }}
           BULL_BOARD_URL=${{ vars.BULL_BOARD_URL }}
           QUEUE_DASHBOARD_USER=${{ vars.QUEUE_DASHBOARD_USER }}
@@ -1109,9 +1105,14 @@ jobs:
           CASHFREE_ENVIRONMENT=${{ vars.CASHFREE_ENVIRONMENT }}
           CASHFREE_APP_ID=${{ secrets.CASHFREE_APP_ID }}
           CASHFREE_SECRET_KEY=${{ secrets.CASHFREE_SECRET_KEY }}
-          CASHFREE_API_VERSION=${{ vars.CASHFREE_API_VERSION }}
           CASHFREE_RETURN_URL=${{ vars.CASHFREE_RETURN_URL }}
           CASHFREE_NOTIFY_URL=${{ vars.CASHFREE_NOTIFY_URL }}
+          PHONEPE_CLIENT_ID=${{ vars.PHONEPE_CLIENT_ID }}
+          PHONEPE_CLIENT_SECRET=${{ secrets.PHONEPE_CLIENT_SECRET }}
+          PHONEPE_ENVIRONMENT=${{ vars.PHONEPE_ENVIRONMENT }}
+          PHONEPE_WEBHOOK_USERNAME=${{ vars.PHONEPE_WEBHOOK_USERNAME }}
+          PHONEPE_WEBHOOK_PASSWORD=${{ secrets.PHONEPE_WEBHOOK_PASSWORD }}
+          PHONEPE_WEBHOOK_AUTHORIZATION_HASH=${{ secrets.PHONEPE_WEBHOOK_AUTHORIZATION_HASH }}
 
           # Clinic-Specific WhatsApp Configuration (Multi-Tenant)
           # =======================================================
@@ -1179,14 +1180,20 @@ jobs:
           CASHFREE_ENVIRONMENT=${{ vars.CASHFREE_ENVIRONMENT }}
           CASHFREE_APP_ID=${{ secrets.CASHFREE_APP_ID }}
           CASHFREE_SECRET_KEY=${{ secrets.CASHFREE_SECRET_KEY }}
-          CASHFREE_API_VERSION=${{ vars.CASHFREE_API_VERSION }}
           CASHFREE_RETURN_URL=${{ vars.CASHFREE_RETURN_URL }}
           CASHFREE_NOTIFY_URL=${{ vars.CASHFREE_NOTIFY_URL }}
+          PHONEPE_CLIENT_ID=${{ vars.PHONEPE_CLIENT_ID }}
+          PHONEPE_CLIENT_SECRET=${{ secrets.PHONEPE_CLIENT_SECRET }}
+          PHONEPE_ENVIRONMENT=${{ vars.PHONEPE_ENVIRONMENT }}
+          PHONEPE_WEBHOOK_USERNAME=${{ vars.PHONEPE_WEBHOOK_USERNAME }}
+          PHONEPE_WEBHOOK_PASSWORD=${{ secrets.PHONEPE_WEBHOOK_PASSWORD }}
+          PHONEPE_WEBHOOK_AUTHORIZATION_HASH=${{ secrets.PHONEPE_WEBHOOK_AUTHORIZATION_HASH }}
 
           # Payment - Razorpay (Fallback Provider - Optional)
           # ============================================
-          RAZORPAY_KEY_ID=${{ secrets.RAZORPAY_KEY_ID }}
+          RAZORPAY_KEY_ID=${{ vars.RAZORPAY_KEY_ID }}
           RAZORPAY_KEY_SECRET=${{ secrets.RAZORPAY_KEY_SECRET }}
+          RAZORPAY_WEBHOOK_SECRET=${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
           PAYMENT_DEFAULT_CURRENCY=${{ vars.PAYMENT_DEFAULT_CURRENCY }}
 
           # Coturn Configuration (for infrastructure services)
@@ -1303,9 +1310,14 @@ jobs:
             GOOGLE_CLIENT_SECRET
             CASHFREE_APP_ID
             CASHFREE_SECRET_KEY
-            CASHFREE_API_VERSION
             CASHFREE_RETURN_URL
             CASHFREE_NOTIFY_URL
+            PHONEPE_CLIENT_ID
+            PHONEPE_CLIENT_SECRET
+            PHONEPE_ENVIRONMENT
+            RAZORPAY_KEY_ID
+            RAZORPAY_KEY_SECRET
+            RAZORPAY_WEBHOOK_SECRET
             S3_ACCESS_KEY_ID
             S3_SECRET_ACCESS_KEY
             FIREBASE_PRIVATE_KEY

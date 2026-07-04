@@ -292,8 +292,8 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         (options.metadata?.['callbackUrl'] as string | undefined) ||
         (() => {
           const baseUrl = options.metadata?.['baseUrl'] as string | undefined;
-          if (!baseUrl || !options.clinicId) return undefined;
-          return `${baseUrl}/api/v1/payments/cashfree/webhook?clinicId=${encodeURIComponent(options.clinicId)}`;
+          if (!baseUrl) return undefined;
+          return `${baseUrl}/api/v1/payments/cashfree/webhook`;
         })();
 
       const body: CashfreeOrderRequest = {

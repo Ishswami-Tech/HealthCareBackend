@@ -75,7 +75,7 @@ export class ServerConfigurator {
       this.configService?.get<string>('HOST', '0.0.0.0') ||
       '0.0.0.0';
 
-    const bindAddress = this.configService?.get<string>('BIND_ADDRESS') || host;
+    const bindAddress = host;
 
     const portNumber = typeof port === 'string' ? parseInt(port, 10) : port;
 
@@ -104,8 +104,7 @@ export class ServerConfigurator {
    * @returns ApplicationConfig - Application configuration object
    */
   getApplicationConfig(instanceId: string, isHorizontalScaling: boolean): ApplicationConfig {
-    const trustProxyValue = this.configService?.get<string>('TRUST_PROXY', '0') || '0';
-    const trustProxy = trustProxyValue === '1' || trustProxyValue === 'true';
+    const trustProxy = this.environment !== 'test';
 
     // Production-like settings for staging, production, and local-prod
     const isProductionLike =

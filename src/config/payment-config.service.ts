@@ -144,13 +144,14 @@ export class PaymentConfigService implements OnModuleInit {
 
     const razorpayKeyId = this.configService.getEnv('RAZORPAY_KEY_ID') || '';
     const razorpayKeySecret = this.configService.getEnv('RAZORPAY_KEY_SECRET') || '';
+    const razorpayWebhookSecret = this.configService.getEnv('RAZORPAY_WEBHOOK_SECRET') || '';
     const razorpayEnabled = razorpayKeyId.length > 0 && razorpayKeySecret.length > 0;
 
-    const phonepeMerchantId = this.configService.getEnv('PHONEPE_MERCHANT_ID') || '';
-    const phonepeSaltKey = this.configService.getEnv('PHONEPE_SALT_KEY') || '';
-    const phonepeSaltIndex = this.configService.getEnv('PHONEPE_SALT_INDEX', '1') || '1';
+    const phonepeClientId = this.configService.getEnv('PHONEPE_CLIENT_ID') || '';
+    const phonepeClientSecret = this.configService.getEnv('PHONEPE_CLIENT_SECRET') || '';
+    const phonepeClientVersion = '1';
     const phonepeEnv = this.configService.getEnv('PHONEPE_ENVIRONMENT', 'sandbox');
-    const phonepeEnabled = phonepeMerchantId.length > 0 && phonepeSaltKey.length > 0;
+    const phonepeEnabled = phonepeClientId.length > 0 && phonepeClientSecret.length > 0;
 
     const easebuzzMerchantKey = this.configService.getEnv('EASEBUZZ_MERCHANT_KEY') || '';
     const easebuzzMerchantSalt = this.configService.getEnv('EASEBUZZ_MERCHANT_SALT') || '';
@@ -186,8 +187,7 @@ export class PaymentConfigService implements OnModuleInit {
             cashfreeEnv === 'production'
               ? 'https://api.cashfree.com/pg'
               : 'https://sandbox.cashfree.com/pg',
-          apiVersion:
-            this.configService.getEnv('CASHFREE_API_VERSION', '2025-01-01') || '2025-01-01',
+          apiVersion: '2025-01-01',
         },
         priority: 1,
       };
@@ -198,6 +198,7 @@ export class PaymentConfigService implements OnModuleInit {
         credentials: {
           keyId: razorpayKeyId,
           keySecret: razorpayKeySecret,
+          webhookSecret: razorpayWebhookSecret,
         },
         priority: 1,
       };
@@ -206,14 +207,10 @@ export class PaymentConfigService implements OnModuleInit {
         provider: PaymentProvider.PHONEPE,
         enabled: true,
         credentials: {
-          merchantId: phonepeMerchantId,
-          saltKey: phonepeSaltKey,
-          saltIndex: phonepeSaltIndex,
+          clientId: phonepeClientId,
+          clientSecret: phonepeClientSecret,
+          clientVersion: phonepeClientVersion,
           environment: phonepeEnv || 'sandbox',
-          baseUrl:
-            phonepeEnv === 'production'
-              ? 'https://api.phonepe.com/apis/hermes'
-              : 'https://api-preprod.phonepe.com/apis/pg-sandbox',
         },
         priority: 1,
       };
@@ -235,6 +232,7 @@ export class PaymentConfigService implements OnModuleInit {
         credentials: {
           keyId: razorpayKeyId,
           keySecret: razorpayKeySecret,
+          webhookSecret: razorpayWebhookSecret,
         },
         priority: 2,
       });
@@ -244,14 +242,10 @@ export class PaymentConfigService implements OnModuleInit {
         provider: PaymentProvider.PHONEPE,
         enabled: true,
         credentials: {
-          merchantId: phonepeMerchantId,
-          saltKey: phonepeSaltKey,
-          saltIndex: phonepeSaltIndex,
+          clientId: phonepeClientId,
+          clientSecret: phonepeClientSecret,
+          clientVersion: phonepeClientVersion,
           environment: phonepeEnv || 'sandbox',
-          baseUrl:
-            phonepeEnv === 'production'
-              ? 'https://api.phonepe.com/apis/hermes'
-              : 'https://api-preprod.phonepe.com/apis/pg-sandbox',
         },
         priority: 3,
       });

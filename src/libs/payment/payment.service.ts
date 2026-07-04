@@ -385,6 +385,38 @@ export class PaymentService {
   }
 
   /**
+   * Fetch refund status
+   */
+  async getRefundStatus(
+    clinicId: string,
+    refundId: string,
+    provider?: PaymentProvider
+  ): Promise<RefundResult> {
+    try {
+      const adapter = await this.getProviderAdapter(clinicId, provider);
+      if (!adapter.getRefundStatus) {
+        throw new Error(
+          `Refund status lookup is not supported by provider: ${adapter.getProviderName()}`
+        );
+      }
+      return await adapter.getRefundStatus(refundId);
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.ERROR,
+        `Failed to fetch refund status: ${error instanceof Error ? error.message : String(error)}`,
+        'PaymentService',
+        {
+          clinicId,
+          refundId,
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+      throw error;
+    }
+  }
+
+  /**
    * Verify webhook signature
    */
   async verifyWebhook(

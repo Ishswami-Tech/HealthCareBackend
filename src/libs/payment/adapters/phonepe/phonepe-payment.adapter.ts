@@ -10,6 +10,12 @@
 
 import { Injectable } from '@nestjs/common';
 import { HttpService } from '@infrastructure/http';
+import {
+  Env,
+  RefundRequest,
+  StandardCheckoutClient,
+  StandardCheckoutPayRequest,
+} from '@phonepe-pg/pg-sdk-node';
 import { LoggingService } from '@logging';
 import { LogType, LogLevel } from '@core/types';
 import { BasePaymentAdapter } from '../base/base-payment-adapter';
@@ -23,78 +29,6 @@ import type {
   WebhookVerificationOptions,
   PaymentProviderConfig,
 } from '@core/types/payment.types';
-import * as crypto from 'crypto';
-
-// PhonePe API types
-interface PhonePePaymentRequest {
-  merchantId: string;
-  merchantTransactionId: string;
-  merchantUserId: string;
-  amount: number; // Amount in paise
-  redirectUrl: string;
-  redirectMode: 'REDIRECT' | 'POST';
-  callbackUrl: string;
-  mobileNumber?: string;
-  paymentInstrument?: {
-    type: 'PAY_PAGE';
-  };
-}
-
-interface PhonePePaymentResponse {
-  success: boolean;
-  code: string;
-  message: string;
-  data?: {
-    merchantId: string;
-    merchantTransactionId: string;
-    instrumentResponse?: {
-      type: string;
-      redirectInfo?: {
-        url: string;
-        method: string;
-      };
-    };
-  };
-}
-
-interface PhonePeStatusResponse {
-  success: boolean;
-  code: string;
-  message: string;
-  data?: {
-    merchantId: string;
-    merchantTransactionId: string;
-    transactionId: string;
-    amount: number;
-    state: 'PENDING' | 'COMPLETED' | 'FAILED';
-    responseCode: string;
-    paymentInstrument?: {
-      type: string;
-    };
-  };
-}
-
-interface PhonePeRefundRequest {
-  merchantId: string;
-  merchantUserId: string;
-  originalTransactionId: string;
-  merchantTransactionId: string;
-  amount?: number; // Amount in paise (optional for full refund)
-  callbackUrl: string;
-}
-
-interface PhonePeRefundResponse {
-  success: boolean;
-  code: string;
-  message: string;
-  data?: {
-    merchantId: string;
-    merchantTransactionId: string;
-    transactionId: string;
-    amount: number;
-    state: 'PENDING' | 'COMPLETED' | 'FAILED';
-  };
-}
 
 /**
  * PhonePe Payment Adapter
@@ -103,10 +37,11 @@ interface PhonePeRefundResponse {
 @Injectable()
 export class PhonePePaymentAdapter extends BasePaymentAdapter {
   private httpService: HttpService | null = null;
-  private merchantId: string = '';
-  private saltKey: string = '';
-  private saltIndex: string = '1';
-  private baseUrl: string = 'https://api.phonepe.com/apis/hermes';
+  private clientId: string = '';
+  private clientSecret: string = '';
+  private clientVersion: number = 1;
+  private environment: Env = Env.SANDBOX;
+  private phonepeClient: StandardCheckoutClient | null = null;
 
   constructor(loggingService: LoggingService, httpService: HttpService) {
     super(loggingService);
@@ -124,33 +59,23 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
     }
 
     const credentials = config.credentials as Record<string, string>;
-    this.merchantId = credentials['merchantId'] || credentials['merchant_id'] || '';
-    this.saltKey = credentials['saltKey'] || credentials['salt_key'] || '';
-    this.saltIndex = credentials['saltIndex'] || credentials['salt_index'] || '1';
-    this.baseUrl =
-      credentials['baseUrl'] ||
-      credentials['base_url'] ||
-      (credentials['environment'] === 'production'
-        ? 'https://api.phonepe.com/apis/hermes'
-        : 'https://api-preprod.phonepe.com/apis/pg-sandbox');
+    this.clientId = credentials['clientId'] || credentials['client_id'] || '';
+    this.clientSecret = credentials['clientSecret'] || credentials['client_secret'] || '';
+    this.clientVersion = Number(
+      credentials['clientVersion'] || credentials['client_version'] || '1'
+    );
+    const environment = String(credentials['environment'] || 'sandbox').toLowerCase();
+    this.environment = environment === 'production' ? Env.PRODUCTION : Env.SANDBOX;
 
-    if (!this.merchantId || !this.saltKey) {
-      throw new Error('PhonePe merchantId and saltKey are required');
+    if (!this.clientId || !this.clientSecret || !Number.isFinite(this.clientVersion)) {
+      throw new Error('PhonePe clientId, clientSecret, and clientVersion are required');
     }
-  }
 
-  /**
-   * Type guard for PaymentProviderConfig
-   */
-  private isPaymentProviderConfig(
-    config: PaymentProviderConfig | Record<string, unknown>
-  ): config is PaymentProviderConfig {
-    return (
-      typeof config === 'object' &&
-      config !== null &&
-      'provider' in config &&
-      'enabled' in config &&
-      'credentials' in config
+    this.phonepeClient = StandardCheckoutClient.getInstance(
+      this.clientId,
+      this.clientSecret,
+      this.clientVersion,
+      this.environment
     );
   }
 
@@ -162,44 +87,25 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
   }
 
   /**
-   * Generate X-VERIFY header for PhonePe API
+   * Get the PhonePe SDK client
    */
-  private generateXVerify(payload: string): string {
-    const stringToHash = `${payload}/pg/v1/pay${this.saltKey}`;
-    const hash = crypto.createHash('sha256').update(stringToHash).digest('hex');
-    return `${hash}###${this.saltIndex}`;
-  }
-
-  /**
-   * Generate X-VERIFY header for status check
-   */
-  private generateStatusXVerify(merchantId: string, merchantTransactionId: string): string {
-    const stringToHash = `/pg/v1/status/${merchantId}/${merchantTransactionId}${this.saltKey}`;
-    const hash = crypto.createHash('sha256').update(stringToHash).digest('hex');
-    return `${hash}###${this.saltIndex}`;
-  }
-
-  /**
-   * Generate X-VERIFY header for refund
-   */
-  private generateRefundXVerify(payload: string): string {
-    const stringToHash = `${payload}/pg/v1/refund${this.saltKey}`;
-    const hash = crypto.createHash('sha256').update(stringToHash).digest('hex');
-    return `${hash}###${this.saltIndex}`;
+  private getClient(): StandardCheckoutClient {
+    if (!this.phonepeClient) {
+      throw new Error('PhonePe SDK client not initialized');
+    }
+    return this.phonepeClient;
   }
 
   /**
    * Verify PhonePe connection
    */
   async verify(): Promise<boolean> {
-    if (!this.httpService || !this.merchantId || !this.saltKey) {
+    if (!this.clientId || !this.clientSecret || !this.phonepeClient) {
       return false;
     }
 
     try {
-      // PhonePe doesn't have a simple verify endpoint
-      // We'll just check if the configuration is valid
-      return this.merchantId.length > 0 && this.saltKey.length > 0;
+      return this.clientId.length > 0 && this.clientSecret.length > 0;
     } catch (error) {
       await this.logger.log(
         LogType.PAYMENT,
@@ -218,8 +124,8 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
    * Create payment intent (initiate payment) via PhonePe
    */
   async createPaymentIntent(options: PaymentIntentOptions): Promise<PaymentResult> {
-    if (!this.httpService) {
-      return this.createErrorResult('PhonePe adapter not initialized');
+    if (!this.phonepeClient) {
+      return this.createErrorResult('PhonePe SDK client not initialized');
     }
 
     try {
@@ -230,70 +136,33 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
       const amountInPaise = Math.round(options.amount);
 
       // Generate unique merchant transaction ID
-      const merchantTransactionId =
+      const merchantOrderId =
         options.orderId || `TXN_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+      const redirectUrl =
+        (options.metadata?.['redirectUrl'] as string) ||
+        (() => {
+          const baseUrl =
+            (options.metadata?.['baseUrl'] as string) ||
+            process.env['FRONTEND_URL'] ||
+            'http://localhost:3000';
+          return `${baseUrl}/payment/callback`;
+        })();
+      const paymentRequest = StandardCheckoutPayRequest.builder()
+        .merchantOrderId(merchantOrderId)
+        .amount(amountInPaise)
+        .redirectUrl(redirectUrl)
+        .build();
 
-      // Create payment request
-      const paymentRequest: PhonePePaymentRequest = {
-        merchantId: this.merchantId,
-        merchantTransactionId,
-        merchantUserId: options.customerId || 'USER_' + Date.now(),
-        amount: amountInPaise,
-        redirectUrl:
-          (options.metadata?.['redirectUrl'] as string) ||
-          (() => {
-            const baseUrl =
-              (options.metadata?.['baseUrl'] as string) ||
-              process.env['FRONTEND_URL'] ||
-              'http://localhost:3000';
-            return `${baseUrl}/payment/callback`;
-          })(),
-        redirectMode: 'REDIRECT',
-        callbackUrl:
-          (options.metadata?.['callbackUrl'] as string) ||
-          (() => {
-            const baseUrl =
-              (options.metadata?.['baseUrl'] as string) ||
-              process.env['API_URL'] ||
-              process.env['BASE_URL'] ||
-              'http://localhost:8088';
-            return `${baseUrl}/api/v1/payments/phonepe/webhook`;
-          })(),
-        ...(options.customerPhone && { mobileNumber: options.customerPhone }),
-        paymentInstrument: {
-          type: 'PAY_PAGE',
-        },
-      };
-
-      // Base64 encode the request payload
-      const base64Payload = Buffer.from(JSON.stringify(paymentRequest)).toString('base64');
-
-      // Generate X-VERIFY header
-      const xVerify = this.generateXVerify(base64Payload);
-
-      // Make API call with retry
       const response = await this.executeWithRetry(async () => {
-        if (!this.httpService) {
-          throw new Error('HTTP service not initialized');
-        }
-        return await this.httpService.post<PhonePePaymentResponse>(
-          `${this.baseUrl}/pg/v1/pay`,
-          { request: base64Payload },
-          {
-            headers: {
-              'Content-Type': 'application/json',
-              'X-VERIFY': xVerify,
-              Accept: 'application/json',
-            },
-          }
-        );
+        const client = this.getClient();
+        return await client.pay(paymentRequest);
       });
 
-      if (!response.data.success || !response.data.data?.instrumentResponse?.redirectInfo) {
-        throw new Error(response.data.message || 'Failed to create payment intent');
-      }
+      const paymentRedirectUrl = response.redirectUrl;
 
-      const redirectUrl = response.data.data.instrumentResponse.redirectInfo.url;
+      if (typeof paymentRedirectUrl !== 'string' || !paymentRedirectUrl) {
+        throw new Error('Failed to create payment intent');
+      }
 
       await this.logger.log(
         LogType.PAYMENT,
@@ -301,7 +170,7 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
         'PhonePe payment intent created successfully',
         'PhonePePaymentAdapter',
         {
-          merchantTransactionId,
+          merchantOrderId,
           amount: options.amount,
           currency: options.currency,
           appointmentId: options.appointmentId,
@@ -311,17 +180,19 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
       // Return pending result with redirect URL in metadata
       return {
         success: true,
-        paymentId: merchantTransactionId,
+        paymentId: merchantOrderId,
         amount: options.amount,
         currency: options.currency,
         status: 'pending',
         provider: this.getProviderName(),
         timestamp: new Date(),
-        orderId: merchantTransactionId,
+        orderId: merchantOrderId,
         metadata: {
-          redirectUrl,
-          merchantTransactionId,
+          redirectUrl: paymentRedirectUrl,
+          merchantOrderId,
+          state: response.state || 'PENDING',
         },
+        providerResponse: response,
       };
     } catch (error) {
       await this.logger.log(
@@ -344,46 +215,28 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
    * Verify payment status via PhonePe
    */
   async verifyPayment(options: PaymentStatusOptions): Promise<PaymentStatusResult> {
-    if (!this.httpService) {
-      throw new Error('PhonePe adapter not initialized');
+    if (!this.phonepeClient) {
+      throw new Error('PhonePe SDK client not initialized');
     }
 
     try {
-      const merchantTransactionId = options.paymentId || options.orderId || '';
-      if (!merchantTransactionId) {
+      const merchantOrderId = options.paymentId || options.orderId || '';
+      if (!merchantOrderId) {
         throw new Error('Payment ID or Order ID is required');
       }
 
-      // Generate X-VERIFY header for status check
-      const xVerify = this.generateStatusXVerify(this.merchantId, merchantTransactionId);
-
-      // Fetch payment status from PhonePe
       const response = await this.executeWithRetry(async () => {
-        if (!this.httpService) {
-          throw new Error('HTTP service not initialized');
-        }
-        return await this.httpService.get<PhonePeStatusResponse>(
-          `${this.baseUrl}/pg/v1/status/${this.merchantId}/${merchantTransactionId}`,
-          {
-            headers: {
-              'Content-Type': 'application/json',
-              'X-VERIFY': xVerify,
-              'X-MERCHANT-ID': this.merchantId,
-              Accept: 'application/json',
-            },
-          }
-        );
+        const client = this.getClient();
+        return await client.getOrderStatus(merchantOrderId, true);
       });
 
-      if (!response.data.success || !response.data.data) {
-        throw new Error(response.data.message || 'Failed to fetch payment status');
+      if (!response.state) {
+        throw new Error('Failed to fetch payment status');
       }
-
-      const paymentData = response.data.data;
 
       // Map PhonePe state to our status
       let status: PaymentStatusResult['status'];
-      switch (paymentData.state) {
+      switch (response.state) {
         case 'COMPLETED':
           status = 'completed';
           break;
@@ -394,17 +247,21 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
           status = 'pending';
       }
 
+      const transactionId = response.paymentDetails?.[0]?.transactionId;
+
       return {
-        paymentId: merchantTransactionId,
+        paymentId: merchantOrderId,
         status,
-        amount: paymentData.amount / 100, // Convert from paise to currency unit
+        amount: (response.amount || 0) / 100, // Convert from paise to currency unit
         currency: 'INR',
-        transactionId: paymentData.transactionId,
+        ...(transactionId ? { transactionId } : {}),
         provider: this.getProviderName(),
         timestamp: new Date(),
         metadata: {
-          responseCode: paymentData.responseCode,
-          state: paymentData.state,
+          paymentMode: response.paymentDetails?.[0]?.paymentMode,
+          state: response.state,
+          errorCode: response.errorCode,
+          detailedErrorCode: response.detailedErrorCode,
         },
       };
     } catch (error) {
@@ -426,7 +283,7 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
    * Process refund via PhonePe
    */
   async refund(options: RefundOptions): Promise<RefundResult> {
-    if (!this.httpService) {
+    if (!this.phonepeClient) {
       return {
         success: false,
         paymentId: options.paymentId,
@@ -443,57 +300,26 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
       this.validateRefundOptions(options);
 
       // Generate unique merchant transaction ID for refund
-      const merchantTransactionId = `REFUND_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-
-      // Create refund request
-      const refundRequest: PhonePeRefundRequest = {
-        merchantId: this.merchantId,
-        merchantUserId: 'SYSTEM',
-        originalTransactionId: options.paymentId,
-        merchantTransactionId,
-        ...(options.amount && { amount: Math.round(options.amount) }), // Only include amount if specified (full refund if omitted)
-        callbackUrl:
-          (options.metadata?.['callbackUrl'] as string) ||
-          (() => {
-            const baseUrl = options.metadata?.['baseUrl'] as string | undefined;
-            if (!baseUrl) {
-              throw new Error(
-                'Missing baseUrl in payment metadata. BASE_URL or API_URL must be set in environment configuration.'
-              );
-            }
-            return `${baseUrl}/api/v1/payments/phonepe/refund-webhook`;
-          })(),
-      };
-
-      // Base64 encode the request payload
-      const base64Payload = Buffer.from(JSON.stringify(refundRequest)).toString('base64');
-
-      // Generate X-VERIFY header for refund
-      const xVerify = this.generateRefundXVerify(base64Payload);
-
-      // Make API call with retry
-      const response = await this.executeWithRetry(async () => {
-        if (!this.httpService) {
-          throw new Error('HTTP service not initialized');
-        }
-        return await this.httpService.post<PhonePeRefundResponse>(
-          `${this.baseUrl}/pg/v1/refund`,
-          { request: base64Payload },
-          {
-            headers: {
-              'Content-Type': 'application/json',
-              'X-VERIFY': xVerify,
-              Accept: 'application/json',
-            },
-          }
-        );
-      });
-
-      if (!response.data.success || !response.data.data) {
-        throw new Error(response.data.message || 'Failed to process refund');
+      const merchantRefundId = `REFUND_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+      const refundAmount = Math.round(options.amount || 0);
+      if (!refundAmount) {
+        throw new Error('PhonePe refund amount is required');
       }
 
-      const refundData = response.data.data;
+      const refundRequest = RefundRequest.builder()
+        .merchantRefundId(merchantRefundId)
+        .originalMerchantOrderId(options.paymentId)
+        .amount(refundAmount)
+        .build();
+
+      const response = await this.executeWithRetry(async () => {
+        const client = this.getClient();
+        return await client.refund(refundRequest);
+      });
+
+      if (!response.state) {
+        throw new Error('Failed to process refund');
+      }
 
       await this.logger.log(
         LogType.PAYMENT,
@@ -501,20 +327,24 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
         'PhonePe refund processed successfully',
         'PhonePePaymentAdapter',
         {
-          refundId: refundData.merchantTransactionId,
+          refundId: response.refundId,
           paymentId: options.paymentId,
-          amount: refundData.amount / 100,
+          amount: (response.amount || 0) / 100,
         }
       );
 
       return {
-        success: refundData.state === 'COMPLETED',
-        refundId: refundData.merchantTransactionId,
+        success: response.state === 'COMPLETED' || response.state === 'CONFIRMED',
+        refundId: response.refundId,
         paymentId: options.paymentId,
-        amount: refundData.amount / 100, // Convert from paise
-        status: refundData.state === 'COMPLETED' ? 'completed' : 'processing',
+        amount: (response.amount || 0) / 100, // Convert from paise
+        status:
+          response.state === 'COMPLETED' || response.state === 'CONFIRMED'
+            ? 'completed'
+            : 'processing',
         provider: this.getProviderName(),
         timestamp: new Date(),
+        providerResponse: response,
       };
     } catch (error) {
       await this.logger.log(
@@ -541,45 +371,95 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
   }
 
   /**
+   * Fetch refund status via PhonePe
+   */
+  async getRefundStatus(refundId: string): Promise<RefundResult> {
+    if (!this.phonepeClient) {
+      return {
+        success: false,
+        paymentId: '',
+        amount: 0,
+        status: 'failed',
+        provider: this.getProviderName(),
+        error: 'PhonePe adapter not initialized',
+        timestamp: new Date(),
+      };
+    }
+
+    if (!refundId) {
+      throw new Error('Refund ID is required');
+    }
+
+    try {
+      const response = await this.executeWithRetry(async () => {
+        const client = this.getClient();
+        return await client.getRefundStatus(refundId);
+      });
+
+      const state = String(response.state || '').toUpperCase();
+      const completed = state === 'COMPLETED' || state === 'CONFIRMED';
+      const processing = state === 'ACCEPTED' || state === 'PENDING' || state === 'PROCESSING';
+
+      return {
+        success: completed || processing,
+        refundId: response.merchantRefundId || refundId,
+        paymentId: response.originalMerchantOrderId || '',
+        amount: (response.amount || 0) / 100,
+        status: completed ? 'completed' : processing ? 'processing' : 'failed',
+        provider: this.getProviderName(),
+        timestamp: new Date(),
+        providerResponse: response,
+      };
+    } catch (error) {
+      await this.logger.log(
+        LogType.PAYMENT,
+        LogLevel.ERROR,
+        'Failed to fetch PhonePe refund status',
+        'PhonePePaymentAdapter',
+        {
+          error: error instanceof Error ? error.message : String(error),
+          refundId,
+        }
+      );
+      throw error;
+    }
+  }
+
+  /**
    * Verify webhook signature from PhonePe
    */
   async verifyWebhook(options: WebhookVerificationOptions): Promise<boolean> {
     try {
-      // PhonePe webhook verification
-      // The signature is in X-VERIFY header
-      // We need to verify it matches the payload
-      if (typeof options.payload === 'string') {
-        const payload = JSON.parse(options.payload) as Record<string, unknown>;
-        const base64Payload = payload['request'] as string;
-        if (!base64Payload) {
-          return false;
-        }
-
-        // Decode the payload
-        const decodedPayload = Buffer.from(base64Payload, 'base64').toString('utf-8');
-        // Payment data is parsed but not used in verification - only signature matters
-        JSON.parse(decodedPayload) as Record<string, unknown>;
-
-        // Verify signature
-        const stringToHash = `${base64Payload}/pg/v1/status${this.saltKey}`;
-        const hash = crypto.createHash('sha256').update(stringToHash).digest('hex');
-        const expectedSignature = `${hash}###${this.saltIndex}`;
-
-        return options.signature === expectedSignature;
-      } else {
-        const payload = options.payload;
-        const base64Payload = payload['request'] as string;
-        if (!base64Payload) {
-          return false;
-        }
-
-        // Verify signature
-        const stringToHash = `${base64Payload}/pg/v1/status${this.saltKey}`;
-        const hash = crypto.createHash('sha256').update(stringToHash).digest('hex');
-        const expectedSignature = `${hash}###${this.saltIndex}`;
-
-        return options.signature === expectedSignature;
+      if (!this.phonepeClient) {
+        return false;
       }
+
+      const authorization = (options.signature || '').trim();
+      if (!authorization) {
+        return false;
+      }
+
+      const responseBody =
+        typeof options.payload === 'string' ? options.payload : JSON.stringify(options.payload);
+      const username = process.env['PHONEPE_WEBHOOK_USERNAME'] || '';
+      const password = process.env['PHONEPE_WEBHOOK_PASSWORD'] || '';
+      const configuredHash = process.env['PHONEPE_WEBHOOK_AUTHORIZATION_HASH'] || '';
+
+      if (username && password) {
+        const callbackResponse = this.getClient().validateCallback(
+          username,
+          password,
+          authorization,
+          responseBody
+        );
+        return Boolean(callbackResponse?.payload);
+      }
+
+      if (configuredHash) {
+        return authorization === configuredHash || authorization === configuredHash.trim();
+      }
+
+      return false;
     } catch (error) {
       await this.logger.log(
         LogType.PAYMENT,
