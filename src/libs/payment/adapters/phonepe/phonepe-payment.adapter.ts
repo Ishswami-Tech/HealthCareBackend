@@ -145,6 +145,25 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
   }
 
   /**
+   * PhonePe merchantOrderId must stay within provider constraints.
+   * Keep the ID readable, stable, and limited to allowed characters.
+   */
+  private buildMerchantOrderId(fallbackOrderId?: string): string {
+    const rawOrderId = String(fallbackOrderId || '').trim();
+    const normalizedOrderId = rawOrderId
+      .replace(/[^A-Za-z0-9_-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^[-_]+|[-_]+$/g, '')
+      .slice(0, 63);
+
+    if (normalizedOrderId) {
+      return normalizedOrderId;
+    }
+
+    return `TXN_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+  }
+
+  /**
    * Verify PhonePe connection
    */
   async verify(): Promise<boolean> {
@@ -187,9 +206,11 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
       // Convert amount to paise (PhonePe uses smallest currency unit)
       const amountInPaise = Math.round(options.amount);
 
-      // Generate unique merchant transaction ID
-      const merchantOrderId =
-        options.orderId || `TXN_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+      // Generate a provider-compliant merchant transaction ID.
+      // PhonePe order creation is intentionally not retried: repeating the same
+      // merchantOrderId after a partial success can surface as an invalid or
+      // duplicate transaction id.
+      const merchantOrderId = this.buildMerchantOrderId(options.orderId);
       const redirectUrl =
         (options.metadata?.['redirectUrl'] as string) ||
         (() => {
@@ -206,10 +227,8 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
         .redirectUrl(redirectUrl)
         .build();
 
-      const response = await this.executeWithRetry(async () => {
-        const client = this.getClient();
-        return await client.pay(paymentRequest);
-      });
+      const client = this.getClient();
+      const response = await client.pay(paymentRequest);
 
       const paymentRedirectUrl = response.redirectUrl;
 
