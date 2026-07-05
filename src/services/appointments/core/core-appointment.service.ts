@@ -1913,10 +1913,10 @@ export class CoreAppointmentService {
         {
           doctorId,
           ...(_context?.clinicId && { clinicId: _context.clinicId }),
-          // Filter to only active appointments on the requested date
-          // Cancelled/Completed/No-show appointments free up the slot
+          // Filter to only active appointments on the requested date.
+          // Cancelled/Completed/No-show/Expired appointments free up the slot.
           date: { gte: dayStart, lte: dayEnd },
-          status: { notIn: ['CANCELLED', 'COMPLETED', 'NO_SHOW'] },
+          status: { notIn: ['CANCELLED', 'COMPLETED', 'NO_SHOW', 'EXPIRED'] },
         },
         { rowLevelSecurity: false }
       );
