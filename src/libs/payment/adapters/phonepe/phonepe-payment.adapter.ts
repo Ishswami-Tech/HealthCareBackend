@@ -172,16 +172,16 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
    * Create payment intent (initiate payment) via PhonePe
    */
   async createPaymentIntent(options: PaymentIntentOptions): Promise<PaymentResult> {
-    if (!this.phonepeClient) {
-      return this.createErrorResult('PhonePe SDK client not initialized');
-    }
-
     try {
       // Validate options
       this.validatePaymentIntentOptions(options);
 
       if (!this.phonepeClient) {
         await this.ensurePhonePeClient();
+      }
+
+      if (!this.phonepeClient) {
+        return this.createErrorResult('PhonePe SDK client not initialized');
       }
 
       // Convert amount to paise (PhonePe uses smallest currency unit)
@@ -268,13 +268,13 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
    * Verify payment status via PhonePe
    */
   async verifyPayment(options: PaymentStatusOptions): Promise<PaymentStatusResult> {
-    if (!this.phonepeClient) {
-      throw new Error('PhonePe SDK client not initialized');
-    }
-
     try {
       if (!this.phonepeClient) {
         await this.ensurePhonePeClient();
+      }
+
+      if (!this.phonepeClient) {
+        throw new Error('PhonePe SDK client not initialized');
       }
 
       const merchantOrderId = options.paymentId || options.orderId || '';
@@ -340,24 +340,24 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
    * Process refund via PhonePe
    */
   async refund(options: RefundOptions): Promise<RefundResult> {
-    if (!this.phonepeClient) {
-      return {
-        success: false,
-        paymentId: options.paymentId,
-        amount: 0,
-        status: 'failed',
-        provider: this.getProviderName(),
-        error: 'PhonePe adapter not initialized',
-        timestamp: new Date(),
-      };
-    }
-
     try {
       // Validate options
       this.validateRefundOptions(options);
 
       if (!this.phonepeClient) {
         await this.ensurePhonePeClient();
+      }
+
+      if (!this.phonepeClient) {
+        return {
+          success: false,
+          paymentId: options.paymentId,
+          amount: 0,
+          status: 'failed',
+          provider: this.getProviderName(),
+          error: 'PhonePe adapter not initialized',
+          timestamp: new Date(),
+        };
       }
 
       // Generate unique merchant transaction ID for refund
@@ -436,18 +436,6 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
    * Fetch refund status via PhonePe
    */
   async getRefundStatus(refundId: string): Promise<RefundResult> {
-    if (!this.phonepeClient) {
-      return {
-        success: false,
-        paymentId: '',
-        amount: 0,
-        status: 'failed',
-        provider: this.getProviderName(),
-        error: 'PhonePe adapter not initialized',
-        timestamp: new Date(),
-      };
-    }
-
     if (!refundId) {
       throw new Error('Refund ID is required');
     }
@@ -455,6 +443,18 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
     try {
       if (!this.phonepeClient) {
         await this.ensurePhonePeClient();
+      }
+
+      if (!this.phonepeClient) {
+        return {
+          success: false,
+          paymentId: '',
+          amount: 0,
+          status: 'failed',
+          provider: this.getProviderName(),
+          error: 'PhonePe adapter not initialized',
+          timestamp: new Date(),
+        };
       }
 
       const response = await this.executeWithRetry(async () => {

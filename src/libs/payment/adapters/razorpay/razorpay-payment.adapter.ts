@@ -90,7 +90,14 @@ interface RazorpayRefund {
   created_at: number;
 }
 
-let RazorpayClass: (new (keyId: string, keySecret: string) => RazorpayInstance) | null = null;
+interface RazorpaySdkConfig {
+  key_id?: string;
+  key_secret?: string;
+  oauthToken?: string;
+  headers?: Record<string, string>;
+}
+
+let RazorpayClass: (new (config: RazorpaySdkConfig) => RazorpayInstance) | null = null;
 
 /**
  * Load Razorpay SDK if package is installed
@@ -106,12 +113,12 @@ function loadRazorpaySDK(): void {
     // Use createRequire for safe dynamic module loading
     const requireFn = createRequire(__filename);
     const razorpayModule = requireFn('razorpay') as {
-      default?: new (keyId: string, keySecret: string) => RazorpayInstance;
-      new (keyId: string, keySecret: string): RazorpayInstance;
+      default?: new (config: RazorpaySdkConfig) => RazorpayInstance;
+      new (config: RazorpaySdkConfig): RazorpayInstance;
     };
     const RazorpayExport = razorpayModule?.default || razorpayModule;
     if (typeof RazorpayExport === 'function') {
-      RazorpayClass = RazorpayExport as new (keyId: string, keySecret: string) => RazorpayInstance;
+      RazorpayClass = RazorpayExport as new (config: RazorpaySdkConfig) => RazorpayInstance;
     }
   } catch {
     // Razorpay package not installed - will throw error on initialization
@@ -172,7 +179,10 @@ export class RazorpayPaymentAdapter extends BasePaymentAdapter {
       if (!RazorpayClass) {
         throw new Error('RazorpayClass is not available');
       }
-      this.razorpay = new RazorpayClass(this.keyId, this.keySecret);
+      this.razorpay = new RazorpayClass({
+        key_id: this.keyId,
+        key_secret: this.keySecret,
+      });
     } catch (error) {
       // Log error asynchronously but don't await to avoid blocking initialization
       this.logger
