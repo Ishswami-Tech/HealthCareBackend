@@ -11,15 +11,10 @@
 import { Injectable } from '@nestjs/common';
 import { createRequire } from 'module';
 import { HttpService } from '@infrastructure/http';
-import {
-  Env,
-  RefundRequest,
-  StandardCheckoutClient,
-  StandardCheckoutPayRequest,
-} from '@phonepe-pg/pg-sdk-node';
 import { LoggingService } from '@logging';
 import { LogType, LogLevel } from '@core/types';
 import { BasePaymentAdapter } from '../base/base-payment-adapter';
+import type * as PhonePeSdk from '@phonepe-pg/pg-sdk-node';
 import type {
   PaymentIntentOptions,
   PaymentResult,
@@ -41,8 +36,9 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
   private clientId: string = '';
   private clientSecret: string = '';
   private clientVersion: number = 1;
-  private environment: Env = Env.SANDBOX;
-  private phonepeClient: StandardCheckoutClient | null = null;
+  private environment: PhonePeSdk.Env = 'SANDBOX' as PhonePeSdk.Env;
+  private phonepeClient: PhonePeSdk.StandardCheckoutClient | null = null;
+  private phonepeSdkPromise: Promise<typeof PhonePeSdk> | null = null;
 
   constructor(loggingService: LoggingService, httpService: HttpService) {
     super(loggingService);
@@ -66,15 +62,30 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
       credentials['clientVersion'] || credentials['client_version'] || '1'
     );
     const environment = String(credentials['environment'] || 'sandbox').toLowerCase();
-    this.environment = environment === 'production' ? Env.PRODUCTION : Env.SANDBOX;
+    this.environment =
+      environment === 'production'
+        ? ('PRODUCTION' as PhonePeSdk.Env)
+        : ('SANDBOX' as PhonePeSdk.Env);
 
     if (!this.clientId || !this.clientSecret || !Number.isFinite(this.clientVersion)) {
       throw new Error('PhonePe clientId, clientSecret, and clientVersion are required');
     }
 
-    this.ensureClassTransformerCompatibility();
+    void this.ensureClassTransformerCompatibility();
+    void this.ensurePhonePeClient();
+  }
 
-    this.phonepeClient = StandardCheckoutClient.getInstance(
+  private async loadPhonePeSdk(): Promise<typeof PhonePeSdk> {
+    if (!this.phonepeSdkPromise) {
+      this.phonepeSdkPromise = import('@phonepe-pg/pg-sdk-node');
+    }
+
+    return this.phonepeSdkPromise;
+  }
+
+  private async ensurePhonePeClient(): Promise<void> {
+    const sdk = await this.loadPhonePeSdk();
+    this.phonepeClient = sdk.StandardCheckoutClient.getInstance(
       this.clientId,
       this.clientSecret,
       this.clientVersion,
@@ -92,7 +103,7 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
   /**
    * Get the PhonePe SDK client
    */
-  private getClient(): StandardCheckoutClient {
+  private getClient(): PhonePeSdk.StandardCheckoutClient {
     if (!this.phonepeClient) {
       throw new Error('PhonePe SDK client not initialized');
     }
@@ -107,7 +118,9 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
   private ensureClassTransformerCompatibility(): void {
     try {
       const requireFn = createRequire(__filename);
-      const classTransformer = requireFn('class-transformer') as Record<string, unknown>;
+      const sdkEntryPoint = requireFn.resolve('@phonepe-pg/pg-sdk-node');
+      const sdkRequire = createRequire(sdkEntryPoint);
+      const classTransformer = sdkRequire('class-transformer') as Record<string, unknown>;
       if (
         typeof classTransformer['plainToClass'] !== 'function' &&
         typeof classTransformer['plainToInstance'] === 'function'
@@ -167,6 +180,10 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
       // Validate options
       this.validatePaymentIntentOptions(options);
 
+      if (!this.phonepeClient) {
+        await this.ensurePhonePeClient();
+      }
+
       // Convert amount to paise (PhonePe uses smallest currency unit)
       const amountInPaise = Math.round(options.amount);
 
@@ -182,7 +199,8 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
             'http://localhost:3000';
           return `${baseUrl}/payment/callback`;
         })();
-      const paymentRequest = StandardCheckoutPayRequest.builder()
+      const sdk = await this.loadPhonePeSdk();
+      const paymentRequest = sdk.StandardCheckoutPayRequest.builder()
         .merchantOrderId(merchantOrderId)
         .amount(amountInPaise)
         .redirectUrl(redirectUrl)
@@ -255,6 +273,10 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
     }
 
     try {
+      if (!this.phonepeClient) {
+        await this.ensurePhonePeClient();
+      }
+
       const merchantOrderId = options.paymentId || options.orderId || '';
       if (!merchantOrderId) {
         throw new Error('Payment ID or Order ID is required');
@@ -334,6 +356,10 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
       // Validate options
       this.validateRefundOptions(options);
 
+      if (!this.phonepeClient) {
+        await this.ensurePhonePeClient();
+      }
+
       // Generate unique merchant transaction ID for refund
       const merchantRefundId = `REFUND_${Date.now()}_${Math.random().toString(36).substring(7)}`;
       const refundAmount = Math.round(options.amount || 0);
@@ -341,7 +367,8 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
         throw new Error('PhonePe refund amount is required');
       }
 
-      const refundRequest = RefundRequest.builder()
+      const sdk = await this.loadPhonePeSdk();
+      const refundRequest = sdk.RefundRequest.builder()
         .merchantRefundId(merchantRefundId)
         .originalMerchantOrderId(options.paymentId)
         .amount(refundAmount)
@@ -426,6 +453,10 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
     }
 
     try {
+      if (!this.phonepeClient) {
+        await this.ensurePhonePeClient();
+      }
+
       const response = await this.executeWithRetry(async () => {
         const client = this.getClient();
         return await client.getRefundStatus(refundId);
@@ -465,6 +496,10 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
    */
   async verifyWebhook(options: WebhookVerificationOptions): Promise<boolean> {
     try {
+      if (!this.phonepeClient) {
+        await this.ensurePhonePeClient();
+      }
+
       if (!this.phonepeClient) {
         return false;
       }
