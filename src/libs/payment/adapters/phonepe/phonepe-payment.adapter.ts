@@ -9,6 +9,7 @@
  */
 
 import { Injectable } from '@nestjs/common';
+import { createRequire } from 'module';
 import { HttpService } from '@infrastructure/http';
 import {
   Env,
@@ -71,6 +72,8 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
       throw new Error('PhonePe clientId, clientSecret, and clientVersion are required');
     }
 
+    this.ensureClassTransformerCompatibility();
+
     this.phonepeClient = StandardCheckoutClient.getInstance(
       this.clientId,
       this.clientSecret,
@@ -94,6 +97,38 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
       throw new Error('PhonePe SDK client not initialized');
     }
     return this.phonepeClient;
+  }
+
+  /**
+   * The PhonePe SDK still calls `plainToClass`, but class-transformer 0.5+
+   * only exports `plainToInstance`. Patch the cached module before the SDK
+   * starts using it so runtime initialization does not explode.
+   */
+  private ensureClassTransformerCompatibility(): void {
+    try {
+      const requireFn = createRequire(__filename);
+      const classTransformer = requireFn('class-transformer') as Record<string, unknown>;
+      if (
+        typeof classTransformer['plainToClass'] !== 'function' &&
+        typeof classTransformer['plainToInstance'] === 'function'
+      ) {
+        const plainToInstance = classTransformer['plainToInstance'] as (
+          ...args: unknown[]
+        ) => unknown;
+        classTransformer['plainToClass'] = ((...args: unknown[]) =>
+          plainToInstance(...args)) as unknown;
+      }
+    } catch (error) {
+      void this.logger.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        'Unable to apply class-transformer compatibility shim for PhonePe',
+        'PhonePePaymentAdapter',
+        {
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+    }
   }
 
   /**
