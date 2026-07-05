@@ -149,18 +149,19 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
    * Keep the ID readable, stable, and limited to allowed characters.
    */
   private buildMerchantOrderId(fallbackOrderId?: string): string {
+    const maxLength = 47;
     const rawOrderId = String(fallbackOrderId || '').trim();
     const normalizedOrderId = rawOrderId
       .replace(/[^A-Za-z0-9_-]/g, '-')
       .replace(/-+/g, '-')
       .replace(/^[-_]+|[-_]+$/g, '')
-      .slice(0, 63);
+      .slice(0, maxLength);
 
     if (normalizedOrderId) {
       return normalizedOrderId;
     }
 
-    return `TXN_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+    return `TXN_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`.slice(0, maxLength);
   }
 
   /**
