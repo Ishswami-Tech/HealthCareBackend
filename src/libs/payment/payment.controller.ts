@@ -49,13 +49,9 @@ type BillingServiceLike = {
 @Controller('payments')
 export class PaymentController {
   private billingServiceRef: BillingServiceLike | null = null;
-  private readonly enabledProviders = (
-    process.env['PAYMENT_ENABLED_PROVIDERS'] ||
-    [PaymentProvider.CASHFREE, PaymentProvider.RAZORPAY, PaymentProvider.PHONEPE].join(',')
-  )
-    .split(',')
-    .map(value => value.trim().toLowerCase())
-    .filter(Boolean);
+  private readonly supportedProviders = new Set<string>(
+    Object.values(PaymentProvider).map(value => value.trim().toLowerCase())
+  );
 
   constructor(
     private readonly paymentService: PaymentService,
@@ -82,17 +78,11 @@ export class PaymentController {
     }
 
     const normalizedProvider = provider.trim().toLowerCase();
-    const enabledProviders = (
-      process.env['PAYMENT_ENABLED_PROVIDERS'] ||
-      [PaymentProvider.CASHFREE, PaymentProvider.RAZORPAY, PaymentProvider.PHONEPE].join(',')
-    )
-      .split(',')
-      .map(value => value.trim().toLowerCase())
-      .filter(Boolean);
-
-    if (!enabledProviders.includes(normalizedProvider)) {
+    if (!this.supportedProviders.has(normalizedProvider)) {
       throw new BadRequestException(
-        `Payment provider '${provider}' is not enabled. Enabled providers: ${enabledProviders.join(', ')}`
+        `Payment provider '${provider}' is not supported. Supported providers: ${Array.from(
+          this.supportedProviders
+        ).join(', ')}`
       );
     }
 
@@ -100,7 +90,7 @@ export class PaymentController {
   }
 
   private isProviderEnabled(provider: PaymentProvider): boolean {
-    return this.enabledProviders.includes(provider);
+    return this.supportedProviders.has(provider);
   }
 
   private getRecord(value: unknown): Record<string, unknown> | null {

@@ -21,19 +21,13 @@ import { PaymentProvider } from '@core/types/payment.types';
 @Injectable()
 export class PaymentProviderFactory {
   constructor(private readonly loggingService: LoggingService) {}
-  private readonly enabledProviders = (
-    process.env['PAYMENT_ENABLED_PROVIDERS'] ||
-    [PaymentProvider.CASHFREE, PaymentProvider.RAZORPAY, PaymentProvider.PHONEPE].join(',')
-  )
-    .split(',')
-    .map(provider => provider.trim().toLowerCase())
-    .filter(Boolean);
+  private readonly supportedProviders = new Set<string>(
+    Object.values(PaymentProvider).map(provider => provider.trim().toLowerCase())
+  );
 
-  private assertProviderEnabled(provider: PaymentProvider): void {
-    if (!this.enabledProviders.includes(provider)) {
-      throw new Error(
-        `Payment provider '${provider}' is disabled. Enabled providers: ${this.enabledProviders.join(', ')}`
-      );
+  private assertProviderSupported(provider: PaymentProvider): void {
+    if (!this.supportedProviders.has(provider)) {
+      throw new Error(`Unsupported payment provider: ${provider}`);
     }
   }
 
@@ -41,7 +35,7 @@ export class PaymentProviderFactory {
    * Create payment provider adapter based on configuration
    */
   async createAdapter(config: PaymentProviderConfig): Promise<PaymentProviderAdapter> {
-    this.assertProviderEnabled(config.provider);
+    this.assertProviderSupported(config.provider);
     let adapter: PaymentProviderAdapter;
 
     switch (config.provider) {
@@ -108,7 +102,7 @@ export class PaymentProviderFactory {
     config: PaymentProviderConfig,
     httpService: HttpService
   ): Promise<PaymentProviderAdapter> {
-    this.assertProviderEnabled(config.provider);
+    this.assertProviderSupported(config.provider);
     let adapter: PaymentProviderAdapter;
 
     switch (config.provider) {
