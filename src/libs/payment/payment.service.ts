@@ -39,6 +39,12 @@ import { formatCurrencyFromMinorUnits } from '../utils/currency.util';
  */
 @Injectable()
 export class PaymentService {
+  private readonly providerFailureCooldownMs = 10 * 60 * 1000;
+  private readonly recentProviderFailures = new Map<
+    string,
+    { failedAt: number; errorMessage: string }
+  >();
+
   constructor(
     private readonly loggingService: LoggingService,
     private readonly eventService: EventService,
@@ -217,9 +223,25 @@ export class PaymentService {
     }
 
     const fallbackProviders = config.payment.fallback?.map(f => f.provider) || [];
-    const providersToTry: PaymentProvider[] = provider
-      ? [provider]
-      : [config.payment.primary.provider, ...fallbackProviders];
+    const providersToTry: PaymentProvider[] = Array.from(
+      new Set([
+        ...(provider ? [provider] : []),
+        config.payment.primary.provider,
+        ...fallbackProviders,
+      ])
+    ).filter(candidate => !this.isProviderTemporarilyFailed(clinicId, candidate));
+
+    if (providersToTry.length === 0) {
+      throw new Error(`No available payment providers for clinic: ${clinicId}`);
+    }
+
+    await this.loggingService.log(
+      LogType.PAYMENT,
+      LogLevel.INFO,
+      `Provider order for payment intent: ${providersToTry.join(' -> ')}`,
+      'PaymentService',
+      { clinicId, requestedProvider: provider }
+    );
 
     let lastError: Error | null = null;
 
@@ -227,6 +249,7 @@ export class PaymentService {
       try {
         const adapter = await this.getProviderAdapter(clinicId, p);
         const result = await adapter.createPaymentIntent(paymentOptions);
+        this.recentProviderFailures.delete(this.getProviderFailureKey(clinicId, p));
 
         const eventPayload: EnterpriseEventPayload = {
           eventId: `payment-intent-${result.paymentId || Date.now()}`,
@@ -262,6 +285,7 @@ export class PaymentService {
         return result;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
+        this.markProviderFailed(clinicId, p, lastError.message);
         await this.loggingService.log(
           LogType.PAYMENT,
           LogLevel.WARN,
@@ -280,6 +304,36 @@ export class PaymentService {
       { clinicId }
     );
     throw lastError || new Error('Failed to create payment intent');
+  }
+
+  private getProviderFailureKey(clinicId: string, provider: PaymentProvider): string {
+    return `${clinicId}:${provider}`;
+  }
+
+  private isProviderTemporarilyFailed(clinicId: string, provider: PaymentProvider): boolean {
+    const entry = this.recentProviderFailures.get(this.getProviderFailureKey(clinicId, provider));
+    if (!entry) {
+      return false;
+    }
+
+    const age = Date.now() - entry.failedAt;
+    if (age <= this.providerFailureCooldownMs) {
+      return true;
+    }
+
+    this.recentProviderFailures.delete(this.getProviderFailureKey(clinicId, provider));
+    return false;
+  }
+
+  private markProviderFailed(
+    clinicId: string,
+    provider: PaymentProvider,
+    errorMessage: string
+  ): void {
+    this.recentProviderFailures.set(this.getProviderFailureKey(clinicId, provider), {
+      failedAt: Date.now(),
+      errorMessage,
+    });
   }
 
   /**
