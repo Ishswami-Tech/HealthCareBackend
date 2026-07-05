@@ -2594,6 +2594,11 @@ export class BillingService implements OnModuleInit {
     const paymentId = paymentIntentResult.paymentId || '';
     const orderId = paymentIntentResult.orderId || '';
     const providerName = paymentIntentResult.provider || '';
+    const providerResponse = this.asRecord(paymentIntentResult.providerResponse) || {};
+    const gatewayRedirectUrl =
+      this.asSafeString(paymentIntentResult.metadata?.['redirectUrl']) ||
+      this.asSafeString(providerResponse['redirectUrl']) ||
+      this.asSafeString(providerResponse['redirect_url']);
     const redirectUrl = this.buildPaymentCallbackUrl(
       subscription.clinicId,
       orderId || this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id),
@@ -2606,6 +2611,8 @@ export class BillingService implements OnModuleInit {
       clinicId: subscription.clinicId,
       invoiceId: invoice.id,
       subscriptionId: subscription.id,
+      gatewayRedirectUrl,
+      callbackUrl: redirectUrl,
       redirectUrl,
     };
 
@@ -2839,6 +2846,11 @@ export class BillingService implements OnModuleInit {
     const paymentId = paymentIntentResult.paymentId || '';
     const orderId = paymentIntentResult.orderId || '';
     const providerName = paymentIntentResult.provider || '';
+    const providerResponse = this.asRecord(paymentIntentResult.providerResponse) || {};
+    const gatewayRedirectUrl =
+      this.asSafeString(paymentIntentResult.metadata?.['redirectUrl']) ||
+      this.asSafeString(providerResponse['redirectUrl']) ||
+      this.asSafeString(providerResponse['redirect_url']);
     const redirectUrl = this.buildPaymentCallbackUrl(
       appointment.clinicId,
       orderId || gatewayOrderId,
@@ -2857,6 +2869,8 @@ export class BillingService implements OnModuleInit {
       tax: resolvedAppointmentTax,
       totalAmount: appointmentTotalAmount,
       gstRatePercent: this.getGstRatePercent(),
+      gatewayRedirectUrl,
+      callbackUrl: redirectUrl,
       redirectUrl,
     };
 
@@ -3009,6 +3023,11 @@ export class BillingService implements OnModuleInit {
     const paymentId = paymentIntentResult.paymentId || '';
     const orderId = paymentIntentResult.orderId || '';
     const providerName = paymentIntentResult.provider || '';
+    const providerResponse = this.asRecord(paymentIntentResult.providerResponse) || {};
+    const gatewayRedirectUrl =
+      this.asSafeString(paymentIntentResult.metadata?.['redirectUrl']) ||
+      this.asSafeString(providerResponse['redirectUrl']) ||
+      this.asSafeString(providerResponse['redirect_url']);
     const redirectUrl = this.buildPaymentCallbackUrl(
       invoice.clinicId,
       orderId || this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id),
@@ -3020,6 +3039,8 @@ export class BillingService implements OnModuleInit {
       ...(this.asRecord(paymentIntentResult.metadata) || {}),
       clinicId: invoice.clinicId,
       invoiceId: invoice.id,
+      gatewayRedirectUrl,
+      callbackUrl: redirectUrl,
       redirectUrl,
     };
 
