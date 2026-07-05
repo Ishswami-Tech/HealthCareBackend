@@ -249,6 +249,9 @@ export class PaymentService {
       try {
         const adapter = await this.getProviderAdapter(clinicId, p);
         const result = await adapter.createPaymentIntent(paymentOptions);
+        if (!result.success) {
+          throw new Error(result.error || `Payment provider ${p} returned an unsuccessful result`);
+        }
         this.recentProviderFailures.delete(this.getProviderFailureKey(clinicId, p));
 
         const eventPayload: EnterpriseEventPayload = {
