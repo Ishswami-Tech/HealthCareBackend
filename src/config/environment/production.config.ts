@@ -42,10 +42,8 @@ export default function createProductionConfig(): ProductionConfig {
   validateProductionConfig();
 
   const host = getEnv(ENV_VARS.HOST) || 'localhost';
-  const resolvedApiUrl = removeTrailingSlash(
-    getEnv(ENV_VARS.API_URL) || getEnv(ENV_VARS.BASE_URL) || `https://${host}`
-  );
-  const resolvedBaseUrl = removeTrailingSlash(getEnv(ENV_VARS.BASE_URL) || resolvedApiUrl);
+  const resolvedBaseUrl = removeTrailingSlash(getEnv(ENV_VARS.BASE_URL) || `https://${host}`);
+  const resolvedApiUrl = resolvedBaseUrl;
 
   return {
     app: {
@@ -57,7 +55,7 @@ export default function createProductionConfig(): ProductionConfig {
       host,
       bindAddress: '0.0.0.0',
       // CRITICAL: baseUrl should NOT include trailing slashes for proper URL concatenation
-      // Production can derive a safe public origin from HOST when API_URL / BASE_URL are not supplied.
+      // Production can derive a safe public origin from HOST when BASE_URL is not supplied.
       baseUrl: resolvedBaseUrl,
       apiUrl: resolvedApiUrl,
     },
@@ -209,7 +207,7 @@ export default function createProductionConfig(): ProductionConfig {
     video: videoConfig(),
     domains: {
       // Extract domain from environment variables (no hardcoded defaults)
-      // FRONTEND_URL is required; API_URL now falls back to the resolved base URL.
+      // FRONTEND_URL is required; api domain falls back to the resolved base URL.
       main: (() => {
         const url = getEnv(ENV_VARS.FRONTEND_URL);
         if (!url) {
@@ -225,16 +223,16 @@ export default function createProductionConfig(): ProductionConfig {
         );
       })(),
       api: (() => {
-        const url = getEnv(ENV_VARS.API_URL) || resolvedApiUrl;
+        const url = resolvedApiUrl;
         if (!url) {
-          throw new Error(`Missing required environment variable: ${ENV_VARS.API_URL}`);
+          throw new Error(`Missing required environment variable: ${ENV_VARS.BASE_URL}`);
         }
         const cleaned = url.replace(/^https?:\/\//, '');
         const parts = cleaned.split('/');
         return (
           parts[0] ||
           (() => {
-            throw new Error(`Invalid API_URL format: ${url}`);
+            throw new Error(`Invalid BASE_URL format: ${url}`);
           })()
         );
       })(),

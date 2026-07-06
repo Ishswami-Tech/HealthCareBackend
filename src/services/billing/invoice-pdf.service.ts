@@ -890,14 +890,14 @@ export class InvoicePDFService {
 
   private getPublicInvoiceUrlBase(): string {
     const appConfig = this.configService.getAppConfig();
-    return appConfig.apiUrl || appConfig.baseUrl || '';
+    return appConfig.baseUrl || appConfig.apiUrl || '';
   }
 
   getPublicInvoiceUrl(fileName: string): string {
     const baseUrl = this.getPublicInvoiceUrlBase();
     if (!baseUrl) {
       throw new Error(
-        'Missing API_URL or BASE_URL environment variable. Cannot generate invoice download URL without base URL.'
+        'Missing BASE_URL environment variable. Cannot generate invoice download URL without base URL.'
       );
     }
 

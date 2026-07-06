@@ -9,7 +9,7 @@ Healthcare Backend.
 - `HOST`
 - `PORT`
 - `BASE_URL`
-- `API_URL`
+- `BASE_URL`
 - `FRONTEND_URL`
 
 ## Database and Cache

@@ -20,7 +20,7 @@ echo ""
 # Set environment variables
 export NODE_ENV="development"
 export PORT="8088"
-export API_URL="http://localhost:8088"
+export BASE_URL="http://localhost:8088"
 export SWAGGER_URL="/docs"
 export BULL_BOARD_URL="/queue-dashboard"
 export SOCKET_URL="/socket.io"
@@ -44,6 +44,5 @@ echo ""
 
 # Start the app
 yarn start:dev
-
 
 

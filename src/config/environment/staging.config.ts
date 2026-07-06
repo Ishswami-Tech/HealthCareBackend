@@ -44,10 +44,8 @@ export default function createStagingConfig(): Config {
   validateStagingConfig();
 
   const host = getEnv(ENV_VARS.HOST) || 'localhost';
-  const resolvedApiUrl = removeTrailingSlash(
-    getEnv(ENV_VARS.API_URL) || getEnv(ENV_VARS.BASE_URL) || `https://${host}`
-  );
-  const resolvedBaseUrl = removeTrailingSlash(getEnv(ENV_VARS.BASE_URL) || resolvedApiUrl);
+  const resolvedBaseUrl = removeTrailingSlash(getEnv(ENV_VARS.BASE_URL) || `https://${host}`);
+  const resolvedApiUrl = resolvedBaseUrl;
 
   return {
     app: {
@@ -58,7 +56,7 @@ export default function createStagingConfig(): Config {
       isDev: false, // Not development mode
       host,
       bindAddress: '0.0.0.0',
-      // Staging can derive a safe public origin from HOST when API_URL / BASE_URL are not supplied.
+      // Staging can derive a safe public origin from HOST when BASE_URL is not supplied.
       baseUrl: resolvedBaseUrl,
       apiUrl: resolvedApiUrl,
     },

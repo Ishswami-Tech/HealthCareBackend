@@ -1,8 +1,7 @@
 # Security Module
 
-**Purpose:** Enterprise-grade security middleware and utilities
-**Location:** `src/libs/security`
-**Status:** ✅ Production-ready
+**Purpose:** Enterprise-grade security middleware and utilities **Location:**
+`src/libs/security` **Status:** ✅ Production-ready
 
 ---
 
@@ -25,10 +24,13 @@ export class MyService {
   constructor(private readonly rateLimitService: RateLimitService) {}
 
   async sensitiveOperation(userId: string) {
-    const result = await this.rateLimitService.checkRateLimit(`user:${userId}`, {
-      windowMs: 60000,  // 1 minute
-      max: 10,          // 10 requests
-    });
+    const result = await this.rateLimitService.checkRateLimit(
+      `user:${userId}`,
+      {
+        windowMs: 60000, // 1 minute
+        max: 10, // 10 requests
+      }
+    );
 
     if (!result.allowed) {
       throw new TooManyRequestsException('Rate limit exceeded');
@@ -43,7 +45,8 @@ export class MyService {
 
 ## Key Features
 
-- ✅ **Global Rate Limiting** - Fastify @fastify/rate-limit plugin (Redis-backed)
+- ✅ **Global Rate Limiting** - Fastify @fastify/rate-limit plugin
+  (Redis-backed)
 - ✅ **Programmatic Rate Limiting** - RateLimitService for custom logic
 - ✅ **Security Headers** - Helmet with CSP (Swagger UI compatible)
 - ✅ **CORS Configuration** - Multi-origin support with credentials
@@ -91,10 +94,13 @@ REDIS_PORT=6379
 ```
 
 **Global Rate Limit Behavior:**
+
 - Applies to all endpoints automatically
 - Key: `${ip}:${userAgent}`
-- Response headers: `x-ratelimit-limit`, `x-ratelimit-remaining`, `x-ratelimit-reset`, `retry-after`
-- 429 response when exceeded: `{ statusCode: 429, error: 'Too Many Requests', message: '...', retryAfter: 60 }`
+- Response headers: `x-ratelimit-limit`, `x-ratelimit-remaining`,
+  `x-ratelimit-reset`, `retry-after`
+- 429 response when exceeded:
+  `{ statusCode: 429, error: 'Too Many Requests', message: '...', retryAfter: 60 }`
 
 ---
 
@@ -111,13 +117,10 @@ export class AuthService {
 
   async login(email: string, password: string) {
     // Rate limit by email (prevent brute force)
-    const result = await this.rateLimitService.checkRateLimit(
-      `auth:${email}`,
-      {
-        windowMs: 60000,  // 1 minute
-        max: 5,           // 5 login attempts
-      }
-    );
+    const result = await this.rateLimitService.checkRateLimit(`auth:${email}`, {
+      windowMs: 60000, // 1 minute
+      max: 5, // 5 login attempts
+    });
 
     if (!result.allowed) {
       throw new TooManyRequestsException(
@@ -172,7 +175,7 @@ const key = this.rateLimitService.generateAuthKey(request);
 
 const result = await this.rateLimitService.checkRateLimit(key, {
   windowMs: 300000, // 5 minutes
-  max: 5,           // 5 attempts
+  max: 5, // 5 attempts
 });
 ```
 
@@ -195,16 +198,18 @@ const result = await this.rateLimitService.checkRateLimit(
 
 ```typescript
 interface RateLimitResult {
-  allowed: boolean;     // Can proceed with request?
-  remaining: number;    // Remaining requests in window
-  resetTime: Date;      // When window resets
-  total: number;        // Total requests allowed in window
+  allowed: boolean; // Can proceed with request?
+  remaining: number; // Remaining requests in window
+  resetTime: Date; // When window resets
+  total: number; // Total requests allowed in window
 }
 
 const result = await this.rateLimitService.checkRateLimit(key, options);
 
 if (!result.allowed) {
-  const retryAfterSeconds = Math.round((result.resetTime.getTime() - Date.now()) / 1000);
+  const retryAfterSeconds = Math.round(
+    (result.resetTime.getTime() - Date.now()) / 1000
+  );
   throw new TooManyRequestsException(
     `Rate limit exceeded. Try again in ${retryAfterSeconds}s`
   );
@@ -278,6 +283,7 @@ app.enableCors({
 ```
 
 **Preflight Handler:**
+
 - Automatic OPTIONS request handling
 - Validates origin against allowed origins
 - Returns CORS headers
@@ -351,10 +357,10 @@ Secure cookie and session handling:
 
 ```typescript
 // Environment configuration
-SESSION_SECRET=min-32-chars-secret-here
-SESSION_TIMEOUT=86400          // 24 hours in seconds
-SESSION_SECURE_COOKIES=true    // HTTPS only
-SESSION_SAME_SITE=strict       // strict | lax | none
+SESSION_SECRET = min - 32 - chars - secret - here;
+SESSION_TIMEOUT = 86400; // 24 hours in seconds
+SESSION_SECURE_COOKIES = true; // HTTPS only
+SESSION_SAME_SITE = strict; // strict | lax | none
 
 // SecurityConfigService.configureCookies()
 await securityConfig.configureCookies(app);
@@ -368,6 +374,7 @@ await securityConfig.configureSession(app, sessionStore);
 ```
 
 **Session Options:**
+
 - **Cookie Name:** `healthcare.session`
 - **Secure:** true (HTTPS only in production)
 - **HttpOnly:** true (no JavaScript access)
@@ -418,7 +425,7 @@ await this.rateLimitService.resetRateLimit(`auth:${email}`);
 const result = await this.rateLimitService.checkRateLimit(key, {
   windowMs: 60000,
   max: 100,
-  skipIf: (req) => {
+  skipIf: req => {
     // Skip rate limiting for admin users
     return req.user?.role === 'SUPER_ADMIN';
   },
@@ -450,7 +457,7 @@ COOKIE_SECRET=min-32-chars-secret
 
 # Security headers
 FRONTEND_URL=https://app.example.com
-API_URL=https://api.example.com
+BASE_URL=https://api.example.com
 ```
 
 ---
@@ -458,6 +465,7 @@ API_URL=https://api.example.com
 ## Troubleshooting
 
 **Issue: Rate limit not working**
+
 ```typescript
 // 1. Check Redis connection
 // Global rate limiting uses Redis - ensure Redis is accessible
@@ -471,6 +479,7 @@ console.log(rateLimitConfig); // { max: 100, timeWindow: '1 minute' }
 ```
 
 **Issue: CORS errors**
+
 ```typescript
 // 1. Check CORS origin configuration
 CORS_ORIGIN=http://localhost:3000,https://app.example.com
@@ -483,20 +492,22 @@ CORS_ORIGIN=http://localhost:3000,https://app.example.com
 ```
 
 **Issue: Session not persisting**
+
 ```typescript
 // 1. Check session secret length (must be >= 32 chars)
-SESSION_SECRET=min-32-chars-secret-here
+SESSION_SECRET = min - 32 - chars - secret - here;
 
 // 2. Check session store
 // Pass CacheService-backed store to configureSession()
 await securityConfig.configureSession(app, sessionStore);
 
 // 3. Check cookie configuration
-SESSION_SECURE_COOKIES=true  // Use false for local HTTP
-SESSION_SAME_SITE=strict
+SESSION_SECURE_COOKIES = true; // Use false for local HTTP
+SESSION_SAME_SITE = strict;
 ```
 
 **Issue: Compression not working**
+
 ```typescript
 // 1. Check response size (must be > 1KB threshold)
 // 2. Check client Accept-Encoding header
@@ -529,13 +540,16 @@ SecurityModule
 ```
 
 **Rate Limiting Layers:**
+
 1. **Global Middleware** - Fastify @fastify/rate-limit plugin (all requests)
 2. **Programmatic** - RateLimitService (custom logic in services/controllers)
 3. **Cache-Based** - CacheService.isRateLimited() (cache-integrated)
 
 **When to Use Each:**
+
 - **Global Middleware** - Default rate limiting for all endpoints (IP-based)
-- **RateLimitService** - Endpoint-specific or user-based rate limiting with custom keys
+- **RateLimitService** - Endpoint-specific or user-based rate limiting with
+  custom keys
 - **CacheService.isRateLimited()** - Cache-integrated rate limiting in services
 
 ---

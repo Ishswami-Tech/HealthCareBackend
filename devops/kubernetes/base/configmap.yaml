@@ -68,9 +68,9 @@ data:
   # Pattern: CLINIC_{SANITIZED_CLINIC_NAME}_FRONTEND_URL
   # Example: CLINIC_DRCHANDRAKUMARDESHMUKH_FRONTEND_URL=https://drchandrakumardeshmukh.viddhakarma.com
   # All clinic frontend URLs must also be included in CORS_ORIGIN above
-  # All frontends connect to the SAME backend API (API_URL)
+  # All frontends connect to the SAME backend API (BASE_URL)
   FRONTEND_URL: "https://ishswami.in"
-  API_URL: "https://backend-service-v1.ishswami.in"
+  BASE_URL: "https://backend-service-v1.ishswami.in"
 
   # API Configuration
   SWAGGER_URL: "/docs"

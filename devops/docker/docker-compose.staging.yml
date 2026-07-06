@@ -174,7 +174,7 @@ services:
       SOCKET_PORT: ${SOCKET_PORT:-8088}
       NPM_CONFIG_LOGLEVEL: error
       # Local-Prod: Local URLs
-      API_URL: ${API_URL:-http://localhost:8088}
+      BASE_URL: ${BASE_URL:-http://localhost:8088}
       SWAGGER_URL: ${SWAGGER_URL:-/docs}
       ENABLE_BULL_BOARD: ${ENABLE_BULL_BOARD:-false}
       BULL_BOARD_URL: ${BULL_BOARD_URL:-/queue-dashboard}

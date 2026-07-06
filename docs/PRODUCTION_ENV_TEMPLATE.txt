@@ -56,7 +56,7 @@ API_PREFIX=/api/v1
 HOST=your-api-domain.com
 BIND_ADDRESS=0.0.0.0
 BASE_URL=https://your-api-domain.com
-API_URL=https://your-api-domain.com
+BASE_URL=https://your-api-domain.com
 FRONTEND_URL=https://your-frontend-domain.com
 
 # JWT Configuration (REQUIRED - Replace with secure secrets!)
