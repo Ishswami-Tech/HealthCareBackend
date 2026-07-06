@@ -292,16 +292,17 @@ export class SecurityConfigService {
       .split(',')
       .map((origin: string) => origin.trim())
       .filter(Boolean);
+    const expandedOrigins = this.expandCorsOrigins(normalizedOrigins);
 
-    if (credentialsEnabled && normalizedOrigins.includes('*')) {
+    if (credentialsEnabled && expandedOrigins.includes('*')) {
       throw new Error('CORS wildcard origin is not allowed when credentials are enabled');
     }
 
-    if (credentialsEnabled && normalizedOrigins.length === 0) {
+    if (credentialsEnabled && expandedOrigins.length === 0) {
       throw new Error('Explicit CORS origins are required when credentials are enabled');
     }
 
-    const corsOrigins = normalizedOrigins.length > 0 ? normalizedOrigins : false;
+    const corsOrigins = expandedOrigins.length > 0 ? expandedOrigins : false;
 
     app.enableCors({
       origin: corsOrigins,
@@ -331,6 +332,44 @@ export class SecurityConfigService {
       exposedHeaders: ['Set-Cookie', 'Authorization'],
       maxAge: 86400, // 24 hours
     });
+  }
+
+  /**
+   * Expand a CORS origin list to include both apex and www variants.
+   * This keeps production deployments working when one side uses
+   * `https://example.com` and the bridge/marketing site uses `https://www.example.com`.
+   */
+  private expandCorsOrigins(origins: readonly string[]): string[] {
+    const expanded = new Set<string>();
+
+    for (const origin of origins) {
+      const value = origin.trim();
+      if (!value) {
+        continue;
+      }
+
+      expanded.add(value);
+
+      try {
+        const url = new URL(value);
+        if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+          continue;
+        }
+
+        const host = url.hostname.toLowerCase();
+        const variants = host.startsWith('www.') ? [host.slice(4)] : [`www.${host}`];
+
+        for (const variantHost of variants) {
+          const variant = new URL(url.toString());
+          variant.hostname = variantHost;
+          expanded.add(variant.toString().replace(/\/+$/u, ''));
+        }
+      } catch {
+        // Ignore malformed origins and keep the original entry only.
+      }
+    }
+
+    return [...expanded];
   }
 
   /**
