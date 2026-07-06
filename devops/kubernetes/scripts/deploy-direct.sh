@@ -33,15 +33,15 @@ echo ""
 
 # Update ConfigMap for local development
 echo "   Updating ConfigMap for local..."
-kubectl patch configmap healthcare-api-config -n healthcare-backend --type='merge' -p='{"data":{"API_URL":"http://localhost:8088","NODE_ENV":"development","LOG_LEVEL":"debug","ENABLE_DEBUG":"true","CORS_ORIGIN":"http://localhost:3000,http://localhost:8088"}}' 2>&1 | grep -v "Warning:" || true
+kubectl patch configmap healthcare-api-config -n healthcare-backend --type='merge' -p='{"data":{"BASE_URL":"http://localhost:8088","NODE_ENV":"development","LOG_LEVEL":"debug","ENABLE_DEBUG":"true","CORS_ORIGIN":"http://localhost:3000,http://localhost:8088"}}' 2>&1 | grep -v "Warning:" || true
 
 # Patch API deployment
 echo "   Patching healthcare-api deployment..."
 kubectl set image deployment/healthcare-api api=healthcare-api:local -n healthcare-backend 2>&1 | grep -v "Warning:" || true
 kubectl patch deployment healthcare-api -n healthcare-backend --type='json' -p='[{"op": "replace", "path": "/spec/template/spec/containers/0/imagePullPolicy", "value": "IfNotPresent"}]' 2>&1 | grep -v "Warning:" || true
 
-# Add API_URL from ConfigMap
-kubectl patch deployment healthcare-api -n healthcare-backend --type='json' -p='[{"op": "add", "path": "/spec/template/spec/containers/0/env/-", "value": {"name": "API_URL", "valueFrom": {"configMapKeyRef": {"name": "healthcare-api-config", "key": "API_URL"}}}}]' 2>&1 | grep -v "Warning:" || true
+# Add BASE_URL from ConfigMap
+kubectl patch deployment healthcare-api -n healthcare-backend --type='json' -p='[{"op": "add", "path": "/spec/template/spec/containers/0/env/-", "value": {"name": "BASE_URL", "valueFrom": {"configMapKeyRef": {"name": "healthcare-api-config", "key": "BASE_URL"}}}}]' 2>&1 | grep -v "Warning:" || true
 
 kubectl scale deployment healthcare-api --replicas=1 -n healthcare-backend 2>&1 | grep -v "Warning:" || true
 
@@ -99,4 +99,3 @@ echo "Then access at: http://localhost:8088"
 echo ""
 
 echo "✅ Deployment complete!"
-

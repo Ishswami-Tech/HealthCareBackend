@@ -435,7 +435,7 @@ See `.env.example` for complete list. Key variables:
 # Application
 NODE_ENV=development          # development | production | staging | test
 PORT=8088
-API_URL=http://localhost:8088
+BASE_URL=http://localhost:8088
 
 # Database
 DATABASE_URL=postgresql://user:pass@localhost:5432/healthcare

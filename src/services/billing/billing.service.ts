@@ -548,15 +548,16 @@ export class BillingService implements OnModuleInit {
     }
 
     // Priority 2: Standard application URLs
-    const frontendBaseUrl =
+    const paymentBaseUrl =
+      this.configService.getEnv('PAYMENT_RETURN_BASE_URL') ||
+      this.configService.getEnv('PAYMENT_SITE_URL') ||
       this.configService.getEnv('FRONTEND_URL') ||
       this.configService.getEnv('NEXT_PUBLIC_APP_URL') ||
       this.configService.getAppConfig().baseUrl ||
-      this.configService.getAppConfig().apiUrl ||
       'http://localhost:3000';
 
-    const normalizedFrontendUrl = frontendBaseUrl.replace(/\/+$/, '');
-    const callbackUrl = new URL(`${normalizedFrontendUrl}/payment/callback`);
+    const normalizedPaymentUrl = paymentBaseUrl.replace(/\/+$/, '');
+    const callbackUrl = new URL(`${normalizedPaymentUrl}/payment/callback`);
     callbackUrl.searchParams.set('clinicId', clinicId);
     callbackUrl.searchParams.set('orderId', orderId);
     if (provider) {
@@ -576,13 +577,7 @@ export class BillingService implements OnModuleInit {
 
   private getResolvedBackendBaseUrl(): string {
     const appConfig = this.configService.getAppConfig();
-    return (
-      appConfig.apiUrl ||
-      appConfig.baseUrl ||
-      this.configService.getEnv('BASE_URL') ||
-      this.configService.getEnv('API_URL') ||
-      ''
-    );
+    return appConfig.baseUrl || appConfig.apiUrl || this.configService.getEnv('BASE_URL') || '';
   }
 
   private buildGatewayOrderId(baseOrderId: string, uniqueKey: string): string {

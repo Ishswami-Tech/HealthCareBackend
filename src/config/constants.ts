@@ -81,7 +81,6 @@ export const ENV_VARS = {
   BIND_ADDRESS: 'BIND_ADDRESS',
   API_PREFIX: 'API_PREFIX',
   BASE_URL: 'BASE_URL',
-  API_URL: 'API_URL',
   FRONTEND_URL: 'FRONTEND_URL',
 
   // Database

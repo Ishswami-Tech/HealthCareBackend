@@ -581,7 +581,6 @@ export class EasebuzzPaymentAdapter extends BasePaymentAdapter {
   private getWebhookUrl(options: PaymentIntentOptions): string {
     const baseUrl =
       (options.metadata?.['baseUrl'] as string) ||
-      process.env['API_URL'] ||
       process.env['BASE_URL'] ||
       'http://localhost:8088';
 

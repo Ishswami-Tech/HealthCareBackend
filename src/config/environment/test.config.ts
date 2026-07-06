@@ -32,7 +32,7 @@ export default function createTestConfig(): Config {
       host: getEnvWithDefault('HOST', 'localhost'),
       bindAddress: '127.0.0.1',
       baseUrl: getEnvWithDefault('BASE_URL', 'http://localhost:0'),
-      apiUrl: getEnvWithDefault('API_URL', 'http://localhost:0'),
+      apiUrl: getEnvWithDefault('BASE_URL', 'http://localhost:0'),
     },
     urls: {
       // Use helper functions (which use dotenv) for environment variable access

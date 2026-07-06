@@ -30,7 +30,7 @@ echo ""
 # Use ClusterIP directly to bypass DNS issues in k3s (10.43.199.102)
 # TODO: Fix DNS resolution issue - CoreDNS might not be working properly
 # Note: REDIS_PASSWORD is NOT added to ConfigMap since Redis doesn't require authentication (protected mode disabled)
-kubectl patch configmap healthcare-api-config -n healthcare-backend --type='merge' -p='{"data":{"API_URL":"http://localhost:8088","SWAGGER_URL":"/docs","BULL_BOARD_URL":"/queue-dashboard","SOCKET_URL":"/socket.io","NODE_ENV":"development","LOG_LEVEL":"debug","ENABLE_DEBUG":"true","CORS_ORIGIN":"http://localhost:3000,http://localhost:8088","REDIS_HOST":"10.43.199.102","REDIS_COMMANDER_URL":"http://localhost:8081","PRISMA_STUDIO_URL":"/prisma","PGADMIN_URL":"/pgadmin"}}'
+kubectl patch configmap healthcare-api-config -n healthcare-backend --type='merge' -p='{"data":{"BASE_URL":"http://localhost:8088","SWAGGER_URL":"/docs","BULL_BOARD_URL":"/queue-dashboard","SOCKET_URL":"/socket.io","NODE_ENV":"development","LOG_LEVEL":"debug","ENABLE_DEBUG":"true","CORS_ORIGIN":"http://localhost:3000,http://localhost:8088","REDIS_HOST":"10.43.199.102","REDIS_COMMANDER_URL":"http://localhost:8081","PRISMA_STUDIO_URL":"/prisma","PGADMIN_URL":"/pgadmin"}}'
 
 # Remove REDIS_PASSWORD from ConfigMap if it exists (Redis doesn't require auth with protected mode disabled)
 # Use kubectl patch to remove the key
@@ -42,8 +42,8 @@ echo ""
 
 # Load all ConfigMap values as environment variables using envFrom
 echo "   Loading ConfigMap values as environment variables..."
-# Remove any existing API_URL env var (we'll use envFrom instead)
-kubectl patch deployment healthcare-api -n healthcare-backend --type='json' -p='[{"op": "remove", "path": "/spec/template/spec/containers/0/env", "value": [{"name": "API_URL"}]}]' 2>&1 | grep -v "Warning:" || true
+# Remove any existing BASE_URL env var (we'll use envFrom instead)
+kubectl patch deployment healthcare-api -n healthcare-backend --type='json' -p='[{"op": "remove", "path": "/spec/template/spec/containers/0/env", "value": [{"name": "BASE_URL"}]}]' 2>&1 | grep -v "Warning:" || true
 
 # Add envFrom to load ConfigMap
 if ! kubectl get deployment healthcare-api -n healthcare-backend -o jsonpath='{.spec.template.spec.containers[0].envFrom}' 2>/dev/null | grep -q "healthcare-api-config"; then
@@ -83,4 +83,3 @@ kubectl get pods -n healthcare-backend
 
 echo ""
 echo "✅ Fix complete! Pods should restart with correct configuration."
-

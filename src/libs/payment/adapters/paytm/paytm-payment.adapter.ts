@@ -239,7 +239,6 @@ export class PaytmBusinessPaymentAdapter extends BasePaymentAdapter {
       // Build webhook URL with clinicId (matches Cashfree pattern)
       const baseUrl =
         (options.metadata?.['baseUrl'] as string) ||
-        process.env['API_URL'] ||
         process.env['BASE_URL'] ||
         'http://localhost:8088';
       const clinicId = options.clinicId || (options.metadata?.['clinicId'] as string) || '';

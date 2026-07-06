@@ -36,11 +36,10 @@ export default function createDevelopmentConfig(): Config {
       // The swagger URL uses ${baseUrl}${swagger} pattern, so baseUrl must not end with /
       baseUrl: removeTrailingSlash(
         getEnvWithDefault(ENV_VARS.BASE_URL, '') ||
-          getEnvWithDefault(ENV_VARS.API_URL, '') ||
           `http://localhost:${getEnv(ENV_VARS.PORT) || DEFAULT_CONFIG.PORT}`
       ),
       apiUrl: removeTrailingSlash(
-        getEnvWithDefault(ENV_VARS.API_URL, '') ||
+        getEnvWithDefault(ENV_VARS.BASE_URL, '') ||
           `http://localhost:${getEnv(ENV_VARS.PORT) || DEFAULT_CONFIG.PORT}`
       ),
     },
