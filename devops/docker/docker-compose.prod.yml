@@ -138,7 +138,6 @@ services:
       BULL_BOARD_URL: ${BULL_BOARD_URL:-/queue-dashboard}
       SOCKET_URL: ${SOCKET_URL:-/socket.io}
       LOGGER_URL: ${LOGGER_URL:-/logger}
-      BASE_URL: ${BASE_URL}
       API_PREFIX: ${API_PREFIX:-/api/v1}
       MAIN_DOMAIN: ${MAIN_DOMAIN:-viddhakarma.com}
       API_DOMAIN: ${API_DOMAIN:-backend-service-v1.ishswami.in}
