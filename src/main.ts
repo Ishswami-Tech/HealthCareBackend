@@ -9,6 +9,7 @@ import { nowIso } from '@utils/date-time.util';
  */
 // Register tsconfig-paths for path alias resolution at runtime
 import 'tsconfig-paths/register';
+import { ensurePhonePeClassTransformerCompatibility } from './libs/payment/phonepe-class-transformer.compat';
 import { SwaggerModule } from '@nestjs/swagger';
 import { Logger, INestApplication, ValidationPipeOptions } from '@nestjs/common';
 import { AppModule } from './app.module';
@@ -51,6 +52,8 @@ import type {
 } from '@core/types/framework.types';
 import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
+
+ensurePhonePeClassTransformerCompatibility();
 
 // Store original console methods for critical error handling
 // Only used when LoggingService is unavailable (cluster management, critical errors)
