@@ -448,8 +448,32 @@ export class JwtAuthGuard implements CanActivate {
     // Use ConfigService (which uses dotenv) for environment variable access
     if (request.headers.origin) {
       const corsConfig = this.configService.getCorsConfig();
-      const allowedOrigins = corsConfig.origin?.split(',') || [];
-      if (!allowedOrigins.includes(request.headers.origin)) {
+      const allowedOrigins = (corsConfig.origin || '')
+        .split(',')
+        .map(origin => origin.trim())
+        .filter(Boolean);
+      const requestOrigin = request.headers.origin.trim();
+      const normalizedRequestOrigins = new Set<string>([requestOrigin]);
+
+      try {
+        const url = new URL(requestOrigin);
+        if (url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') {
+          const host = url.hostname.toLowerCase();
+          const variants = host.startsWith('www.') ? [host.slice(4)] : [`www.${host}`];
+          for (const variantHost of variants) {
+            const variant = new URL(url.toString());
+            variant.hostname = variantHost;
+            normalizedRequestOrigins.add(variant.toString().replace(/\/+$/u, ''));
+          }
+        }
+      } catch {
+        // Ignore malformed origin strings and use the raw origin only.
+      }
+
+      const isAllowed = [...normalizedRequestOrigins].some(origin =>
+        allowedOrigins.includes(origin)
+      );
+      if (!isAllowed) {
         throw new HttpException('Invalid origin', HttpStatus.FORBIDDEN);
       }
     }
