@@ -18,9 +18,18 @@ import { ConfigModule } from '@config/config.module';
 import { PaymentService } from './payment.service';
 import { PaymentProviderFactory } from './adapters/factories/payment-provider.factory';
 import { PaymentController } from './payment.controller';
+import { PaymentHandoffTokenModule } from './payment.handoff-token.module';
 
 @Module({
-  imports: [HttpModule, DatabaseModule, CacheModule, LoggingModule, EventsModule, ConfigModule],
+  imports: [
+    HttpModule,
+    DatabaseModule,
+    CacheModule,
+    LoggingModule,
+    EventsModule,
+    ConfigModule,
+    PaymentHandoffTokenModule,
+  ],
   controllers: [PaymentController],
   providers: [
     PaymentService,

@@ -47,6 +47,7 @@ import {
 import { InvoicePDFService } from './invoice-pdf.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { PaymentService } from '@payment/payment.service';
+import { PaymentHandoffTokenService } from '@payment/payment.handoff-token.service';
 import { ConfigService } from '@config/config.service';
 import type {
   PaymentIntentOptions,
@@ -94,6 +95,7 @@ export class BillingService implements OnModuleInit {
     private readonly invoicePDFService: InvoicePDFService,
     private readonly whatsAppService: WhatsAppService,
     private readonly paymentService: PaymentService,
+    private readonly paymentHandoffTokenService: PaymentHandoffTokenService,
     private readonly configService: ConfigService,
     private readonly moduleRef: ModuleRef,
     @Optional()
@@ -573,6 +575,39 @@ export class BillingService implements OnModuleInit {
       callbackUrl.searchParams.set('appointmentType', appointmentType);
     }
     return callbackUrl.toString();
+  }
+
+  private async createPaymentHandoffDetails(params: {
+    clinicId: string;
+    orderId: string;
+    paymentId?: string;
+    provider?: PaymentProvider;
+    appointmentId?: string;
+    appointmentType?: 'VIDEO_CALL' | 'IN_PERSON' | 'HOME_VISIT';
+    callbackUrl: string;
+  }): Promise<{
+    token: string;
+    callbackUrl: string;
+    expiresAt: Date;
+  }> {
+    const handoffParams = {
+      clinicId: params.clinicId,
+      orderId: params.orderId,
+      frontendCallbackBase: params.callbackUrl,
+      ...(params.provider ? { provider: params.provider } : {}),
+      ...(params.paymentId ? { paymentId: params.paymentId } : {}),
+      ...(params.appointmentId ? { appointmentId: params.appointmentId } : {}),
+      ...(params.appointmentType ? { appointmentType: params.appointmentType } : {}),
+    };
+    const result = await this.paymentHandoffTokenService.generateHandoffToken({
+      ...handoffParams,
+    });
+
+    return {
+      token: result.token,
+      callbackUrl: result.frontendCallbackUrlWithToken,
+      expiresAt: result.expiresAt,
+    };
   }
 
   private getResolvedBackendBaseUrl(): string {
@@ -2601,14 +2636,31 @@ export class BillingService implements OnModuleInit {
       undefined,
       paymentId || undefined
     );
+    const handoff = await this.createPaymentHandoffDetails({
+      clinicId: subscription.clinicId,
+      orderId: orderId || this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id),
+      callbackUrl: redirectUrl,
+      ...(paymentId ? { paymentId } : {}),
+      ...(paymentIntentResult.provider
+        ? { provider: paymentIntentResult.provider as PaymentProvider }
+        : {}),
+    });
+    const paymentIntentWithHandoff = {
+      ...paymentIntentResult,
+      handoffToken: handoff.token,
+      handoffCallbackUrl: handoff.callbackUrl,
+      callbackUrl: handoff.callbackUrl,
+    } as PaymentResult & Record<string, unknown>;
     paymentIntentResult.metadata = {
       ...(this.asRecord(paymentIntentResult.metadata) || {}),
       clinicId: subscription.clinicId,
       invoiceId: invoice.id,
       subscriptionId: subscription.id,
       gatewayRedirectUrl,
-      callbackUrl: redirectUrl,
-      redirectUrl,
+      handoffToken: handoff.token,
+      handoffCallbackUrl: handoff.callbackUrl,
+      callbackUrl: handoff.callbackUrl,
+      redirectUrl: handoff.callbackUrl,
     };
 
     // Create payment record
@@ -2630,7 +2682,9 @@ export class BillingService implements OnModuleInit {
         tax: subscriptionTax,
         totalAmount: subscriptionTotalAmount,
         gstRatePercent: this.getGstRatePercent(),
-        redirectUrl,
+        handoffToken: handoff.token,
+        handoffCallbackUrl: handoff.callbackUrl,
+        redirectUrl: handoff.callbackUrl,
       },
     });
 
@@ -2651,7 +2705,7 @@ export class BillingService implements OnModuleInit {
 
     return {
       invoice,
-      paymentIntent: paymentIntentResult,
+      paymentIntent: paymentIntentWithHandoff,
     };
   }
 
@@ -2854,6 +2908,23 @@ export class BillingService implements OnModuleInit {
       paymentId || undefined,
       appointmentType
     );
+    const handoff = await this.createPaymentHandoffDetails({
+      clinicId: appointment.clinicId,
+      orderId: orderId || gatewayOrderId,
+      appointmentId: appointment.id,
+      appointmentType,
+      callbackUrl: redirectUrl,
+      ...(paymentId ? { paymentId } : {}),
+      ...(paymentIntentResult.provider
+        ? { provider: paymentIntentResult.provider as PaymentProvider }
+        : {}),
+    });
+    const paymentIntentWithHandoff = {
+      ...paymentIntentResult,
+      handoffToken: handoff.token,
+      handoffCallbackUrl: handoff.callbackUrl,
+      callbackUrl: handoff.callbackUrl,
+    } as PaymentResult & Record<string, unknown>;
     paymentIntentResult.metadata = {
       ...(this.asRecord(paymentIntentResult.metadata) || {}),
       clinicId: appointment.clinicId,
@@ -2865,8 +2936,10 @@ export class BillingService implements OnModuleInit {
       totalAmount: appointmentTotalAmount,
       gstRatePercent: this.getGstRatePercent(),
       gatewayRedirectUrl,
-      callbackUrl: redirectUrl,
-      redirectUrl,
+      handoffToken: handoff.token,
+      handoffCallbackUrl: handoff.callbackUrl,
+      callbackUrl: handoff.callbackUrl,
+      redirectUrl: handoff.callbackUrl,
     };
 
     const paymentMetadata = {
@@ -2876,7 +2949,9 @@ export class BillingService implements OnModuleInit {
       appointmentType,
       revenueModel: 'APPOINTMENT',
       serviceType: appointmentType,
-      redirectUrl,
+      handoffToken: handoff.token,
+      handoffCallbackUrl: handoff.callbackUrl,
+      redirectUrl: handoff.callbackUrl,
     };
 
     let payment: PaymentWithRelations;
@@ -2956,7 +3031,7 @@ export class BillingService implements OnModuleInit {
 
     return {
       invoice,
-      paymentIntent: paymentIntentResult,
+      paymentIntent: paymentIntentWithHandoff,
     };
   }
 
@@ -3030,13 +3105,30 @@ export class BillingService implements OnModuleInit {
       undefined,
       paymentId || undefined
     );
+    const handoff = await this.createPaymentHandoffDetails({
+      clinicId: invoice.clinicId,
+      orderId: orderId || this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id),
+      callbackUrl: redirectUrl,
+      ...(paymentId ? { paymentId } : {}),
+      ...(paymentIntentResult.provider
+        ? { provider: paymentIntentResult.provider as PaymentProvider }
+        : {}),
+    });
+    const paymentIntentWithHandoff = {
+      ...paymentIntentResult,
+      handoffToken: handoff.token,
+      handoffCallbackUrl: handoff.callbackUrl,
+      callbackUrl: handoff.callbackUrl,
+    } as PaymentResult & Record<string, unknown>;
     paymentIntentResult.metadata = {
       ...(this.asRecord(paymentIntentResult.metadata) || {}),
       clinicId: invoice.clinicId,
       invoiceId: invoice.id,
       gatewayRedirectUrl,
-      callbackUrl: redirectUrl,
-      redirectUrl,
+      handoffToken: handoff.token,
+      handoffCallbackUrl: handoff.callbackUrl,
+      callbackUrl: handoff.callbackUrl,
+      redirectUrl: handoff.callbackUrl,
     };
 
     await this.createPayment({
@@ -3052,7 +3144,9 @@ export class BillingService implements OnModuleInit {
         provider: providerName,
         revenueModel: 'OTHER',
         serviceType: 'INVOICE',
-        redirectUrl,
+        handoffToken: handoff.token,
+        handoffCallbackUrl: handoff.callbackUrl,
+        redirectUrl: handoff.callbackUrl,
       },
     });
 
@@ -3072,7 +3166,7 @@ export class BillingService implements OnModuleInit {
 
     return {
       invoice,
-      paymentIntent: paymentIntentResult,
+      paymentIntent: paymentIntentWithHandoff,
     };
   }
 

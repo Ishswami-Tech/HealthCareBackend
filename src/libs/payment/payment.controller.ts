@@ -16,12 +16,14 @@ import {
   HttpCode,
   HttpStatus,
   BadRequestException,
+  UnauthorizedException,
   Req,
 } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { ApiTags, ApiOperation, ApiResponse, ApiHeader } from '@nestjs/swagger';
 import { DatabaseService } from '@infrastructure/database';
 import { PaymentService } from './payment.service';
+import { PaymentHandoffTokenService } from './payment.handoff-token.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel, PaymentProvider } from '@core/types';
 import { Public } from '@core/decorators/public.decorator';
@@ -55,6 +57,7 @@ export class PaymentController {
 
   constructor(
     private readonly paymentService: PaymentService,
+    private readonly handoffTokenService: PaymentHandoffTokenService,
     private readonly databaseService: DatabaseService,
     private readonly moduleRef: ModuleRef,
     private readonly loggingService: LoggingService
@@ -963,6 +966,122 @@ export class PaymentController {
         }
       );
       return { success: false };
+    }
+  }
+
+  /**
+   * Handoff callback handler — verifies the signed token and then
+   * forwards to the billing service.
+   * Called by the frontend after the payment provider redirects the user back.
+   */
+  @Post('callback/handoff')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Handle payment handoff callback with token verification' })
+  @ApiResponse({ status: 200, description: 'Handoff processed successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid or missing token' })
+  @ApiResponse({ status: 401, description: 'Token verification failed' })
+  async handleHandoffCallback(
+    @Query('handoff_token') handoffToken?: string,
+    @Query('order_id') orderId?: string,
+    @Query('payment_id') paymentId?: string,
+    @Query('provider') provider?: string
+  ): Promise<{
+    success: boolean;
+    clinicId?: string;
+    orderId?: string;
+    paymentId?: string;
+    provider?: string;
+    appointmentId?: string;
+    appointmentType?: string;
+    message?: string;
+    error?: string;
+  }> {
+    let verifiedPayload: {
+      clinicId: string;
+      orderId: string;
+      paymentId?: string;
+      appointmentId?: string;
+      appointmentType?: string;
+      provider: string;
+      iat: number;
+      exp: number;
+      jti: string;
+      version?: string;
+      integrity?: string;
+    } | null = null;
+    try {
+      // 1. Verify the handoff token
+      if (!handoffToken || typeof handoffToken !== 'string' || handoffToken.trim().length === 0) {
+        throw new BadRequestException('handoff_token is required');
+      }
+
+      verifiedPayload = await this.handoffTokenService.verifyHandoffToken(handoffToken.trim());
+      if (!verifiedPayload) {
+        throw new UnauthorizedException('Invalid or expired handoff token');
+      }
+
+      const clinicId = verifiedPayload.clinicId;
+      const resolvedOrderId = orderId || verifiedPayload.orderId;
+      const resolvedPaymentId = paymentId || verifiedPayload.paymentId;
+      const resolvedProvider = (provider || verifiedPayload.provider) as
+        | PaymentProvider
+        | undefined;
+      const verificationPaymentId = resolvedPaymentId || resolvedOrderId;
+
+      // 2. Forward to billing service for payment status update
+      if (verificationPaymentId) {
+        await this.getBillingService().handlePaymentCallback(
+          clinicId,
+          verificationPaymentId,
+          resolvedOrderId || '',
+          resolvedProvider
+        );
+      }
+
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        'Payment handoff callback processed',
+        'PaymentController',
+        {
+          clinicId,
+          orderId: resolvedOrderId,
+          paymentId: verificationPaymentId,
+          provider: resolvedProvider,
+          jti: verifiedPayload.jti,
+        }
+      );
+
+      return {
+        success: true,
+        clinicId,
+        orderId: resolvedOrderId,
+        ...(verificationPaymentId ? { paymentId: verificationPaymentId } : {}),
+        ...(resolvedProvider ? { provider: resolvedProvider } : {}),
+        ...(verifiedPayload.appointmentId ? { appointmentId: verifiedPayload.appointmentId } : {}),
+        ...(verifiedPayload.appointmentType
+          ? { appointmentType: verifiedPayload.appointmentType }
+          : {}),
+        message: 'Payment callback processed successfully',
+      };
+    } catch (error) {
+      if (verifiedPayload?.jti) {
+        await this.handoffTokenService.releaseReplayToken(verifiedPayload.jti);
+      }
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.ERROR,
+        `Failed to process handoff callback: ${error instanceof Error ? error.message : String(error)}`,
+        'PaymentController',
+        {
+          orderId,
+          paymentId,
+          provider,
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+      throw error;
     }
   }
 }

@@ -13,6 +13,7 @@ import { WhatsAppModule } from '@communication/channels/whatsapp/whatsapp.module
 import { RateLimitModule } from '@security/rate-limit/rate-limit.module';
 import { CacheModule } from '@infrastructure/cache/cache.module';
 import { PaymentModule } from '@payment/payment.module';
+import { PaymentHandoffTokenModule } from '@payment/payment.handoff-token.module';
 import { QueueModule } from '@queue/src/queue.module';
 
 @Module({
@@ -27,6 +28,7 @@ import { QueueModule } from '@queue/src/queue.module';
     WhatsAppModule,
     CacheModule,
     PaymentModule,
+    PaymentHandoffTokenModule,
     QueueModule, // Queue processing for invoice PDF generation, bulk operations
   ],
   controllers: [BillingController],
