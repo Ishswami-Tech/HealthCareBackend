@@ -1,4 +1,3 @@
-import { nowIso } from '@utils/date-time.util';
 import {
   Injectable,
   CanActivate,
@@ -137,12 +136,17 @@ export class JwtAuthGuard implements CanActivate {
   private readonly SESSION_ACTIVITY_THRESHOLD = 15 * 60 * 1000;
 
   /**
-   * Maximum number of concurrent sessions per user
+   * Maximum number of concurrent sessions per user.
+   * CRIT-1 FIX: Read from the same config source as SessionManagementService
+   * (SESSION_MAX_PER_USER env var, default 10) so both components share a single
+   * source of truth. Previously hardcoded to 5 while SessionManagementService
+   * defaulted to 10, causing 429 errors for users with 6–10 valid sessions.
    *
    * @private
-   * @readonly
    */
-  private readonly MAX_CONCURRENT_SESSIONS = 5;
+  private get MAX_CONCURRENT_SESSIONS(): number {
+    return this.configService.getEnvNumber('SESSION_MAX_PER_USER', 10);
+  }
 
   /**
    * Security event retention period (30 days)
@@ -395,13 +399,17 @@ export class JwtAuthGuard implements CanActivate {
         clinicId: payload['clinicId'], // Ensure clinicId is available
       } as JwtPayload;
 
-      // Validate session
-      const sessionData = await this.validateSession(payload.sub || 'anonymous', request);
-
-      // Check concurrent sessions limit
+      // Check concurrent sessions limit BEFORE validating/restoring the session.
+      // HIGH-2 FIX: Previously this ran after validateSession(), which can call
+      // restoreSession() and ADD a new entry to the Redis Set. Running the check
+      // first ensures we count only pre-existing sessions, not the one we are
+      // about to restore, preventing systematic false-positive 429s on cold cache.
       if (payload.sub) {
         await this.checkConcurrentSessions(payload.sub);
       }
+
+      // Validate session (may restore from JWT on cold cache)
+      const sessionData = await this.validateSession(payload.sub || 'anonymous', request);
 
       // Update session data
       if (payload.sub) {
@@ -606,10 +614,10 @@ export class JwtAuthGuard implements CanActivate {
   }
 
   /**
-   * Get session data from cache and parse it
-   */
-  /**
-   * Get session data via SessionManagementService (handles partitioning)
+   * Get session data via SessionManagementService (handles partitioning).
+   * LOW-2 FIX: Removed duplicate JSDoc block — the previous version had two
+   * consecutive doc comments on this method, the first referencing a stale
+   * implementation (direct cache read) that no longer exists.
    */
   private async getSessionData(userId: string, sessionId: string): Promise<SessionData | null> {
     const fullSession = await this.sessionManagementService.getSession(sessionId);
@@ -648,12 +656,26 @@ export class JwtAuthGuard implements CanActivate {
       ipAddress: fullSession.ipAddress || 'unknown',
     };
 
-    // Check inactivity threshold
-    const lastActivity = new Date(lastActivityAt).getTime();
-    const inactivityDuration = Date.now() - lastActivity;
+    // Check inactivity threshold and log a warning.
+    // MED-4 FIX: Previously the if-block was empty — the threshold was computed
+    // but never acted upon, making the 15-minute inactivity window a dead letter.
+    const lastActivityMs = new Date(lastActivityAt).getTime();
+    const inactivityDuration = Date.now() - lastActivityMs;
     if (inactivityDuration > this.SESSION_ACTIVITY_THRESHOLD) {
-      // Session is still valid but inactive for a while
-      // This is just for logging
+      // Use explicit cast to satisfy eslint no-unsafe-call on forwardRef-injected logger
+      const logger = this.loggingService as LoggingService;
+      void logger.log(
+        LogType.AUTH,
+        LogLevel.WARN,
+        'Session has been inactive beyond the activity threshold',
+        'JwtAuthGuard',
+        {
+          userId,
+          sessionId,
+          inactivityMinutes: Math.floor(inactivityDuration / 60000),
+          thresholdMinutes: Math.floor(this.SESSION_ACTIVITY_THRESHOLD / 60000),
+        }
+      );
     }
 
     return mappedSession;
@@ -923,7 +945,7 @@ export class JwtAuthGuard implements CanActivate {
     details: Record<string, unknown>
   ): Promise<void> {
     try {
-      const timestamp = nowIso();
+      const timestamp = new Date().toISOString();
       const event = {
         timestamp,
         eventType,
@@ -1069,25 +1091,6 @@ export class JwtAuthGuard implements CanActivate {
     const attemptsKey = `auth:attempts:${identifier}`;
     const lockoutKey = `auth:lockout:${identifier}`;
     await Promise.all([this.cacheService.del(attemptsKey), this.cacheService.del(lockoutKey)]);
-  }
-
-  private validateSecurityHeaders(request: FastifyRequestWithUser): void {
-    // Validate Content-Type for POST requests
-    if (
-      request.method === 'POST' &&
-      !(request.headers['content-type'] as string)?.includes('application/json')
-    ) {
-      throw new HttpException('Invalid Content-Type', HttpStatus.BAD_REQUEST);
-    }
-
-    // Check for required security headers
-    if (!request.headers['user-agent']) {
-      throw new HttpException('User-Agent header is required', HttpStatus.BAD_REQUEST);
-    }
-  }
-
-  private generateDeviceId(userAgent: string): string {
-    return crypto.createHash('md5').update(userAgent).digest('hex');
   }
 
   private extractTokenFromHeader(request: FastifyRequestWithUser): string | undefined {
