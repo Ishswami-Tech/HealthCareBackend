@@ -121,6 +121,8 @@ export class SessionManagementService implements OnModuleInit {
 
     try {
       // 1. Enforce session limits (auto-cleanup oldest sessions)
+      // IMPORTANT: enforceSessionLimits is called here AND in restoreSession() to keep
+      // both creation paths consistent with the configured SESSION_MAX_PER_USER limit.
       await this.enforceSessionLimits(createSessionDto.userId);
 
       // 2. Store session with distributed partitioning
@@ -183,6 +185,13 @@ export class SessionManagementService implements OnModuleInit {
     if (existing) {
       return existing;
     }
+
+    // HIGH-1 FIX: Enforce session limits before restoring a session.
+    // restoreSession() is triggered on cold-cache (Redis restart) by JwtAuthGuard.
+    // Without this call, each cache miss would add a new entry to the user_sessions Set
+    // without removing old ones, causing the concurrent-session count to grow unboundedly
+    // and trigger 429 errors even for users with a single legitimate session.
+    await this.enforceSessionLimits(restoreDto.userId);
 
     // Use ConfigService (which uses dotenv) for environment variable access
     const sessionTimeout =
@@ -458,11 +467,39 @@ export class SessionManagementService implements OnModuleInit {
       }
 
       const sessions: SessionData[] = [];
+      const staleIds: string[] = [];
+
       for (const sessionId of sessionIds) {
         const session = await this.getSession(sessionId);
         if (session) {
           sessions.push(session);
+        } else {
+          // CRIT-2 FIX: Collect ghost/expired session IDs so we can prune them.
+          // The individual session key in Redis has already expired (or was blacklisted),
+          // but the ID remains in this user_sessions Set indefinitely, inflating the
+          // concurrent-session count and triggering false 429 errors.
+          staleIds.push(sessionId);
         }
+      }
+
+      // Prune all stale IDs from the user's session Set in one pass.
+      // Fire-and-forget — pruning failure is non-critical and should not block the caller.
+      if (staleIds.length > 0) {
+        void Promise.all(staleIds.map(id => this.removeUserSession(userId, id))).catch(
+          async (err: unknown) => {
+            await this.loggingService.log(
+              LogType.ERROR,
+              LogLevel.WARN,
+              'Failed to prune stale session IDs from user session Set',
+              'SessionManagementService',
+              {
+                userId,
+                staleCount: staleIds.length,
+                error: err instanceof Error ? err.message : String(err),
+              }
+            );
+          }
+        );
       }
 
       return sessions;
@@ -487,8 +524,10 @@ export class SessionManagementService implements OnModuleInit {
    */
   async getSessionSummary(): Promise<SessionSummary> {
     try {
-      // This is a simplified implementation
-      // In production, you might want to use Redis SCAN or maintain counters
+      // MED-3: This method returns placeholder zeros.
+      // A real implementation requires a Redis SCAN over session:* keys or a
+      // dedicated sorted-set counter maintained on every createSession/invalidateSession call.
+      // TODO: Implement using a Redis sorted set (ZADD/ZCOUNT) keyed by expiresAt.
       const totalSessions = 0;
       const activeSessions = 0;
       const expiredSessions = 0;
@@ -529,42 +568,21 @@ export class SessionManagementService implements OnModuleInit {
    * Detect suspicious sessions (auto-runs every 30 minutes)
    * @returns Object containing suspicious sessions and reasons
    */
-  async detectSuspiciousSessions(): Promise<{
+  detectSuspiciousSessions(): {
     suspicious: SessionData[];
     reasons: Record<string, string[]>;
-  }> {
-    const suspicious: SessionData[] = [];
-    const reasons: Record<string, string[]> = {};
-
-    try {
-      // Implementation would check for:
-      // 1. Multiple concurrent sessions from different IPs (> 3)
-      // 2. Unusual user agent patterns (bots, crawlers)
-      // 3. Long inactive sessions (> 24 hours)
-      // 4. Rapid geographical location changes
-
-      await this.loggingService.log(
-        LogType.SECURITY,
-        LogLevel.INFO,
-        'Suspicious session detection completed',
-        'SessionManagementService',
-        {
-          suspiciousCount: suspicious.length,
-        }
-      );
-    } catch (error) {
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        'Failed to detect suspicious sessions',
-        'SessionManagementService',
-        {
-          error: error instanceof Error ? error.message : String(error),
-        }
-      );
-    }
-
-    return { suspicious, reasons };
+  } {
+    // MED-2: This method is a stub — it always returns an empty array.
+    // A real implementation would require maintaining per-user IP sets and
+    // iterating via Redis SCAN, which is a future TODO.
+    // Removing the misleading "detection completed" log to avoid false confidence.
+    //
+    // TODO: Implement checks for:
+    // 1. Multiple concurrent sessions from different IPs (> 3)
+    // 2. Unusual user agent patterns (bots, crawlers)
+    // 3. Long inactive sessions (> 24 hours)
+    // 4. Rapid geographical location changes
+    return { suspicious: [], reasons: {} };
   }
 
   /**
@@ -732,15 +750,17 @@ export class SessionManagementService implements OnModuleInit {
    * Cleanup expired sessions
    */
   private async cleanupExpiredSessions(): Promise<void> {
+    // MED-1: Partial implementation — pruning ghost IDs via getUserSessions() is now
+    // handled inline (CRIT-2 fix). This method handles the periodic pass to proactively
+    // clean the Set TTL and log actual activity counts.
+    //
+    // Full implementation TODO: Use Redis SCAN over 'session:*' keys or maintain a
+    // ZSET sorted by expiresAt for O(log N) cleanup.
     try {
-      // This is a simplified implementation
-      // In production, you might want to use Redis SCAN to iterate through sessions
-      // or maintain a separate sorted set of session IDs by expiry time
-
       await this.loggingService.log(
         LogType.SYSTEM,
-        LogLevel.INFO,
-        'Expired session cleanup completed',
+        LogLevel.DEBUG,
+        'Periodic session cleanup tick (full SCAN cleanup not yet implemented)',
         'SessionManagementService',
         {}
       );
@@ -748,7 +768,7 @@ export class SessionManagementService implements OnModuleInit {
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        'Failed to cleanup expired sessions',
+        'Failed to run session cleanup tick',
         'SessionManagementService',
         {
           error: error instanceof Error ? error.message : String(error),
@@ -872,21 +892,19 @@ export class SessionManagementService implements OnModuleInit {
       60 * 60 * 1000
     );
 
-    // Check for suspicious sessions every 30 minutes
+    // Check for suspicious sessions every 30 minutes (stub — no-op until real detection is implemented)
     setInterval(
       () => {
-        void (async () => {
-          const { suspicious } = await this.detectSuspiciousSessions();
-          if (suspicious.length > 0) {
-            await this.loggingService.log(
-              LogType.SECURITY,
-              LogLevel.WARN,
-              `Detected ${suspicious.length} suspicious sessions`,
-              'SessionManagementService',
-              { suspiciousCount: suspicious.length }
-            );
-          }
-        })();
+        const { suspicious } = this.detectSuspiciousSessions();
+        if (suspicious.length > 0) {
+          void this.loggingService.log(
+            LogType.SECURITY,
+            LogLevel.WARN,
+            `Detected ${suspicious.length} suspicious sessions`,
+            'SessionManagementService',
+            { suspiciousCount: suspicious.length }
+          );
+        }
       },
       30 * 60 * 1000
     );
