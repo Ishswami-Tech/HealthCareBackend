@@ -205,7 +205,7 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
       }
 
       // Convert amount to paise (PhonePe uses smallest currency unit)
-      const amountInPaise = Math.round(options.amount);
+      const amountInPaise = Math.round(options.amount * 100);
 
       // Generate a provider-compliant merchant transaction ID.
       // PhonePe order creation is intentionally not retried: repeating the same
