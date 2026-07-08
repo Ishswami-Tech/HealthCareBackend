@@ -29,9 +29,6 @@ import { LoggingModule } from '@infrastructure/logging';
 
         return {
           secret,
-          signOptions: {
-            expiresIn: '5m', // 5 minutes for payment handoff tokens
-          },
           verifyOptions: {
             clockTolerance: 0, // No clock skew tolerance for strict timing
           },
