@@ -247,8 +247,8 @@ export class RazorpayPaymentAdapter extends BasePaymentAdapter {
       // Validate options
       this.validatePaymentIntentOptions(options);
 
-      // Convert amount to paise (Razorpay uses smallest currency unit)
-      const amountInPaise = Math.round(options.amount * 100);
+      // PaymentIntentOptions.amount is already in the smallest currency unit.
+      const amountInPaise = Math.round(options.amount);
 
       // Create order in Razorpay
       const orderOptions: RazorpayOrderOptions = {
@@ -401,7 +401,7 @@ export class RazorpayPaymentAdapter extends BasePaymentAdapter {
       // Create refund in Razorpay
       const refundOptions: RazorpayRefundOptions = {
         payment_id: options.paymentId,
-        ...(options.amount && { amount: Math.round(options.amount * 100) }), // Convert to paise
+        ...(options.amount && { amount: Math.round(options.amount) }),
         notes: {
           ...(options.reason && { reason: options.reason }),
           ...(options.metadata &&

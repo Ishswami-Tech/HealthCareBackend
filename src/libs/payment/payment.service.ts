@@ -176,6 +176,7 @@ export class PaymentService {
       throw new Error(`No payment configuration found for clinic: ${clinicId}`);
     }
 
+    const displayAmount = formatCurrencyFromMinorUnits(options.amount, options.currency);
     const paymentOptions: PaymentIntentOptions = {
       ...options,
       clinicId: options.clinicId || clinicId,
@@ -184,9 +185,18 @@ export class PaymentService {
     if (this.isDemoPaymentMode()) {
       const demoProvider = provider || config.payment.primary.provider;
       const demoResult = this.createDemoPaymentResult(clinicId, paymentOptions, demoProvider);
+      const normalizedDemoResult: PaymentResult = {
+        ...demoResult,
+        metadata: {
+          ...(demoResult.metadata || {}),
+          amount: options.amount,
+          displayAmount,
+          currency: options.currency,
+        },
+      };
 
       const demoEventPayload: EnterpriseEventPayload = {
-        eventId: `payment-intent-${demoResult.paymentId}`,
+        eventId: `payment-intent-${normalizedDemoResult.paymentId}`,
         eventType: 'payment.intent.created',
         category: EventCategory.BILLING,
         priority: EventPriority.HIGH,
@@ -196,9 +206,9 @@ export class PaymentService {
         clinicId,
         ...(options.customerId && { userId: options.customerId }),
         metadata: {
-          paymentId: demoResult.paymentId,
+          paymentId: normalizedDemoResult.paymentId,
           amount: options.amount,
-          displayAmount: formatCurrencyFromMinorUnits(options.amount, options.currency),
+          displayAmount,
           currency: options.currency,
           appointmentId: options.appointmentId,
           appointmentType: options.appointmentType,
@@ -212,12 +222,12 @@ export class PaymentService {
           LogLevel.INFO,
           `Demo payment intent created with provider: ${demoProvider}`,
           'PaymentService',
-          { clinicId, provider: demoProvider, paymentId: demoResult.paymentId }
+          { clinicId, provider: demoProvider, paymentId: normalizedDemoResult.paymentId }
         ),
         this.eventService.emitEnterprise('payment.intent.created', demoEventPayload),
       ]);
 
-      return demoResult;
+      return normalizedDemoResult;
     }
 
     const fallbackProviders = config.payment.fallback?.map(f => f.provider) || [];
@@ -251,9 +261,18 @@ export class PaymentService {
           throw new Error(result.error || `Payment provider ${p} returned an unsuccessful result`);
         }
         this.recentProviderFailures.delete(this.getProviderFailureKey(clinicId, p));
+        const normalizedResult: PaymentResult = {
+          ...result,
+          metadata: {
+            ...(result.metadata || {}),
+            amount: options.amount,
+            displayAmount,
+            currency: options.currency,
+          },
+        };
 
         const eventPayload: EnterpriseEventPayload = {
-          eventId: `payment-intent-${result.paymentId || Date.now()}`,
+          eventId: `payment-intent-${normalizedResult.paymentId || Date.now()}`,
           eventType: 'payment.intent.created',
           category: EventCategory.BILLING,
           priority: EventPriority.HIGH,
@@ -263,7 +282,7 @@ export class PaymentService {
           clinicId,
           ...(options.customerId && { userId: options.customerId }),
           metadata: {
-            paymentId: result.paymentId,
+            paymentId: normalizedResult.paymentId,
             amount: options.amount,
             displayAmount: formatCurrencyFromMinorUnits(options.amount, options.currency),
             currency: options.currency,
@@ -276,14 +295,14 @@ export class PaymentService {
           this.loggingService.log(
             LogType.PAYMENT,
             LogLevel.INFO,
-            `Payment intent created with provider: ${result.provider}`,
+            `Payment intent created with provider: ${normalizedResult.provider}`,
             'PaymentService',
-            { clinicId, provider: result.provider, paymentId: result.paymentId }
+            { clinicId, provider: normalizedResult.provider, paymentId: normalizedResult.paymentId }
           ),
           this.eventService.emitEnterprise('payment.intent.created', eventPayload),
         ]);
 
-        return result;
+        return normalizedResult;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         this.markProviderFailed(clinicId, p, lastError.message);
