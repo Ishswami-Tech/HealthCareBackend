@@ -204,8 +204,8 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
         return this.createErrorResult('PhonePe SDK client not initialized');
       }
 
-      // Convert amount to paise (PhonePe uses smallest currency unit)
-      const amountInPaise = Math.round(options.amount * 100);
+      // PaymentIntentOptions.amount is already in the smallest currency unit.
+      const amountInPaise = Math.round(options.amount);
 
       // Generate a provider-compliant merchant transaction ID.
       // PhonePe order creation is intentionally not retried: repeating the same
