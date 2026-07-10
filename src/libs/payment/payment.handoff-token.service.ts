@@ -108,7 +108,6 @@ export class PaymentHandoffTokenService {
     // Sign the token with the handoff-specific secret
     const token = this.jwtService.sign(payloadWithIntegrity, {
       secret: this.SECRET_KEY,
-      jwtid: jti,
     });
 
     // Build callback URL with token
