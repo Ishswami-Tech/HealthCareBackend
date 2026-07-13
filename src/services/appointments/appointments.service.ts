@@ -109,7 +109,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
     assistantDoctorEligible: true,
     active: true,
-    videoConsultationFee: 500,
+    videoConsultationFee: 1000,
   },
   {
     treatmentType: TreatmentType.FOLLOW_UP,
@@ -243,7 +243,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
     assistantDoctorEligible: true,
     active: true,
-    videoConsultationFee: 500,
+    videoConsultationFee: 1000,
   },
   {
     treatmentType: TreatmentType.SHIRODHARA,
