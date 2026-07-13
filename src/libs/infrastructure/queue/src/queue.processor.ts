@@ -11,6 +11,7 @@ import { S3StorageService } from '@infrastructure/storage';
 // Use direct import to avoid circular dependency with barrel exports
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { AppointmentNotificationService } from '@services/appointments/plugins/notifications/appointment-notification.service';
+import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 
 // Internal imports - Core
 import { LogType, LogLevel } from '@core/types';
@@ -88,6 +89,17 @@ export class QueueProcessor {
     private readonly invoicePDFService?: InvoicePDFServiceType,
     private readonly moduleRef?: ModuleRef
   ) {}
+
+  private getWhatsAppService(): WhatsAppService | null {
+    if (!this.moduleRef) {
+      return null;
+    }
+    try {
+      return this.moduleRef.get(WhatsAppService, { strict: false });
+    } catch {
+      return null;
+    }
+  }
 
   private getEmailService(): EmailService | null {
     if (!this.moduleRef) {

@@ -71,10 +71,12 @@ import { isVideoSlotAwaitingConfirmation } from './core/appointment-state-contra
 
 // Legacy imports for backward compatibility
 import { DatabaseService } from '@infrastructure/database';
+import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { QrService } from '@utils/QR';
 
 // Auth Integration
 import { AuthService } from '@services/auth/auth.service';
+import { NotificationPreferenceService } from '@services/notification/notification-preference.service';
 import { BillingService } from '@services/billing/billing.service';
 
 // Use centralized types
@@ -427,6 +429,9 @@ export class AppointmentsService {
 
     // Auth Integration
     @Inject(forwardRef(() => AuthService)) private readonly authService: AuthService,
+    @Inject(forwardRef(() => WhatsAppService)) private readonly whatsAppService: WhatsAppService,
+    @Inject(forwardRef(() => NotificationPreferenceService))
+    private readonly notificationPreferenceService: NotificationPreferenceService,
 
     // Error Handling & RBAC
     private readonly errors: HealthcareErrorsService,
@@ -487,6 +492,139 @@ export class AppointmentsService {
   @Cron(CronExpression.EVERY_DAY_AT_3AM)
   async handleNoShowCancellationCron() {
     await this.processNoShowCancellations();
+  }
+
+  @Cron(CronExpression.EVERY_DAY_AT_7AM)
+  async handleDoctorDailyAppointmentSummaryCron() {
+    try {
+      const summaryStart = new Date();
+      summaryStart.setHours(0, 0, 0, 0);
+      const summaryEnd = new Date(summaryStart);
+      summaryEnd.setDate(summaryEnd.getDate() + 1);
+
+      const todayLabel = formatDateInIST(summaryStart, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      });
+
+      const doctors = await this.databaseService.executeHealthcareRead<
+        Array<{ id: string; userId: string }>
+      >(async client => {
+        const prismaClient = client as unknown as Prisma.TransactionClient;
+        return await prismaClient.doctor.findMany({
+          select: { id: true, userId: true },
+        });
+      });
+
+      let sentCount = 0;
+      let skipCount = 0;
+
+      for (const doctor of doctors) {
+        try {
+          const preferences = await this.notificationPreferenceService.getPreferences(
+            doctor.userId
+          );
+          if (!preferences.whatsappEnabled || !preferences.appointmentEnabled) {
+            skipCount++;
+            continue;
+          }
+
+          const doctorUser = await this.databaseService.findUserByIdSafe(doctor.userId);
+          const phone = doctorUser?.phone;
+          if (!phone) {
+            skipCount++;
+            continue;
+          }
+
+          const appointments = await this.databaseService.executeHealthcareRead<
+            Array<{
+              time: string | null;
+              type: string | null;
+              patient: { user: { name: string | null } } | null;
+              clinic: { name: string | null } | null;
+            }>
+          >(async client => {
+            const prismaClient = client as unknown as Prisma.TransactionClient;
+            return await prismaClient.appointment.findMany({
+              where: {
+                doctorId: doctor.id,
+                date: { gte: summaryStart, lt: summaryEnd },
+                status: {
+                  in: [AppointmentStatus.CONFIRMED] as unknown as $Enums.AppointmentStatus[],
+                },
+              },
+              select: {
+                time: true,
+                type: true,
+                patient: {
+                  select: { user: { select: { name: true } } },
+                },
+                clinic: { select: { name: true } },
+              },
+              orderBy: { time: 'asc' },
+            });
+          });
+
+          if (appointments.length === 0) {
+            await this.whatsAppService.sendCustomMessage(
+              phone,
+              `Good morning! You have no confirmed appointments for ${todayLabel}.`
+            );
+            sentCount++;
+            continue;
+          }
+
+          const lines = [`Good morning! Here is your appointment summary for ${todayLabel}:`];
+          for (const apt of appointments) {
+            const timeLabel = apt.time
+              ? new Date(`1970-01-01T${apt.time}`).toLocaleTimeString('en-US', {
+                  hour: 'numeric',
+                  minute: '2-digit',
+                  hour12: true,
+                })
+              : 'TBD';
+            const patientName = apt.patient?.user?.name || 'Unknown';
+            const typeLabel =
+              apt.type === AppointmentType.VIDEO_CALL
+                ? 'Video'
+                : apt.type === AppointmentType.IN_PERSON
+                  ? 'In-person'
+                  : apt.type?.toLowerCase().replace(/_/g, ' ') || 'Consultation';
+            const clinicLabel = apt.clinic?.name ? ` @ ${apt.clinic.name}` : '';
+            lines.push(`${timeLabel} - ${patientName}${clinicLabel} (${typeLabel})`);
+          }
+          lines.push(`Total: ${appointments.length} appointment(s).`);
+
+          await this.whatsAppService.sendCustomMessage(phone, lines.join('\n'));
+          sentCount++;
+        } catch (error) {
+          void this.loggingService.log(
+            LogType.NOTIFICATION,
+            LogLevel.ERROR,
+            `Failed to send daily summary for doctor ${doctor.userId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            'AppointmentsService',
+            { doctorId: doctor.id }
+          );
+        }
+      }
+
+      await this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.INFO,
+        'Doctor daily appointment summary cron completed',
+        'AppointmentsService',
+        { sentCount, skipCount, totalDoctors: doctors.length }
+      );
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Doctor daily appointment summary cron failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'AppointmentsService',
+        { error }
+      );
+    }
   }
 
   @Cron(CronExpression.EVERY_HOUR)

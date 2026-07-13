@@ -144,6 +144,7 @@ export enum JobType {
   PANCHAKARMA = 'panchakarma',
   CHEQUP = 'chequp',
   DOCTOR_AVAILABILITY = 'doctor_availability',
+  DOCTOR_SUMMARY = 'doctor_summary',
   QUEUE_MANAGEMENT = 'queue_management',
   PAYMENT_PROCESSING = 'payment_processing',
   ANALYTICS = 'analytics',
