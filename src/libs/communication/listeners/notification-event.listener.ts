@@ -286,9 +286,8 @@ export class NotificationEventListener implements OnModuleInit {
     {
       eventPattern: /^appointment\.created$/,
       category: CommunicationCategory.APPOINTMENT,
-      // Booking creation should update the UI immediately, but only payment confirmation
-      // should send the user-facing WhatsApp/email confirmation to avoid duplicates.
-      channels: ['socket', 'push'],
+      // Booking creation notifies patient via socket/push, and doctor via WhatsApp for immediate awareness.
+      channels: ['socket', 'push', 'whatsapp'],
       priority: CommunicationPriority.HIGH,
       template: 'appointment_confirmation',
       recipients: payload => {

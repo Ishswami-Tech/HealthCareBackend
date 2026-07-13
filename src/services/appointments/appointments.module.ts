@@ -81,6 +81,7 @@ import { BillingModule } from '@services/billing/billing.module';
 
 // Communication Modules
 import { CommunicationModule } from '@communication/communication.module';
+import { NotificationModule } from '@services/notification/notification.module';
 import { EHRModule } from '@services/ehr/ehr.module';
 
 /**
@@ -121,6 +122,7 @@ import { EHRModule } from '@services/ehr/ehr.module';
     VideoModule,
     forwardRef(() => BillingModule),
     forwardRef(() => CommunicationModule),
+    NotificationModule,
     EHRModule,
 
     // QR Code Module
