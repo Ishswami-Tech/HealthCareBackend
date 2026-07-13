@@ -1173,7 +1173,7 @@ async function main() {
               rating: faker.number.float({ min: 3, max: 5, fractionDigits: 1 }),
               isAvailable: true,
               consultationFee: faker.number.float({
-                min: 500,
+                min: 1000,
                 max: 2000,
                 fractionDigits: 2,
               }),
