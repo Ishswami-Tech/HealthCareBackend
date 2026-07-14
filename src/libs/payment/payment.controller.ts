@@ -258,8 +258,15 @@ export class PaymentController {
         ['payload', 'order', 'entity', 'id'],
         ['payload', 'order', 'id'],
       ]);
+      const notesClinicId = this.getFirstStringAtPath(body, [
+        ['payload', 'payment', 'entity', 'notes', 'clinicId'],
+        ['payload', 'order', 'entity', 'notes', 'clinicId'],
+        ['notes', 'clinicId'],
+      ]);
       const resolvedClinicId =
-        clinicId || (await this.resolveClinicIdFromPaymentReferences(paymentId, orderId));
+        clinicId ||
+        notesClinicId ||
+        (await this.resolveClinicIdFromPaymentReferences(paymentId, orderId));
 
       if (!resolvedClinicId) {
         throw new Error('Clinic ID is required');
@@ -474,7 +481,7 @@ export class PaymentController {
         return { success: false };
       }
 
-      const base64Payload = body['request'] as string;
+      const base64Payload = (body['response'] || body['request']) as string;
       let callbackType = this.getFirstStringAtPath(body, [['type'], ['event']]);
       let merchantTransactionId = '';
       let transactionId = '';
