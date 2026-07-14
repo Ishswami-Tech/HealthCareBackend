@@ -101,6 +101,16 @@ export interface EmailJobData {
   metadata?: JobMetadata;
 }
 
+// Doctor summary job data
+export interface DoctorSummaryJobData {
+  phone: string;
+  doctorLastName: string;
+  dateLabel: string;
+  appointmentsList: string;
+  totalCount: string;
+  doctorId: string;
+}
+
 // Patient check-in job data
 export interface PatientCheckinData {
   patientId: string;

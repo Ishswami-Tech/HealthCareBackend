@@ -20,6 +20,7 @@ import {
   type CanonicalJobEnvelope,
   type JobData,
   type JobMetadata,
+  type DoctorSummaryJobData,
 } from '@core/types/queue.types';
 import { EmailTemplate } from '@core/types/common.types';
 import type { NotificationData } from '@core/types/appointment.types';
@@ -166,6 +167,10 @@ export class QueueProcessor {
           return await this.processPaymentReconciliation(job as unknown as Job<JobData>);
         case JobType.APPOINTMENT:
           return await this.processAppointmentJob(job as unknown as Job<JobData>);
+        case JobType.DOCTOR_SUMMARY:
+          return await this.processDoctorSummaryJob(
+            job as unknown as Job<CanonicalJobEnvelope<DoctorSummaryJobData>>
+          );
         default: {
           // Fallback for legacy actions or unrecognized job types
           const action = data?.action || job.name;
@@ -545,6 +550,97 @@ export class QueueProcessor {
         }
       );
       throw _error; // Rethrow to trigger job retry
+    }
+  }
+
+  // ============ Doctor Summary ============
+
+  async processDoctorSummaryJob(
+    job: Job<CanonicalJobEnvelope<DoctorSummaryJobData>>
+  ): Promise<{ success: boolean }> {
+    const payload = this.extractCanonicalPayload(job.data) as unknown as DoctorSummaryJobData;
+
+    void this.loggingService.log(
+      LogType.QUEUE,
+      LogLevel.INFO,
+      `Processing doctor summary job ${safeStringify(job.id)}`,
+      'QueueProcessor',
+      {
+        jobId: safeStringify(job.id),
+        doctorId: payload.doctorId,
+        phone: payload.phone,
+      }
+    );
+
+    try {
+      const { phone, doctorLastName, dateLabel, appointmentsList, totalCount } = payload;
+
+      const whatsAppService = this.getWhatsAppService();
+      if (!whatsAppService) {
+        void this.loggingService.log(
+          LogType.QUEUE,
+          LogLevel.ERROR,
+          `WhatsApp service not available for doctor summary job`,
+          'QueueProcessor',
+          { jobId: safeStringify(job.id), doctorId: payload.doctorId }
+        );
+        throw new Error('WhatsApp service unavailable');
+      }
+
+      const success = await whatsAppService.sendDoctorDailySummary(
+        phone,
+        doctorLastName,
+        dateLabel,
+        appointmentsList,
+        totalCount
+      );
+
+      if (success) {
+        void this.loggingService.log(
+          LogType.NOTIFICATION,
+          LogLevel.INFO,
+          `Doctor daily summary sent successfully for doctor ${payload.doctorId}`,
+          'QueueProcessor',
+          {
+            jobId: safeStringify(job.id),
+            doctorId: payload.doctorId,
+            phone,
+          }
+        );
+        return { success: true };
+      }
+
+      // sendDoctorDailySummary returned false → WhatsApp call failed.
+      // Throw to trigger BullMQ retry (attempts: 3 with exponential backoff).
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.WARN,
+        `WhatsApp sendDoctorDailySummary returned false for doctor ${payload.doctorId} — will retry`,
+        'QueueProcessor',
+        {
+          jobId: safeStringify(job.id),
+          doctorId: payload.doctorId,
+          phone,
+          attempt: job.attemptsMade + 1,
+        }
+      );
+      throw new Error(
+        `WhatsApp doctor daily summary failed for doctor ${payload.doctorId} (phone: ${phone})`
+      );
+    } catch (_error) {
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.ERROR,
+        `Error processing doctor summary job for doctor ${payload.doctorId}`,
+        'QueueProcessor',
+        {
+          jobId: safeStringify(job.id),
+          doctorId: payload.doctorId,
+          error: _error instanceof Error ? _error.message : safeStringify(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
+      throw _error; // Rethrow to trigger BullMQ retry
     }
   }
 

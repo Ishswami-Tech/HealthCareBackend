@@ -14,6 +14,8 @@ import {
   formatAppointmentConfirmationTemplateParams,
   formatAppointmentReminderTemplateParams,
   formatPaymentReceiptTemplateParams,
+  formatDoctorDailySummaryTemplateParams,
+  formatDoctorNoAppointmentsTemplateParams,
 } from '@communication/templates/WhatsappTemplates/template-helpers';
 
 /**
@@ -738,6 +740,125 @@ export class WhatsAppService {
         `Failed to send receipt via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'WhatsAppService',
         { stack: (error as Error)?.stack }
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Sends a daily appointment summary to a doctor via WhatsApp.
+   * Template: "doctor_daily_appointment_summary"
+   * Body: "Good morning Dr. {{1}}!\n\nHere is your appointment summary for {{2}}:\n\n{{3}}\n\nTotal appointments: {{4}}\n\nHave a productive day"
+   * @param phoneNumber - Doctor's phone number (with country code)
+   * @param doctorLastName - Doctor's last name for personalization
+   * @param dateLabel - Formatted date string (e.g. "14 Jul 2026")
+   * @param appointmentsList - Newline-separated, optionally numbered appointment lines
+   * @param totalCount - Total number of appointments as string (e.g. "7")
+   * @returns Promise resolving to true if message was sent successfully
+   */
+  async sendDoctorDailySummary(
+    phoneNumber: string,
+    doctorLastName: string,
+    dateLabel: string,
+    appointmentsList: string,
+    totalCount: string
+  ): Promise<boolean> {
+    if (!this.whatsAppConfig.enabled) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'WhatsApp service is disabled. Simulating successful doctor daily summary delivery.',
+        'WhatsAppService'
+      );
+      return true;
+    }
+
+    try {
+      const formattedPhone = this.formatPhoneNumber(phoneNumber);
+      const templateId = this.whatsAppConfig.doctorDailySummaryTemplateId;
+
+      await this.sendTemplateMessage(
+        formattedPhone,
+        templateId,
+        formatDoctorDailySummaryTemplateParams(
+          doctorLastName,
+          dateLabel,
+          appointmentsList,
+          totalCount
+        )
+      );
+
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Doctor daily summary sent to ${phoneNumber} via WhatsApp template ${templateId} (count=${totalCount})`,
+        'WhatsAppService'
+      );
+      return true;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to send doctor daily summary via WhatsApp: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+        'WhatsAppService',
+        { stack: (error as Error)?.stack, doctorLastName, dateLabel, totalCount }
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Sends a "no appointments today" message to a doctor via WhatsApp.
+   * Template: "doctor_no_appointments_today"
+   * Body: "Good morning Dr. {{1}}!\n\nYou have no confirmed appointments scheduled for {{2}}.\n\nHave a productive day"
+   * @param phoneNumber - Doctor's phone number (with country code)
+   * @param doctorLastName - Doctor's last name for personalization
+   * @param dateLabel - Formatted date string (e.g. "14 Jul 2026")
+   * @returns Promise resolving to true if message was sent successfully
+   */
+  async sendDoctorNoAppointments(
+    phoneNumber: string,
+    doctorLastName: string,
+    dateLabel: string
+  ): Promise<boolean> {
+    if (!this.whatsAppConfig.enabled) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'WhatsApp service is disabled. Simulating successful doctor no-appointments delivery.',
+        'WhatsAppService'
+      );
+      return true;
+    }
+
+    try {
+      const formattedPhone = this.formatPhoneNumber(phoneNumber);
+      const templateId = this.whatsAppConfig.doctorNoAppointmentsTemplateId;
+
+      await this.sendTemplateMessage(
+        formattedPhone,
+        templateId,
+        formatDoctorNoAppointmentsTemplateParams(doctorLastName, dateLabel)
+      );
+
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Doctor no-appointments notice sent to ${phoneNumber} via WhatsApp template ${templateId}`,
+        'WhatsAppService'
+      );
+      return true;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to send doctor no-appointments notice via WhatsApp: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+        'WhatsAppService',
+        { stack: (error as Error)?.stack, doctorLastName, dateLabel }
       );
       return false;
     }

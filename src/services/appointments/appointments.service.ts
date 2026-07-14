@@ -8,6 +8,7 @@ import { QueueService, AppointmentQueueService } from '@infrastructure/queue';
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events/event.service';
 import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
+import { JobType, JobPriorityLevel } from '@core/types/queue.types';
 import type { EnterpriseEventPayload } from '@core/types/event.types';
 import { HealthcareErrorsService } from '@core/errors';
 import { HealthcareError } from '@core/errors';
@@ -496,6 +497,7 @@ export class AppointmentsService {
 
   @Cron(CronExpression.EVERY_DAY_AT_7AM)
   async handleDoctorDailyAppointmentSummaryCron() {
+    const runStart = Date.now();
     try {
       const summaryStart = new Date();
       summaryStart.setHours(0, 0, 0, 0);
@@ -517,7 +519,7 @@ export class AppointmentsService {
         });
       });
 
-      let sentCount = 0;
+      let enqueuedCount = 0;
       let skipCount = 0;
 
       for (const doctor of doctors) {
@@ -566,43 +568,70 @@ export class AppointmentsService {
             });
           });
 
+          let appointmentsList: string;
           if (appointments.length === 0) {
-            await this.whatsAppService.sendCustomMessage(
-              phone,
-              `Good morning! You have no confirmed appointments for ${todayLabel}.`
+            appointmentsList = 'No confirmed appointments for today.';
+          } else {
+            const lines: string[] = [];
+            for (const apt of appointments) {
+              const timeLabel = apt.time
+                ? new Date(`1970-01-01T${apt.time}`).toLocaleTimeString('en-US', {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    hour12: true,
+                  })
+                : 'TBD';
+              const patientName = apt.patient?.user?.name || 'Unknown';
+              const typeLabel =
+                apt.type === AppointmentType.VIDEO_CALL
+                  ? 'Video'
+                  : apt.type === AppointmentType.IN_PERSON
+                    ? 'In-person'
+                    : apt.type?.toLowerCase().replace(/_/g, ' ') || 'Consultation';
+              const clinicLabel = apt.clinic?.name ? ` @ ${apt.clinic.name}` : '';
+              lines.push(`${timeLabel} - ${patientName}${clinicLabel} (${typeLabel})`);
+            }
+            appointmentsList = lines.join('\n');
+          }
+
+          const doctorLastName = doctorUser?.lastName || doctorUser?.name || 'Doctor';
+          const totalCount = String(appointments.length);
+
+          try {
+            await this.queueService.addJob(
+              JobType.DOCTOR_SUMMARY,
+              'send-doctor-daily-summary',
+              {
+                phone,
+                doctorId: doctor.id,
+                doctorLastName,
+                dateLabel: todayLabel,
+                appointmentsList,
+                totalCount,
+              },
+              {
+                priority: JobPriorityLevel.NORMAL,
+                attempts: 3,
+              }
             );
-            sentCount++;
-            continue;
+            enqueuedCount++;
+          } catch (enqueueError) {
+            void this.loggingService.log(
+              LogType.QUEUE,
+              LogLevel.ERROR,
+              `Failed to enqueue doctor summary for doctor ${doctor.userId}`,
+              'AppointmentsService',
+              {
+                doctorId: doctor.id,
+                error: enqueueError instanceof Error ? enqueueError.message : String(enqueueError),
+              }
+            );
           }
-
-          const lines = [`Good morning! Here is your appointment summary for ${todayLabel}:`];
-          for (const apt of appointments) {
-            const timeLabel = apt.time
-              ? new Date(`1970-01-01T${apt.time}`).toLocaleTimeString('en-US', {
-                  hour: 'numeric',
-                  minute: '2-digit',
-                  hour12: true,
-                })
-              : 'TBD';
-            const patientName = apt.patient?.user?.name || 'Unknown';
-            const typeLabel =
-              apt.type === AppointmentType.VIDEO_CALL
-                ? 'Video'
-                : apt.type === AppointmentType.IN_PERSON
-                  ? 'In-person'
-                  : apt.type?.toLowerCase().replace(/_/g, ' ') || 'Consultation';
-            const clinicLabel = apt.clinic?.name ? ` @ ${apt.clinic.name}` : '';
-            lines.push(`${timeLabel} - ${patientName}${clinicLabel} (${typeLabel})`);
-          }
-          lines.push(`Total: ${appointments.length} appointment(s).`);
-
-          await this.whatsAppService.sendCustomMessage(phone, lines.join('\n'));
-          sentCount++;
         } catch (error) {
           void this.loggingService.log(
             LogType.NOTIFICATION,
             LogLevel.ERROR,
-            `Failed to send daily summary for doctor ${doctor.userId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            `Failed to prepare daily summary for doctor ${doctor.userId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
             'AppointmentsService',
             { doctorId: doctor.id }
           );
@@ -612,9 +641,14 @@ export class AppointmentsService {
       await this.loggingService.log(
         LogType.NOTIFICATION,
         LogLevel.INFO,
-        'Doctor daily appointment summary cron completed',
+        'Doctor daily appointment summary cron completed — jobs enqueued',
         'AppointmentsService',
-        { sentCount, skipCount, totalDoctors: doctors.length }
+        {
+          enqueuedCount,
+          skipCount,
+          totalDoctors: doctors.length,
+          durationMs: Date.now() - runStart,
+        }
       );
     } catch (error) {
       void this.loggingService.log(

@@ -68,4 +68,18 @@ export class WhatsAppConfig {
   get receiptTemplateId(): string {
     return WhatsAppConfig.RECEIPT_TEMPLATE_ID;
   }
+
+  get doctorDailySummaryTemplateId(): string {
+    return this.getConfig<string>(
+      'WHATSAPP_DOCTOR_DAILY_SUMMARY_TEMPLATE_ID',
+      'doctor_daily_appointment_summary'
+    );
+  }
+
+  get doctorNoAppointmentsTemplateId(): string {
+    return this.getConfig<string>(
+      'WHATSAPP_DOCTOR_NO_APPOINTMENTS_TEMPLATE_ID',
+      'doctor_no_appointments_today'
+    );
+  }
 }
