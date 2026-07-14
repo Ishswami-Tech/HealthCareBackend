@@ -118,7 +118,12 @@ export class BillingController {
     const normalizedProvider = provider.trim().toLowerCase();
     const enabledProviders = (
       process.env['PAYMENT_ENABLED_PROVIDERS'] ||
-      [PaymentProvider.CASHFREE, PaymentProvider.RAZORPAY, PaymentProvider.PHONEPE].join(',')
+      [
+        PaymentProvider.CASHFREE,
+        PaymentProvider.RAZORPAY,
+        PaymentProvider.PHONEPE,
+        PaymentProvider.ZOHO,
+      ].join(',')
     )
       .split(',')
       .map(value => value.trim().toLowerCase())

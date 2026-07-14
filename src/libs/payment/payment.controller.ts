@@ -916,6 +916,149 @@ export class PaymentController {
   }
 
   /**
+   * Zoho Payments webhook handler
+   */
+  @Post('zoho/webhook')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Handle Zoho Payments webhook' })
+  @ApiHeader({
+    name: 'X-Zoho-Webhook-Signature',
+    description: 'Zoho Payments webhook signature header',
+  })
+  @ApiResponse({ status: 200, description: 'Webhook processed successfully' })
+  async handleZohoWebhook(
+    @Req() request: FastifyRequest & { rawBody?: string | Buffer },
+    @Body() body: Record<string, unknown>,
+    @Headers('x-zoho-webhook-signature') signature: string,
+    @Query('clinicId') clinicId: string
+  ): Promise<{ success: boolean }> {
+    try {
+      if (!this.isProviderEnabled(PaymentProvider.ZOHO)) {
+        await this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.WARN,
+          'Zoho webhook received but provider is disabled',
+          'PaymentController',
+          { clinicId }
+        );
+        return { success: false };
+      }
+
+      const rawPayload =
+        typeof request.rawBody === 'string'
+          ? request.rawBody
+          : Buffer.isBuffer(request.rawBody)
+            ? request.rawBody.toString('utf8')
+            : JSON.stringify(body);
+      const event = this.getFirstStringAtPath(body, [['event'], ['event_type'], ['type']]);
+      const paymentSessionId = this.getFirstStringAtPath(body, [
+        ['payments_session_id'],
+        ['payment_session_id'],
+        ['data', 'payments_session_id'],
+        ['data', 'payment_session_id'],
+        ['payload', 'payments_session_id'],
+        ['payload', 'payment_session_id'],
+        ['payments_session', 'payments_session_id'],
+        ['payments_session', 'payment_session_id'],
+      ]);
+      const paymentId = this.getFirstStringAtPath(body, [
+        ['payment_id'],
+        ['paymentId'],
+        ['data', 'payment_id'],
+        ['data', 'paymentId'],
+        ['payload', 'payment_id'],
+        ['payload', 'paymentId'],
+        ['payments_session', 'payment_id'],
+        ['payment', 'payment_id'],
+      ]);
+      const paymentStatus = this.getFirstStringAtPath(body, [
+        ['payment_status'],
+        ['paymentStatus'],
+        ['payment_session_status'],
+        ['paymentSessionStatus'],
+        ['data', 'payment_status'],
+        ['data', 'payment_session_status'],
+        ['payload', 'payment_status'],
+        ['payload', 'payment_session_status'],
+        ['payments_session', 'payment_status'],
+        ['payments_session', 'payment_session_status'],
+        ['payment', 'status'],
+      ]);
+      const resolvedClinicId =
+        clinicId ||
+        this.getFirstStringAtPath(body, [['udf1'], ['clinicId'], ['clinic_id']]) ||
+        (await this.resolveClinicIdFromPaymentReferences(paymentId, paymentSessionId));
+
+      if (!resolvedClinicId) {
+        throw new Error('Clinic ID is required');
+      }
+      if (!signature) {
+        throw new Error('Zoho webhook signature is required');
+      }
+
+      const isValid = await this.paymentService.verifyWebhook(
+        resolvedClinicId,
+        {
+          payload: rawPayload,
+          signature: signature || '',
+        },
+        PaymentProvider.ZOHO
+      );
+
+      if (!isValid) {
+        await this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.WARN,
+          'Invalid Zoho webhook signature',
+          'PaymentController',
+          { clinicId: resolvedClinicId }
+        );
+        return { success: false };
+      }
+
+      const callbackPaymentId = paymentId || paymentSessionId;
+      const callbackOrderId = paymentSessionId || paymentId;
+      if (callbackPaymentId && callbackOrderId) {
+        await this.getBillingService().handlePaymentCallback(
+          resolvedClinicId,
+          callbackPaymentId,
+          callbackOrderId,
+          PaymentProvider.ZOHO
+        );
+      }
+
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        'Zoho webhook processed',
+        'PaymentController',
+        {
+          clinicId: resolvedClinicId,
+          event,
+          paymentStatus,
+          paymentId: callbackPaymentId,
+          paymentSessionId: callbackOrderId,
+        }
+      );
+
+      return { success: true };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.ERROR,
+        `Failed to process Zoho webhook: ${error instanceof Error ? error.message : String(error)}`,
+        'PaymentController',
+        {
+          clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+      return { success: false };
+    }
+  }
+
+  /**
    * Generic payment callback handler
    */
   @Post('callback')

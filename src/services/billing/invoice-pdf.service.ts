@@ -906,7 +906,8 @@ export class InvoicePDFService {
 
   deleteInvoicePDF(fileName: string): void {
     try {
-      const filePath = path.join(this.invoicesDir, fileName);
+      const sanitizedName = path.basename(fileName);
+      const filePath = path.join(this.invoicesDir, sanitizedName);
 
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
@@ -933,11 +934,13 @@ export class InvoicePDFService {
   }
 
   invoicePDFExists(fileName: string): boolean {
-    const filePath = path.join(this.invoicesDir, fileName);
+    const sanitizedName = path.basename(fileName);
+    const filePath = path.join(this.invoicesDir, sanitizedName);
     return fs.existsSync(filePath);
   }
 
   getInvoiceFilePath(fileName: string): string {
-    return path.join(this.invoicesDir, fileName);
+    const sanitizedName = path.basename(fileName);
+    return path.join(this.invoicesDir, sanitizedName);
   }
 }
