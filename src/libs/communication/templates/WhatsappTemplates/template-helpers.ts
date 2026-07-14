@@ -220,6 +220,60 @@ export function formatPaymentReceiptTemplateParams(
 }
 
 /**
+ * Formats doctor daily appointment summary template parameters for WhatsApp
+ * Template: "doctor_daily_appointment_summary"
+ * Body: "Good morning Dr. {{1}}!\n\nHere is your appointment summary for {{2}}:\n\n{{3}}\n\nTotal: {{4}} appointment(s). Have a productive day!"
+ * @param doctorLastName - Doctor's last name for personalization
+ * @param dateLabel - Formatted date string (e.g. "14 Jul 2026")
+ * @param appointmentsList - Newline-separated numbered appointment lines (e.g. "1. 09:30 AM - Rahul @ Clinic A\n2. 10:30 AM - Priya @ Clinic B")
+ * @param totalCount - Total number of appointments as string
+ * @returns Template components array
+ */
+export function formatDoctorDailySummaryTemplateParams(
+  doctorLastName: string,
+  dateLabel: string,
+  appointmentsList: string,
+  totalCount: string
+): WhatsAppTemplateComponent[] {
+  const components: WhatsAppTemplateComponent[] = [
+    {
+      type: 'body',
+      parameters: [
+        { type: 'text', text: normalizeTemplateText(doctorLastName, 'Doctor') },
+        { type: 'text', text: normalizeTemplateText(dateLabel, 'today') },
+        { type: 'text', text: normalizeTemplateText(appointmentsList, 'No appointments') },
+        { type: 'text', text: normalizeTemplateText(totalCount, '0') },
+      ],
+    },
+  ];
+  return components;
+}
+
+/**
+ * Formats doctor no-appointments template parameters for WhatsApp
+ * Template: "doctor_no_appointments_today"
+ * Body: "Good morning Dr. {{1}}!\n\nYou have no confirmed appointments scheduled for {{2}}. Enjoy your day!"
+ * @param doctorLastName - Doctor's last name for personalization
+ * @param dateLabel - Formatted date string (e.g. "14 Jul 2026")
+ * @returns Template components array
+ */
+export function formatDoctorNoAppointmentsTemplateParams(
+  doctorLastName: string,
+  dateLabel: string
+): WhatsAppTemplateComponent[] {
+  const components: WhatsAppTemplateComponent[] = [
+    {
+      type: 'body',
+      parameters: [
+        { type: 'text', text: normalizeTemplateText(doctorLastName, 'Doctor') },
+        { type: 'text', text: normalizeTemplateText(dateLabel, 'today') },
+      ],
+    },
+  ];
+  return components;
+}
+
+/**
  * Example WhatsApp template structure documentation
  *
  * OTP Template Example:
