@@ -56,8 +56,21 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       const request = context.switchToHttp().getRequest<CustomFastifyRequest>();
       const _response = context.switchToHttp().getResponse<{ statusCode?: number }>();
 
+      // ✅ Cache bust: clients can force a fresh fetch by sending
+      // `?bust=1` or `X-Cache-Bust: 1`. Useful for the doctors list where
+      // an empty cached result should be re-fetched.
+      const hasBustQuery = (() => {
+        const raw = (request as { query?: Record<string, unknown> })?.query;
+        if (!raw) return false;
+        const v = raw['bust'] ?? raw['cacheBust'] ?? raw['cache-bust'];
+        return v === '1' || v === 'true';
+      })();
+      const bustHeader = (request.headers?.['x-cache-bust'] ?? '').toString().toLowerCase();
+      const hasBustHeader = bustHeader === '1' || bustHeader === 'true';
+      const shouldBustCache = hasBustQuery || hasBustHeader;
+
       // Handle cache read operations
-      if (cacheOptions && request.method === 'GET') {
+      if (cacheOptions && request.method === 'GET' && !shouldBustCache) {
         return this.handleCacheRead(context, next, cacheOptions);
       }
 
