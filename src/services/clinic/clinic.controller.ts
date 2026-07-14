@@ -766,15 +766,16 @@ export class ClinicController {
   @RequireResourcePermission('clinics', 'read', { requireOwnership: true })
   @Cache({
     keyTemplate: 'clinic:{id}:doctors',
-    ttl: 1800, // 30 minutes
+    ttl: 120, // 2 minutes (shortened from 30 to reduce stale-empty window)
     tags: ['clinics', 'clinic:{id}', 'doctors'],
-    enableSWR: true,
+    enableSWR: false,
+    staleTime: 0,
     containsPHI: true,
   })
   @ApiOperation({
     summary: 'Get all doctors for a clinic',
     description:
-      'Retrieves all doctors associated with a specific clinic. Super Admin, Clinic Admin, Receptionist, and Patients can see all doctors. Cached for performance.',
+      'Retrieves all doctors associated with a specific clinic. Super Admin, Clinic Admin, Receptionist, and Patients can see all doctors. Cached for performance. Pass ?bust=1 to bypass cache.',
   })
   @ApiParam({
     name: 'id',

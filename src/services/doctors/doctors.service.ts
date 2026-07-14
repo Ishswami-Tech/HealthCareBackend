@@ -2,6 +2,7 @@ import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
 import { CacheService } from '@infrastructure/cache/cache.service';
+import { EventService } from '@infrastructure/events/event.service';
 import { PrismaDelegateArgs, PrismaTransactionClientWithDelegates } from '@core/types/prisma.types';
 import { LogType, LogLevel } from '@core/types/logging.types';
 
@@ -13,7 +14,9 @@ export class DoctorsService {
     private readonly databaseService: DatabaseService,
     private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => CacheService))
-    private readonly cacheService: CacheService
+    private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => EventService))
+    private readonly eventService: EventService
   ) {}
 
   /**
@@ -104,6 +107,23 @@ export class DoctorsService {
 
     if (data.clinicId) {
       await this.cacheService.invalidateClinicCache(data.clinicId);
+      // ✅ Emit WebSocket event so all connected clients refetch the
+      // clinic doctor list immediately instead of waiting for TTL.
+      try {
+        await this.eventService.emit('doctor.clinic.changed', {
+          clinicId: data.clinicId,
+          userId,
+          action: 'updated',
+        });
+      } catch (eventError) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Failed to emit doctor.clinic.changed event',
+          'DoctorsService',
+          { error: (eventError as Error).message }
+        );
+      }
     }
 
     return { success: true, message: 'Doctor profile updated' };
