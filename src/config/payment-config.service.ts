@@ -156,6 +156,12 @@ export class PaymentConfigService implements OnModuleInit {
     const phonepeEnv = this.configService.getEnv('PHONEPE_ENVIRONMENT', 'sandbox');
     const phonepeEnabled = phonepeClientId.length > 0 && phonepeClientSecret.length > 0;
 
+    const zohoAccountId = this.configService.getEnv('ZOHO_ACCOUNT_ID') || '';
+    const zohoAccessToken = this.configService.getEnv('ZOHO_ACCESS_TOKEN') || '';
+    const zohoSigningKey = this.configService.getEnv('ZOHO_WEBHOOK_SIGNING_KEY') || '';
+    const zohoBaseUrl = this.configService.getEnv('ZOHO_API_BASE_URL', 'https://payments.zoho.com');
+    const zohoEnabled = zohoAccountId.length > 0 && zohoAccessToken.length > 0;
+
     const easebuzzMerchantKey = this.configService.getEnv('EASEBUZZ_MERCHANT_KEY') || '';
     const easebuzzMerchantSalt = this.configService.getEnv('EASEBUZZ_MERCHANT_SALT') || '';
     const easebuzzEnv = this.configService.getEnv('EASEBUZZ_ENVIRONMENT', 'TEST');
@@ -176,7 +182,7 @@ export class PaymentConfigService implements OnModuleInit {
     const payuEnv = this.configService.getEnv('PAYU_ENVIRONMENT', 'test');
     const payuEnabled = payuMerchantKey.length > 0 && payuMerchantSalt.length > 0;
 
-    // Determine primary provider (priority: Cashfree > Razorpay > PhonePe > Easebuzz > Paytm > PayU)
+    // Determine primary provider (priority: Cashfree > Razorpay > PhonePe > Zoho > Easebuzz > Paytm > PayU)
     let primary: ClinicPaymentConfig['payment']['primary'];
     if (cashfreeEnabled) {
       primary = {
@@ -217,6 +223,18 @@ export class PaymentConfigService implements OnModuleInit {
         },
         priority: 1,
       };
+    } else if (zohoEnabled) {
+      primary = {
+        provider: PaymentProvider.ZOHO,
+        enabled: true,
+        credentials: {
+          accountId: zohoAccountId,
+          accessToken: zohoAccessToken,
+          signingKey: zohoSigningKey,
+          baseUrl: zohoBaseUrl || 'https://payments.zoho.com',
+        },
+        priority: 1,
+      };
     } else {
       primary = {
         provider: PaymentProvider.CASHFREE,
@@ -251,6 +269,19 @@ export class PaymentConfigService implements OnModuleInit {
           environment: phonepeEnv || 'sandbox',
         },
         priority: 3,
+      });
+    }
+    if (zohoEnabled && primary.provider !== PaymentProvider.ZOHO) {
+      fallback.push({
+        provider: PaymentProvider.ZOHO,
+        enabled: true,
+        credentials: {
+          accountId: zohoAccountId,
+          accessToken: zohoAccessToken,
+          signingKey: zohoSigningKey,
+          baseUrl: zohoBaseUrl || 'https://payments.zoho.com',
+        },
+        priority: 4,
       });
     }
     if (easebuzzEnabled && primary.provider !== PaymentProvider.EASEBUZZ) {

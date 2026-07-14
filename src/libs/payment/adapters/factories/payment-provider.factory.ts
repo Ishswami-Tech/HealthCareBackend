@@ -61,6 +61,14 @@ export class PaymentProviderFactory {
         );
       }
 
+      case PaymentProvider.ZOHO: {
+        await import('@nestjs/axios');
+        await import('@payment/adapters/zoho/zoho-payment.adapter');
+        throw new Error(
+          'Zoho adapter requires HttpService. Use createAdapterWithHttpService() method instead.'
+        );
+      }
+
       case PaymentProvider.EASEBUZZ: {
         await import('@nestjs/axios');
         await import('@payment/adapters/easebuzz/easebuzz-payment.adapter');
@@ -124,6 +132,12 @@ export class PaymentProviderFactory {
         const { PhonePePaymentAdapter } =
           await import('@payment/adapters/phonepe/phonepe-payment.adapter');
         adapter = new PhonePePaymentAdapter(this.loggingService, httpService);
+        break;
+      }
+
+      case PaymentProvider.ZOHO: {
+        const { ZohoPaymentAdapter } = await import('@payment/adapters/zoho/zoho-payment.adapter');
+        adapter = new ZohoPaymentAdapter(this.loggingService, httpService);
         break;
       }
 

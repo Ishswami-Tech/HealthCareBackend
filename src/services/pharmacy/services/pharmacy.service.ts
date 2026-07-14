@@ -117,6 +117,7 @@ export class PharmacyService {
       provider === 'cashfree' ||
       provider === 'payu' ||
       provider === 'phonepe' ||
+      provider === 'zoho' ||
       provider === 'razorpay' ||
       provider === 'stripe'
     );
