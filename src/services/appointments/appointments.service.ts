@@ -608,6 +608,7 @@ export class AppointmentsService {
                 dateLabel: todayLabel,
                 appointmentsList,
                 totalCount,
+                triggeredBy: 'cron',
               },
               {
                 priority: JobPriorityLevel.NORMAL,

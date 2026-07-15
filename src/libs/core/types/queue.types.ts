@@ -109,6 +109,7 @@ export interface DoctorSummaryJobData {
   appointmentsList: string;
   totalCount: string;
   doctorId: string;
+  triggeredBy?: 'cron' | 'appointment_created';
 }
 
 // Patient check-in job data
