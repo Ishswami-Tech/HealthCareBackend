@@ -1725,15 +1725,13 @@ export class AppointmentsService {
     ]);
 
     let resolvedInPersonCoverage: { subscriptionId: string; patientUserId: string } | null = null;
-    if (shouldResolveInPersonCoverageBeforeCreate) {
+    if (shouldResolveInPersonCoverageBeforeCreate && !isAdministrativeRole) {
       resolvedInPersonCoverage = await this.resolveEligibleInPersonSubscription(
         createDto.patientId,
         clinicId
       );
 
-      // If no subscription is found, we only throw for patients booking for themselves.
-      // Administrative roles can bypass this to support walk-ins or manual billing.
-      if (!resolvedInPersonCoverage && !isAdministrativeRole) {
+      if (!resolvedInPersonCoverage) {
         throw this.errors.businessRuleViolation(
           'An active plan is required before creating this in-person appointment',
           'AppointmentsService.createAppointment'
