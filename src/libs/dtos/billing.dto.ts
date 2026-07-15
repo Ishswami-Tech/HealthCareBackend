@@ -19,6 +19,7 @@ import {
 } from 'class-validator';
 import { IsClinicId } from '@core/decorators/clinic-id.validator';
 import { AppointmentPriority, AppointmentType, TreatmentType } from '@dtos/appointment.dto';
+import { PaymentProvider } from '@core/types';
 
 export class CreateBillingPlanDto {
   @IsString()
@@ -183,6 +184,7 @@ export class CreatePaymentDto {
   transactionId?: string;
   description?: string;
   metadata?: Record<string, unknown>;
+  provider?: PaymentProvider;
 }
 
 export class UpdatePaymentDto {

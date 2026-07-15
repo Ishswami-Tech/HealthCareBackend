@@ -46,7 +46,11 @@ import { BusinessRulesModule } from '@core/business-rules';
       maxListeners: 20,
       verboseMemoryLeak: true,
     }),
-    ScheduleModule.forRoot(),
+    ScheduleModule.forRoot({
+      // Timezone is controlled at the container level (TZ: Asia/Kolkata in docker-compose).
+      // All @Cron expressions (e.g. EVERY_DAY_AT_7AM) fire at 07:00 IST because
+      // the Node.js process inherits the system timezone from the TZ env var.
+    }),
     QueueModule.forRoot(),
     BullBoardModule.forRoot(), // Queue dashboard at /queue-dashboard
     // Cache must initialize before logging so the log dashboard can persist and read entries.

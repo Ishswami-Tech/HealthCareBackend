@@ -150,6 +150,8 @@ services:
       NODE_ENV: production
       DEV_MODE: "false"
       DOCKER_ENV: "true"
+      CRON_TIMEZONE: Asia/Kolkata
+      TZ: Asia/Kolkata
       ENABLE_HTTP2: "false"
       CORS_ORIGIN: ${CORS_ORIGIN}
       FRONTEND_URL: ${FRONTEND_URL}
@@ -253,6 +255,8 @@ services:
       SERVICE_NAME: worker
       DEV_MODE: "false"
       DOCKER_ENV: "true"
+      CRON_TIMEZONE: Asia/Kolkata
+      TZ: Asia/Kolkata
       DATABASE_URL: ${DATABASE_URL}
       PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
       CACHE_PROVIDER: dragonfly
