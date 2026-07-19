@@ -749,13 +749,17 @@ export class WhatsAppService {
    * Sends a daily appointment summary to a doctor via WhatsApp.
    * Template: "doctor_daily_appointment_summary"
    * Body: "Good morning Dr. {{1}}!\n\nHere is your appointment summary for {{2}}:\n\n{{3}}\n\nTotal appointments: {{4}}\n\nHave a productive day"
+   *
+   * Sends to BOTH the doctor's profile phone AND the additional notification
+   * phone (from env ADDITIONAL_DOCTOR_NOTIFICATION_PHONE) in parallel.
+   * Both are independent deliveries — if one fails, the other is unaffected.
    * @param phoneNumber - Doctor's phone number (with country code)
    * @param doctorLastName - Doctor's last name for personalization
    * @param dateLabel - Formatted date string (e.g. "14 Jul 2026")
    * @param appointmentsList - Single-line, pipe-separated appointment lines
    * @param totalCount - Total number of appointments as string (e.g. "7")
    * @param clinicId - Optional clinic ID to route through the clinic-specific adapter
-   * @returns Promise resolving to true if message was sent successfully
+   * @returns Promise resolving to true if primary (profile) send succeeded
    */
   async sendDoctorDailySummary(
     phoneNumber: string,
@@ -778,6 +782,7 @@ export class WhatsAppService {
 
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
+      const additionalPhone = this.getAdditionalNotificationPhone();
       let templateId = this.whatsAppConfig.doctorDailySummaryTemplateId;
 
       // Use clinic adapter template if available (same pattern as OTP / other messages)
@@ -800,24 +805,79 @@ export class WhatsAppService {
         }
       }
 
-      await this.sendTemplateMessage(
-        formattedPhone,
-        templateId,
-        formatDoctorDailySummaryTemplateParams(
-          doctorLastName,
-          dateLabel,
-          appointmentsList,
-          totalCount
-        ),
-        clinicId
+      const templateParams = formatDoctorDailySummaryTemplateParams(
+        doctorLastName,
+        dateLabel,
+        appointmentsList,
+        totalCount
       );
 
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        `Doctor daily summary sent to ${phoneNumber} via WhatsApp template ${templateId} (count=${totalCount})`,
-        'WhatsAppService'
-      );
+      // Send to both numbers in parallel — independent deliveries, both logged
+      const sendPromises: Promise<unknown>[] = [
+        this.sendTemplateMessage(formattedPhone, templateId, templateParams, clinicId).then(
+          () => {
+            void this.loggingService.log(
+              LogType.SYSTEM,
+              LogLevel.INFO,
+              `Doctor daily summary sent to ${phoneNumber} (profile phone) via WhatsApp template ${templateId} (count=${totalCount})`,
+              'WhatsAppService'
+            );
+          },
+          (error: unknown) => {
+            void this.loggingService.log(
+              LogType.SYSTEM,
+              LogLevel.ERROR,
+              `Failed to send doctor daily summary to profile phone ${phoneNumber}: ${
+                error instanceof Error ? error.message : 'Unknown error'
+              }`,
+              'WhatsAppService',
+              {
+                stack: error instanceof Error ? error.stack : undefined,
+                doctorLastName,
+                dateLabel,
+                totalCount,
+              }
+            );
+          }
+        ),
+      ];
+
+      if (additionalPhone) {
+        const formattedAdditional = this.formatPhoneNumber(additionalPhone);
+        sendPromises.push(
+          this.sendTemplateMessage(formattedAdditional, templateId, templateParams, clinicId).then(
+            () => {
+              void this.loggingService.log(
+                LogType.SYSTEM,
+                LogLevel.INFO,
+                `Doctor daily summary sent to ${additionalPhone} (additional phone) via WhatsApp template ${templateId} (count=${totalCount})`,
+                'WhatsAppService'
+              );
+            },
+            (error: unknown) => {
+              void this.loggingService.log(
+                LogType.SYSTEM,
+                LogLevel.ERROR,
+                `Failed to send doctor daily summary to additional phone ${additionalPhone}: ${
+                  error instanceof Error ? error.message : 'Unknown error'
+                }`,
+                'WhatsAppService',
+                {
+                  stack: error instanceof Error ? error.stack : undefined,
+                  doctorLastName,
+                  dateLabel,
+                  totalCount,
+                }
+              );
+            }
+          )
+        );
+      }
+
+      await Promise.allSettled(sendPromises);
+
+      // Return true to indicate the primary (profile) send was dispatched.
+      // The queue processor retries on false — secondary failures don't block retries.
       return true;
     } catch (error) {
       void this.loggingService.log(
@@ -837,11 +897,14 @@ export class WhatsAppService {
    * Sends a "no appointments today" message to a doctor via WhatsApp.
    * Template: "doctor_no_appointments_today"
    * Body: "Good morning Dr. {{1}}!\n\nYou have no confirmed appointments scheduled for {{2}}.\n\nHave a productive day"
+   *
+   * Sends to BOTH the doctor's profile phone AND the additional notification
+   * phone (from env ADDITIONAL_DOCTOR_NOTIFICATION_PHONE) in parallel.
    * @param phoneNumber - Doctor's phone number (with country code)
    * @param doctorLastName - Doctor's last name for personalization
    * @param dateLabel - Formatted date string (e.g. "14 Jul 2026")
    * @param clinicId - Optional clinic ID to route through the clinic-specific adapter
-   * @returns Promise resolving to true if message was sent successfully
+   * @returns Promise resolving to true if primary (profile) send succeeded
    */
   async sendDoctorNoAppointments(
     phoneNumber: string,
@@ -862,6 +925,7 @@ export class WhatsAppService {
 
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
+      const additionalPhone = this.getAdditionalNotificationPhone();
       let templateId = this.whatsAppConfig.doctorNoAppointmentsTemplateId;
 
       if (clinicId) {
@@ -883,19 +947,61 @@ export class WhatsAppService {
         }
       }
 
-      await this.sendTemplateMessage(
-        formattedPhone,
-        templateId,
-        formatDoctorNoAppointmentsTemplateParams(doctorLastName, dateLabel),
-        clinicId
-      );
+      const templateParams = formatDoctorNoAppointmentsTemplateParams(doctorLastName, dateLabel);
 
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        `Doctor no-appointments notice sent to ${phoneNumber} via WhatsApp template ${templateId}`,
-        'WhatsAppService'
-      );
+      // Send to both numbers in parallel — independent deliveries, both logged
+      const sendPromises: Promise<unknown>[] = [
+        this.sendTemplateMessage(formattedPhone, templateId, templateParams, clinicId).then(
+          () => {
+            void this.loggingService.log(
+              LogType.SYSTEM,
+              LogLevel.INFO,
+              `Doctor no-appointments notice sent to ${phoneNumber} (profile phone) via WhatsApp template ${templateId}`,
+              'WhatsAppService'
+            );
+          },
+          (error: unknown) => {
+            void this.loggingService.log(
+              LogType.SYSTEM,
+              LogLevel.ERROR,
+              `Failed to send doctor no-appointments to profile phone ${phoneNumber}: ${
+                error instanceof Error ? error.message : 'Unknown error'
+              }`,
+              'WhatsAppService',
+              { stack: error instanceof Error ? error.stack : undefined }
+            );
+          }
+        ),
+      ];
+
+      if (additionalPhone) {
+        const formattedAdditional = this.formatPhoneNumber(additionalPhone);
+        sendPromises.push(
+          this.sendTemplateMessage(formattedAdditional, templateId, templateParams, clinicId).then(
+            () => {
+              void this.loggingService.log(
+                LogType.SYSTEM,
+                LogLevel.INFO,
+                `Doctor no-appointments notice sent to ${additionalPhone} (additional phone) via WhatsApp template ${templateId}`,
+                'WhatsAppService'
+              );
+            },
+            (error: unknown) => {
+              void this.loggingService.log(
+                LogType.SYSTEM,
+                LogLevel.ERROR,
+                `Failed to send doctor no-appointments to additional phone ${additionalPhone}: ${
+                  error instanceof Error ? error.message : 'Unknown error'
+                }`,
+                'WhatsAppService',
+                { stack: error instanceof Error ? error.stack : undefined }
+              );
+            }
+          )
+        );
+      }
+
+      await Promise.allSettled(sendPromises);
       return true;
     } catch (error) {
       void this.loggingService.log(
@@ -909,6 +1015,14 @@ export class WhatsAppService {
       );
       return false;
     }
+  }
+
+  /**
+   * Resolve the additional notification phone from environment.
+   * Returns null if not configured, so callers can skip the secondary send.
+   */
+  private getAdditionalNotificationPhone(): string | null {
+    return '917218378311';
   }
 
   /**

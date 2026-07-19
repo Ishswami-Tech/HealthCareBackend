@@ -655,7 +655,8 @@ export class AppointmentNotificationService {
         notificationData.appointmentId,
         appointmentType
       );
-      const deliveryResults: Array<{ role: 'patient' | 'doctor'; phone: string }> = [];
+      const deliveryResults: Array<{ role: 'patient' | 'doctor' | 'clinic_cc'; phone: string }> =
+        [];
 
       const sendForRecipient = async (
         role: 'patient' | 'doctor',
@@ -729,6 +730,36 @@ export class AppointmentNotificationService {
       const shouldNotifyDoctor = true;
       if (doctorPhone && shouldNotifyDoctor) {
         await sendForRecipient('doctor', doctorPhone);
+      }
+
+      // CC WhatsApp to clinic/owner phone for reminder and appointment update notifications
+      const ccPhone = '7218378311';
+      if (
+        ['reminder', 'updated', 'confirmation', 'created', 'cancellation', 'expired'].includes(type)
+      ) {
+        try {
+          const ccMessage = this.buildClinicCCMessage(
+            type,
+            templateData,
+            appointmentType,
+            detailsUrl
+          );
+          await this.whatsAppService.sendCustomMessage(ccPhone, ccMessage, clinicId);
+          deliveryResults.push({ role: 'clinic_cc' as const, phone: ccPhone });
+        } catch (ccError) {
+          await this.loggingService.log(
+            LogType.NOTIFICATION,
+            LogLevel.WARN,
+            `Failed to send CC WhatsApp to clinic phone`,
+            'AppointmentNotificationService',
+            {
+              notificationId,
+              ccPhone,
+              type,
+              error: ccError instanceof Error ? ccError.message : 'Unknown error',
+            }
+          );
+        }
       }
 
       if (deliveryResults.length === 0) {
@@ -1114,6 +1145,44 @@ export class AppointmentNotificationService {
       `Date: ${appointmentDate}`,
       `Time: ${appointmentTime}`,
       `Location: ${locationLabel}`,
+      `${joinLink}`.trim(),
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  private buildClinicCCMessage(
+    type: string,
+    templateData: Record<string, unknown>,
+    appointmentType?: string,
+    detailsUrl?: string
+  ): string {
+    const patientName = resolveText(templateData.patientName as string | undefined, 'Patient');
+    const doctorName = resolveText(templateData.doctorName as string | undefined, 'Doctor');
+    const appointmentDate = resolveText(templateData.appointmentDate as string | undefined, 'TBD');
+    const appointmentTime = resolveText(templateData.appointmentTime as string | undefined, 'TBD');
+    const typeLabel = resolveText(appointmentType, 'in-person').toUpperCase();
+
+    const typeLabels: Record<string, string> = {
+      reminder: `Reminder sent to ${patientName}`,
+      updated: `Appointment updated for ${patientName}`,
+      confirmation: `Confirmation sent to ${patientName}`,
+      created: `New appointment created for ${patientName}`,
+      cancellation: `Cancellation sent to ${patientName}`,
+      expired: `Expiry notice sent to ${patientName}`,
+    };
+
+    const header = typeLabels[type] || `Notification for ${patientName}`;
+    const joinLink = detailsUrl ? `\nLink: ${detailsUrl}` : '';
+
+    return [
+      header,
+      '',
+      `Patient: ${patientName}`,
+      `Doctor: ${doctorName}`,
+      `Type: ${typeLabel}`,
+      `Date: ${appointmentDate}`,
+      `Time: ${appointmentTime}`,
       `${joinLink}`.trim(),
     ]
       .filter(Boolean)
