@@ -1157,10 +1157,16 @@ export class AppointmentNotificationService {
     appointmentType?: string,
     detailsUrl?: string
   ): string {
-    const patientName = resolveText(templateData.patientName as string | undefined, 'Patient');
-    const doctorName = resolveText(templateData.doctorName as string | undefined, 'Doctor');
-    const appointmentDate = resolveText(templateData.appointmentDate as string | undefined, 'TBD');
-    const appointmentTime = resolveText(templateData.appointmentTime as string | undefined, 'TBD');
+    const patientName = resolveText(templateData['patientName'] as string | undefined, 'Patient');
+    const doctorName = resolveText(templateData['doctorName'] as string | undefined, 'Doctor');
+    const appointmentDate = resolveText(
+      templateData['appointmentDate'] as string | undefined,
+      'TBD'
+    );
+    const appointmentTime = resolveText(
+      templateData['appointmentTime'] as string | undefined,
+      'TBD'
+    );
     const typeLabel = resolveText(appointmentType, 'in-person').toUpperCase();
 
     const typeLabels: Record<string, string> = {
