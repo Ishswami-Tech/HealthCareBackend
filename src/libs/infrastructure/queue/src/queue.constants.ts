@@ -50,7 +50,7 @@ export const HEALTHCARE_QUEUE_CONFIG = {
  *   - Retry a DLQ job via queueService.retryDeadLetter(jobId)
  *   - Purge DLQ via queueService.purgeDeadLetter()
  */
-export const DEAD_LETTER_QUEUE = 'healthcare-queue:dead-letter';
+export const DEAD_LETTER_QUEUE = 'healthcare-queue-dead-letter';
 
 export const DLQ_CONFIG = {
   // Mirror main queue's "removeOnFail" behavior — keep failed jobs forever,

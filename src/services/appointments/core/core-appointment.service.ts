@@ -1201,6 +1201,7 @@ export class CoreAppointmentService {
           { patientId: context.patientId || '__missing_patient_profile__' },
         ];
         break;
+      case 'SUPER_ADMIN':
       case 'NURSE':
       case 'RECEPTIONIST':
       case 'PHARMACIST':

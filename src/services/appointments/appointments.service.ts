@@ -464,6 +464,7 @@ export class AppointmentsService {
       | 'appointment.cancelled'
       | 'appointment.completed'
       | 'appointment.noshow'
+      | 'appointment.expired'
       | 'appointment.consultation_started',
     params: {
       eventId: string;
@@ -745,6 +746,181 @@ export class AppointmentsService {
     };
   }
 
+  @Cron(CronExpression.EVERY_HOUR)
+  async handlePastVideoCallClosureCron() {
+    await this.processPastVideoCallClosures();
+  }
+
+  async processPastVideoCallClosures(settings?: {
+    graceHours?: number;
+    checkStatuses?: readonly AppointmentStatus[];
+    clinicId?: string;
+  }): Promise<{
+    totalChecked: number;
+    closed: number;
+    failed: number;
+    details: Array<{
+      appointmentId: string;
+      patientId: string;
+      doctorId: string;
+      closedAt: Date;
+      reason: string;
+    }>;
+  }> {
+    const mergedSettings = {
+      graceHours: 6,
+      checkStatuses: [
+        AppointmentStatus.CONFIRMED,
+        AppointmentStatus.SCHEDULED,
+        AppointmentStatus.IN_PROGRESS,
+      ] as readonly AppointmentStatus[],
+      ...settings,
+    };
+
+    const now = new Date();
+    const istOffset = 5.5 * 60 * 60 * 1000;
+    const nowIST = new Date(now.getTime() + istOffset);
+    const cutoff = new Date(nowIST.getTime() - mergedSettings.graceHours * 60 * 60 * 1000);
+
+    const candidates = await this.databaseService.executeHealthcareRead(async client => {
+      const prismaClient = client as unknown as Prisma.TransactionClient;
+      return await prismaClient.appointment.findMany({
+        where: {
+          type: AppointmentType.VIDEO_CALL,
+          status: { in: mergedSettings.checkStatuses as unknown as $Enums.AppointmentStatus[] },
+          ...(mergedSettings.clinicId ? { clinicId: mergedSettings.clinicId } : {}),
+        },
+        select: {
+          id: true,
+          patientId: true,
+          doctorId: true,
+          clinicId: true,
+          date: true,
+          time: true,
+          status: true,
+          type: true,
+        },
+      });
+    });
+
+    const details: Array<{
+      appointmentId: string;
+      patientId: string;
+      doctorId: string;
+      closedAt: Date;
+      reason: string;
+    }> = [];
+    let closedCount = 0;
+    let failedCount = 0;
+
+    for (const appointment of candidates) {
+      const start = new Date(appointment.date);
+      const time = appointment.time;
+      if (time) {
+        const parts = time.split(':');
+        const hours = parts[0] ?? '0';
+        const mins = parts[1] ?? '0';
+        start.setHours(parseInt(hours, 10), parseInt(mins, 10), 0, 0);
+      }
+      start.setHours(start.getHours() + 5);
+
+      if (start.getTime() > cutoff.getTime()) {
+        continue;
+      }
+
+      const formattedStart = formatDateTimeInIST(start, {
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      const reason =
+        `Auto-closed: video appointment scheduled for ${formattedStart} IST ` +
+        `has passed its 5-hour join window without being completed. ` +
+        `The appointment is now closed.`;
+
+      try {
+        await this.updateStatus(
+          appointment.id,
+          {
+            status: AppointmentStatus.EXPIRED,
+            reason,
+            notes: 'Auto-closed by past-video-call closure cron.',
+          } as unknown as UpdateAppointmentStatusDto,
+          'system',
+          appointment.clinicId,
+          'SYSTEM'
+        );
+
+        closedCount++;
+        details.push({
+          appointmentId: appointment.id,
+          patientId: appointment.patientId,
+          doctorId: appointment.doctorId,
+          closedAt: new Date(),
+          reason,
+        });
+
+        await this.emitAppointmentEnterpriseEvent('appointment.expired', {
+          eventId: `video-expired-${appointment.id}-${Date.now()}`,
+          clinicId: appointment.clinicId,
+          priority: EventPriority.HIGH,
+          userId: appointment.patientId,
+          payload: {
+            appointmentId: appointment.id,
+            doctorId: appointment.doctorId,
+            clinicId: appointment.clinicId,
+            patientId: appointment.patientId,
+            patientName: '',
+            doctorName: '',
+            date: appointment.date,
+            time: appointment.time,
+            appointmentType: 'VIDEO_CALL',
+            reason,
+            appointment,
+          },
+        });
+      } catch (error) {
+        failedCount++;
+        await this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.WARN,
+          `Failed to auto-close past video call: ${
+            error instanceof Error ? error.message : 'Unknown error'
+          }`,
+          'AppointmentsService.processPastVideoCallClosures',
+          {
+            appointmentId: appointment.id,
+            clinicId: appointment.clinicId,
+            status: appointment.status,
+          }
+        );
+      }
+    }
+
+    if (details.length > 0 || failedCount > 0) {
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        'Processed past video call closures',
+        'AppointmentsService.processPastVideoCallClosures',
+        {
+          totalChecked: candidates.length,
+          closed: closedCount,
+          failed: failedCount,
+        }
+      );
+    }
+
+    return {
+      totalChecked: candidates.length,
+      closed: closedCount,
+      failed: failedCount,
+      details,
+    };
+  }
+
   async processNoShowCancellations(settings?: {
     checkDaysBefore?: number;
     checkStatuses?: readonly string[];
@@ -783,6 +959,7 @@ export class AppointmentsService {
       const prismaClient = client as unknown as Prisma.TransactionClient;
       return await prismaClient.appointment.findMany({
         where: {
+          type: { not: AppointmentType.VIDEO_CALL },
           date: { lt: cutoffDate },
           status: { in: mergedSettings.checkStatuses as unknown as $Enums.AppointmentStatus[] },
           ...(mergedSettings.clinicId ? { clinicId: mergedSettings.clinicId } : {}),

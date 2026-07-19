@@ -842,6 +842,7 @@ export class AppointmentsController {
   @Get()
   @HttpCode(HttpStatus.OK)
   @Roles(
+    Role.SUPER_ADMIN,
     Role.CLINIC_ADMIN,
     Role.DOCTOR,
     Role.ASSISTANT_DOCTOR,
