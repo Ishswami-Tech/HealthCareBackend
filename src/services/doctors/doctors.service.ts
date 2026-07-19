@@ -8,8 +8,6 @@ import { LogType, LogLevel } from '@core/types/logging.types';
 
 @Injectable()
 export class DoctorsService {
-  private readonly EMPTY_RESULT_TTL = 60;
-
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly loggingService: LoggingService,
@@ -248,13 +246,11 @@ export class DoctorsService {
       'DoctorsService'
     );
 
-    if (Array.isArray(result) && result.length === 0) {
-      await Promise.allSettled([
-        this.cacheService.del(cacheKey),
-        this.cacheService.set(cacheKey, result, this.EMPTY_RESULT_TTL),
-      ]);
+    if (!Array.isArray(result) || result.length > 0) {
+      return result;
     }
 
+    // Empty array — don't cache (interceptor will skip writing [] to cache).
     return result;
   }
 }

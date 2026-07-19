@@ -752,8 +752,9 @@ export class WhatsAppService {
    * @param phoneNumber - Doctor's phone number (with country code)
    * @param doctorLastName - Doctor's last name for personalization
    * @param dateLabel - Formatted date string (e.g. "14 Jul 2026")
-   * @param appointmentsList - Newline-separated, optionally numbered appointment lines
+   * @param appointmentsList - Single-line, pipe-separated appointment lines
    * @param totalCount - Total number of appointments as string (e.g. "7")
+   * @param clinicId - Optional clinic ID to route through the clinic-specific adapter
    * @returns Promise resolving to true if message was sent successfully
    */
   async sendDoctorDailySummary(
@@ -761,9 +762,11 @@ export class WhatsAppService {
     doctorLastName: string,
     dateLabel: string,
     appointmentsList: string,
-    totalCount: string
+    totalCount: string,
+    clinicId?: string
   ): Promise<boolean> {
-    if (!this.whatsAppConfig.enabled) {
+    // Allow clinic adapter to bypass the global WHATSAPP_ENABLED gate (same as OTP pattern).
+    if (!this.whatsAppConfig.enabled && !clinicId) {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
@@ -775,7 +778,27 @@ export class WhatsAppService {
 
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
-      const templateId = this.whatsAppConfig.doctorDailySummaryTemplateId;
+      let templateId = this.whatsAppConfig.doctorDailySummaryTemplateId;
+
+      // Use clinic adapter template if available (same pattern as OTP / other messages)
+      if (clinicId) {
+        try {
+          let resolvedClinicId = clinicId;
+          try {
+            const { resolveClinicUUID } = await import('@utils/clinic.utils');
+            resolvedClinicId = await resolveClinicUUID(this.databaseService, clinicId);
+          } catch {
+            // use original clinicId
+          }
+          const clinicData =
+            await this.clinicTemplateService.getClinicTemplateData(resolvedClinicId);
+          if (clinicData) {
+            templateId = clinicData.templateIds.doctorDailySummary || templateId;
+          }
+        } catch {
+          // fall through with env default template
+        }
+      }
 
       await this.sendTemplateMessage(
         formattedPhone,
@@ -785,7 +808,8 @@ export class WhatsAppService {
           dateLabel,
           appointmentsList,
           totalCount
-        )
+        ),
+        clinicId
       );
 
       void this.loggingService.log(
@@ -816,14 +840,17 @@ export class WhatsAppService {
    * @param phoneNumber - Doctor's phone number (with country code)
    * @param doctorLastName - Doctor's last name for personalization
    * @param dateLabel - Formatted date string (e.g. "14 Jul 2026")
+   * @param clinicId - Optional clinic ID to route through the clinic-specific adapter
    * @returns Promise resolving to true if message was sent successfully
    */
   async sendDoctorNoAppointments(
     phoneNumber: string,
     doctorLastName: string,
-    dateLabel: string
+    dateLabel: string,
+    clinicId?: string
   ): Promise<boolean> {
-    if (!this.whatsAppConfig.enabled) {
+    // Allow clinic adapter to bypass the global WHATSAPP_ENABLED gate (same as OTP pattern).
+    if (!this.whatsAppConfig.enabled && !clinicId) {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
@@ -835,12 +862,32 @@ export class WhatsAppService {
 
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
-      const templateId = this.whatsAppConfig.doctorNoAppointmentsTemplateId;
+      let templateId = this.whatsAppConfig.doctorNoAppointmentsTemplateId;
+
+      if (clinicId) {
+        try {
+          let resolvedClinicId = clinicId;
+          try {
+            const { resolveClinicUUID } = await import('@utils/clinic.utils');
+            resolvedClinicId = await resolveClinicUUID(this.databaseService, clinicId);
+          } catch {
+            // use original clinicId
+          }
+          const clinicData =
+            await this.clinicTemplateService.getClinicTemplateData(resolvedClinicId);
+          if (clinicData) {
+            templateId = clinicData.templateIds.doctorNoAppointments || templateId;
+          }
+        } catch {
+          // fall through with env default template
+        }
+      }
 
       await this.sendTemplateMessage(
         formattedPhone,
         templateId,
-        formatDoctorNoAppointmentsTemplateParams(doctorLastName, dateLabel)
+        formatDoctorNoAppointmentsTemplateParams(doctorLastName, dateLabel),
+        clinicId
       );
 
       void this.loggingService.log(

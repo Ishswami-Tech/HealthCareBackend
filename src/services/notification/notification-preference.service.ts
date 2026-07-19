@@ -40,6 +40,18 @@ export class NotificationPreferenceService {
         const pref = await this.databaseService.findNotificationPreferenceByUserIdSafe(userId);
 
         if (!pref) {
+          // Default: doctors get WhatsApp enabled (opt-out model),
+          // other roles keep it disabled (opt-in model).
+          let whatsappDefault = false;
+          try {
+            const user = await this.databaseService.findUserByIdSafe(userId);
+            if (user?.role === 'DOCTOR') {
+              whatsappDefault = true;
+            }
+          } catch {
+            // If user lookup fails, fall back to false (safe default)
+          }
+
           // Return default preferences if not found
           return {
             id: '',
@@ -48,7 +60,7 @@ export class NotificationPreferenceService {
             smsEnabled: true,
             pushEnabled: true,
             socketEnabled: true,
-            whatsappEnabled: false,
+            whatsappEnabled: whatsappDefault,
             appointmentEnabled: true,
             ehrEnabled: true,
             billingEnabled: true,
@@ -119,7 +131,8 @@ export class NotificationPreferenceService {
       smsEnabled: data.smsEnabled ?? true,
       pushEnabled: data.pushEnabled ?? true,
       socketEnabled: data.socketEnabled ?? true,
-      whatsappEnabled: data.whatsappEnabled ?? false,
+      // Doctors: default WhatsApp to true (opt-out model); others: false (opt-in).
+      whatsappEnabled: data.whatsappEnabled ?? user?.role === 'DOCTOR',
       appointmentEnabled: data.appointmentEnabled ?? true,
       ehrEnabled: data.ehrEnabled ?? true,
       billingEnabled: data.billingEnabled ?? true,

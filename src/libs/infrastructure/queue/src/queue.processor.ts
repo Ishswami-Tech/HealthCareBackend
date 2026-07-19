@@ -12,6 +12,7 @@ import { S3StorageService } from '@infrastructure/storage';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { AppointmentNotificationService } from '@services/appointments/plugins/notifications/appointment-notification.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
+import { DoctorSummaryService } from '@communication/services/doctor-summary.service';
 
 // Internal imports - Core
 import { LogType, LogLevel } from '@core/types';
@@ -97,6 +98,17 @@ export class QueueProcessor {
     }
     try {
       return this.moduleRef.get(WhatsAppService, { strict: false });
+    } catch {
+      return null;
+    }
+  }
+
+  private getDoctorSummaryService(): DoctorSummaryService | null {
+    if (!this.moduleRef) {
+      return null;
+    }
+    try {
+      return this.moduleRef.get(DoctorSummaryService, { strict: false });
     } catch {
       return null;
     }
@@ -573,7 +585,55 @@ export class QueueProcessor {
     );
 
     try {
-      const { phone, doctorLastName, dateLabel, appointmentsList, totalCount } = payload;
+      // Backward compatibility: if precomputed fields exist (in-flight jobs from
+      // before the process-time-computation change), use them directly.
+      const hasPrecomputedData =
+        payload.phone &&
+        payload.doctorLastName &&
+        payload.dateLabel &&
+        payload.appointmentsList &&
+        payload.totalCount;
+
+      let phone: string;
+      let doctorLastName: string;
+      let dateLabel: string;
+      let appointmentsList: string;
+      let totalCount: string;
+
+      if (hasPrecomputedData) {
+        phone = payload.phone!;
+        doctorLastName = payload.doctorLastName!;
+        dateLabel = payload.dateLabel!;
+        appointmentsList = payload.appointmentsList!;
+        totalCount = payload.totalCount!;
+      } else {
+        // Compute summary fresh at process time (the correct path).
+        const doctorSummaryService = this.getDoctorSummaryService();
+        if (!doctorSummaryService) {
+          throw new Error('DoctorSummaryService not available');
+        }
+
+        const summary = await doctorSummaryService.buildSummary(payload.doctorId, payload.clinicId);
+
+        if (!summary) {
+          // Pre-condition gate failed (prefs/phone missing). Log and mark success —
+          // we don't want to retry a job that can never succeed due to user config.
+          void this.loggingService.log(
+            LogType.QUEUE,
+            LogLevel.DEBUG,
+            `Doctor summary skipped for doctor ${payload.doctorId} (doctorUserId=${payload.doctorUserId}) — pre-condition gate failed`,
+            'QueueProcessor',
+            { jobId: safeStringify(job.id), doctorId: payload.doctorId, clinicId: payload.clinicId }
+          );
+          return { success: true };
+        }
+
+        phone = summary.phone;
+        doctorLastName = summary.doctorLastName;
+        dateLabel = summary.dateLabel;
+        appointmentsList = summary.appointmentsList;
+        totalCount = summary.totalCount;
+      }
 
       const whatsAppService = this.getWhatsAppService();
       if (!whatsAppService) {
@@ -587,12 +647,15 @@ export class QueueProcessor {
         throw new Error('WhatsApp service unavailable');
       }
 
+      // Route through clinic adapter — pass clinicId so it bypasses the global
+      // WHATSAPP_ENABLED gate (same pattern as OTP: if !enabled && !clinicId → skip).
       const success = await whatsAppService.sendDoctorDailySummary(
         phone,
         doctorLastName,
         dateLabel,
         appointmentsList,
-        totalCount
+        totalCount,
+        payload.clinicId
       );
 
       if (success) {

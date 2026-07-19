@@ -56,6 +56,7 @@ model User {
   lifestyleFactors        Json?
   seasonalPatterns        Json?
   primaryClinicId         String?
+  deletedAt               DateTime?
   allergies               Allergy[]
   appointments            Appointment[]
   auditLogs               AuditLog[]
@@ -145,6 +146,7 @@ model Clinic {
   createdAt                    DateTime                            @default(now())
   updatedAt                    DateTime                            @updatedAt
   createdBy                    String
+  deletedAt                    DateTime?
   subdomain                    String?                             @unique
   logo                         String?
   website                      String?
@@ -215,6 +217,7 @@ model ClinicLocation {
   isActive         Boolean           @default(true)
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
+  deletedAt        DateTime?
   clinicId         String
   latitude         Float?
   longitude        Float?
@@ -446,6 +449,7 @@ model FamilyMember {
   isActive        Boolean       @default(true)
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
+  deletedAt       DateTime?
   createdByUserId String?
   notes           String?
   patient         Patient       @relation("PatientFamilyMembers", fields: [patientId], references: [id], onDelete: Cascade)
@@ -650,6 +654,7 @@ model Supplier {
   isActive      Boolean    @default(true)
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
+  deletedAt     DateTime?
   medicines     Medicine[]
   clinic        Clinic     @relation(fields: [clinicId], references: [id])
 
@@ -975,6 +980,7 @@ model WhatsAppSuppressionList {
   isActive     Boolean           @default(true)
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
+  deletedAt    DateTime?
   user         User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
   clinic       Clinic?           @relation(fields: [clinicId], references: [id], onDelete: SetNull)
 
@@ -1325,17 +1331,18 @@ model LifestyleAssessment {
 }
 
 model EmergencyContact {
-  id             String   @id @default(uuid())
+  id             String    @id @default(uuid())
   userId         String
   name           String
   relationship   String
   phone          String
   alternatePhone String?
   address        String?
-  isActive       Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  user           User     @relation(fields: [userId], references: [id])
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+  user           User      @relation(fields: [userId], references: [id])
 
   @@index([userId])
 }

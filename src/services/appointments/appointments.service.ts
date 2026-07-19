@@ -495,27 +495,18 @@ export class AppointmentsService {
     await this.processNoShowCancellations();
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_7AM)
+  @Cron(CronExpression.EVERY_DAY_AT_7AM, { timeZone: 'Asia/Kolkata' })
   async handleDoctorDailyAppointmentSummaryCron() {
     const runStart = Date.now();
     try {
-      const summaryStart = new Date();
-      summaryStart.setHours(0, 0, 0, 0);
-      const summaryEnd = new Date(summaryStart);
-      summaryEnd.setDate(summaryEnd.getDate() + 1);
-
-      const todayLabel = formatDateInIST(summaryStart, {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-      });
+      const todayKey = formatDateKeyInIST(new Date());
 
       const doctors = await this.databaseService.executeHealthcareRead<
-        Array<{ id: string; userId: string }>
+        Array<{ id: string; userId: string; clinicId: string }>
       >(async client => {
         const prismaClient = client as unknown as Prisma.TransactionClient;
         return await prismaClient.doctor.findMany({
-          select: { id: true, userId: true },
+          select: { id: true, userId: true, clinicId: true },
         });
       });
 
@@ -524,117 +515,42 @@ export class AppointmentsService {
 
       for (const doctor of doctors) {
         try {
-          const preferences = await this.notificationPreferenceService.getPreferences(
-            doctor.userId
+          // Thin enqueue — summary is computed at process time by DoctorSummaryService.
+          // Use a distinct jobId suffix `:cron` so it never collides with event-triggered buckets.
+          const deterministicJobId = `doctor-summary:${doctor.userId}:${doctor.clinicId}:${todayKey}:cron`;
+
+          const existingJob = await this.queueService.getJob(
+            'healthcare-queue',
+            deterministicJobId
           );
-          if (!preferences.whatsappEnabled || !preferences.appointmentEnabled) {
+          if (existingJob) {
             skipCount++;
             continue;
           }
 
-          const doctorUser = await this.databaseService.findUserByIdSafe(doctor.userId);
-          const phone = doctorUser?.phone;
-          if (!phone) {
-            skipCount++;
-            continue;
-          }
-
-          const appointments = await this.databaseService.executeHealthcareRead<
-            Array<{
-              time: string | null;
-              type: string | null;
-              patient: { user: { name: string | null } } | null;
-              clinic: { name: string | null } | null;
-            }>
-          >(async client => {
-            const prismaClient = client as unknown as Prisma.TransactionClient;
-            return await prismaClient.appointment.findMany({
-              where: {
-                doctorId: doctor.id,
-                date: { gte: summaryStart, lt: summaryEnd },
-                status: {
-                  in: [AppointmentStatus.CONFIRMED] as unknown as $Enums.AppointmentStatus[],
-                },
-              },
-              select: {
-                time: true,
-                type: true,
-                patient: {
-                  select: { user: { select: { name: true } } },
-                },
-                clinic: { select: { name: true } },
-              },
-              orderBy: { time: 'asc' },
-            });
-          });
-
-          let appointmentsList: string;
-          if (appointments.length === 0) {
-            appointmentsList = 'No confirmed appointments for today.';
-          } else {
-            const lines: string[] = [];
-            for (const apt of appointments) {
-              const timeLabel = apt.time
-                ? new Date(`1970-01-01T${apt.time}`).toLocaleTimeString('en-US', {
-                    hour: 'numeric',
-                    minute: '2-digit',
-                    hour12: true,
-                  })
-                : 'TBD';
-              const patientName = apt.patient?.user?.name || 'Unknown';
-              const typeLabel =
-                apt.type === AppointmentType.VIDEO_CALL
-                  ? 'Video'
-                  : apt.type === AppointmentType.IN_PERSON
-                    ? 'In-person'
-                    : apt.type?.toLowerCase().replace(/_/g, ' ') || 'Consultation';
-              const clinicLabel = apt.clinic?.name ? ` @ ${apt.clinic.name}` : '';
-              lines.push(`${timeLabel} - ${patientName}${clinicLabel} (${typeLabel})`);
+          await this.queueService.addJob(
+            JobType.DOCTOR_SUMMARY,
+            'send-doctor-daily-summary',
+            {
+              doctorId: doctor.id,
+              doctorUserId: doctor.userId,
+              clinicId: doctor.clinicId,
+              triggeredBy: 'cron',
+            },
+            {
+              priority: JobPriorityLevel.NORMAL,
+              correlationId: deterministicJobId,
+              attempts: 3,
             }
-            appointmentsList = lines.join('\n');
-          }
-
-          const doctorLastName = doctorUser?.lastName || doctorUser?.name || 'Doctor';
-          const totalCount = String(appointments.length);
-
-          try {
-            await this.queueService.addJob(
-              JobType.DOCTOR_SUMMARY,
-              'send-doctor-daily-summary',
-              {
-                phone,
-                doctorId: doctor.id,
-                doctorLastName,
-                dateLabel: todayLabel,
-                appointmentsList,
-                totalCount,
-                triggeredBy: 'cron',
-              },
-              {
-                priority: JobPriorityLevel.NORMAL,
-                attempts: 3,
-              }
-            );
-            enqueuedCount++;
-          } catch (enqueueError) {
-            void this.loggingService.log(
-              LogType.QUEUE,
-              LogLevel.ERROR,
-              `Failed to enqueue doctor summary for doctor ${doctor.userId}`,
-              'AppointmentsService',
-              {
-                doctorId: doctor.id,
-                error: enqueueError instanceof Error ? enqueueError.message : String(enqueueError),
-              }
-            );
-          }
+          );
+          enqueuedCount++;
         } catch (error) {
           void this.loggingService.log(
             LogType.NOTIFICATION,
             LogLevel.ERROR,
-            `Failed to prepare daily summary for doctor ${doctor.userId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            `Failed to enqueue doctor summary for doctor ${doctor.userId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
             'AppointmentsService',
-            { doctorId: doctor.id }
+            { doctorId: doctor.id, error }
           );
         }
       }

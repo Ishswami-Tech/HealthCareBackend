@@ -64,6 +64,21 @@ function normalizeTemplateText(value: unknown, fallback: string): string {
   return fallback;
 }
 
+/**
+ * Meta hard-rejects template parameters containing newlines/tabs regardless
+ * of the template body. This sanitizer strips or replaces whitespace control
+ * characters and collapses excess spaces. Applied as defense-in-depth on
+ * the appointmentsList parameter even though the formatter already emits a
+ * single-line string.
+ */
+function sanitizeParamText(value: string): string {
+  return value
+    .replace(/[\n\r]/g, ' | ')
+    .replace(/\t/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function sanitizeTemplateText(value: unknown, fallback: string): string {
   const normalized = normalizeTemplateText(value, fallback);
   const withoutUrlLikeCharacters = normalized
@@ -241,7 +256,10 @@ export function formatDoctorDailySummaryTemplateParams(
       parameters: [
         { type: 'text', text: normalizeTemplateText(doctorLastName, 'Doctor') },
         { type: 'text', text: normalizeTemplateText(dateLabel, 'today') },
-        { type: 'text', text: normalizeTemplateText(appointmentsList, 'No appointments') },
+        {
+          type: 'text',
+          text: sanitizeParamText(normalizeTemplateText(appointmentsList, 'No appointments')),
+        },
         { type: 'text', text: normalizeTemplateText(totalCount, '0') },
       ],
     },

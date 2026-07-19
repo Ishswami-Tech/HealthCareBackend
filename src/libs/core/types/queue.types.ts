@@ -103,13 +103,17 @@ export interface EmailJobData {
 
 // Doctor summary job data
 export interface DoctorSummaryJobData {
-  phone: string;
-  doctorLastName: string;
-  dateLabel: string;
-  appointmentsList: string;
-  totalCount: string;
   doctorId: string;
-  triggeredBy?: 'cron' | 'appointment_created';
+  doctorUserId: string;
+  clinicId: string;
+  triggeredBy?: 'cron' | 'appointment_confirmed';
+  // Below fields are optional — populated at process time by DoctorSummaryService.
+  // Old in-flight jobs may still carry them (precomputed at enqueue time).
+  phone?: string;
+  doctorLastName?: string;
+  dateLabel?: string;
+  appointmentsList?: string;
+  totalCount?: string;
 }
 
 // Patient check-in job data
