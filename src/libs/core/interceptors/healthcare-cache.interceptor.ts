@@ -130,7 +130,8 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
 
       // Check for existing cache
       const cachedResult = await this.getCachedValue(cacheKey, options);
-      if (cachedResult !== null) {
+      const cachedIsEmptyArray = this.isCachedEmptyArray(cachedResult);
+      if (cachedResult !== null && !cachedIsEmptyArray) {
         await this.loggingService.log(
           LogType.CACHE,
           LogLevel.DEBUG,
@@ -139,6 +140,11 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
           { cacheKey }
         );
         return of(cachedResult);
+      }
+
+      // Stale empty array in cache — evict it and fall through to a fresh fetch.
+      if (cachedResult !== null && cachedIsEmptyArray) {
+        await this.cacheService.del(cacheKey).catch(() => {});
       }
 
       // Cache miss - execute and cache the result
@@ -317,19 +323,14 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       try {
         // Route to appropriate cache method based on healthcare data type
         if (options.patientSpecific) {
-          // This would use the healthcare cache service with patient-specific logic
-          // For now, we'll use the basic Redis cache
           return await this.cacheService.get(cacheKey);
         }
 
         if (options.emergencyData) {
-          // Emergency data uses minimal caching
           const cached = await this.cacheService.get(cacheKey);
-          // Double-check TTL for emergency data
           if (cached) {
             const ttl = await this.cacheService.ttl(cacheKey);
             if (ttl > (options.ttl || 300)) {
-              // TTL too long for emergency data, invalidate
               await this.cacheService.del(cacheKey);
               return null;
             }
@@ -337,11 +338,13 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
           return cached;
         }
 
-        // Standard cache retrieval
+        // Standard cache retrieval — unwrap SWR wrapper if present.
+        // The cache strategies store data as { data: T, timestamp: number }
+        // but the interceptor reads directly from the provider, so we need
+        // to unwrap here to return the actual data to the client.
         const cachedValue = await this.cacheService.get(cacheKey);
-        return cachedValue || null;
+        return this.unwrapCacheValue(cachedValue) ?? null;
       } catch (cacheError) {
-        // Cache service might not be fully initialized yet
         void this.loggingService?.log(
           LogType.CACHE,
           LogLevel.WARN,
@@ -370,6 +373,47 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
     }
   }
 
+  /**
+   * Unwrap SWR-wrapped cache values ({ data, timestamp }) to return the
+   * underlying data. If the value isn't wrapped, return it as-is.
+   */
+  private unwrapCacheValue(value: unknown): unknown {
+    if (value === null || value === undefined) return value;
+    if (typeof value !== 'object') return value;
+    const obj = value as Record<string, unknown>;
+    if ('data' in obj && 'timestamp' in obj) {
+      return obj['data'];
+    }
+    return value;
+  }
+
+  private isCachedEmptyArray(value: unknown): boolean {
+    if (value === null || value === undefined) return false;
+    // Handle raw JSON strings (from setCacheValue's JSON.stringify)
+    const parsed: unknown = typeof value === 'string' ? this.tryParseJson(value) : value;
+    // Direct empty array
+    if (Array.isArray(parsed) && parsed.length === 0) return true;
+    // SWR-wrapped empty array: { data: [], timestamp: number }
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      'data' in parsed &&
+      Array.isArray((parsed as { data: unknown }).data) &&
+      (parsed as { data: unknown[] }).data.length === 0
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  private tryParseJson(raw: string): unknown {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return raw;
+    }
+  }
+
   private async setCacheValue(
     cacheKey: string,
     value: unknown,
@@ -377,6 +421,14 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
     context: ExecutionContext
   ): Promise<void> {
     try {
+      // Never cache empty arrays — they are often transient (e.g. race with
+      // doctor/location assignment). This single guard covers all write paths
+      // (normal, condition, PHI, SWR) and is defense-in-depth alongside the
+      // service-level early returns.
+      if (Array.isArray(value) && value.length === 0) {
+        return;
+      }
+
       // Check if cache service is available
       if (!this.cacheService) {
         void this.loggingService?.log(
@@ -642,33 +694,5 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
         }
       );
     }
-  }
-
-  /**
-   * Check if current request should bypass cache based on various factors
-   */
-  private shouldBypassCache(context: ExecutionContext, options: UnifiedCacheOptions): boolean {
-    const request = context.switchToHttp().getRequest<CustomFastifyRequest>();
-
-    // Always bypass cache for emergency users when dealing with patient data
-    if (options.patientSpecific && request.user?.role === 'EMERGENCY_RESPONDER') {
-      return true;
-    }
-
-    // Bypass cache if force refresh header is present
-    if (request['headers']['x-force-refresh'] === 'true') {
-      return true;
-    }
-
-    // Bypass cache for emergency data during off-hours
-    if (options.emergencyData) {
-      const hour = new Date().getHours();
-      if (hour < 6 || hour > 22) {
-        // 6 AM to 10 PM
-        return true;
-      }
-    }
-
-    return false;
   }
 }

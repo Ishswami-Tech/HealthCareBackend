@@ -37,3 +37,24 @@ export const HEALTHCARE_QUEUE_CONFIG = {
   removeOnFail: 50,
   attempts: 3,
 } as const;
+
+/**
+ * Dead-letter queue (DLQ) configuration.
+ *
+ * Jobs that exhaust all retry attempts are routed to a dedicated DLQ
+ * instead of being silently discarded. The DLQ preserves the full job
+ * payload, error stack, and attempted timestamps for investigation.
+ *
+ * Operationally:
+ *   - Inspect DLQ via QueueMonitoringService.getFailedJobs() or the queue dashboard
+ *   - Retry a DLQ job via queueService.retryDeadLetter(jobId)
+ *   - Purge DLQ via queueService.purgeDeadLetter()
+ */
+export const DEAD_LETTER_QUEUE = 'healthcare-queue:dead-letter';
+
+export const DLQ_CONFIG = {
+  // Mirror main queue's "removeOnFail" behavior — keep failed jobs forever,
+  // not just the most-recent 500, so they don't disappear before ops sees them.
+  removeOnComplete: 0,
+  removeOnFail: 0,
+} as const;

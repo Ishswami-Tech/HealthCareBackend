@@ -19,7 +19,7 @@ import { QueueMonitoringModule } from './monitoring/queue-monitoring.module';
 import { LoggingModule } from '@infrastructure/logging';
 import { ResilienceModule } from '@core/resilience/resilience.module';
 import { QueueHealthMonitorService } from './queue-health-monitor.service';
-import { HEALTHCARE_QUEUE } from './queue.constants';
+import { HEALTHCARE_QUEUE, DEAD_LETTER_QUEUE } from './queue.constants';
 import { Queue, Worker, Job } from 'bullmq';
 // Use direct imports to avoid TDZ issues with barrel exports
 import { DatabaseModule } from '@infrastructure/database/database.module';
@@ -28,6 +28,7 @@ import { StorageModule } from '@infrastructure/storage';
 import type { JobData, CanonicalJobEnvelope } from '@core/types/queue.types';
 import { AppointmentQueueService } from './services/appointment-queue.service';
 import { QueueController } from './controllers/queue.controller';
+import { DeadLetterQueueService } from './services/dead-letter-queue.service';
 
 @Module({})
 export class QueueModule {
@@ -182,12 +183,25 @@ export class QueueModule {
             },
           })
         ),
+        // Dead-letter queue — jobs that exhaust all retry attempts are routed here
+        // instead of being silently discarded. Never auto-removes.
+        BullModule.registerQueue({
+          name: DEAD_LETTER_QUEUE,
+          defaultJobOptions: {
+            removeOnComplete: 0, // Retain completed DLQ jobs forever
+            removeOnFail: 0, // Retain failed DLQ jobs forever
+            attempts: 1, // No retries in DLQ itself
+            priority: 0,
+            lifo: false,
+          },
+        }),
       ],
       controllers: [QueueController],
       providers: [
         // Core services first - QueueService must be available before QueueStatusGateway
         QueueService,
         AppointmentQueueService,
+        DeadLetterQueueService,
         QueueHealthMonitorService,
         QueueProcessor,
         // QueueStatusGateway depends on QueueService and LoggingService (via LoggingModule import)
@@ -200,9 +214,10 @@ export class QueueModule {
                 useFactory: (
                   queueProcessor: QueueProcessor,
                   _prisma: DatabaseService,
-                  configService: ConfigService
+                  configService: ConfigService,
+                  deadLetterQueueService: DeadLetterQueueService
                 ) => {
-                  const workers = [];
+                  const workers: Worker[] = [];
 
                   // Build Redis config using ConfigService
                   const cacheHost = configService.getCacheHost();
@@ -230,47 +245,54 @@ export class QueueModule {
 
                   // Create workers for each queue with enhanced concurrency
                   for (const queueName of queueNames) {
-                    const concurrency = queueName.includes('appointment') ? 200 : 100; // Higher concurrency for appointment queues
+                    const concurrency = queueName.includes('appointment') ? 200 : 100;
 
-                    workers.push(
-                      new Worker(
-                        queueName,
-                        async (job: Job<JobData, unknown, string>) => {
-                          const typedJob = job as unknown as Job<CanonicalJobEnvelope>;
-                          return await queueProcessor.processJob(typedJob);
+                    const worker = new Worker(
+                      queueName,
+                      async (job: Job<JobData, unknown, string>) => {
+                        const typedJob = job as unknown as Job<CanonicalJobEnvelope>;
+                        return await queueProcessor.processJob(typedJob);
+                      },
+                      {
+                        connection: {
+                          ...workerRedisConfig,
+                          // Enhanced worker connection settings
+                          // BullMQ requires maxRetriesPerRequest to be null
+                          maxRetriesPerRequest: null,
+                          retryDelayOnFailover: 100,
+                          connectTimeout: 60000,
+                          commandTimeout: 30000,
+                          lazyConnect: false,
+                          enableReadyCheck: true,
+                          keepAlive: 30000,
                         },
-                        {
-                          connection: {
-                            ...workerRedisConfig,
-                            // Enhanced worker connection settings
-                            // BullMQ requires maxRetriesPerRequest to be null
-                            maxRetriesPerRequest: null,
-                            retryDelayOnFailover: 100,
-                            connectTimeout: 60000,
-                            commandTimeout: 30000,
-                            lazyConnect: false,
-                            enableReadyCheck: true,
-                            keepAlive: 30000,
-                          },
-                          concurrency: concurrency, // Enhanced concurrency for 1M users
-                          // Enhanced worker settings - using only valid BullMQ options
-                          settings: {
-                            // Note: BullMQ Worker doesn't support these settings directly
-                            // They are handled internally by BullMQ
-                          },
-                          // Rate limiting for worker
-                          limiter: {
-                            max: 1000, // Max jobs per time window
-                            duration: 60000, // 1 minute window
-                          },
-                        }
-                      )
+                        concurrency: concurrency, // Enhanced concurrency for 1M users
+                        // Enhanced worker settings - using only valid BullMQ options
+                        settings: {
+                          // Note: BullMQ Worker doesn't support these settings directly
+                          // They are handled internally by BullMQ
+                        },
+                        // Rate limiting for worker
+                        limiter: {
+                          max: 1000, // Max jobs per time window
+                          duration: 60000, // 1 minute window
+                        },
+                      }
                     );
+
+                    // When a job exhausts all retries, move it to the dead-letter queue
+                    worker.on('failed', (job: Job | undefined, err: Error) => {
+                      if (!job) return;
+                      const maxAttempts = job.opts.attempts ?? 3;
+                      if (job.attemptsMade >= maxAttempts) {
+                        void deadLetterQueueService.moveToDeadLetter(job, err);
+                      }
+                    });
                   }
 
                   return workers;
                 },
-                inject: [QueueProcessor, 'DATABASE_SERVICE', ConfigService],
+                inject: [QueueProcessor, 'DATABASE_SERVICE', ConfigService, DeadLetterQueueService],
               },
             ]
           : []),

@@ -25,6 +25,8 @@ import { RowLevelSecurityService } from './internal/row-level-security.service';
 import { ReadReplicaRouterService } from './internal/read-replica-router.service';
 import { DatabaseHealthMonitorService } from './internal/database-health-monitor.service';
 import { ClinicRateLimiterService } from './internal/clinic-rate-limiter.service';
+import { SoftDeleteHelper } from './internal/soft-delete.service';
+import { FieldEncryptionService } from './config/field-encryption.service';
 import { DatabaseService } from './database.service';
 import { EventsModule } from '@infrastructure/events/events.module';
 import { LoggingModule } from '@infrastructure/logging/logging.module';
@@ -122,6 +124,8 @@ import { QueryKeyFactory } from './query/factories/query-key.factory';
     // Query patterns - builders and factories
     QueryOptionsBuilder, // @internal - no dependencies
     QueryKeyFactory, // @internal - no dependencies
+    SoftDeleteHelper, // @internal - soft delete operations for PHI records
+    FieldEncryptionService, // @internal - field-level encryption for PHI
     {
       provide: 'HealthcareDatabaseConfig',
       useValue: {

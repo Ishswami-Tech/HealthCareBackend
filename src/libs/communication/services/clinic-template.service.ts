@@ -32,6 +32,8 @@ export interface ClinicTemplateData {
     reminder?: string;
     receipt?: string;
     prescription?: string;
+    doctorDailySummary?: string;
+    doctorNoAppointments?: string;
   };
 }
 
@@ -171,6 +173,12 @@ export class ClinicTemplateService {
             : {}),
           ...(whatsappTemplates?.['prescription'] && {
             prescription: whatsappTemplates['prescription'],
+          }),
+          ...(whatsappTemplates?.['doctorDailySummary'] && {
+            doctorDailySummary: whatsappTemplates['doctorDailySummary'],
+          }),
+          ...(whatsappTemplates?.['doctorNoAppointments'] && {
+            doctorNoAppointments: whatsappTemplates['doctorNoAppointments'],
           }),
         },
       };

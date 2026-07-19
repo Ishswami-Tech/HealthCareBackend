@@ -16,6 +16,7 @@ import { DatabaseModule } from '@infrastructure/database/database.module';
 import { NotificationModule } from '@services/notification/notification.module';
 import { NotificationEventListener } from './notification-event.listener';
 import { DoctorAppointmentEventListener } from './doctor-appointment-event.listener';
+import { DoctorSummaryService } from '../services/doctor-summary.service';
 
 /**
  * Communication Listeners Module
@@ -35,7 +36,7 @@ import { DoctorAppointmentEventListener } from './doctor-appointment-event.liste
     DatabaseModule,
     NotificationModule, // NotificationPreferenceService for doctor prefs
   ],
-  providers: [NotificationEventListener, DoctorAppointmentEventListener],
-  exports: [NotificationEventListener, DoctorAppointmentEventListener],
+  providers: [NotificationEventListener, DoctorAppointmentEventListener, DoctorSummaryService],
+  exports: [NotificationEventListener, DoctorAppointmentEventListener, DoctorSummaryService],
 })
 export class ListenersModule {}

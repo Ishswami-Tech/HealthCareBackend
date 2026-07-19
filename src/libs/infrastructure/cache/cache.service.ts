@@ -1172,8 +1172,10 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
         this.getConfig().clinicDataTTL
       );
 
-      const doctorsKey = this.keyFactory.clinic(clinicId, 'doctors');
-      await this.set(doctorsKey, [], this.getConfig().doctorProfilesTTL);
+      // Don't seed with empty array — the doctors list will be populated
+      // by the first request and cached correctly. Seeding [] here would
+      // cause a stale-empty cache bug similar to the one fixed in the
+      // cache interceptor.
 
       await this.loggingService.log(
         LogType.CACHE,
