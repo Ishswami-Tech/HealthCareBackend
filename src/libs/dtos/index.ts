@@ -34,6 +34,7 @@ export {
   MessageHistoryResponseDto,
   NotificationStatsResponseDto,
   SendTestEmailDto,
+  SendCustomWhatsAppMessageDto,
   // Notification Preference DTOs
   QuietHoursDto,
   CategoryPreferencesDto,
