@@ -401,6 +401,26 @@ export class NotificationResponseDto {
   metadata?: Record<string, unknown>;
 }
 
+export class SendCustomWhatsAppMessageDto {
+  @ApiProperty({
+    description: 'Recipient phone number with country code',
+    example: '+917218378311',
+  })
+  @IsString()
+  @Length(10, 20)
+  phoneNumber!: string;
+
+  @ApiProperty({ description: 'Message text to send via WhatsApp', example: 'Hello from admin' })
+  @IsString()
+  @Length(1, 1000)
+  message!: string;
+
+  @ApiPropertyOptional({ description: 'Clinic ID for multi-tenant provider routing' })
+  @IsOptional()
+  @IsString()
+  clinicId?: string;
+}
+
 export class MessageHistoryResponseDto {
   @ApiProperty({ description: 'Whether the operation was successful' })
   success!: boolean;

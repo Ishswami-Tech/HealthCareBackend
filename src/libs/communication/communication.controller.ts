@@ -22,7 +22,7 @@ import {
   UseGuards,
   Request,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiParam, ApiQuery } from '@nestjs/swagger';
 import { CommunicationService } from './communication.service';
 import { PushNotificationService } from './channels/push/push.service';
 import { DeviceTokenService } from './channels/push/device-token.service';
@@ -31,6 +31,7 @@ import { CommunicationAlertingService } from './services/communication-alerting.
 import { CommunicationHealthMonitorService } from './communication-health-monitor.service';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { EmailService } from './channels/email/email.service';
+import { WhatsAppService } from './channels/whatsapp/whatsapp.service';
 import { ConfigService } from '@config/config.service';
 import {
   CommunicationCategory,
@@ -55,6 +56,7 @@ import {
   MessageHistoryResponseDto,
   NotificationStatsResponseDto,
   SendTestEmailDto,
+  SendCustomWhatsAppMessageDto,
 } from '@dtos/index';
 import { NotificationType } from '@dtos/notification.dto';
 import type {
@@ -92,6 +94,7 @@ export class CommunicationController {
     private readonly healthMonitor: CommunicationHealthMonitorService,
     private readonly databaseService: DatabaseService,
     private readonly emailService: EmailService,
+    private readonly whatsAppService: WhatsAppService,
     private readonly configService: ConfigService
   ) {}
 
@@ -1264,6 +1267,46 @@ export class CommunicationController {
       success: successfulTests > 0,
       tests,
       summary: `${successfulTests}/${totalTests} tests passed`,
+    };
+  }
+
+  /**
+   * Send a custom WhatsApp text message (admin/test)
+   */
+  @Post('admin/whatsapp/custom')
+  @Roles(Role.SUPER_ADMIN)
+  @RequireResourcePermission('notifications', 'create')
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      errorHttpStatusCode: HttpStatus.BAD_REQUEST,
+    })
+  )
+  @ApiOperation({
+    summary: 'Send custom WhatsApp text message',
+    description: 'Send a plain-text WhatsApp message to any phone number for admin/test purposes.',
+  })
+  @ApiBody({ type: SendCustomWhatsAppMessageDto })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'WhatsApp message dispatch attempted',
+    type: NotificationResponseDto,
+  })
+  async sendCustomWhatsApp(
+    @Body() dto: SendCustomWhatsAppMessageDto,
+    @Request() _req: ClinicAuthenticatedRequest
+  ): Promise<NotificationResponseDto> {
+    const sent = await this.whatsAppService.sendCustomMessage(
+      dto.phoneNumber,
+      dto.message,
+      dto.clinicId
+    );
+
+    return {
+      success: sent,
+      ...(sent ? {} : { error: 'Failed to send WhatsApp custom message' }),
     };
   }
 }
