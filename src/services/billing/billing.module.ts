@@ -10,6 +10,7 @@ import { RbacModule } from '@core/rbac/rbac.module';
 import { LoggingModule } from '@infrastructure/logging';
 import { ErrorsModule } from '@core/errors/errors.module';
 import { WhatsAppModule } from '@communication/channels/whatsapp/whatsapp.module';
+import { EmailModule } from '@communication/channels/email/email.module';
 import { RateLimitModule } from '@security/rate-limit/rate-limit.module';
 import { CacheModule } from '@infrastructure/cache/cache.module';
 import { PaymentModule } from '@payment/payment.module';
@@ -26,6 +27,7 @@ import { QueueModule } from '@queue/src/queue.module';
     LoggingModule,
     ErrorsModule,
     WhatsAppModule,
+    EmailModule,
     CacheModule,
     PaymentModule,
     PaymentHandoffTokenModule,

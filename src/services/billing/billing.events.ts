@@ -4,7 +4,17 @@ import { BillingService } from './billing.service';
 import { DatabaseService } from '@infrastructure/database';
 import { EventService } from '@infrastructure/events/event.service';
 import { LoggingService } from '@infrastructure/logging';
+import { EmailService } from '@communication/channels/email/email.service';
+import { EmailTemplatesService } from '@communication/channels/email/email-templates.service';
 import { LogType, LogLevel, AppointmentStatus } from '@core/types';
+
+/**
+ * Email address that receives an internal notification every time a
+ * payment completes for an appointment. Configurable via the
+ * `ADMIN_NOTIFICATION_EMAIL` env var; falls back to the project owner.
+ */
+const ADMIN_NOTIFICATION_EMAIL =
+  process.env['ADMIN_NOTIFICATION_EMAIL'] || 'ishswami.tech@gmail.com';
 
 function resolveRecordValue(value: unknown, fallback = ''): string {
   if (typeof value === 'string') {
@@ -25,7 +35,9 @@ export class BillingEventsListener {
     private readonly billingService: BillingService,
     private readonly databaseService: DatabaseService,
     private readonly loggingService: LoggingService,
-    private readonly eventService: EventService
+    private readonly eventService: EventService,
+    private readonly emailService: EmailService,
+    private readonly emailTemplatesService: EmailTemplatesService
   ) {}
 
   /**
@@ -566,6 +578,21 @@ export class BillingEventsListener {
               appointmentType: String(appointment.type),
             }
           );
+
+          // Send admin notification email with appointment + payment details
+          await this.notifyAdminPaymentReceived({
+            patientName,
+            doctorName,
+            clinicName,
+            appointmentType,
+            appointmentDate,
+            appointmentTime,
+            locationName,
+            paymentId: payload.paymentId,
+            appointmentId,
+            clinicId: resolvedClinicId,
+          });
+
           return;
         }
 
@@ -614,6 +641,87 @@ export class BillingEventsListener {
     }
     const appointment = await this.databaseService.findAppointmentByIdSafe(payload.appointmentId);
     return appointment?.clinicId ?? null;
+  }
+
+  private async notifyAdminPaymentReceived(details: {
+    patientName: string;
+    doctorName: string;
+    clinicName: string;
+    appointmentType: string;
+    appointmentDate: string;
+    appointmentTime: string;
+    locationName: string;
+    paymentId: string;
+    appointmentId: string;
+    clinicId: string;
+  }): Promise<void> {
+    try {
+      const subject = `Payment Received — ${details.patientName} / ${details.clinicName}`;
+      const body = `
+        <h2>New Payment Received</h2>
+        <p>A patient payment has been confirmed. Details below:</p>
+        <table style="border-collapse: collapse; width: 100%; max-width: 600px;">
+          <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">Patient</td><td style="padding: 8px 12px;">${details.patientName}</td></tr>
+          <tr><td style="padding: 8px 12px; font-weight: bold;">Doctor</td><td style="padding: 8px 12px;">${details.doctorName}</td></tr>
+          <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">Clinic</td><td style="padding: 8px 12px;">${details.clinicName}</td></tr>
+          <tr><td style="padding: 8px 12px; font-weight: bold;">Appointment Type</td><td style="padding: 8px 12px;">${details.appointmentType}</td></tr>
+          <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">Date</td><td style="padding: 8px 12px;">${details.appointmentDate}</td></tr>
+          <tr><td style="padding: 8px 12px; font-weight: bold;">Time</td><td style="padding: 8px 12px;">${details.appointmentTime}</td></tr>
+          <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">Location</td><td style="padding: 8px 12px;">${details.locationName}</td></tr>
+          <tr><td style="padding: 8px 12px; font-weight: bold;">Payment ID</td><td style="padding: 8px 12px;">${details.paymentId}</td></tr>
+          <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">Appointment ID</td><td style="padding: 8px 12px;">${details.appointmentId}</td></tr>
+        </table>
+      `;
+
+      const result = await this.emailService.sendSimpleEmail(
+        {
+          to: ADMIN_NOTIFICATION_EMAIL,
+          subject,
+          body,
+          isHtml: true,
+        },
+        details.clinicId
+      );
+
+      if (result.success) {
+        void this.loggingService.log(
+          LogType.EMAIL,
+          LogLevel.INFO,
+          'Admin payment notification email sent',
+          'BillingEventsListener',
+          {
+            to: ADMIN_NOTIFICATION_EMAIL,
+            paymentId: details.paymentId,
+            appointmentId: details.appointmentId,
+            clinicId: details.clinicId,
+          }
+        );
+      } else {
+        void this.loggingService.log(
+          LogType.EMAIL,
+          LogLevel.WARN,
+          `Admin payment notification email failed: ${result.error ?? 'unknown'}`,
+          'BillingEventsListener',
+          {
+            to: ADMIN_NOTIFICATION_EMAIL,
+            paymentId: details.paymentId,
+            error: result.error,
+          }
+        );
+      }
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.EMAIL,
+        LogLevel.ERROR,
+        `Failed to send admin payment notification email: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'BillingEventsListener',
+        {
+          paymentId: details.paymentId,
+          appointmentId: details.appointmentId,
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+    }
   }
 
   @OnEvent('appointment.completed')
