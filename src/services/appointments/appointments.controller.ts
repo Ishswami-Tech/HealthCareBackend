@@ -855,6 +855,13 @@ export class AppointmentsController {
   )
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read')
+  @Cache({
+    keyTemplate:
+      'appointments:list:{clinicId}:{userId}:{doctorId}:{status}:{date}:{locationId}:{page}:{limit}',
+    ttl: 300,
+    tags: ['appointments', 'list'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get all appointments',
     description:
