@@ -521,40 +521,92 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
       }
 
       if (!this.phonepeClient) {
+        await this.logger.log(
+          LogType.PAYMENT,
+          LogLevel.ERROR,
+          'PhonePe client not initialized — cannot verify webhook',
+          'PhonePePaymentAdapter',
+          { signature: options.signature?.slice(0, 20) + '...' }
+        );
         return false;
       }
 
       const authorization = (options.signature || '').trim();
       if (!authorization) {
+        await this.logger.log(
+          LogType.PAYMENT,
+          LogLevel.WARN,
+          'PhonePe webhook verification skipped — empty authorization header',
+          'PhonePePaymentAdapter',
+          {}
+        );
         return false;
       }
 
       const responseBody =
         typeof options.payload === 'string' ? options.payload : JSON.stringify(options.payload);
+      const configuredHash = process.env['PHONEPE_WEBHOOK_AUTHORIZATION_HASH'] || '';
       const username = process.env['PHONEPE_WEBHOOK_USERNAME'] || '';
       const password = process.env['PHONEPE_WEBHOOK_PASSWORD'] || '';
-      const configuredHash = process.env['PHONEPE_WEBHOOK_AUTHORIZATION_HASH'] || '';
 
-      if (username && password) {
-        const callbackResponse = this.getClient().validateCallback(
-          username,
-          password,
-          authorization,
-          responseBody
-        );
-        return Boolean(callbackResponse?.payload);
-      }
-
+      // Path 1: Hash-based verification (simpler, no SDK call)
       if (configuredHash) {
-        return authorization === configuredHash || authorization === configuredHash.trim();
+        const isValid = authorization === configuredHash || authorization === configuredHash.trim();
+        if (!isValid) {
+          await this.logger.log(
+            LogType.PAYMENT,
+            LogLevel.WARN,
+            'PhonePe webhook hash verification failed',
+            'PhonePePaymentAdapter',
+            {
+              expectedLength: configuredHash.length,
+              receivedLength: authorization.length,
+            }
+          );
+        }
+        return isValid;
       }
 
+      // Path 2: SDK-based username/password verification
+      if (username && password) {
+        try {
+          const callbackResponse = this.getClient().validateCallback(
+            username,
+            password,
+            authorization,
+            responseBody
+          );
+          return Boolean(callbackResponse?.payload);
+        } catch (sdkError) {
+          await this.logger.log(
+            LogType.PAYMENT,
+            LogLevel.ERROR,
+            'PhonePe SDK validateCallback failed',
+            'PhonePePaymentAdapter',
+            {
+              error: sdkError instanceof Error ? sdkError.message : String(sdkError),
+              username: username,
+              responseBodyLength: responseBody.length,
+            }
+          );
+          return false;
+        }
+      }
+
+      // No credentials configured at all
+      await this.logger.log(
+        LogType.PAYMENT,
+        LogLevel.ERROR,
+        'PhonePe webhook verification skipped — no credentials configured. Set PHONEPE_WEBHOOK_AUTHORIZATION_HASH or PHONEPE_WEBHOOK_USERNAME + PHONEPE_WEBHOOK_PASSWORD',
+        'PhonePePaymentAdapter',
+        {}
+      );
       return false;
     } catch (error) {
       await this.logger.log(
         LogType.PAYMENT,
         LogLevel.ERROR,
-        'Failed to verify PhonePe webhook',
+        'Unexpected error during PhonePe webhook verification',
         'PhonePePaymentAdapter',
         {
           error: error instanceof Error ? error.message : String(error),

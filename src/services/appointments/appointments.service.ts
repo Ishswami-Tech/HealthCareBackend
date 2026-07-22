@@ -502,23 +502,29 @@ export class AppointmentsService {
     try {
       const todayKey = formatDateKeyInIST(new Date());
 
-      const doctors = await this.databaseService.executeHealthcareRead<
-        Array<{ id: string; userId: string; clinicId: string }>
+      const doctorClinics = await this.databaseService.executeHealthcareRead<
+        Array<{ doctor: { id: string; userId: string }; clinicId: string }>
       >(async client => {
         const prismaClient = client as unknown as Prisma.TransactionClient;
-        return await prismaClient.doctor.findMany({
-          select: { id: true, userId: true, clinicId: true },
+        return await prismaClient.doctorClinic.findMany({
+          select: {
+            doctorId: true,
+            clinicId: true,
+            doctor: {
+              select: { id: true, userId: true },
+            },
+          },
         });
       });
 
       let enqueuedCount = 0;
       let skipCount = 0;
 
-      for (const doctor of doctors) {
+      for (const dc of doctorClinics) {
         try {
           // Thin enqueue — summary is computed at process time by DoctorSummaryService.
           // Use a distinct jobId suffix `:cron` so it never collides with event-triggered buckets.
-          const deterministicJobId = `doctor-summary:${doctor.userId}:${doctor.clinicId}:${todayKey}:cron`;
+          const deterministicJobId = `doctor-summary:${dc.doctor.userId}:${dc.clinicId}:${todayKey}:cron`;
 
           const existingJob = await this.queueService.getJob(
             'healthcare-queue',
@@ -533,9 +539,9 @@ export class AppointmentsService {
             JobType.DOCTOR_SUMMARY,
             'send-doctor-daily-summary',
             {
-              doctorId: doctor.id,
-              doctorUserId: doctor.userId,
-              clinicId: doctor.clinicId,
+              doctorId: dc.doctor.id,
+              doctorUserId: dc.doctor.userId,
+              clinicId: dc.clinicId,
               triggeredBy: 'cron',
             },
             {
@@ -549,9 +555,9 @@ export class AppointmentsService {
           void this.loggingService.log(
             LogType.NOTIFICATION,
             LogLevel.ERROR,
-            `Failed to enqueue doctor summary for doctor ${doctor.userId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            `Failed to enqueue doctor summary for doctor ${dc.doctor.userId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
             'AppointmentsService',
-            { doctorId: doctor.id, error }
+            { doctorId: dc.doctor.id, error }
           );
         }
       }
@@ -564,7 +570,7 @@ export class AppointmentsService {
         {
           enqueuedCount,
           skipCount,
-          totalDoctors: doctors.length,
+          totalDoctors: doctorClinics.length,
           durationMs: Date.now() - runStart,
         }
       );
