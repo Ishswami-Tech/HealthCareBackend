@@ -1914,6 +1914,7 @@ export class AppointmentsService {
             {
               appointmentId: (result.data as Record<string, unknown>)?.['id'] as string,
               error: reminderError instanceof Error ? reminderError.message : String(reminderError),
+              stack: reminderError instanceof Error ? reminderError.stack : undefined,
             }
           );
         });

@@ -559,7 +559,7 @@ export class PaymentController {
           ? await this.paymentService.verifyWebhook(
               resolvedClinicId,
               {
-                payload: body,
+                payload: responseBody,
                 signature: signature || '',
               },
               PaymentProvider.PHONEPE
