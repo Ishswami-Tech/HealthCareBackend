@@ -26,7 +26,7 @@
     "form-data": "4.0.6",
     "nodemailer": "9.0.1",
     "piscina": "4.9.3",
-    "postcss": "8.5.10",
+    "postcss": "8.5.22",
     "uuid": "14.0.0",
     "qs": "6.15.2",
     "esbuild": "0.28.1"
@@ -157,7 +157,7 @@
     "npm-check-updates": "^22.2.3",
     "pdfkit": "^0.19.0",
     "pg": "^8.20.0",
-    "postcss": "8.5.15",
+    "postcss": "8.5.22",
     "qrcode": "^1.5.4",
     "razorpay": "^2.9.6",
     "redis": "^6.0.0",
