@@ -5091,7 +5091,7 @@ export class AppointmentsService {
         patientId,
         clinicId,
         status,
-        cursor: undefined, // Can be extended to support pagination params
+        offset: undefined, // Can be extended to support pagination params
         limit: 20, // Default limit
         includeCompleted: true,
       });
