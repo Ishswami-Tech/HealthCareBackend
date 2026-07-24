@@ -112,7 +112,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
     assistantDoctorEligible: true,
     active: true,
-    videoConsultationFee: 1000,
+    videoConsultationFee: 1179,
   },
   {
     treatmentType: TreatmentType.FOLLOW_UP,
@@ -126,7 +126,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
     assistantDoctorEligible: true,
     active: true,
-    videoConsultationFee: 300,
+    videoConsultationFee: 1179,
   },
   {
     treatmentType: TreatmentType.THERAPY,
@@ -167,7 +167,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
     assistantDoctorEligible: true,
     active: true,
-    videoConsultationFee: 600,
+    videoConsultationFee: 1179,
   },
   {
     treatmentType: TreatmentType.GERIATRIC_CARE,
@@ -181,6 +181,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
     assistantDoctorEligible: true,
     active: true,
+    videoConsultationFee: 1179,
   },
   {
     treatmentType: TreatmentType.VIDDHAKARMA,
@@ -246,7 +247,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
     assistantDoctorEligible: true,
     active: true,
-    videoConsultationFee: 1000,
+    videoConsultationFee: 1179,
   },
   {
     treatmentType: TreatmentType.SHIRODHARA,

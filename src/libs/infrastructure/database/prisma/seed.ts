@@ -538,7 +538,7 @@ async function quickSeed() {
             qualification: 'MBBS',
             rating: 4.5,
             isAvailable: true,
-            consultationFee: 1000,
+            consultationFee: 1179,
           },
         });
       }
@@ -1341,7 +1341,7 @@ async function main() {
         qualification: 'MBBS',
         rating: 4.5,
         isAvailable: true,
-        consultationFee: 1000,
+        consultationFee: 1179,
       },
     }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
     (await (prisma.doctorClinic.create({
