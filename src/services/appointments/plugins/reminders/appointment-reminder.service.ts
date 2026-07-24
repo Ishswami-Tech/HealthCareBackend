@@ -22,7 +22,7 @@ export class AppointmentReminderService {
   ) {}
 
   buildReminderJobId(appointmentId: string, reminderType: string): string {
-    return `reminder:${reminderType}:${appointmentId}`;
+    return `reminder-${reminderType}-${appointmentId}`;
   }
 
   /**
@@ -119,6 +119,7 @@ export class AppointmentReminderService {
       this.logger.error(`Failed to schedule reminder ${jobId}`, {
         error: _error instanceof Error ? _error.message : 'Unknown error',
         appointmentId,
+        stack: _error instanceof Error ? _error.stack : undefined,
       });
 
       return {
