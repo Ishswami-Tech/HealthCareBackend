@@ -7,6 +7,7 @@ import {
   HttpCode,
   HttpStatus,
   BadRequestException,
+  HttpException,
   InternalServerErrorException,
   Inject,
   forwardRef,
@@ -216,7 +217,7 @@ export class ProfileCompletionController {
         }
       );
 
-      if (error instanceof BadRequestException) {
+      if (error instanceof HttpException) {
         throw error;
       }
 
@@ -287,7 +288,7 @@ export class ProfileCompletionController {
         }
       );
 
-      if (error instanceof BadRequestException) {
+      if (error instanceof HttpException) {
         throw error;
       }
 

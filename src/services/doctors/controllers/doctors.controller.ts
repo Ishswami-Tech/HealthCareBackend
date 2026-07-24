@@ -12,6 +12,7 @@ import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { ClinicGuard } from '@core/guards/clinic.guard';
 import { Roles } from '@core/decorators/roles.decorator';
+import { LongCache } from '@core/decorators/cache.decorator';
 import { Role } from '@core/types/enums.types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { CreateDoctorDto } from '@dtos/doctor.dto';
@@ -86,6 +87,7 @@ export class DoctorsController {
   @ApiOperation({ summary: 'Get doctor profile by ID (User ID)' })
   @ApiResponse({ status: 200, description: 'Doctor profile retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Doctor not found' })
+  @LongCache(86400)
   async getDoctor(@Param('id') id: string) {
     return this.doctorsService.getDoctorProfile(id);
   }

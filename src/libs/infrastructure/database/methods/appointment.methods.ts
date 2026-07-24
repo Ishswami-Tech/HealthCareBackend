@@ -76,6 +76,7 @@ const appointmentListIncludeValidator = {
         select: {
           id: true,
           amount: true,
+          totalAmount: true,
           status: true,
           dueDate: true,
           paidAt: true,
@@ -99,6 +100,7 @@ type AppointmentPaymentRelation = {
   invoice?: {
     id?: string;
     amount?: number;
+    totalAmount?: number;
     status?: string;
     dueDate?: Date | null;
     paidAt?: Date | null;
@@ -155,7 +157,7 @@ function enrichAppointmentPaymentState(
     paymentStatus: paymentStatus || undefined,
     paymentCompleted,
     paymentPending: !paymentCompleted,
-    paymentAmount: payment?.amount ?? invoice?.amount ?? null,
+    paymentAmount: payment?.amount ?? invoice?.totalAmount ?? invoice?.amount ?? null,
     paymentTransactionId: payment?.transactionId ?? null,
     invoiceStatus: invoice?.status ?? null,
     invoicePaidAt: invoice?.paidAt ?? null,

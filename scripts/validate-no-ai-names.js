@@ -59,6 +59,47 @@ function scanStagedFiles() {
   }
 }
 
+function scanRange(fromRef, toRef) {
+  const diffOutput = execFileSync(
+    'git',
+    ['diff', '--name-only', '--diff-filter=ACMR', `${fromRef}..${toRef}`],
+    { encoding: 'utf8' }
+  );
+
+  const changedFiles = diffOutput
+    .split('\n')
+    .map(filePath => filePath.trim())
+    .filter(Boolean);
+  const violations = [];
+
+  for (const filePath of changedFiles) {
+    const fileContent = execFileSync('git', ['show', `${toRef}:${filePath}`], {
+      encoding: 'utf8',
+    });
+
+    if (hasBannedText(filePath) || hasBannedText(fileContent)) {
+      violations.push(filePath);
+    }
+  }
+
+  const commitMessages = execFileSync('git', ['log', '--format=%B', `${fromRef}..${toRef}`], {
+    encoding: 'utf8',
+  });
+
+  if (hasBannedText(commitMessages)) {
+    violations.push(`commit-messages:${fromRef}..${toRef}`);
+  }
+
+  if (violations.length > 0) {
+    fail(
+      [
+        'Changes in the selected range contain a prohibited AI identifier:',
+        ...violations.map(filePath => `- ${filePath}`),
+      ].join('\n')
+    );
+  }
+}
+
 const command = process.argv[2] || '--staged';
 const targetPath = process.argv[3];
 
@@ -67,6 +108,13 @@ if (command === '--commit-msg') {
     fail('Missing commit message path.');
   }
   scanCommitMessage(targetPath);
+} else if (command === '--range') {
+  const fromRef = process.argv[3];
+  const toRef = process.argv[4];
+  if (!fromRef || !toRef) {
+    fail('Missing range boundaries.');
+  }
+  scanRange(fromRef, toRef);
 } else {
   scanStagedFiles();
 }

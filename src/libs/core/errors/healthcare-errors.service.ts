@@ -171,6 +171,12 @@ export class HealthcareErrorsService {
     });
   }
 
+  phoneAlreadyExists(phone: string, context?: string): HealthcareError {
+    return this.createError(ErrorCode.USER_PHONE_ALREADY_EXISTS, HttpStatus.CONFLICT, context, {
+      phone,
+    });
+  }
+
   // Clinic Management Errors
   clinicNotFound(clinicId?: string, context?: string): HealthcareError {
     return this.createError(

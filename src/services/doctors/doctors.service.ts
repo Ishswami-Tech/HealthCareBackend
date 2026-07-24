@@ -227,7 +227,7 @@ export class DoctorsService {
         });
       },
       {
-        ttl: 14400,
+        ttl: 86400,
         enableSwr: true,
         tags: [
           'doctors',

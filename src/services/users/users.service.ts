@@ -845,10 +845,9 @@ export class UsersService {
             (existingPhoneUser as unknown as Record<string, unknown>)['profileComplete'] === true);
 
         if (isPhoneOwnedByAnotherUser && existingPhoneUserProfileComplete) {
-          throw this.errors.validationError(
-            'phone',
-            'Phone number already registered with another account. Please login with existing account or try a different number.',
-            'UsersService.update'
+          throw this.errors.phoneAlreadyExists(
+            normalizedPhone,
+            'UsersService.updateUserProfileWithValidation'
           );
         }
 
