@@ -114,33 +114,41 @@ export abstract class BaseAppointmentPlugin implements BasePlugin {
 
   protected async logPluginAction(action: string, data?: unknown): Promise<void> {
     if (this.loggingService) {
-      await this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        `🔧 Plugin ${this.name} - ${action}`,
-        this.constructor.name,
-        {
-          pluginName: this.name,
-          action,
-          ...(data && typeof data === 'object' ? (data as Record<string, unknown>) : { data }),
-        }
-      );
+      try {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          `🔧 Plugin ${this.name} - ${action}`,
+          this.constructor.name,
+          {
+            pluginName: this.name,
+            action,
+            ...(data && typeof data === 'object' ? (data as Record<string, unknown>) : { data }),
+          }
+        );
+      } catch {
+        return;
+      }
     }
   }
 
   protected async logPluginError(error: string, data?: unknown): Promise<void> {
     if (this.loggingService) {
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `❌ Plugin ${this.name} - ${error}`,
-        this.constructor.name,
-        {
-          pluginName: this.name,
-          error,
-          ...(data && typeof data === 'object' ? (data as Record<string, unknown>) : { data }),
-        }
-      );
+      try {
+        await this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          `❌ Plugin ${this.name} - ${error}`,
+          this.constructor.name,
+          {
+            pluginName: this.name,
+            error,
+            ...(data && typeof data === 'object' ? (data as Record<string, unknown>) : { data }),
+          }
+        );
+      } catch {
+        return;
+      }
     }
   }
 }

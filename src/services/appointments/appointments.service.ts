@@ -523,8 +523,8 @@ export class AppointmentsService {
       for (const dc of doctorClinics) {
         try {
           // Thin enqueue — summary is computed at process time by DoctorSummaryService.
-          // Use a distinct jobId suffix `:cron` so it never collides with event-triggered buckets.
-          const deterministicJobId = `doctor-summary:${dc.doctor.userId}:${dc.clinicId}:${todayKey}:cron`;
+          // Use a distinct jobId suffix that stays compatible with BullMQ custom IDs.
+          const deterministicJobId = `doctor-summary-${dc.doctor.userId}-${dc.clinicId}-${todayKey}-cron`;
 
           const existingJob = await this.queueService.getJob(
             'healthcare-queue',
@@ -1914,6 +1914,7 @@ export class AppointmentsService {
             {
               appointmentId: (result.data as Record<string, unknown>)?.['id'] as string,
               error: reminderError instanceof Error ? reminderError.message : String(reminderError),
+              stack: reminderError instanceof Error ? reminderError.stack : undefined,
             }
           );
         });

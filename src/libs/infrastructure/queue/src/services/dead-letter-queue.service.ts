@@ -96,7 +96,7 @@ export class DeadLetterQueueService {
       };
 
       await this.dlqQueue.add('dead-letter', entry, {
-        jobId: `dlq:${job.id}`,
+        jobId: `dlq-${job.id}`,
         removeOnComplete: 0,
         removeOnFail: 0,
         priority: 0,
