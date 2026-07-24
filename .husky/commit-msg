@@ -1,0 +1,9 @@
+#!/bin/sh
+# Commit message policy hook
+
+node scripts/validate-no-ai-names.js --commit-msg "$1" || {
+  echo ""
+  echo "Commit blocked by repository identifier policy."
+  echo "Remove prohibited AI identifiers from the commit message and try again"
+  exit 1
+}

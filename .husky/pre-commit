@@ -3,19 +3,25 @@
 # Fast validation on staged files only - full build happens in pre-push
 # This ensures fast commits while maintaining code quality
 
-echo "🔍 Running pre-commit checks (quick validation on staged files)..."
+echo "Running pre-commit checks (quick validation on staged files)..."
+
+node scripts/validate-no-ai-names.js --staged || {
+  echo ""
+  echo "Commit blocked by repository identifier policy."
+  echo "Remove prohibited AI identifiers from staged changes and try again"
+  exit 1
+}
 
 # Run lint-staged (runs eslint --fix and prettier --write on staged files only)
 # This is fast and only processes files you're committing
 # Full build validation happens in pre-push hook
 npx lint-staged || {
   echo ""
-  echo "❌ Linting/formatting failed on staged files!"
-  echo "💡 Fix the errors above and try committing again"
-  echo "💡 Full build validation will run before pushing (pre-push hook)"
+  echo "Linting/formatting failed on staged files!"
+  echo "Fix the errors above and try committing again"
+  echo "Full build validation will run before pushing (pre-push hook)"
   exit 1
 }
 
-echo "✅ Pre-commit checks passed! (Fast validation completed)"
-echo "ℹ️  Full build validation will run before pushing"
-
+echo "Pre-commit checks passed! (Fast validation completed)"
+echo "Full build validation will run before pushing"
