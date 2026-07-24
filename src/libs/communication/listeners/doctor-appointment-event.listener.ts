@@ -91,7 +91,7 @@ export class DoctorAppointmentEventListener {
         new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getHours() * 60 +
         new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getMinutes();
       const bucket = Math.floor(minutesOfDay / 15);
-      const bucketedJobId = `doctor-summary:${doctorUserId}:${clinicId}:${todayKey}:${bucket}`;
+      const bucketedJobId = `doctor-summary-${doctorUserId}-${clinicId}-${todayKey}-${bucket}`;
 
       // 3. Short-circuit if a job for this bucket already exists
       const existingJob = await this.queueService.getJob('healthcare-queue', bucketedJobId);
