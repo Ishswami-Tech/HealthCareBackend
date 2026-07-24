@@ -7,6 +7,7 @@ import { LoggingService } from '@infrastructure/logging';
 import { EmailService } from '@communication/channels/email/email.service';
 import { EmailTemplatesService } from '@communication/channels/email/email-templates.service';
 import { LogType, LogLevel, AppointmentStatus } from '@core/types';
+import { formatCurrencyFromMinorUnits } from '@utils/currency.util';
 
 /**
  * Email address that receives an internal notification every time a
@@ -24,6 +25,19 @@ function resolveRecordValue(value: unknown, fallback = ''): string {
     return String(value);
   }
   return fallback;
+}
+
+function buildAppointmentDetailsUrl(appointmentId: string, appointmentType: string): string {
+  const frontendBaseUrl =
+    process.env['FRONTEND_URL'] || process.env['NEXT_PUBLIC_APP_URL'] || 'http://localhost:3000';
+  const normalizedFrontendUrl = frontendBaseUrl.replace(/\/+$/, '');
+  const normalizedType = appointmentType.trim().toUpperCase();
+
+  if (normalizedType.includes('VIDEO')) {
+    return `${normalizedFrontendUrl}/meet/${encodeURIComponent(appointmentId)}`;
+  }
+
+  return `${normalizedFrontendUrl}/patient/appointments?appointmentId=${encodeURIComponent(appointmentId)}`;
 }
 
 /**
@@ -314,6 +328,8 @@ export class BillingEventsListener {
       appointment: (inner['appointment'] ?? rawPayload['appointment']) as
         | { clinicId?: string; patientId?: string; doctorId?: string }
         | undefined,
+      amount:
+        (inner['amount'] as number | undefined) ?? (rawPayload['amount'] as number | undefined),
     };
 
     const resolvedClinicId =
@@ -505,10 +521,10 @@ export class BillingEventsListener {
             unknown
           >;
           const patientRelation = confirmedAppointment.patient as
-            | { user?: { name?: string; firstName?: string; lastName?: string } }
+            | { user?: { name?: string; firstName?: string; lastName?: string; phone?: string } }
             | undefined;
           const doctorRelation = confirmedAppointment.doctor as
-            | { user?: { name?: string; firstName?: string; lastName?: string } }
+            | { user?: { name?: string; firstName?: string; lastName?: string; phone?: string } }
             | undefined;
           const locationRelation = confirmedAppointment.location as { name?: string } | undefined;
           const appointmentType = resolveRecordValue(
@@ -532,6 +548,27 @@ export class BillingEventsListener {
           const clinicName =
             confirmedAppointment.clinic?.name || appointment.clinic?.name || 'Healthcare Clinic';
           const locationName = locationRelation?.name || appointment.location?.name || clinicName;
+          const patientPhone =
+            patientUser?.phone ||
+            resolveRecordValue(confirmedAppointmentRecord['patientPhone']) ||
+            resolveRecordValue(confirmedAppointmentRecord['phone']) ||
+            'N/A';
+          const paymentRelation = confirmedAppointmentRecord['payment'] as
+            | {
+                amount?: number;
+                transactionId?: string | null;
+              }
+            | undefined;
+          const phonePePaymentId =
+            paymentRelation?.transactionId ||
+            resolveRecordValue(confirmedAppointmentRecord['paymentTransactionId']) ||
+            payload.paymentId;
+          const paymentAmount =
+            paymentRelation?.amount ??
+            (typeof confirmedAppointmentRecord['paymentAmount'] === 'number'
+              ? confirmedAppointmentRecord['paymentAmount']
+              : (payload.amount ?? 0));
+          const appointmentLink = buildAppointmentDetailsUrl(appointmentId, appointmentType);
           const appointmentDate = resolveRecordValue(
             confirmedAppointmentRecord['date'] ??
               confirmedAppointmentRecord['appointmentDate'] ??
@@ -589,6 +626,10 @@ export class BillingEventsListener {
             appointmentTime,
             locationName,
             paymentId: payload.paymentId,
+            phonePePaymentId,
+            amount: paymentAmount,
+            phoneNumber: patientPhone,
+            appointmentLink,
             appointmentId,
             clinicId: resolvedClinicId,
           });
@@ -652,11 +693,16 @@ export class BillingEventsListener {
     appointmentTime: string;
     locationName: string;
     paymentId: string;
+    phonePePaymentId?: string;
+    amount?: number;
+    phoneNumber?: string;
+    appointmentLink?: string;
     appointmentId: string;
     clinicId: string;
   }): Promise<void> {
     try {
       const subject = `Payment Received — ${details.patientName} / ${details.clinicName}`;
+      const formattedAmount = formatCurrencyFromMinorUnits(details.amount ?? 0);
       const body = `
         <h2>New Payment Received</h2>
         <p>A patient payment has been confirmed. Details below:</p>
@@ -664,11 +710,15 @@ export class BillingEventsListener {
           <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">Patient</td><td style="padding: 8px 12px;">${details.patientName}</td></tr>
           <tr><td style="padding: 8px 12px; font-weight: bold;">Doctor</td><td style="padding: 8px 12px;">${details.doctorName}</td></tr>
           <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">Clinic</td><td style="padding: 8px 12px;">${details.clinicName}</td></tr>
+          <tr><td style="padding: 8px 12px; font-weight: bold;">Phone No.</td><td style="padding: 8px 12px;">${details.phoneNumber || 'N/A'}</td></tr>
           <tr><td style="padding: 8px 12px; font-weight: bold;">Appointment Type</td><td style="padding: 8px 12px;">${details.appointmentType}</td></tr>
           <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">Date</td><td style="padding: 8px 12px;">${details.appointmentDate}</td></tr>
           <tr><td style="padding: 8px 12px; font-weight: bold;">Time</td><td style="padding: 8px 12px;">${details.appointmentTime}</td></tr>
           <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">Location</td><td style="padding: 8px 12px;">${details.locationName}</td></tr>
+          <tr><td style="padding: 8px 12px; font-weight: bold;">Amount</td><td style="padding: 8px 12px;">${formattedAmount}</td></tr>
           <tr><td style="padding: 8px 12px; font-weight: bold;">Payment ID</td><td style="padding: 8px 12px;">${details.paymentId}</td></tr>
+          <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">PhonePe Payment ID</td><td style="padding: 8px 12px;">${details.phonePePaymentId || details.paymentId}</td></tr>
+          <tr><td style="padding: 8px 12px; font-weight: bold;">Appointment Link</td><td style="padding: 8px 12px;"><a href="${details.appointmentLink || '#'}" target="_blank" rel="noreferrer noopener">${details.appointmentLink || 'Open appointment'}</a></td></tr>
           <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">Appointment ID</td><td style="padding: 8px 12px;">${details.appointmentId}</td></tr>
         </table>
       `;
@@ -692,6 +742,10 @@ export class BillingEventsListener {
           {
             to: ADMIN_NOTIFICATION_EMAIL,
             paymentId: details.paymentId,
+            phonePePaymentId: details.phonePePaymentId,
+            amount: details.amount,
+            phoneNumber: details.phoneNumber,
+            appointmentLink: details.appointmentLink,
             appointmentId: details.appointmentId,
             clinicId: details.clinicId,
           }
@@ -705,6 +759,10 @@ export class BillingEventsListener {
           {
             to: ADMIN_NOTIFICATION_EMAIL,
             paymentId: details.paymentId,
+            phonePePaymentId: details.phonePePaymentId,
+            amount: details.amount,
+            phoneNumber: details.phoneNumber,
+            appointmentLink: details.appointmentLink,
             error: result.error,
           }
         );
@@ -717,6 +775,10 @@ export class BillingEventsListener {
         'BillingEventsListener',
         {
           paymentId: details.paymentId,
+          phonePePaymentId: details.phonePePaymentId,
+          amount: details.amount,
+          phoneNumber: details.phoneNumber,
+          appointmentLink: details.appointmentLink,
           appointmentId: details.appointmentId,
           error: error instanceof Error ? error.stack : undefined,
         }

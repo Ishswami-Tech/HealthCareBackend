@@ -40,7 +40,7 @@ import { ClinicNotificationPlugin } from './plugins/notifications/clinic-notific
 import { ClinicConfirmationPlugin } from './plugins/confirmation/clinic-confirmation.plugin';
 import { ClinicLocationPlugin } from './plugins/location/clinic-location.plugin';
 import { ClinicFollowUpPlugin } from './plugins/followup/clinic-followup.plugin';
-import { ClinicReminderPlugin } from './plugins/reminders/clinic-reminder.plugin';
+import { AppointmentReminderService } from './plugins/reminders/appointment-reminder.service';
 import { ClinicVideoPlugin } from './plugins/video/clinic-video.plugin';
 import { CheckInService } from './plugins/checkin/check-in.service';
 
@@ -410,7 +410,7 @@ export class AppointmentsService {
     private readonly clinicConfirmationPlugin: ClinicConfirmationPlugin, // Hot path: Confirmations (common)
     private readonly clinicLocationPlugin: ClinicLocationPlugin, // Medium: Location queries (moderate frequency)
     private readonly clinicFollowUpPlugin: ClinicFollowUpPlugin, // Medium: Follow-up operations (moderate frequency)
-    private readonly clinicReminderPlugin: ClinicReminderPlugin, // Scheduled reminder workflows
+    private readonly appointmentReminderService: AppointmentReminderService,
     private readonly clinicVideoPlugin: ClinicVideoPlugin, // Video consultations (medium-low frequency)
 
     // Infrastructure Services
@@ -489,6 +489,22 @@ export class AppointmentsService {
       ...(params.metadata ? { metadata: params.metadata } : {}),
       payload: params.payload,
     } as EnterpriseEventPayload);
+  }
+
+  private resolveAppointmentReminderScheduledFor(
+    appointmentDate: string | undefined,
+    appointmentTime: string | undefined,
+    hoursBefore: number
+  ): Date {
+    const appointmentDateTime =
+      parseIstDateTime(appointmentDate, appointmentTime) ??
+      (appointmentDate ? new Date(appointmentDate) : null);
+
+    if (appointmentDateTime instanceof Date && !Number.isNaN(appointmentDateTime.getTime())) {
+      return new Date(appointmentDateTime.getTime() - hoursBefore * 60 * 60 * 1000);
+    }
+
+    return new Date(Date.now() + hoursBefore * 60 * 60 * 1000);
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_3AM)
@@ -1888,22 +1904,46 @@ export class AppointmentsService {
 
       // Schedule the automatic reminder for this appointment.
       // The reminder plugin converts the appointment time into an actual delayed execution window.
-      void this.clinicReminderPlugin
-        .process({
-          operation: 'scheduleAppointmentReminder',
-          appointmentId: (result.data as Record<string, unknown>)?.['id'] as string,
-          patientId: createDto.patientId,
-          doctorId: createDto.doctorId,
+      void this.appointmentReminderService
+        .scheduleReminder(
+          (result.data as Record<string, unknown>)?.['id'] as string,
+          createDto.patientId,
+          createDto.doctorId,
           clinicId,
-          appointmentDate: createDto.appointmentDate,
-          appointmentTime: (createDto as CreateAppointmentDto & { time?: string }).time,
-          appointmentType: createDto.type,
-          notes: createDto.notes,
-          clinicName: this.configService.getEnv('APP_NAME', 'Healthcare App'),
-          patientName: 'Patient',
-          doctorName: 'Doctor',
-          hoursBefore: 0.25,
-          channels: ['email', 'whatsapp'],
+          'appointment_reminder',
+          0.25,
+          ['email', 'whatsapp'],
+          {
+            patientName: 'Patient',
+            doctorName: 'Doctor',
+            appointmentDate: createDto.appointmentDate ?? formatDateKeyInIST(new Date()),
+            appointmentTime:
+              (createDto as CreateAppointmentDto & { time?: string }).time ?? '10:00',
+            location: 'Clinic',
+            clinicName: this.configService.getEnv('APP_NAME', 'Healthcare App'),
+            appointmentType: createDto.type,
+            notes: createDto.notes,
+          },
+          this.resolveAppointmentReminderScheduledFor(
+            createDto.appointmentDate,
+            (createDto as CreateAppointmentDto & { time?: string }).time,
+            0.25
+          )
+        )
+        .then(reminderResult => {
+          if (!reminderResult.success) {
+            void this.loggingService.log(
+              LogType.ERROR,
+              LogLevel.WARN,
+              'Failed to schedule appointment reminder',
+              'AppointmentsService.createAppointment',
+              {
+                appointmentId: (result.data as Record<string, unknown>)?.['id'] as string,
+                error: reminderResult.error ?? 'Unknown reminder scheduling failure',
+                reminderId: reminderResult.reminderId,
+              }
+            );
+          }
         })
         .catch(reminderError => {
           void this.loggingService.log(
@@ -2742,22 +2782,26 @@ export class AppointmentsService {
     await this.syncPaidAppointmentBillingAfterReschedule(appointment, newDate, newTime, userId);
 
     try {
-      await this.clinicReminderPlugin.process({
-        operation: 'rescheduleAppointmentReminder',
+      await this.appointmentReminderService.rescheduleReminder(
         appointmentId,
-        patientId: appointment.patientId,
-        doctorId: appointment.doctorId,
+        appointment.patientId,
+        appointment.doctorId,
         clinicId,
-        appointmentDate: newDate,
-        appointmentTime: newTime,
-        appointmentType: appointment.type,
-        notes: appointment.notes ?? undefined,
-        clinicName: this.configService.getEnv('APP_NAME', 'Healthcare App'),
-        patientName: 'Patient',
-        doctorName: 'Doctor',
-        hoursBefore: 0.25,
-        channels: ['email', 'whatsapp'],
-      });
+        'appointment_reminder',
+        0.25,
+        ['email', 'whatsapp'],
+        {
+          patientName: 'Patient',
+          doctorName: 'Doctor',
+          appointmentDate: newDate,
+          appointmentTime: newTime,
+          location: 'Clinic',
+          clinicName: this.configService.getEnv('APP_NAME', 'Healthcare App'),
+          appointmentType: appointment.type,
+          notes: appointment.notes ?? undefined,
+        },
+        this.resolveAppointmentReminderScheduledFor(newDate, newTime, 0.25)
+      );
     } catch (reminderError) {
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -3461,14 +3505,10 @@ export class AppointmentsService {
       );
 
       try {
-        await this.clinicReminderPlugin.process({
-          operation: 'cancelAppointmentReminder',
+        await this.appointmentReminderService.cancelAppointmentReminder(
           appointmentId,
-          patientId: (result.data as Record<string, unknown>)?.['patientId'] as string,
-          doctorId: (result.data as Record<string, unknown>)?.['doctorId'] as string,
-          clinicId,
-          reminderType: 'appointment_reminder',
-        });
+          'appointment_reminder'
+        );
       } catch (reminderError) {
         void this.loggingService.log(
           LogType.SYSTEM,
