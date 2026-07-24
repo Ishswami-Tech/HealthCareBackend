@@ -22,7 +22,7 @@ export class AppointmentReminderService {
   ) {}
 
   buildReminderJobId(appointmentId: string, reminderType: string): string {
-    return `reminder:${reminderType}:${appointmentId}`;
+    return `reminder-${reminderType}-${appointmentId}`;
   }
 
   /**
