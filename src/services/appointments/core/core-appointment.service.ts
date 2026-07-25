@@ -1735,6 +1735,7 @@ export class CoreAppointmentService {
           if (association) {
             // If doctor is assigned to a specific location, satisfy strict location requirement
             if (
+              _context?.appointmentType !== 'VIDEO_CALL' &&
               _context.locationId &&
               association.locationId &&
               association.locationId !== _context.locationId

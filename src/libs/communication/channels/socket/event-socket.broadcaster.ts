@@ -43,6 +43,7 @@ export class EventSocketBroadcaster implements OnModuleInit {
     'ehr.',
     'appointment.',
     'doctor.availability.',
+    'doctor.clinic.',
     'user.',
     'clinic.',
     'notification.',
@@ -144,9 +145,9 @@ export class EventSocketBroadcaster implements OnModuleInit {
       // Determine target rooms
       const rooms = this.determineTargetRooms(event, eventData);
 
-      // Availability changes should be visible to every connected client immediately.
-      // Room-based delivery still happens below for finer-grained targeting.
-      if (event.startsWith('doctor.availability.')) {
+      // Availability changes are delivered through room targeting. Keep the
+      // global broadcast only as a fallback when no rooms can be resolved.
+      if (event.startsWith('doctor.availability.') && rooms.length === 0) {
         this.socketService.broadcast(event, socketData);
       }
 
@@ -361,6 +362,7 @@ export class EventSocketBroadcaster implements OnModuleInit {
     const doctorEvents = [
       'appointment.',
       'doctor.availability.',
+      'doctor.clinic.',
       'ehr.',
       'notification.patient',
       'user.patient',
@@ -376,6 +378,7 @@ export class EventSocketBroadcaster implements OnModuleInit {
     const receptionistEvents = [
       'appointment.',
       'doctor.availability.',
+      'doctor.clinic.',
       'notification.appointment',
       'user.patient',
     ];
