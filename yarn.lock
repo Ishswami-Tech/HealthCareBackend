@@ -439,35 +439,35 @@
   resolved "https://registry.yarnpkg.com/@borewit/text-codec/-/text-codec-0.2.2.tgz#75025f735c0983b3a871668804a57387e3649375"
   integrity sha512-DDaRehssg1aNrH4+2hnj1B7vnUGEjU6OIlyRdkMd0aUdIUvKXrJfXsy8LVtXAy7DRvYVluWbMspsRhz2lcW0mQ==
 
-"@bull-board/api@7.2.1", "@bull-board/api@^7.0.0":
-  version "7.2.1"
-  resolved "https://registry.yarnpkg.com/@bull-board/api/-/api-7.2.1.tgz#9aeb5bd0ad2dadd41b89414728099b5f690bc9ed"
-  integrity sha512-ldRG4POJLHf6oDrbDA7AsbTKliBmV4eySlwdUAumiRDtfvtbRSdXGE4Md2uPDova1r/ck7ExEe1+pHEQAZElqw==
+"@bull-board/api@8.3.0", "@bull-board/api@^8.3.0":
+  version "8.3.0"
+  resolved "https://registry.yarnpkg.com/@bull-board/api/-/api-8.3.0.tgz#635acf182a4a99496f27d6bc28bb93a3c44990b1"
+  integrity sha512-5ti+DROXnlZeQYnOiapUc2t4JFWO2rCPMxzZZbG15e8Nn2sX4gU0x09WqLfDU19RjYWDnNa1FtJm1DdQEC6Z0Q==
   dependencies:
     redis-info "^3.1.0"
 
-"@bull-board/fastify@^7.0.0":
-  version "7.2.1"
-  resolved "https://registry.yarnpkg.com/@bull-board/fastify/-/fastify-7.2.1.tgz#68cb5d1c94b7748cbc415bc7e503de1e80a0ab52"
-  integrity sha512-OzJRqMArt9n1SoK+bi/+uOjqYpte5VUMh9+1R0MlTG+wRm7pe/Y5mqNsl5JfGFaElPLDsxyJCLQqDH/25eRlaQ==
+"@bull-board/fastify@^8.3.0":
+  version "8.3.0"
+  resolved "https://registry.yarnpkg.com/@bull-board/fastify/-/fastify-8.3.0.tgz#99a0d0a584aefe7db2f3e107a4e36fed920d0ce3"
+  integrity sha512-RZ210Ia+78n94bd60ycaeWxJgrDWfyrQSxsBFRHHnzKSRnmk5oHqS28cxpOVyPGrBaJcxQF1S2bBg3pKFOdgow==
   dependencies:
-    "@bull-board/api" "7.2.1"
-    "@bull-board/ui" "7.2.1"
-    "@fastify/static" "^9.1.3"
-    "@fastify/view" "^11.1.1"
+    "@bull-board/api" "8.3.0"
+    "@bull-board/ui" "8.3.0"
+    "@fastify/static" "^10.1.0"
+    "@fastify/view" "^12.0.0"
     ejs "^6.0.1"
 
-"@bull-board/nestjs@^7.0.0":
-  version "7.2.1"
-  resolved "https://registry.yarnpkg.com/@bull-board/nestjs/-/nestjs-7.2.1.tgz#93fb3eac915433c90e164092f5468b691d1861c7"
-  integrity sha512-Uq2Z3+0ORgHJSw4TDV1kBrHdksRnK8CZdda63hrStduPnvKHPBxIZUGNfBN/vL08UqizpNkjFmNyNXiHOgf0LQ==
+"@bull-board/nestjs@^8.3.0":
+  version "8.3.0"
+  resolved "https://registry.yarnpkg.com/@bull-board/nestjs/-/nestjs-8.3.0.tgz#74653d7ab6dd428a190a297939a74bb28a45c87a"
+  integrity sha512-EeRNmGXvZpMYBS6fbo3tjRhELz3MvyfdXoeUfIRvFTO9ZiSmyWhLF+eIjNgwm0AlsNk946vkJ4tRRFEjtOb33A==
 
-"@bull-board/ui@7.2.1", "@bull-board/ui@^7.0.0":
-  version "7.2.1"
-  resolved "https://registry.yarnpkg.com/@bull-board/ui/-/ui-7.2.1.tgz#5293436f9226cfde62c5a05db656ec13d0072b64"
-  integrity sha512-O4ykrXrl2UJNHnhJrCvJxrw1ar+DlUBgyZUeZ8Ci+Ne5Wbq6rBv1gfpQH54/eu3IFbLso0S/kjc6WUGb2HPqZw==
+"@bull-board/ui@8.3.0", "@bull-board/ui@^8.3.0":
+  version "8.3.0"
+  resolved "https://registry.yarnpkg.com/@bull-board/ui/-/ui-8.3.0.tgz#aa7d390180ee1dcb876c62f3b66af8a1ae11fd11"
+  integrity sha512-ZKHvHEzLekyDqSQEECOJZ0gP2wcba0Jdm+0dl7SXu82qfp03HIxrvmsKZJzG9bLVSI3GitLgcIaYHWsjDjHFZQ==
   dependencies:
-    "@bull-board/api" "7.2.1"
+    "@bull-board/api" "8.3.0"
 
 "@cspotcode/source-map-support@^0.8.0":
   version "0.8.1"
@@ -864,25 +864,18 @@
     fastify-plugin "^5.0.1"
     safe-stable-stringify "^2.4.3"
 
-"@fastify/static@^9.1.3":
-  version "9.1.3"
-  resolved "https://registry.yarnpkg.com/@fastify/static/-/static-9.1.3.tgz#d878694333b75c646d40670b7416044de09f09ad"
-  integrity sha512-aXrYtsiryLhRxRNaxNqsn7FUISeb7rB9q4eHUPIot5aeQBLNahnz1m6thzm7JWC1poSGXS9XrX8DvuMivp2hkQ==
+"@fastify/static@^10.1.0", "@fastify/static@^10.1.2":
+  version "10.1.2"
+  resolved "https://registry.yarnpkg.com/@fastify/static/-/static-10.1.2.tgz#29ced6be149cabe6af24927c0385acee0c2407d7"
+  integrity sha512-G/g18cG9tLutT/OVyN1AIsHIl9L1UwmJ+S3dkyhVpplIx0nEMicd7RGQ+uJLyhKKF4a3tTcQydccn3Mop1fX+Q==
   dependencies:
     "@fastify/accept-negotiator" "^2.0.0"
+    "@fastify/error" "^4.0.0"
     "@fastify/send" "^4.0.0"
-    content-disposition "^1.0.1"
-    fastify-plugin "^5.0.0"
+    content-disposition "^2.0.1"
+    fastify-plugin "^6.0.0"
     fastq "^1.17.1"
     glob "^13.0.0"
-
-"@fastify/view@^11.1.1":
-  version "11.1.1"
-  resolved "https://registry.yarnpkg.com/@fastify/view/-/view-11.1.1.tgz#e9e4693422689d9182f9160d69cccc8bdc90fda6"
-  integrity sha512-GiHqT3R2eKJgWmy0s45eELTC447a4+lTM2o+8fSWeKwBe9VToeePuHJcKtOEXPrKGSddGO0RsNayULiS3aeHeQ==
-  dependencies:
-    fastify-plugin "^5.0.0"
-    toad-cache "^3.7.0"
 
 "@fastify/view@^12.0.0":
   version "12.0.0"
@@ -2760,10 +2753,10 @@ boxen@5.1.2:
     widest-line "^3.1.0"
     wrap-ansi "^7.0.0"
 
-brace-expansion@5.0.7, brace-expansion@^1.1.7, brace-expansion@^2.0.2, brace-expansion@^5.0.5:
-  version "5.0.7"
-  resolved "https://registry.yarnpkg.com/brace-expansion/-/brace-expansion-5.0.7.tgz#1b0e46965b479dad65af737b4a02790a05498337"
-  integrity sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==
+brace-expansion@5.0.8, brace-expansion@^1.1.7, brace-expansion@^2.0.2, brace-expansion@^5.0.5:
+  version "5.0.8"
+  resolved "https://registry.yarnpkg.com/brace-expansion/-/brace-expansion-5.0.8.tgz#135ad0d8d808eb18eb5e0ec9a21f3a0b92ef18cf"
+  integrity sha512-JZyDyq3D4AUifKTPOB7DELf6XsB3WdPuNxCtob1vFXPsSXhdAiHBWJ/tJ8HAc9aH84BK+5JFZLNkJKx3G9kzQg==
   dependencies:
     balanced-match "^4.0.2"
 
@@ -3116,11 +3109,6 @@ confbox@^0.2.4:
   version "0.2.4"
   resolved "https://registry.yarnpkg.com/confbox/-/confbox-0.2.4.tgz#592e7be71f882a4a874e3c88f0ac1ef6f7da1ce5"
   integrity sha512-ysOGlgTFbN2/Y6Cg3Iye8YKulHw+R2fNXHrgSmXISQdMnomY6eNDprVdW9R5xBguEqI954+S6709UyiO7B+6OQ==
-
-content-disposition@^1.0.1:
-  version "1.1.0"
-  resolved "https://registry.yarnpkg.com/content-disposition/-/content-disposition-1.1.0.tgz#f3db789c752d45564cc7e9e1e0b31790d4a38e17"
-  integrity sha512-5jRCH9Z/+DRP7rkvY83B+yGIGX96OYdJmzngqnw2SBSxqCFPd0w2km3s5iawpGX8krnwSGmF0FW5Nhr0Hfai3g==
 
 content-disposition@^2.0.1:
   version "2.0.1"
@@ -3976,15 +3964,10 @@ fast-safe-stringify@2.1.1:
   resolved "https://registry.yarnpkg.com/fast-safe-stringify/-/fast-safe-stringify-2.1.1.tgz#c406a83b6e70d9e35ce3b30a81141df30aeba884"
   integrity sha512-W+KJc2dmILlPplD/H4K9l9LcAHAfPtP6BY84uVLXQ6Evcz9Lcg33Y2z1IVblT6xdY54PXYVHEv+0Wpq8Io6zkA==
 
-fast-uri@3.1.2, fast-uri@^3.0.0, fast-uri@^3.0.1:
-  version "3.1.2"
-  resolved "https://registry.yarnpkg.com/fast-uri/-/fast-uri-3.1.2.tgz#8af3d4fc9d3e71b11572cc2673b514a7d1a8c8ec"
-  integrity sha512-rVjf7ArG3LTk+FS6Yw81V1DLuZl1bRbNrev6Tmd/9RaroeeRRJhAt7jg/6YFxbvAQXUCavSoZhPPj6oOx+5KjQ==
-
-fast-uri@4.0.0:
-  version "4.0.0"
-  resolved "https://registry.yarnpkg.com/fast-uri/-/fast-uri-4.0.0.tgz#604091cf5d17247f25f7d79feff5543a9a67f4f2"
-  integrity sha512-l90y339r2DkZs/ldcWQXcwTjkbp/NbuJDGYoQ3awBgaT3GXOFkm3OkVpz6Z86TywYcya0eVP2r1kTV90f3krGQ==
+fast-uri@4.1.1, fast-uri@^3.0.0, fast-uri@^3.0.1:
+  version "4.1.1"
+  resolved "https://registry.yarnpkg.com/fast-uri/-/fast-uri-4.1.1.tgz#380cdc10a7d603625eef31ead5303d3e98ec418a"
+  integrity sha512-YPOs1zD5TG2+EZt+r88LwF6mclA7TPkpwMP7ZN3TO2HiHS8TXvq7QA/17iJsV9dubcLo/f8eEYqMBruyQV21hQ==
 
 fast-xml-builder@1.1.7, fast-xml-builder@^1.1.5, fast-xml-builder@^1.2.0:
   version "1.1.7"
@@ -4026,6 +4009,11 @@ fastify-plugin@5.1.0, fastify-plugin@^5.0.0, fastify-plugin@^5.0.1:
   version "5.1.0"
   resolved "https://registry.yarnpkg.com/fastify-plugin/-/fastify-plugin-5.1.0.tgz#7083e039d6418415f9a669f8c25e72fc5bf2d3e7"
   integrity sha512-FAIDA8eovSt5qcDgcBvDuX/v0Cjz0ohGhENZ/wpc3y+oZCY2afZ9Baqql3g/lC+OHRnciQol4ww7tuthOb9idw==
+
+fastify-plugin@^6.0.0:
+  version "6.0.0"
+  resolved "https://registry.yarnpkg.com/fastify-plugin/-/fastify-plugin-6.0.0.tgz#7cd659c6aad5f3bf07b4c59205412351a47d39c8"
+  integrity sha512-fZOty7z3O7vOliF6d8bHE3wiEh1KcNnKEQensSgTk9C1DvN6nRLS++XVd86v33Hw/8u9Un8A1zDrQ8ujcQDHEg==
 
 fastify@5.8.5, fastify@^5.8.5:
   version "5.8.5"
@@ -7058,10 +7046,10 @@ v8-compile-cache-lib@^3.0.1:
   resolved "https://registry.yarnpkg.com/v8-compile-cache-lib/-/v8-compile-cache-lib-3.0.1.tgz#6336e8d71965cb3d35a1bbb7868445a7c05264bf"
   integrity sha512-wa7YjyUGfNZngI/vtK0UHAN+lgDCxBPCylVXGp0zu59Fz5aiGtNXaq3DhIov063MorB+VfufLh3JlF2KdTK3xg==
 
-valibot@1.2.0:
-  version "1.2.0"
-  resolved "https://registry.yarnpkg.com/valibot/-/valibot-1.2.0.tgz#8fc720d9e4082ba16e30a914064a39619b2f1d6f"
-  integrity sha512-mm1rxUsmOxzrwnX5arGS+U4T25RdvpPjPN4yR0u9pUBov9+zGVtO84tif1eY4r6zWxVxu3KzIyknJy3rxfRZZg==
+valibot@1.2.0, valibot@1.4.2:
+  version "1.4.2"
+  resolved "https://registry.yarnpkg.com/valibot/-/valibot-1.4.2.tgz#da857781187f170aeaf4498d463d25028615b0d6"
+  integrity sha512-gjdCvJ6d3RyHAneqxMYMW9QMCwYMb3jpOO0IyHZV1bnRHFBHrX3VkIILt5XYR0WhwHiH7Mty8ovuPZ/O3gamrg==
 
 validator@^13.15.22:
   version "13.15.35"
