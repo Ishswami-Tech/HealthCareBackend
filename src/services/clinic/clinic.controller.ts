@@ -763,7 +763,7 @@ export class ClinicController {
     Role.COUNSELOR,
     Role.PATIENT
   )
-  @RequireResourcePermission('clinics', 'read', { requireOwnership: true })
+  @RequireResourcePermission('clinics', 'read')
   @Cache({
     keyTemplate: 'clinic:{id}:doctors',
     ttl: 120, // 2 minutes (shortened from 30 to reduce stale-empty window)
