@@ -1378,6 +1378,72 @@ export class ClinicService {
         }));
       });
 
+      if (doctors.length === 0) {
+        const fallbackDoctors = await this.databaseService.executeHealthcareRead<
+          Array<{ doctor: Doctor & { user: { id: string; name: string; email: string } } }>
+        >(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+            user: {
+              findMany: (args: PrismaDelegateArgs) => Promise<
+                Array<{
+                  doctor: Doctor & { user: { id: string; name: string; email: string } };
+                }>
+              >;
+            };
+          };
+
+          const users = (await typedClient.user.findMany({
+            where: {
+              role: 'DOCTOR',
+              doctor: {
+                isNot: null,
+              },
+              OR: [
+                { primaryClinicId: id },
+                { clinics: { some: { id } } },
+                { userRoles: { some: { clinicId: id, isActive: true } } },
+              ],
+            } as PrismaDelegateArgs,
+            select: {
+              doctor: {
+                select: {
+                  id: true,
+                  userId: true,
+                  specialization: true,
+                  experience: true,
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      email: true,
+                      profilePicture: true,
+                    },
+                  },
+                },
+              },
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs)) as unknown as Array<{
+            doctor: Doctor & { user: { id: string; name: string; email: string } };
+          }>;
+
+          return users.filter(entry => Boolean(entry.doctor));
+        });
+
+        if (fallbackDoctors.length > 0) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Resolved clinic doctors for clinic ${id} via fallback doctor lookup`,
+            'ClinicService',
+            {
+              clinicId: id,
+              doctorCount: fallbackDoctors.length,
+            }
+          );
+          return fallbackDoctors;
+        }
+      }
+
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
