@@ -940,6 +940,17 @@ export class AppointmentsController {
         userId = currentUserId;
       }
 
+      const requestSummary = {
+        clinicId,
+        userId: userId || undefined,
+        doctorId: doctorId || undefined,
+        status: status || undefined,
+        date: date || undefined,
+        locationId: locationId || undefined,
+        page: Math.max(1, page),
+        limit: Math.min(100, Math.max(1, limit)),
+      };
+
       // Log the operation with proper structure
       await this.loggingService.log(
         LogType.REQUEST,
@@ -950,6 +961,7 @@ export class AppointmentsController {
           userId: currentUserId,
           clinicId,
           filters: { userId, doctorId, status, date, locationId, page, limit },
+          requestSummary,
           operation: 'getAppointments',
         }
       );
@@ -987,6 +999,14 @@ export class AppointmentsController {
           userId: currentUserId,
           clinicId,
           appointmentCount: (result.data as unknown as AppointmentResponseDto[])?.length || 0,
+          responseSummary: {
+            appointmentCount: (result.data as unknown as AppointmentResponseDto[])?.length || 0,
+            hasPagination: !!(
+              result.data &&
+              typeof result.data === 'object' &&
+              'pagination' in result.data
+            ),
+          },
           operation: 'getAppointments',
         }
       );

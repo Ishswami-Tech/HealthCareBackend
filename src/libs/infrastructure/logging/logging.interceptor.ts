@@ -30,7 +30,6 @@ interface HttpResponse {
 @Injectable()
 export class LoggingInterceptor implements NestInterceptor {
   private readonly SKIP_LOG_PATHS = [
-    '/health',
     '/api-health',
     '/socket.io/socket.io.js',
     '/logger/logs',
@@ -47,6 +46,7 @@ export class LoggingInterceptor implements NestInterceptor {
     const { method, url, body, headers, ip } = request;
     const userAgent = headers['user-agent'] || 'unknown';
     const startTime = Date.now();
+    const requestSummary = this.summarizeRequest(url, body);
 
     // Skip logging for health checks and other frequent endpoints
     if (this.SKIP_LOG_PATHS.some(path => url.includes(path))) {
@@ -57,6 +57,7 @@ export class LoggingInterceptor implements NestInterceptor {
       method,
       url,
       body: this.sanitizeBody(body),
+      ...(requestSummary ? { requestSummary } : {}),
       ip,
       userAgent,
     });
@@ -68,6 +69,7 @@ export class LoggingInterceptor implements NestInterceptor {
           const duration = endTime - startTime;
           const response = this.extractResponse(context.switchToHttp().getResponse());
           const statusCode = response.statusCode;
+          const responseSummary = this.summarizeResponse(responseBody);
           void this.loggingService.log(
             LogType.RESPONSE,
             LogLevel.INFO,
@@ -78,7 +80,8 @@ export class LoggingInterceptor implements NestInterceptor {
               url,
               duration: `${duration}ms`,
               statusCode,
-              response: this.summarizeResponse(responseBody),
+              response: responseSummary,
+              ...(responseSummary ? { responseSummary } : {}),
             }
           );
         },
@@ -154,6 +157,95 @@ export class LoggingInterceptor implements NestInterceptor {
     return {
       type: typeof responseBody,
     };
+  }
+
+  private summarizeRequest(url: string, body: unknown): Record<string, unknown> | undefined {
+    if (url.includes('/api/v1/appointments/my-appointments')) {
+      return {
+        ...(this.summarizeUrlParams(url, [
+          'clinicId',
+          'status',
+          'date',
+          'startDate',
+          'endDate',
+          'page',
+          'limit',
+        ]) || {}),
+        ...(this.summarizeObject(body, [
+          'clinicId',
+          'status',
+          'date',
+          'startDate',
+          'endDate',
+          'page',
+          'limit',
+        ]) || {}),
+      };
+    }
+
+    if (url.includes('/api/v1/clinics/') && url.includes('/doctors')) {
+      return {
+        ...(this.summarizeUrlParams(url, [
+          'clinicId',
+          'locationId',
+          'specialization',
+          'search',
+          'isActive',
+          'limit',
+          'offset',
+        ]) || {}),
+        ...(this.summarizeObject(body, [
+          'clinicId',
+          'locationId',
+          'specialization',
+          'search',
+          'isActive',
+          'limit',
+          'offset',
+        ]) || {}),
+      };
+    }
+
+    if (url.includes('/health')) {
+      return {
+        ...(this.summarizeUrlParams(url, ['detailed', 'namespace', 'source']) || {}),
+        ...(this.summarizeObject(body, ['detailed', 'namespace', 'source']) || {}),
+      };
+    }
+
+    return undefined;
+  }
+
+  private summarizeUrlParams(url: string, keys: string[]): Record<string, unknown> | undefined {
+    try {
+      const parsed = new URL(url, 'http://localhost');
+      const summary: Record<string, unknown> = {};
+      for (const key of keys) {
+        const value = parsed.searchParams.get(key);
+        if (value !== null && value !== '') {
+          summary[key] = value;
+        }
+      }
+      return Object.keys(summary).length > 0 ? summary : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private summarizeObject(value: unknown, keys: string[]): Record<string, unknown> | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return undefined;
+    }
+
+    const record = value as Record<string, unknown>;
+    const summary: Record<string, unknown> = {};
+    for (const key of keys) {
+      if (record[key] !== undefined) {
+        summary[key] = record[key];
+      }
+    }
+
+    return Object.keys(summary).length > 0 ? summary : undefined;
   }
 
   /**
