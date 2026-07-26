@@ -1323,7 +1323,8 @@ export class ClinicService {
     _userId: string
   ): Promise<Array<{ doctor: Doctor & { user: { id: string; name: string; email: string } } }>> {
     try {
-      // Use executeHealthcareRead for optimized query - Doctor is linked via DoctorClinic
+      // Query the clinic-doctor join table directly so we always return the
+      // clinic's actual configured doctors, regardless of role data drift.
       const doctors = await this.databaseService.executeHealthcareRead<
         Array<{ doctor: Doctor & { user: { id: string; name: string; email: string } } }>
       >(async client => {
@@ -1336,43 +1337,57 @@ export class ClinicService {
             >;
           };
         };
-        // Fetch users who have DOCTOR role at this clinic
-        const users = await typedClient.user.findMany({
-          where: {
-            OR: [
-              { role: Role.DOCTOR },
-              { role: 'DOCTOR' },
-              {
-                userRoles: { some: { clinicId: id, role: { name: Role.DOCTOR }, isActive: true } },
-              },
-            ],
-            AND: [
-              {
-                OR: [
-                  { doctor: { clinics: { some: { clinicId: id } } } },
-                  { primaryClinicId: id },
-                  { clinics: { some: { id } } },
-                  { userRoles: { some: { clinicId: id, isActive: true } } },
-                ],
-              },
-            ],
-          } as PrismaDelegateArgs,
-          include: {
-            doctor: {
-              include: { user: true },
-            },
-          } as PrismaDelegateArgs,
-        });
 
-        // Filter out those without doctor profile and format
-        return users
-          .filter(u => u.doctor)
-          .map(u => ({
-            doctor: u.doctor as unknown as Doctor & {
-              user: { id: string; name: string; email: string };
+        const doctorClinics = (await typedClient.doctorClinic.findMany({
+          where: { clinicId: id } as PrismaDelegateArgs,
+          select: {
+            doctor: {
+              select: {
+                id: true,
+                userId: true,
+                specialization: true,
+                experience: true,
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    profilePicture: true,
+                  },
+                },
+              },
             },
-          }));
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs)) as unknown as Array<{
+          doctor: Doctor & { user: { id: string; name: string; email: string } };
+        }>;
+
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.DEBUG,
+          `Loaded doctor-clinic links for clinic ${id}`,
+          'ClinicService',
+          {
+            clinicId: id,
+            doctorLinkCount: doctorClinics.length,
+          }
+        );
+
+        return doctorClinics.map(entry => ({
+          doctor: entry.doctor,
+        }));
       });
+
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Resolved clinic doctors for clinic ${id}`,
+        'ClinicService',
+        {
+          clinicId: id,
+          doctorCount: doctors.length,
+        }
+      );
       return doctors;
     } catch (error) {
       void this.loggingService.log(
