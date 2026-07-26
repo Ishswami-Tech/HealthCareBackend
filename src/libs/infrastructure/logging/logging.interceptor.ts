@@ -1,13 +1,5 @@
 // External imports
-import {
-  Injectable,
-  NestInterceptor,
-  ExecutionContext,
-  CallHandler,
-  Optional,
-} from '@nestjs/common';
-// IMPORTANT: avoid importing from the @config barrel in infra boot code (SWC TDZ/cycles).
-import { ConfigService } from '@config/config.service';
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 
@@ -47,10 +39,7 @@ export class LoggingInterceptor implements NestInterceptor {
     '/status',
   ];
 
-  constructor(
-    private readonly loggingService: LoggingService,
-    @Optional() private readonly configService?: ConfigService
-  ) {}
+  constructor(private readonly loggingService: LoggingService) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const httpContext = context.switchToHttp();
@@ -64,42 +53,34 @@ export class LoggingInterceptor implements NestInterceptor {
       return next.handle();
     }
 
-    // Log the incoming request (only in non-production)
-    // Use ConfigService (which uses dotenv) for environment variable access
-    // If ConfigService is unavailable (edge case during bootstrap/cycles), default to production-safe behavior.
-    if (!(this.configService?.isProduction() ?? true)) {
-      void this.loggingService.log(LogType.REQUEST, LogLevel.INFO, `${method} ${url}`, 'API', {
-        method,
-        url,
-        body: this.sanitizeBody(body),
-        ip,
-        userAgent,
-      });
-    }
+    void this.loggingService.log(LogType.REQUEST, LogLevel.INFO, `${method} ${url}`, 'API', {
+      method,
+      url,
+      body: this.sanitizeBody(body),
+      ip,
+      userAgent,
+    });
 
     return next.handle().pipe(
       tap({
-        next: _response => {
+        next: responseBody => {
           const endTime = Date.now();
           const duration = endTime - startTime;
-
-          // Only log slow responses or non-200 status codes
           const response = this.extractResponse(context.switchToHttp().getResponse());
           const statusCode = response.statusCode;
-          if (duration > 1000 || statusCode !== 200) {
-            void this.loggingService.log(
-              LogType.RESPONSE,
-              LogLevel.INFO,
-              `${method} ${url} [${duration}ms] ${statusCode}`,
-              'API',
-              {
-                method,
-                url,
-                duration: `${duration}ms`,
-                statusCode,
-              }
-            );
-          }
+          void this.loggingService.log(
+            LogType.RESPONSE,
+            LogLevel.INFO,
+            `${method} ${url} [${statusCode}]`,
+            'API',
+            {
+              method,
+              url,
+              duration: `${duration}ms`,
+              statusCode,
+              response: this.summarizeResponse(responseBody),
+            }
+          );
         },
         error: error => {
           const endTime = Date.now();
@@ -142,6 +123,37 @@ export class LoggingInterceptor implements NestInterceptor {
     });
 
     return sanitized;
+  }
+
+  private summarizeResponse(responseBody: unknown): unknown {
+    if (responseBody == null) {
+      return { type: 'null' };
+    }
+
+    if (Array.isArray(responseBody)) {
+      return {
+        type: 'array',
+        count: responseBody.length,
+      };
+    }
+
+    if (typeof responseBody === 'object') {
+      const record = responseBody as Record<string, unknown>;
+      const keys = Object.keys(record).slice(0, 12);
+      return {
+        type: 'object',
+        keys,
+        ...(Array.isArray(record['data'])
+          ? { count: record['data'].length }
+          : Array.isArray(record['items'])
+            ? { count: record['items'].length }
+            : {}),
+      };
+    }
+
+    return {
+      type: typeof responseBody,
+    };
   }
 
   /**

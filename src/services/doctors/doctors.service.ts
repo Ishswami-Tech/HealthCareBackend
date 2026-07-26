@@ -172,85 +172,95 @@ export class DoctorsService {
         locationId: locationSegment,
       });
 
-    const result = await this.cacheService.cache(
-      cacheKey,
-      async () => {
-        return await this.databaseService.executeHealthcareRead(async client => {
-          const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-            user: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+    const fetchDoctorsFromDatabase = async () => {
+      return await this.databaseService.executeHealthcareRead(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          user: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+        };
+
+        const where: Record<string, unknown> = { role: 'DOCTOR' };
+
+        if (filters?.specialization) {
+          where['doctor'] = {
+            specialization: { contains: filters.specialization, mode: 'insensitive' },
           };
+        }
 
-          const where: Record<string, unknown> = { role: 'DOCTOR' };
+        // DEBUG: Log the where clause before query
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.DEBUG,
+          `getAllDoctors query - filters: ${JSON.stringify(filters)}, where clause: ${JSON.stringify(where)}`,
+          'DoctorsService'
+        );
 
-          if (filters?.specialization) {
-            where['doctor'] = {
-              specialization: { contains: filters.specialization, mode: 'insensitive' },
-            };
+        if (filters?.clinicId || filters?.locationId) {
+          if (!where['doctor']) {
+            where['doctor'] = {};
+          }
+          const doctorWhere = where['doctor'] as Record<string, unknown>;
+
+          const clinicsFilter: Record<string, unknown> = {};
+
+          if (filters.clinicId) {
+            clinicsFilter['clinicId'] = filters.clinicId;
           }
 
-          // DEBUG: Log the where clause before query
-          await this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.DEBUG,
-            `getAllDoctors query - filters: ${JSON.stringify(filters)}, where clause: ${JSON.stringify(where)}`,
-            'DoctorsService'
-          );
-
-          if (filters?.clinicId || filters?.locationId) {
-            if (!where['doctor']) {
-              where['doctor'] = {};
-            }
-            const doctorWhere = where['doctor'] as Record<string, unknown>;
-
-            const clinicsFilter: Record<string, unknown> = {};
-
-            if (filters.clinicId) {
-              clinicsFilter['clinicId'] = filters.clinicId;
-            }
-
-            if (filters.locationId) {
-              // Match doctors assigned specifically to this location OR not assigned to any specific location (clinic-wide)
-              clinicsFilter['OR'] = [{ locationId: filters.locationId }, { locationId: null }];
-            }
-
-            doctorWhere['clinics'] = {
-              some: clinicsFilter,
-            };
+          if (filters.locationId) {
+            // Match doctors assigned specifically to this location OR not assigned to any specific location (clinic-wide)
+            clinicsFilter['OR'] = [{ locationId: filters.locationId }, { locationId: null }];
           }
 
-          return await typedClient.user.findMany({
-            where: where as PrismaDelegateArgs,
-            include: {
-              doctor: true,
-            } as PrismaDelegateArgs,
-          } as PrismaDelegateArgs);
-        });
-      },
-      {
-        ttl: 86400,
-        enableSwr: true,
-        tags: [
-          'doctors',
-          `clinic:${clinicSegment}`,
-          `clinic:${clinicSegment}:doctors`,
-          `clinic:${clinicSegment}:doctors:spec:${specializationSegment}:loc:${locationSegment}`,
-        ],
-      }
-    );
+          doctorWhere['clinics'] = {
+            some: clinicsFilter,
+          };
+        }
+
+        return await typedClient.user.findMany({
+          where: where as PrismaDelegateArgs,
+          include: {
+            doctor: true,
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      });
+    };
+
+    const cacheOptions = {
+      ttl: 86400,
+      enableSwr: true,
+      tags: [
+        'doctors',
+        `clinic:${clinicSegment}`,
+        `clinic:${clinicSegment}:doctors`,
+        `clinic:${clinicSegment}:doctors:spec:${specializationSegment}:loc:${locationSegment}`,
+      ],
+    };
+
+    let result = await this.cacheService.cache(cacheKey, fetchDoctorsFromDatabase, cacheOptions);
+
+    if (Array.isArray(result) && result.length === 0) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'getAllDoctors cache returned no doctors, forcing direct database refresh',
+        'DoctorsService',
+        { filters, clinicSegment, specializationSegment, locationSegment }
+      );
+
+      result = await this.cacheService.cache(cacheKey, fetchDoctorsFromDatabase, {
+        ...cacheOptions,
+        forceRefresh: true,
+      });
+    }
 
     // DEBUG: Log the final result
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.DEBUG,
-      `getAllDoctors final result - count: ${result?.length || 0}`,
+      `getAllDoctors final result - count: ${Array.isArray(result) ? result.length : 0}`,
       'DoctorsService'
     );
 
-    if (!Array.isArray(result) || result.length > 0) {
-      return result;
-    }
-
-    // Empty array — don't cache (interceptor will skip writing [] to cache).
     return result;
   }
 }
