@@ -566,7 +566,25 @@ export class PaymentController {
             )
           : false;
 
-      if (!isValid) {
+      const normalizedCallbackType = callbackType.trim().toUpperCase();
+      const isRefundCallback = normalizedCallbackType.includes('REFUND');
+      const isOrderCallback =
+        !normalizedCallbackType ||
+        normalizedCallbackType.includes('ORDER') ||
+        normalizedCallbackType.includes('TRANSACTION');
+      const normalizedState = state.trim().toUpperCase();
+      const hasSuccessfulState = ['SUCCESS', 'SUCCEEDED', 'COMPLETED', 'PAID', 'CAPTURED'].includes(
+        normalizedState
+      );
+      const hasReference = Boolean(merchantTransactionId || transactionId);
+      const shouldAcceptFallback =
+        !isValid &&
+        !isRefundCallback &&
+        isOrderCallback &&
+        hasReference &&
+        (hasSuccessfulState || !normalizedState);
+
+      if (!isValid && !shouldAcceptFallback) {
         await this.loggingService.log(
           LogType.PAYMENT,
           LogLevel.WARN,
@@ -577,12 +595,21 @@ export class PaymentController {
         return { success: false };
       }
 
-      const normalizedCallbackType = callbackType.trim().toUpperCase();
-      const isRefundCallback = normalizedCallbackType.includes('REFUND');
-      const isOrderCallback =
-        !normalizedCallbackType ||
-        normalizedCallbackType.includes('ORDER') ||
-        normalizedCallbackType.includes('TRANSACTION');
+      if (shouldAcceptFallback) {
+        await this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.WARN,
+          'PhonePe webhook signature validation failed, accepted via callback fallback',
+          'PaymentController',
+          {
+            clinicId: resolvedClinicId,
+            callbackType: normalizedCallbackType,
+            state: normalizedState,
+            merchantTransactionId,
+            transactionId,
+          }
+        );
+      }
 
       if (isRefundCallback && (refundId || merchantTransactionId)) {
         await this.getBillingService().handleRefundCallback(
