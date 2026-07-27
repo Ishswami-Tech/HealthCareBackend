@@ -770,7 +770,7 @@ export class NotificationEventListener implements OnModuleInit {
 
   private typedEventService?: IEventService;
   private typedCommunicationService?: CommunicationService;
-  private appointmentNotificationService?: AppointmentNotificationService;
+  private appointmentNotificationService?: AppointmentNotificationService | undefined;
   private readonly appointmentNotificationDedup = new Map<string, number>();
   private readonly appointmentNotificationDedupTtlMs = 30_000;
 
@@ -802,9 +802,14 @@ export class NotificationEventListener implements OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
-    this.appointmentNotificationService = this.moduleRef.get(AppointmentNotificationService, {
-      strict: false,
-    });
+    try {
+      this.appointmentNotificationService = this.moduleRef.get(AppointmentNotificationService, {
+        strict: false,
+      });
+    } catch {
+      // AppointmentNotificationService is not available in this module context (e.g., worker bootstrap)
+      this.appointmentNotificationService = undefined;
+    }
 
     await this.loggingService.log(
       LogType.SYSTEM,
