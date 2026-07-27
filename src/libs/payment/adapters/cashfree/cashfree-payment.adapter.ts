@@ -161,6 +161,57 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
     };
   }
 
+  private getCashfreeMode(): 'sandbox' | 'production' {
+    return this.baseUrl.includes('api.cashfree.com') ? 'production' : 'sandbox';
+  }
+
+  /**
+   * Hosted checkout action URL used by form-POST redirects (required for reliable iOS Safari).
+   * Docs: https://www.cashfree.com/docs/payments/online/web/custom-checkout-ios
+   */
+  private buildCheckoutSessionUrl(paymentSessionId: string): string {
+    const base =
+      this.getCashfreeMode() === 'production'
+        ? 'https://api.cashfree.com/pg/view/sessions/checkout'
+        : 'https://sandbox.cashfree.com/pg/view/sessions/checkout';
+    return `${base}?payment_session_id=${encodeURIComponent(paymentSessionId)}`;
+  }
+
+  /**
+   * Cashfree return_url constraints:
+   * - max 250 characters (excessively long URLs cause hosted checkout load failures)
+   * - keep order_id context so the app can verify after redirect
+   */
+  private normalizeCashfreeReturnUrl(returnUrl: string, orderId: string): string {
+    try {
+      const url = new URL(returnUrl);
+      const clinicId = url.searchParams.get('clinicId') || '';
+      const provider = url.searchParams.get('provider') || 'cashfree';
+      const appointmentId = url.searchParams.get('appointmentId') || '';
+      const appointmentType = url.searchParams.get('appointmentType') || '';
+
+      const compact = new URL(`${url.origin}${url.pathname}`);
+      if (clinicId) compact.searchParams.set('clinicId', clinicId);
+      compact.searchParams.set('provider', provider);
+      compact.searchParams.set('orderId', orderId);
+      compact.searchParams.set('order_id', orderId);
+      if (appointmentId) compact.searchParams.set('appointmentId', appointmentId);
+      if (appointmentType) compact.searchParams.set('appointmentType', appointmentType);
+
+      let normalized = compact.toString();
+      if (normalized.length > 250) {
+        const minimal = new URL(`${url.origin}${url.pathname}`);
+        if (clinicId) minimal.searchParams.set('clinicId', clinicId);
+        minimal.searchParams.set('provider', 'cashfree');
+        minimal.searchParams.set('orderId', orderId);
+        normalized = minimal.toString();
+      }
+      return normalized.length <= 250 ? normalized : normalized.slice(0, 250);
+    } catch {
+      return returnUrl.length <= 250 ? returnUrl : returnUrl.slice(0, 250);
+    }
+  }
+
   private getHttpStatus(error: unknown): number | undefined {
     if (!error || typeof error !== 'object') {
       return undefined;
@@ -284,9 +335,14 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
       // Accept all URL key variants sent by BillingService
       // BillingService uses: redirectUrl, callbackUrl
       // Legacy/direct callers may use: returnUrl, notifyUrl
-      const returnUrl =
+      const rawReturnUrl =
         (options.metadata?.['returnUrl'] as string | undefined) ||
         (options.metadata?.['redirectUrl'] as string | undefined);
+      // Cashfree caps return_url at 250 chars. Keep only essential query params so
+      // checkout can redirect back reliably on mobile Safari after bank OTP.
+      const returnUrl = rawReturnUrl
+        ? this.normalizeCashfreeReturnUrl(rawReturnUrl, orderId)
+        : undefined;
       const notifyUrl =
         (options.metadata?.['notifyUrl'] as string | undefined) ||
         (options.metadata?.['callbackUrl'] as string | undefined) ||
@@ -402,12 +458,19 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
       );
       const orderRecord = data as unknown as Record<string, unknown>;
       const orderMeta = (orderRecord['order_meta'] as Record<string, unknown> | undefined) || {};
-      const redirectUrl =
+      const paymentLink =
         (typeof orderMeta['payment_link'] === 'string' ? orderMeta['payment_link'] : undefined) ||
         (typeof orderRecord['payment_link'] === 'string' ? orderRecord['payment_link'] : undefined);
+      const mode = this.getCashfreeMode();
+      const gatewayRedirectUrl = data.payment_session_id
+        ? this.buildCheckoutSessionUrl(data.payment_session_id)
+        : paymentLink;
       pendingResult.metadata = {
         ...(data.payment_session_id ? { paymentSessionId: data.payment_session_id } : {}),
-        ...(redirectUrl ? { redirectUrl } : {}),
+        ...(gatewayRedirectUrl ? { redirectUrl: gatewayRedirectUrl, gatewayRedirectUrl } : {}),
+        ...(paymentLink ? { paymentLink } : {}),
+        mode,
+        environment: mode,
         orderStatus: data.order_status,
       };
       pendingResult.providerResponse = data;

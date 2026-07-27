@@ -2626,6 +2626,7 @@ export class BillingService implements OnModuleInit {
     const providerName = paymentIntentResult.provider || '';
     const providerResponse = this.asRecord(paymentIntentResult.providerResponse) || {};
     const gatewayRedirectUrl =
+      this.asSafeString(paymentIntentResult.metadata?.['gatewayRedirectUrl']) ||
       this.asSafeString(paymentIntentResult.metadata?.['redirectUrl']) ||
       this.asSafeString(providerResponse['redirectUrl']) ||
       this.asSafeString(providerResponse['redirect_url']);
@@ -2656,11 +2657,12 @@ export class BillingService implements OnModuleInit {
       clinicId: subscription.clinicId,
       invoiceId: invoice.id,
       subscriptionId: subscription.id,
+      // Keep gateway URL on redirectUrl so clients never fall back to unpaid callback.
       gatewayRedirectUrl,
+      redirectUrl: gatewayRedirectUrl || handoff.callbackUrl,
       handoffToken: handoff.token,
       handoffCallbackUrl: handoff.callbackUrl,
       callbackUrl: handoff.callbackUrl,
-      redirectUrl: handoff.callbackUrl,
     };
 
     // Create payment record
@@ -2684,7 +2686,8 @@ export class BillingService implements OnModuleInit {
         gstRatePercent: this.getGstRatePercent(),
         handoffToken: handoff.token,
         handoffCallbackUrl: handoff.callbackUrl,
-        redirectUrl: handoff.callbackUrl,
+        gatewayRedirectUrl,
+        redirectUrl: gatewayRedirectUrl || handoff.callbackUrl,
       },
     });
 
@@ -2897,6 +2900,7 @@ export class BillingService implements OnModuleInit {
     const providerName = paymentIntentResult.provider || '';
     const providerResponse = this.asRecord(paymentIntentResult.providerResponse) || {};
     const gatewayRedirectUrl =
+      this.asSafeString(paymentIntentResult.metadata?.['gatewayRedirectUrl']) ||
       this.asSafeString(paymentIntentResult.metadata?.['redirectUrl']) ||
       this.asSafeString(providerResponse['redirectUrl']) ||
       this.asSafeString(providerResponse['redirect_url']);
@@ -2936,10 +2940,10 @@ export class BillingService implements OnModuleInit {
       totalAmount: appointmentTotalAmount,
       gstRatePercent: this.getGstRatePercent(),
       gatewayRedirectUrl,
+      redirectUrl: gatewayRedirectUrl || handoff.callbackUrl,
       handoffToken: handoff.token,
       handoffCallbackUrl: handoff.callbackUrl,
       callbackUrl: handoff.callbackUrl,
-      redirectUrl: handoff.callbackUrl,
     };
 
     const paymentMetadata = {
@@ -2951,7 +2955,8 @@ export class BillingService implements OnModuleInit {
       serviceType: appointmentType,
       handoffToken: handoff.token,
       handoffCallbackUrl: handoff.callbackUrl,
-      redirectUrl: handoff.callbackUrl,
+      gatewayRedirectUrl,
+      redirectUrl: gatewayRedirectUrl || handoff.callbackUrl,
     };
 
     let payment: PaymentWithRelations;
@@ -3095,6 +3100,7 @@ export class BillingService implements OnModuleInit {
     const providerName = paymentIntentResult.provider || '';
     const providerResponse = this.asRecord(paymentIntentResult.providerResponse) || {};
     const gatewayRedirectUrl =
+      this.asSafeString(paymentIntentResult.metadata?.['gatewayRedirectUrl']) ||
       this.asSafeString(paymentIntentResult.metadata?.['redirectUrl']) ||
       this.asSafeString(providerResponse['redirectUrl']) ||
       this.asSafeString(providerResponse['redirect_url']);
@@ -3125,10 +3131,10 @@ export class BillingService implements OnModuleInit {
       clinicId: invoice.clinicId,
       invoiceId: invoice.id,
       gatewayRedirectUrl,
+      redirectUrl: gatewayRedirectUrl || handoff.callbackUrl,
       handoffToken: handoff.token,
       handoffCallbackUrl: handoff.callbackUrl,
       callbackUrl: handoff.callbackUrl,
-      redirectUrl: handoff.callbackUrl,
     };
 
     await this.createPayment({
@@ -3146,7 +3152,8 @@ export class BillingService implements OnModuleInit {
         serviceType: 'INVOICE',
         handoffToken: handoff.token,
         handoffCallbackUrl: handoff.callbackUrl,
-        redirectUrl: handoff.callbackUrl,
+        gatewayRedirectUrl,
+        redirectUrl: gatewayRedirectUrl || handoff.callbackUrl,
       },
     });
 
