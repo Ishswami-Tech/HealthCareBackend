@@ -25,6 +25,7 @@ import { SessionModule } from '@core/session/session.module';
 import { EventsModule } from '@infrastructure/events/events.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ErrorsModule } from '@core/errors';
+import { CommunicationModule } from '@communication/communication.module';
 import {
   GracefulShutdownService,
   ProcessErrorHandlersService,
@@ -62,6 +63,7 @@ import type { ApplicationConfig } from '@core/types/framework.types';
     }),
     ResilienceModule, // Provides GracefulShutdownService and ProcessErrorHandlersService
     EventsModule, // Central event system - required for queue event emissions
+    CommunicationModule,
     QueueModule.forRoot(),
     // GuardsModule provides JwtAuthGuard and configures JwtModule (JwtService) globally
     // Required for worker queue processors/controllers that use JwtAuthGuard

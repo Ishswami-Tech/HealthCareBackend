@@ -230,14 +230,14 @@ export class PaymentService {
       return normalizedDemoResult;
     }
 
-    const fallbackProviders = config.payment.fallback?.map(f => f.provider) || [];
-    const providersToTry: PaymentProvider[] = Array.from(
-      new Set([
-        ...(provider ? [provider] : []),
-        config.payment.primary.provider,
-        ...fallbackProviders,
-      ])
-    ).filter(candidate => !this.isProviderTemporarilyFailed(clinicId, candidate));
+    const providersToTry: PaymentProvider[] = provider
+      ? [provider]
+      : Array.from(
+          new Set([
+            config.payment.primary.provider,
+            ...(config.payment.fallback?.map(f => f.provider) || []),
+          ])
+        ).filter(candidate => !this.isProviderTemporarilyFailed(clinicId, candidate));
 
     if (providersToTry.length === 0) {
       throw new Error(`No available payment providers for clinic: ${clinicId}`);
@@ -248,7 +248,7 @@ export class PaymentService {
       LogLevel.INFO,
       `Provider order for payment intent: ${providersToTry.join(' -> ')}`,
       'PaymentService',
-      { clinicId, requestedProvider: provider }
+      { clinicId, requestedProvider: provider, strictProvider: Boolean(provider) }
     );
 
     let lastError: Error | null = null;

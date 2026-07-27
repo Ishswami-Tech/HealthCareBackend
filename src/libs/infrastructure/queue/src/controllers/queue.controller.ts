@@ -30,6 +30,7 @@ import type {
 import { QueueService } from '../queue.service';
 import { HEALTHCARE_QUEUE } from '../queue.constants';
 import { JobType } from '@core/types/queue.types';
+import type { DetailedQueueMetrics } from '@core/types/queue.types';
 import { AppointmentQueueService } from '../services/appointment-queue.service';
 import { formatDateKeyInIST, nowIso } from '../../../../utils/date-time.util';
 
@@ -172,6 +173,24 @@ export type NotificationQueueLike = {
   createdAt?: string;
   updatedAt?: string;
   raw?: Record<string, unknown>;
+};
+
+type QueueDashboardJobSummary = {
+  id: string;
+  name: string;
+  state: string;
+  timestamp: string | null;
+  attemptsMade: number;
+  priority: number | null;
+  progress: number | string | null;
+  dataPreview: Record<string, unknown>;
+};
+
+type QueueDashboardQueueSummary = {
+  queueName: string;
+  health: Record<string, unknown>;
+  metrics: DetailedQueueMetrics;
+  jobs: QueueDashboardJobSummary[];
 };
 
 @ApiTags('queue')
@@ -696,6 +715,98 @@ export class QueueController {
     };
   }
 
+  @Get('dashboard')
+  @Roles(
+    Role.DOCTOR,
+    Role.RECEPTIONIST,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN,
+    Role.CLINIC_LOCATION_HEAD
+  )
+  @ApiOperation({ summary: 'Queue dashboard summary' })
+  async dashboard(
+    @Query() query: { queueName?: string; limit?: string },
+    @Req() req: ClinicAuthenticatedRequest
+  ): Promise<{ success: true; data: Record<string, unknown> }> {
+    const clinicId = this.requireClinicId(req);
+    const queueNames = this.resolveQueueNames(query.queueName);
+    const limit = Math.min(Math.max(this.parseLimit(query.limit, 5), 1), 10);
+    const previewStates: Array<'waiting' | 'active' | 'delayed' | 'failed'> = [
+      'waiting',
+      'active',
+      'delayed',
+      'failed',
+    ];
+
+    const queues: QueueDashboardQueueSummary[] = await Promise.all(
+      queueNames.map(async queueName => {
+        const [health, metrics, jobsByState] = await Promise.all([
+          this.queueService.getQueueHealth(queueName),
+          this.queueService.getQueueMetrics(queueName),
+          Promise.all(
+            previewStates.map(async state => {
+              const jobs = await this.queueService.getJobs(queueName, { status: [state] });
+              return {
+                state,
+                jobs,
+              };
+            })
+          ),
+        ]);
+
+        const jobs = await Promise.all(
+          jobsByState.flatMap(({ state, jobs }) =>
+            jobs
+              .slice(0, Math.ceil(limit / previewStates.length))
+              .map(job => this.queueDashboardJob(job, state))
+          )
+        );
+
+        return {
+          queueName,
+          health: health as Record<string, unknown>,
+          metrics: metrics as DetailedQueueMetrics,
+          jobs,
+        };
+      })
+    );
+
+    const totals = queues.reduce(
+      (accumulator, queue) => {
+        const metrics = queue.metrics;
+        accumulator.queues += 1;
+        accumulator.jobs += queue.jobs.length;
+        accumulator.waiting += Number(metrics.waiting || 0);
+        accumulator.active += Number(metrics.active || 0);
+        accumulator.delayed += Number(metrics.delayed || 0);
+        accumulator.failed += Number(metrics.failed || 0);
+        accumulator.completed += Number(metrics.completed || 0);
+        return accumulator;
+      },
+      {
+        queues: 0,
+        jobs: 0,
+        waiting: 0,
+        active: 0,
+        delayed: 0,
+        failed: 0,
+        completed: 0,
+      }
+    );
+
+    return {
+      success: true,
+      data: {
+        clinicId,
+        generatedAt: nowIso(),
+        requestedQueueName: query.queueName || null,
+        totals,
+        queues,
+        ...this.queueDashboardMeta(),
+      },
+    };
+  }
+
   @Post('estimate-wait-time')
   @Roles(
     Role.DOCTOR,
@@ -1162,6 +1273,56 @@ export class QueueController {
   private resolveQueueNames(queueName?: string): string[] {
     const names = this.queueService.getQueueNames();
     return queueName && names.includes(queueName) ? [queueName] : names;
+  }
+
+  private async queueDashboardJob(
+    job: Job,
+    fallbackState: string
+  ): Promise<QueueDashboardJobSummary> {
+    const data = this.jobData(job);
+    const stateValue = typeof job.getState === 'function' ? await job.getState() : fallbackState;
+    const state = this.asString(stateValue) || fallbackState || 'unknown';
+    const previewKeys = [
+      'appointmentId',
+      'patientId',
+      'doctorId',
+      'clinicId',
+      'queueType',
+      'jobType',
+      'status',
+      'type',
+      'module',
+      'family',
+      'source',
+      'locationId',
+      'paymentId',
+      'consultationId',
+      'notificationId',
+    ] as const;
+
+    const dataPreview: Record<string, unknown> = {};
+    for (const key of previewKeys) {
+      const value = data[key];
+      if (this.isPreviewScalar(value)) {
+        dataPreview[key] = value;
+      }
+    }
+
+    return {
+      id: this.asString(job.id) || '',
+      name: this.asString(job.name) || 'Job',
+      state,
+      timestamp: typeof job.timestamp === 'number' ? new Date(job.timestamp).toISOString() : null,
+      attemptsMade: typeof job.attemptsMade === 'number' ? job.attemptsMade : 0,
+      priority: typeof job.opts?.priority === 'number' ? job.opts.priority : null,
+      progress:
+        typeof job.progress === 'number' || typeof job.progress === 'string' ? job.progress : null,
+      dataPreview,
+    };
+  }
+
+  private isPreviewScalar(value: unknown): value is string | number | boolean {
+    return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
   }
 
   private parseStatuses(status?: string): string[] {

@@ -519,6 +519,14 @@ export class AppointmentsService {
     try {
       const todayKey = formatDateKeyInIST(new Date());
 
+      await this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.INFO,
+        'Doctor daily appointment summary cron started',
+        'AppointmentsService',
+        { todayKey }
+      );
+
       const doctorClinics = await this.databaseService.executeHealthcareRead<
         Array<{ doctor: { id: string; userId: string }; clinicId: string }>
       >(async client => {
@@ -578,6 +586,19 @@ export class AppointmentsService {
           );
         }
       }
+
+      await this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.INFO,
+        'Doctor daily appointment summary cron resolved doctor clinics',
+        'AppointmentsService',
+        {
+          todayKey,
+          totalDoctors: doctorClinics.length,
+          enqueuedCount,
+          skipCount,
+        }
+      );
 
       await this.loggingService.log(
         LogType.NOTIFICATION,
