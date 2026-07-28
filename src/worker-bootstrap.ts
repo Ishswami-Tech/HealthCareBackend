@@ -112,12 +112,18 @@ async function bootstrap() {
       throw new Error('Worker application failed to initialize');
     }
 
+    console.error('[WORKER-DIAG] NestFactory.create returned, app.init() starting');
+
     // Get service container for type-safe service retrieval
     const serviceContainer = lifecycleManager.getServiceContainer();
+    console.error('[WORKER-DIAG] serviceContainer obtained');
+
     const configService = await serviceContainer.getService<ConfigService>(ConfigService);
+    console.error('[WORKER-DIAG] ConfigService resolved');
 
     // Initialize worker service
     await app.init();
+    console.error('[WORKER-DIAG] app.init() completed');
 
     // Try to use LoggingService, fallback to console if not available
     try {
