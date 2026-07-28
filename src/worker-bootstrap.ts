@@ -18,7 +18,6 @@ import { DatabaseModule } from '@infrastructure/database/database.module'; // Di
 import { CacheModule } from '@infrastructure/cache/cache.module';
 import { QueueModule } from '@infrastructure/queue';
 import { LoggingModule } from '@infrastructure/logging';
-import type { LoggingService } from '@infrastructure/logging';
 import { ResilienceModule } from '@core/resilience/resilience.module';
 import { GuardsModule } from '@core/guards/guards.module';
 import { SessionModule } from '@core/session/session.module';
@@ -26,10 +25,6 @@ import { EventsModule } from '@infrastructure/events/events.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ErrorsModule } from '@core/errors';
 import { CommunicationModule } from '@communication/communication.module';
-import {
-  GracefulShutdownService,
-  ProcessErrorHandlersService,
-} from '@core/resilience/graceful-shutdown.service';
 import { createFrameworkAdapter } from '@infrastructure/framework/adapters/fastify.adapter';
 import { ApplicationLifecycleManager } from '@infrastructure/framework/wrappers/application-lifecycle.manager';
 import type { ApplicationConfig } from '@core/types/framework.types';
@@ -78,7 +73,6 @@ class WorkerModule {}
 
 async function bootstrap() {
   let app: INestApplication | null = null;
-  let logService: LoggingService | null = null;
 
   try {
     // Use framework adapter to create application (framework-agnostic approach)
@@ -125,224 +119,53 @@ async function bootstrap() {
     await app.init();
     console.error('[WORKER-DIAG] app.init() completed');
 
-    // Try to use LoggingService, fallback to console if not available
-    try {
-      const LoggingServiceClass = (await import('@infrastructure/logging')).LoggingService;
-      logService = await serviceContainer.getService<LoggingService>(LoggingServiceClass);
-      const { LogType, LogLevel } = await import('@core/types');
+    // Log startup info via console — LoggingService will be initialized
+    // by NestJS onModuleInit hooks and available to queue processors
+    console.error('Worker initialized successfully');
+    const cacheProvider = configService.getCacheProvider();
+    const cacheHost = configService.getCacheHost();
+    const cachePort = configService.getCachePort();
+    console.error(
+      `Processing queues for ${configService.get<string>('SERVICE_NAME', 'clinic')} domain`
+    );
+    console.error(
+      `${cacheProvider === 'dragonfly' ? 'Dragonfly' : cacheProvider === 'redis' ? 'Redis' : 'Memory'} Connection: ${cacheHost}:${cachePort}`
+    );
 
-      if (logService) {
-        // Use ConfigService for all cache configuration (single source of truth)
-        const cacheProvider = configService.getCacheProvider();
-        const cacheHost = configService.getCacheHost();
-        const cachePort = configService.getCachePort();
-
-        await logService.log(
-          LogType.SYSTEM,
-          LogLevel.INFO,
-          'Healthcare Worker initialized successfully',
-          'WorkerBootstrap',
-          {
-            serviceName: configService.get<string>('SERVICE_NAME', 'clinic'),
-            cacheProvider,
-            cacheHost,
-            cachePort,
-          }
-        );
-
-        // Log additional startup information through LoggingService
-        await logService.log(
-          LogType.SYSTEM,
-          LogLevel.INFO,
-          `Processing queues for ${configService.get<string>('SERVICE_NAME', 'clinic')} domain`,
-          'WorkerBootstrap',
-          {
-            serviceName: configService.get<string>('SERVICE_NAME', 'clinic'),
-          }
-        );
-
-        await logService.log(
-          LogType.SYSTEM,
-          LogLevel.INFO,
-          `${cacheProvider === 'dragonfly' ? 'Dragonfly' : cacheProvider === 'redis' ? 'Redis' : 'Memory'} Connection: ${cacheHost}:${cachePort}`,
-          'WorkerBootstrap',
-          {
-            cacheProvider,
-            cacheHost,
-            cachePort,
-          }
-        );
-      }
-    } catch (error) {
-      // Fallback logging only if LoggingService completely fails
-      // This is acceptable as a last resort fallback when LoggingService is unavailable
-      // These logs will NOT appear in logger dashboard, only in terminal
-      console.error('✅ Healthcare Worker initialized successfully');
-      console.error(
-        `🔄 Processing queues for ${configService.get<string>('SERVICE_NAME', 'clinic')} domain`
-      );
-      // Use ConfigService for all cache configuration (single source of truth)
-      const cacheProvider = configService.getCacheProvider();
-      const cacheHost = configService.getCacheHost();
-      const cachePort = configService.getCachePort();
-      console.error(
-        `📊 ${cacheProvider === 'dragonfly' ? 'Dragonfly' : cacheProvider === 'redis' ? 'Redis' : 'Memory'} Connection: ${cacheHost}:${cachePort}`
-      );
-      // Log the error that prevented LoggingService from being used
-      if (error instanceof Error) {
-        console.error(`⚠️ LoggingService initialization failed: ${error.message}`);
-      }
-    }
-
-    // Setup process error handlers using ProcessErrorHandlersService
-    if (logService && app) {
+    // Setup graceful shutdown handlers
+    const shutdownHandler = async (signal: string): Promise<void> => {
+      console.error(`Received ${signal}, shutting down worker gracefully...`);
       try {
-        const processErrorHandlersService =
-          await serviceContainer.getService<ProcessErrorHandlersService>(
-            ProcessErrorHandlersService
-          );
-        processErrorHandlersService.setupErrorHandlers();
-      } catch (error) {
-        // If service is not available, log and continue
-        if (logService) {
-          const { LogType, LogLevel } = await import('@core/types');
-          await logService.log(
-            LogType.ERROR,
-            LogLevel.WARN,
-            'ProcessErrorHandlersService not available, using fallback handlers',
-            'WorkerBootstrap',
-            { error: error instanceof Error ? error.message : String(error) }
-          );
+        if (app) {
+          await app.close();
         }
+        process.exit(0);
+      } catch {
+        console.error(`Error during ${signal} shutdown`);
+        process.exit(1);
       }
-    }
+    };
 
-    // Setup graceful shutdown using GracefulShutdownService
-    if (app && logService) {
-      try {
-        const gracefulShutdownService =
-          await serviceContainer.getService<GracefulShutdownService>(GracefulShutdownService);
-        gracefulShutdownService.setupShutdownHandlers(app, null, null, null);
-      } catch (error) {
-        // If service is not available, use fallback shutdown handler
-        if (logService) {
-          const { LogType, LogLevel } = await import('@core/types');
-          await logService.log(
-            LogType.ERROR,
-            LogLevel.WARN,
-            'GracefulShutdownService not available, using fallback shutdown handler',
-            'WorkerBootstrap',
-            { error: error instanceof Error ? error.message : String(error) }
-          );
-        }
+    process.on('SIGTERM', () => {
+      void shutdownHandler('SIGTERM');
+    });
 
-        // Fallback shutdown handler
-        const shutdownHandler = async (signal: string): Promise<void> => {
-          if (logService) {
-            const { LogType, LogLevel } = await import('@core/types');
-            await logService.log(
-              LogType.SYSTEM,
-              LogLevel.WARN,
-              `Received ${signal}, shutting down worker gracefully...`,
-              'WorkerBootstrap',
-              { signal }
-            );
-          } else {
-            // Fallback logging only if LoggingService is not available
-            // These logs will NOT appear in logger dashboard, only in terminal
-            console.error(`📤 Received ${signal}, shutting down worker gracefully...`);
-          }
-          try {
-            if (app) {
-              await app.close();
-            }
-            process.exit(0);
-          } catch (shutdownError) {
-            if (logService) {
-              const { LogType, LogLevel } = await import('@core/types');
-              await logService.log(
-                LogType.ERROR,
-                LogLevel.ERROR,
-                `Error during ${signal} shutdown`,
-                'WorkerBootstrap',
-                {
-                  signal,
-                  error:
-                    shutdownError instanceof Error ? shutdownError.message : String(shutdownError),
-                  stack: shutdownError instanceof Error ? shutdownError.stack : undefined,
-                }
-              );
-            } else {
-              // Fallback logging only if LoggingService is not available
-              // These logs will NOT appear in logger dashboard, only in terminal
-              console.error(`❌ Error during ${signal} shutdown:`, shutdownError);
-            }
-            process.exit(1);
-          }
-        };
-
-        process.on('SIGTERM', () => {
-          void shutdownHandler('SIGTERM');
-        });
-
-        process.on('SIGINT', () => {
-          void shutdownHandler('SIGINT');
-        });
-      }
-    }
+    process.on('SIGINT', () => {
+      void shutdownHandler('SIGINT');
+    });
 
     // Health check endpoint for Docker
     if (process.argv.includes('--healthcheck')) {
-      if (logService) {
-        const { LogType, LogLevel } = await import('@core/types');
-        await logService.log(
-          LogType.SYSTEM,
-          LogLevel.INFO,
-          'Worker health check passed',
-          'WorkerBootstrap',
-          { healthCheck: true }
-        );
-      } else {
-        // Fallback logging only if LoggingService is not available
-        // These logs will NOT appear in logger dashboard, only in terminal
-        console.error('✅ Worker health check passed');
-      }
+      console.error('Worker health check passed');
       process.exit(0);
     }
 
-    // Keep the process alive
-    if (logService) {
-      const { LogType, LogLevel } = await import('@core/types');
-      await logService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'Worker is running and processing queues...',
-        'WorkerBootstrap',
-        { status: 'running' }
-      );
-    } else {
-      // Fallback logging only if LoggingService is not available
-      // These logs will NOT appear in logger dashboard, only in terminal
-      console.error('🔄 Worker is running and processing queues...');
-    }
+    console.error('Worker is running and processing queues...');
   } catch (error) {
-    if (logService) {
-      const { LogType, LogLevel } = await import('@core/types');
-      await logService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        'Worker failed to start',
-        'WorkerBootstrap',
-        {
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        }
-      );
-    } else {
-      // Fallback logging only if LoggingService is not available
-      // These logs will NOT appear in logger dashboard, only in terminal
-      console.error('❌ Worker failed to start:', error);
-    }
+    console.error(
+      'Worker failed to start:',
+      error instanceof Error ? error.message : String(error)
+    );
     process.exit(1);
   }
 }
