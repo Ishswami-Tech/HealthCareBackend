@@ -1396,89 +1396,24 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       return this.prismaClient;
     }
 
-    // If onModuleInit hasn't completed yet, check if PrismaClient files are generated
-    // and wait a bit for onModuleInit to complete (allow 60s total during heavy startup)
-    const maxRetries = 20;
-    const retryDelay = 1500; // 1.5 seconds
-
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      // Check if shared instance was created by onModuleInit
-      if (PrismaService.sharedPrismaClient) {
-        this.prismaClient = PrismaService.sharedPrismaClient;
-        return this.prismaClient;
-      }
-
-      // Check if PrismaClient has been generated (files exist)
-      if (!PrismaService.isPrismaClientGenerated()) {
-        if (attempt < maxRetries - 1) {
-          if (this.loggingService) {
-            void this.loggingService.log(
-              LogType.DATABASE,
-              LogLevel.WARN,
-              `PrismaClient not generated yet (attempt ${attempt + 1}/${maxRetries}), waiting ${retryDelay}ms...`,
-              'PrismaService.getRawPrismaClient'
-            );
-          }
-          // Busy wait - this ensures we wait before retrying
-          const startWait = Date.now();
-          while (Date.now() - startWait < retryDelay) {
-            // Busy wait - this ensures we wait before retrying
-            // In practice, this should only happen during startup
-          }
-          continue; // Retry
-        } else {
-          throw new HealthcareError(
-            ErrorCode.DATABASE_CONNECTION_FAILED,
-            `PrismaClient has not been generated after ${maxRetries} attempts. Please ensure "prisma generate" has been run.`,
-            undefined,
-            { attempts: maxRetries },
-            'PrismaService.getRawPrismaClient'
-          );
-        }
-      }
-
-      // Files exist but instance not created yet - onModuleInit is still running
-      // Check if delegates are initialized (they're initialized before connection)
-      if (PrismaService.isFullyInitialized && PrismaService.sharedPrismaClient) {
-        this.prismaClient = PrismaService.sharedPrismaClient;
-        return this.prismaClient;
-      }
-
-      // Wait a bit more for onModuleInit to complete
-      if (attempt < maxRetries - 1) {
-        if (this.loggingService) {
-          void this.loggingService.log(
-            LogType.DATABASE,
-            LogLevel.WARN,
-            `PrismaClient files found but instance not initialized yet (attempt ${attempt + 1}/${maxRetries}), waiting for onModuleInit to complete...`,
-            'PrismaService.getRawPrismaClient'
-          );
-        }
-        // Busy wait for onModuleInit to complete
-        const startWait = Date.now();
-        while (Date.now() - startWait < retryDelay) {
-          // Check if shared instance was created during wait
-          if (PrismaService.sharedPrismaClient) {
-            this.prismaClient = PrismaService.sharedPrismaClient;
-            return this.prismaClient;
-          }
-          // Also check if delegates are initialized
-          if (PrismaService.isFullyInitialized && PrismaService.sharedPrismaClient) {
-            this.prismaClient = PrismaService.sharedPrismaClient;
-            return this.prismaClient;
-          }
-        }
-        continue; // Retry
-      }
-    }
-
-    // If we get here, onModuleInit hasn't completed after all retries
-    // This should not happen in normal operation, but provide a helpful error
+    // If PrismaClient is not yet initialized, throw immediately.
+    // This method is synchronous and must NOT block the event loop with busy-wait loops —
+    // doing so creates a deadlock during NestJS module initialization because
+    // onModuleInit cannot run until all constructors finish, but constructors
+    // waiting here prevent onModuleInit from ever executing.
+    //
+    // Callers should use isReady() / waitUntilReady() (async) instead,
+    // or ensure PrismaClient is initialized before calling this method.
     throw new HealthcareError(
       ErrorCode.DATABASE_CONNECTION_FAILED,
-      `PrismaClient instance not available after ${maxRetries} attempts. onModuleInit may not have completed yet. Please wait for application initialization to complete.`,
+      `PrismaClient instance is not yet initialized. sharedPrismaClient is null. ` +
+        `This typically means onModuleInit has not completed yet. ` +
+        `Use isReady() or waitUntilReady() to check initialization status asynchronously.`,
       undefined,
-      { attempts: maxRetries, isFullyInitialized: PrismaService.isFullyInitialized },
+      {
+        isSharedClientSet: !!PrismaService.sharedPrismaClient,
+        isFullyInitialized: PrismaService.isFullyInitialized,
+      },
       'PrismaService.getRawPrismaClient'
     );
   }
