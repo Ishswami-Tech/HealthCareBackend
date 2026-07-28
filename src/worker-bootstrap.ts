@@ -18,6 +18,7 @@ import { DatabaseModule } from '@infrastructure/database/database.module'; // Di
 import { CacheModule } from '@infrastructure/cache/cache.module';
 import { QueueModule } from '@infrastructure/queue';
 import { LoggingModule } from '@infrastructure/logging';
+import type { LoggingService } from '@infrastructure/logging';
 import { ResilienceModule } from '@core/resilience/resilience.module';
 import { GuardsModule } from '@core/guards/guards.module';
 import { SessionModule } from '@core/session/session.module';
@@ -27,6 +28,10 @@ import { ErrorsModule } from '@core/errors';
 import { CommunicationModule } from '@communication/communication.module';
 import { createFrameworkAdapter } from '@infrastructure/framework/adapters/fastify.adapter';
 import { ApplicationLifecycleManager } from '@infrastructure/framework/wrappers/application-lifecycle.manager';
+import {
+  GracefulShutdownService,
+  ProcessErrorHandlersService,
+} from '@core/resilience/graceful-shutdown.service';
 import type { ApplicationConfig } from '@core/types/framework.types';
 
 @Module({
@@ -106,31 +111,89 @@ async function bootstrap() {
       throw new Error('Worker application failed to initialize');
     }
 
-    console.error('[WORKER-DIAG] NestFactory.create returned, app.init() starting');
-
     // Get service container for type-safe service retrieval
     const serviceContainer = lifecycleManager.getServiceContainer();
-    console.error('[WORKER-DIAG] serviceContainer obtained');
 
     const configService = await serviceContainer.getService<ConfigService>(ConfigService);
-    console.error('[WORKER-DIAG] ConfigService resolved');
 
     // Initialize worker service
     await app.init();
-    console.error('[WORKER-DIAG] app.init() completed');
 
-    // Log startup info via console — LoggingService will be initialized
-    // by NestJS onModuleInit hooks and available to queue processors
-    console.error('Worker initialized successfully');
-    const cacheProvider = configService.getCacheProvider();
-    const cacheHost = configService.getCacheHost();
-    const cachePort = configService.getCachePort();
-    console.error(
-      `Processing queues for ${configService.get<string>('SERVICE_NAME', 'clinic')} domain`
-    );
-    console.error(
-      `${cacheProvider === 'dragonfly' ? 'Dragonfly' : cacheProvider === 'redis' ? 'Redis' : 'Memory'} Connection: ${cacheHost}:${cachePort}`
-    );
+    // Log startup info via LoggingService (fire-and-forget so cache writes don't block startup)
+    // All logs route through cache + /logger dashboard for unified observability
+    try {
+      const importedLogging = await import('@infrastructure/logging');
+      const { LogType, LogLevel } = await import('@core/types');
+      const logService = await serviceContainer.getService<LoggingService>(
+        importedLogging.LoggingService
+      );
+
+      const cacheProvider = configService.getCacheProvider();
+      const cacheHost = configService.getCacheHost();
+      const cachePort = configService.getCachePort();
+
+      void logService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Healthcare Worker initialized successfully',
+        'WorkerBootstrap',
+        {
+          serviceName: configService.get<string>('SERVICE_NAME', 'clinic'),
+          cacheProvider,
+          cacheHost,
+          cachePort,
+        }
+      );
+
+      void logService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Processing queues for ${configService.get<string>('SERVICE_NAME', 'clinic')} domain`,
+        'WorkerBootstrap',
+        {
+          serviceName: configService.get<string>('SERVICE_NAME', 'clinic'),
+        }
+      );
+
+      void logService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `${cacheProvider === 'dragonfly' ? 'Dragonfly' : cacheProvider === 'redis' ? 'Redis' : 'Memory'} Connection: ${cacheHost}:${cachePort}`,
+        'WorkerBootstrap',
+        {
+          cacheProvider,
+          cacheHost,
+          cachePort,
+        }
+      );
+
+      // Setup resilience services for production stability
+      try {
+        const gracefulShutdownService =
+          await serviceContainer.getService<GracefulShutdownService>(GracefulShutdownService);
+        gracefulShutdownService.setupShutdownHandlers(app!, null, null, null);
+
+        const processErrorHandlersService =
+          await serviceContainer.getService<ProcessErrorHandlersService>(
+            ProcessErrorHandlersService
+          );
+        processErrorHandlersService.setupErrorHandlers();
+      } catch {
+        // Resilience services not available — fallback shutdown handler below covers basics
+      }
+    } catch {
+      // Fallback to console if LoggingService is not available
+      const cacheProvider = configService.getCacheProvider();
+      const cacheHost = configService.getCacheHost();
+      const cachePort = configService.getCachePort();
+      console.error('Worker initialized successfully');
+      console.error(
+        `Processing queues for ${configService.get<string>('SERVICE_NAME', 'clinic')} domain`
+      );
+      console.error(
+        `${cacheProvider === 'dragonfly' ? 'Dragonfly' : cacheProvider === 'redis' ? 'Redis' : 'Memory'} Connection: ${cacheHost}:${cachePort}`
+      );
+    }
 
     // Setup graceful shutdown handlers
     const shutdownHandler = async (signal: string): Promise<void> => {
