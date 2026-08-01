@@ -133,7 +133,7 @@ async function bootstrap() {
     // Start HTTP server for Bull Board dashboard (worker-only, no API endpoints)
     // PORT env is set to 8080 in docker-compose for the worker (vs 8088 for API)
     // startServer() internally calls app.init() which triggers OnModuleInit hooks
-    const serverPort = parseInt(configService.getEnv('PORT', '8088'), 10);
+    const serverPort = parseInt(configService.getEnv('PORT') ?? '8088', 10);
     await lifecycleManager.startServer({ port: serverPort, host: '0.0.0.0' });
 
     // Log startup info via LoggingService (fire-and-forget so cache writes don't block startup)

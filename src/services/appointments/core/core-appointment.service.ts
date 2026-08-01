@@ -161,9 +161,9 @@ export class CoreAppointmentService {
       }
 
       // 1a. Validate appointment date is not in the past and not a weekend
-      const appointmentDateIso = (createDto as Record<string, unknown>).appointmentDate as
-        | string
-        | undefined;
+      const appointmentDateIso = (createDto as unknown as Record<string, unknown>)[
+        'appointmentDate'
+      ] as string | undefined;
       if (appointmentDateIso) {
         const utcDate = new Date(appointmentDateIso);
         if (!Number.isNaN(utcDate.getTime())) {
