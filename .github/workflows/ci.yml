@@ -882,6 +882,15 @@ jobs:
             # ZERO-DOWNTIME: Blue-Green API Deploy
             echo "=== ZERO-DOWNTIME DEPLOY START ==="
             docker rm -f "\${NEXT}" 2>/dev/null || true
+
+            # If old container is restarting (from previous failed deploy),
+            # force-kill it so Docker allows removal
+            if docker ps -a --format '{{.Names}}\t{{.Status}}' | grep -q "^latest-api[[:space:]]*restarting"; then
+              echo "Old container is restarting -- force-killing"
+              docker kill --signal=SIGKILL latest-api 2>/dev/null || true
+              sleep 2
+            fi
+
             IS_ROLLING=false
             docker ps --format '{{.Names}}' | grep -q "^\${ACTIVE}$" && IS_ROLLING=true
 
