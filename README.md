@@ -436,6 +436,108 @@ docker run -p 8088:8088 healthcare-api
 ./run.sh prod start
 ```
 
+## 🔄 Infrastructure Migration: Portainer → Coolify
+
+> **Status**: Planned — worker crash loop resolved (2026-07-28)
+
+### Why Migrate
+
+Portainer is unhealthy and unmaintained. Coolify provides built-in CI/CD,
+reverse proxy with SSL, and container management in one platform.
+
+### Current Production State
+
+| Container       | Status       | Uptime   |
+| --------------- | ------------ | -------- |
+| `latest-api`    | Healthy      | 2 days   |
+| `latest-worker` | Up (healthy) | 2 days   |
+| `postgres`      | Healthy      | 4 months |
+| `dragonfly`     | Healthy      | 4 months |
+| `portainer`     | Unhealthy    | 2 months |
+
+### Deployment: `ghcr.io/ishswami-tech/healthcarebackend:main-<sha>`
+
+### VPS: `31.220.79.219` — Docker Compose at `/opt/healthcare-backend/devops/docker/docker-compose.prod.yml`
+
+### Phase 1: Prepare
+
+```bash
+# 1. Push worker fix (notification-event.listener.ts guard)
+git add src/libs/communication/listeners/notification-event.listener.ts
+git commit -m "fix: guard AppointmentNotificationService lookup in worker context"
+git push origin main
+
+# 2. Back up database
+docker exec postgres pg_dump -U postgres userdb > ~/backups/pre-coolify-db-$(date +%Y%m%d).sql
+```
+
+### Phase 2: Install Coolify
+
+```bash
+# On VPS as root
+curl -fsSL https://getcoolify.io | bash
+# Access at http://31.220.79.219:8000
+```
+
+1. Create admin account
+2. Connect GitHub account
+3. Configure server IP: `31.220.79.219`
+
+### Phase 3: Create Applications
+
+| Application         | Dockerfile Path            | Port | Health Check              |
+| ------------------- | -------------------------- | ---- | ------------------------- |
+| `healthcare-api`    | `devops/docker/Dockerfile` | 8088 | `/health`                 |
+| `healthcare-worker` | `devops/docker/Dockerfile` | —    | `node -e process.exit(0)` |
+
+### Phase 4: Configure Environment
+
+Import all variables from `.env.production`. Key vars:
+
+```
+DATABASE_URL=postgresql://postgres:<pass>@<postgres>:5432/userdb
+DRAGONFLY_HOST=<dragonfly>          DRAGONFLY_PORT=6379
+SERVICE_NAME=api                    SERVICE_NAME=worker
+JWT_SECRET=<from .env.production>
+```
+
+### Phase 5: Configure Domain
+
+- Domain: `backend-service-v1.ishswami.in`
+- Port: 8088
+- SSL: Let's Encrypt (auto via Coolify Traefik)
+
+### Phase 6: CI/CD Migration
+
+**Option A** — Coolify auto-deploy on push to `main` (simplest)
+
+**Option B** — Keep GitHub Actions for build + security scanning, Coolify pulls
+from GHCR:
+
+- Keep `.github/workflows/ci.yml` for build + Trivy scan
+- In Coolify, set image source to
+  `ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:main-<sha>`
+- Remove deploy steps from CI
+
+### Phase 7: Cutover
+
+1. Deploy in Coolify (runs parallel with Portainer)
+2. Verify: `curl https://backend-service-v1.ishswami.in/health`
+3. Verify worker processes jobs (check BullMQ queue depth)
+4. Stop Portainer stack: `docker compose -f docker-compose.prod.yml down`
+5. Remove portainer container
+
+### Resource Limits
+
+| Instance          | CPU | Memory |
+| ----------------- | --- | ------ |
+| healthcare-api    | 3.0 | 8GB    |
+| healthcare-worker | 1.0 | 2GB    |
+| postgres          | 3.0 | 10GB   |
+| dragonfly         | 1.5 | 4GB    |
+
+---
+
 ## 🚨 Troubleshooting
 
 ### Common Issues

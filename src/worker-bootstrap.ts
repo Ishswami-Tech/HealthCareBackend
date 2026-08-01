@@ -26,13 +26,29 @@ import { EventsModule } from '@infrastructure/events/events.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ErrorsModule } from '@core/errors';
 import { CommunicationModule } from '@communication/communication.module';
+import { ScheduleModule } from '@nestjs/schedule';
 import { createFrameworkAdapter } from '@infrastructure/framework/adapters/fastify.adapter';
 import { ApplicationLifecycleManager } from '@infrastructure/framework/wrappers/application-lifecycle.manager';
+import { BullBoardModule } from '@infrastructure/queue/src/bull-board/bull-board.module';
 import {
   GracefulShutdownService,
   ProcessErrorHandlersService,
 } from '@core/resilience/graceful-shutdown.service';
 import type { ApplicationConfig } from '@core/types/framework.types';
+
+/**
+ * Service modules that own @Cron jobs.
+ * On the worker these register schedulers; on the API the same modules
+ * are loaded as plain providers (no ScheduleModule → @Cron is a no-op).
+ *
+ * AppointmentsModule: 4 crons (3 AM, 7 AM, 2× hourly)
+ * BillingModule: 2 crons (hourly)
+ * VideoModule: 5 crons (4× every minute, every 10 min)
+ * CacheWarmingService (via CacheModule.forRoot when not worker): 2 crons
+ */
+import { AppointmentsModule } from '@services/appointments/appointments.module';
+import { BillingModule } from '@services/billing/billing.module';
+import { VideoModule } from '@services/video/video.module';
 
 @Module({
   imports: [
@@ -49,26 +65,24 @@ import type { ApplicationConfig } from '@core/types/framework.types';
     }),
     DatabaseModule,
     LoggingModule,
-    ErrorsModule, // Provides CacheErrorHandler globally - required before CacheModule
-    // Use forRoot() to exclude CacheWarmingService in worker
-    // Worker only needs CacheService for queue processing, not cron jobs
-    // Note: forwardRef needed due to circular dependency with ConfigModule/DatabaseModule
+    ErrorsModule,
+    ScheduleModule.forRoot(), // ONLY on worker — owns all cron execution
     forwardRef(() => {
-      // TypeScript has trouble inferring types in forwardRef with circular dependencies
-      // Use double assertion to work around this
       const CacheModuleRef = CacheModule as unknown as {
         forRoot: () => DynamicModule;
       };
       return CacheModuleRef.forRoot();
     }),
-    ResilienceModule, // Provides GracefulShutdownService and ProcessErrorHandlersService
-    EventsModule, // Central event system - required for queue event emissions
+    ResilienceModule,
+    EventsModule,
     CommunicationModule,
     QueueModule.forRoot(),
-    // GuardsModule provides JwtAuthGuard and configures JwtModule (JwtService) globally
-    // Required for worker queue processors/controllers that use JwtAuthGuard
+    BullBoardModule.forRoot(), // Bull Board on worker — actual job processor, real data
+    // Service modules with @Cron decorators — these fire only here, not on API
+    AppointmentsModule,
+    BillingModule,
+    VideoModule,
     forwardRef(() => GuardsModule),
-    // SessionModule provides SessionManagementService required by JwtAuthGuard
     forwardRef(() => SessionModule),
   ],
   providers: [],
@@ -116,8 +130,11 @@ async function bootstrap() {
 
     const configService = await serviceContainer.getService<ConfigService>(ConfigService);
 
-    // Initialize worker service
-    await app.init();
+    // Start HTTP server for Bull Board dashboard (worker-only, no API endpoints)
+    // PORT env is set to 8080 in docker-compose for the worker (vs 8088 for API)
+    // startServer() internally calls app.init() which triggers OnModuleInit hooks
+    const serverPort = parseInt(configService.getEnv('PORT', '8088'), 10);
+    await lifecycleManager.startServer({ port: serverPort, host: '0.0.0.0' });
 
     // Log startup info via LoggingService (fire-and-forget so cache writes don't block startup)
     // All logs route through cache + /logger dashboard for unified observability

@@ -44,6 +44,8 @@ BACKUP_RESULTS[postgres_local]="failed"
 BACKUP_RESULTS[postgres_s3]="failed"
 BACKUP_RESULTS[dragonfly_local]="failed"
 BACKUP_RESULTS[dragonfly_s3]="failed"
+BACKUP_RESULTS[env_local]="failed"
+BACKUP_RESULTS[env_s3]="failed"
 
 # Result metrics and statuses for modern backup sequence
 # BACKUP_RESULTS is declared as an associative array at the top
@@ -72,12 +74,19 @@ create_metadata() {
     fi
 
     local postgres_local_status="${BACKUP_RESULTS[postgres_local]}"
+    local env_local_status="${BACKUP_RESULTS[env_local]:-skipped}"
+    local env_s3_status="${BACKUP_RESULTS[env_s3]:-skipped}"
+
     cat > "$METADATA_FILE" <<EOF
 {
   "backup_id": "${BACKUP_ID}",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "postgres": ${postgres_json},
   "dragonfly": ${dragonfly_json},
+  "env": {
+    "local": "${env_local_status}",
+    "s3": "${env_s3_status}"
+  },
   "storage": {
     "local": "${postgres_local_status}",
     "s3": "${postgres_s3_status}"
@@ -265,10 +274,12 @@ main_backup() {
     # Create backup type subdirectories
     mkdir -p "${BACKUP_DIR}/postgres/${backup_type}"
     mkdir -p "${BACKUP_DIR}/dragonfly/${backup_type}"
-    
+    mkdir -p "${BACKUP_DIR}/env/${backup_type}"
+
     # Update backup file paths to include type
     local postgres_backup_file="${BACKUP_DIR}/postgres/${backup_type}/postgres-${TIMESTAMP}.sql.gz"
     local dragonfly_backup_file="${BACKUP_DIR}/dragonfly/${backup_type}/dragonfly-${TIMESTAMP}.rdb.gz"
+    local env_backup_file="${BACKUP_DIR}/env/${backup_type}/env-${TIMESTAMP}.tar.gz"
     
     # Backup PostgreSQL
     if backup_postgres_to_path "$postgres_backup_file"; then
@@ -284,6 +295,13 @@ main_backup() {
     else
         log_warning "Dragonfly backup failed (non-critical)"
     fi
+
+    # Backup .env.production and critical config files
+    if backup_env_files "$env_backup_file"; then
+        log_success "Environment/config backup completed"
+    else
+        log_warning "Environment/config backup failed (non-critical)"
+    fi
     
     # Create metadata only for successful backups (Postgres local + S3, metadata uploaded)
     if ! create_metadata; then
@@ -291,6 +309,7 @@ main_backup() {
         # Remove partial/failed backup artifacts so we don't retain failed backups
         rm -f "${postgres_backup_file}" "${BACKUP_DIR}/metadata/postgres-${TIMESTAMP}.json"
         rm -f "${dragonfly_backup_file}" "${BACKUP_DIR}/metadata/dragonfly-${TIMESTAMP}.json"
+        rm -f "${env_backup_file}" "${BACKUP_DIR}/metadata/env-${TIMESTAMP}.json"
         rm -f "$METADATA_FILE"
         log_info "Removed partial backup files for failed run"
         exit 1
@@ -545,9 +564,13 @@ backup_dragonfly_to_path() {
         
         # Also try with just the filename in common directories (in case dir is empty)
         if [ -n "$db_filename" ] && [ "$db_filename" != "dump.rdb" ]; then
-            rdb_paths+=("/data/${db_filename}" "/var/lib/dragonfly/${db_filename}")
+            rdb_paths+=(/data/${db_filename} /var/lib/dragonfly/${db_filename})
         fi
-        
+
+        # Dragonfly sometimes stores as backup-dump.rdb
+        rdb_paths+=(/data/backup-dump.rdb)
+
+
         local rdb_found=false
         local checked_paths=()
         for rdb_path in "${rdb_paths[@]}"; do
@@ -570,25 +593,31 @@ backup_dragonfly_to_path() {
         done
         
         if [ "$rdb_found" = false ]; then
-            log_error "RDB file not found after SAVE. Checked paths: ${checked_paths[*]}"
-            # Try to get more diagnostic info
-            if [ "$cli_available" = true ] && [ -n "$redis_cli_cmd" ]; then
-                # Suppressing verbose diagnostic message
-                local persistence_info=$(eval "$redis_cli_cmd INFO persistence" 2>/dev/null | grep -E "(rdb_last_save_time|rdb_last_bgsave_status)" || echo "")
-                if [ -n "$persistence_info" ]; then
-                    log_info "Dragonfly persistence info: ${persistence_info}"
-                fi
-                # Try to find RDB file using find command in container
-                # Suppressing verbose search message
-                local found_files=$(docker exec "$container" find / -name "${db_filename:-dump.rdb}" -type f 2>/dev/null | head -5 || echo "")
-                if [ -n "$found_files" ]; then
-                    log_info "Found ${db_filename:-dump.rdb} files in container: ${found_files}"
-                else
-                    log_warning "No ${db_filename:-dump.rdb} files found in container"
+            # Try the most recent .dfs snapshot file (Dragonfly uses timestamped .dfs)
+            local found_dfs_files
+            found_dfs_files=$(docker exec "$container" find /data -maxdepth 1 -name "dump-*summary.dfs" -type f 2>/dev/null | sort -r | head -3 || echo "")
+            if [ -n "$found_dfs_files" ]; then
+                local dfs_path
+                dfs_path=$(echo "$found_dfs_files" | head -1)
+                checked_paths+=("$dfs_path")
+                log_info "Trying Dragonfly .dfs snapshot: $dfs_path"
+                if docker cp "${container}:${dfs_path}" "$temp_rdb" 2>/dev/null; then
+                    if [ -f "$temp_rdb" ] && [ -s "$temp_rdb" ]; then
+                        rdb_found=true
+                        source_file="$dfs_path"
+                        log_info "Found .dfs snapshot at: $dfs_path"
+                    fi
                 fi
             fi
         fi
-        
+
+        if [ "$rdb_found" = false ]; then
+            log_error "No snapshot file found after SAVE. Checked paths: ${checked_paths[*]}"
+            if [ -n "$found_dfs_files" ]; then
+                log_error "Available .dfs files: $(echo "$found_dfs_files" | tr '\n' ' ')"
+            fi
+        fi
+
         if [ "$rdb_found" = true ]; then
             # Compress
             if gzip -c "$temp_rdb" > "$backup_file"; then
@@ -645,6 +674,83 @@ EOF
     log_error "Dragonfly backup failed"
     return 1
 }
+
+# ============================================================================
+# ENV / CONFIG BACKUP
+# ============================================================================
+
+backup_env_files() {
+    local backup_file="$1"
+    local temp_dir
+    temp_dir=$(mktemp -d)
+
+    log_info "Starting environment/config backup..."
+
+    # Files to back up (relative to BASE_DIR)
+    local files_to_backup=()
+    local source_dir="${BASE_DIR}"
+
+    if [[ -f "${source_dir}/.env.production" ]]; then
+        files_to_backup+=("${source_dir}/.env.production")
+    else
+        log_warning "No .env.production found at ${source_dir}/.env.production"
+    fi
+
+    # Docker compose and devops config
+    if [[ -d "${source_dir}/devops" ]]; then
+        # Tar entire devops directory (docker-compose, scripts, configs)
+        files_to_backup+=("${source_dir}/devops")
+    fi
+
+    # .env files in project root
+    for f in "${source_dir}"/.env "${source_dir}"/.env.local "${source_dir}"/.env.production.local; do
+        if [[ -f "$f" ]]; then
+            files_to_backup+=("$f")
+        fi
+    done
+
+    if [[ ${#files_to_backup[@]} -eq 0 ]]; then
+        log_warning "No env/config files found to backup"
+        return 0
+    fi
+
+    # Create tar.gz of all files
+    local tar_cmd="tar -czf '${backup_file}'"
+    for f in "${files_to_backup[@]}"; do
+        tar_cmd+=" '${f}'"
+    done
+    tar_cmd+=" 2>/dev/null"
+
+    if eval "$tar_cmd" && [[ -f "$backup_file" ]] && [[ -s "$backup_file" ]]; then
+        local size=$(du -h "$backup_file" | cut -f1)
+        local checksum=$(sha256sum "$backup_file" | cut -d' ' -f1)
+
+        log_success "Env/config backup created: $(basename "$backup_file") (${size})"
+
+        # Upload to S3
+        local s3_path="backups/env/${backup_type}/env-${TIMESTAMP}.tar.gz"
+        log_info "Uploading env backup to S3: ${s3_path}"
+
+        if s3_upload_with_retry "$backup_file" "$s3_path" 3 5; then
+            log_success "Env backup uploaded to S3"
+            BACKUP_RESULTS[env_local]="success"
+            BACKUP_RESULTS[env_s3]="success"
+        else
+            log_error "Env backup S3 upload failed"
+            BACKUP_RESULTS[env_local]="success"
+            BACKUP_RESULTS[env_s3]="failed"
+        fi
+
+        # Cleanup temp dir
+        rm -rf "$temp_dir"
+        return 0
+    else
+        log_error "Failed to create env backup archive"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+}
+
 
 # Cleanup old backups based on retention policy
 cleanup_old_backups_by_type() {

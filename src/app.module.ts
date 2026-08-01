@@ -11,9 +11,7 @@ import { LoggingControllersModule } from '@infrastructure/logging/logging-contro
 import { AppService } from './app.service';
 import { AppointmentsModule } from './services/appointments/appointments.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { ScheduleModule } from '@nestjs/schedule';
 import { QueueModule } from '@infrastructure/queue';
-import { BullBoardModule } from '@infrastructure/queue/src/bull-board/bull-board.module';
 import { CommunicationModule } from '@communication/communication.module';
 import { BillingModule } from './services/billing/billing.module';
 import { EHRModule } from './services/ehr/ehr.module';
@@ -46,13 +44,10 @@ import { BusinessRulesModule } from '@core/business-rules';
       maxListeners: 20,
       verboseMemoryLeak: true,
     }),
-    ScheduleModule.forRoot({
-      // Timezone is controlled at the container level (TZ: Asia/Kolkata in docker-compose).
-      // All @Cron expressions (e.g. EVERY_DAY_AT_7AM) fire at 07:00 IST because
-      // the Node.js process inherits the system timezone from the TZ env var.
-    }),
+    // Note: ScheduleModule is ONLY registered in the worker container (worker-bootstrap.ts).
+    // All @Cron decorators in AppointmentsModule, BillingModule, VideoModule, etc.
+    // will fire only on the worker — never on the API container.
     QueueModule.forRoot(),
-    BullBoardModule.forRoot(), // Queue dashboard at /queue-dashboard
     // Cache must initialize before logging so the log dashboard can persist and read entries.
     CacheModule.forRoot(),
     // JWT is configured in AuthModule - no need for global registration here

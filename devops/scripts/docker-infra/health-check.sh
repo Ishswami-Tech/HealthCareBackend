@@ -1,6 +1,6 @@
 #!/bin/bash
 # Infrastructure health check for the deployment stack.
-# Checks only PostgreSQL, Dragonfly, and Portainer.
+# Checks PostgreSQL and Dragonfly (portainer removed — use Coolify UI for management).
 
 set -euo pipefail
 
@@ -26,11 +26,9 @@ declare -A SERVICE_DETAILS
 
 SERVICE_STATUS["postgres"]="unknown"
 SERVICE_STATUS["dragonfly"]="unknown"
-SERVICE_STATUS["portainer"]="unknown"
 
 SERVICE_DETAILS["postgres"]='{"status":"unknown"}'
 SERVICE_DETAILS["dragonfly"]='{"status":"unknown"}'
-SERVICE_DETAILS["portainer"]='{"status":"unknown"}'
 
 set_service_status() {
     local service="$1"
@@ -90,65 +88,6 @@ check_dragonfly() {
     return 1
 }
 
-check_portainer() {
-    local container="portainer"
-    local container_port="9000/tcp"
-    local host_port
-
-    if ! validate_container_name "$container"; then
-        set_service_status "portainer" "invalid" '{"status":"invalid","error":"Invalid container name"}'
-        return 1
-    fi
-
-    if ! container_running "$container"; then
-        set_service_status "portainer" "missing" '{"status":"missing","error":"Container not running"}'
-        return 1
-    fi
-
-    local docker_health
-    docker_health="$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null || echo "unknown")"
-
-    if [[ "$docker_health" == "healthy" ]]; then
-        set_service_status "portainer" "healthy" '{"status":"healthy","ready":true,"port":9000,"health":"docker"}'
-        return 0
-    fi
-
-    if [[ "$docker_health" == "restarting" ]]; then
-        set_service_status "portainer" "unhealthy" '{"status":"unhealthy","error":"Container restarting"}'
-        return 1
-    fi
-
-    host_port="$(container_host_port "$container" "$container_port")"
-    if [[ -z "$host_port" ]]; then
-        set_service_status "portainer" "unhealthy" '{"status":"unhealthy","error":"Port mapping unavailable"}'
-        return 1
-    fi
-
-    local attempt=0
-    local max_attempts=6
-    while [[ $attempt -lt $max_attempts ]]; do
-        attempt=$((attempt + 1))
-
-        if command -v curl >/dev/null 2>&1; then
-            if curl -fsS --max-time 3 "http://127.0.0.1:${host_port}/api/status" >/dev/null 2>&1; then
-                set_service_status "portainer" "healthy" '{"status":"healthy","ready":true,"port":9000,"health":"api"}'
-                return 0
-            fi
-        elif command -v wget >/dev/null 2>&1; then
-            if wget -q --spider --timeout=3 "http://127.0.0.1:${host_port}/api/status" >/dev/null 2>&1; then
-                set_service_status "portainer" "healthy" '{"status":"healthy","ready":true,"port":9000,"health":"api"}'
-                return 0
-            fi
-        fi
-
-        if [[ $attempt -lt $max_attempts ]]; then
-            sleep 5
-        fi
-    done
-
-    set_service_status "portainer" "unhealthy" '{"status":"unhealthy","error":"Health endpoint failed"}'
-    return 1
-}
 
 emit_json() {
     local overall_status="$1"
@@ -158,8 +97,7 @@ emit_json() {
   "status": "${overall_status}",
   "services": {
     "postgres": ${SERVICE_DETAILS[postgres]},
-    "dragonfly": ${SERVICE_DETAILS[dragonfly]},
-    "portainer": ${SERVICE_DETAILS[portainer]}
+    "dragonfly": ${SERVICE_DETAILS[dragonfly]}
   }
 }
 EOF
@@ -173,9 +111,8 @@ main() {
 
     check_postgres || true
     check_dragonfly || true
-    check_portainer || true
 
-    for service in postgres dragonfly portainer; do
+    for service in postgres dragonfly; do
         case "${SERVICE_STATUS[$service]}" in
             healthy)
                 ;;

@@ -1,42 +1,4 @@
-# Docker Deployment Guides
-
-This folder contains Docker Compose files for the Healthcare Backend.
-
-## Environments
-
-- Production: `docker-compose.prod.yml`
-- Local production-like: `docker-compose.local-prod.yml`
-- Development: `docker-compose.dev.yml`
-
-## Current Stack
-
-- Infrastructure: `postgres`, `dragonfly`, `portainer`
-- Application: `api`, `worker`
-- Video: handled by the backend `video` service abstraction
-
-## Common Commands
-
-```bash
-cd devops/docker
-docker compose -f docker-compose.prod.yml up -d --build
-docker compose -f docker-compose.local-prod.yml --profile infrastructure --profile app up -d --build
-docker compose -f docker-compose.dev.yml up -d --build
-```
-
-## Checks
-
-- `docker compose -f docker-compose.prod.yml ps`
-- `curl http://localhost:8088/health`
-- `docker compose -f docker-compose.prod.yml logs -f api`
-- `docker compose -f docker-compose.prod.yml logs -f worker`
-
-## Notes
-
-- Video provider selection happens in the backend.
-
----
-
-# Coolify Migration Guide
+/re# Coolify Migration Guide
 
 Migrate the healthcare backend from Portainer to Coolify **without downtime**.
 The Portainer stack stays running throughout; Coolify runs a parallel "canary"
@@ -62,8 +24,8 @@ docker exec postgres pg_dump -U postgres userdb > ~/backups/pre-coolify-migratio
 ### 0.2 Confirm VPS resources
 
 ```bash
-free -h        # need ≥ 4 GB free RAM
-df -h          # need ≥ 10 GB free disk
+free -h        # need >= 4 GB free RAM
+df -h          # need >= 10 GB free disk
 ```
 
 ### 0.3 Document current state
@@ -78,14 +40,14 @@ the Coolify image identically.
 
 ### 0.4 Choose non-conflicting ports
 
-| Service    | Portainer current | Coolify canary               |
-| ---------- | ----------------- | ---------------------------- |
-| PostgreSQL | internal only     | `127.0.0.1:5433:5432`        |
-| Dragonfly  | internal only     | `127.0.0.1:6380:6379`        |
-| API        | `:8088` (host)    | `127.0.0.1:8089:8088`        |
-| Worker     | no host port      | no host port (same)          |
-| Bull Board | `:9090` → `:8080` | `:9091` → `:8080` (optional) |
-| Coolify UI | n/a               | `:18000` / `:18443`          |
+| Service    | Portainer current  | Coolify canary                |
+| ---------- | ------------------ | ----------------------------- |
+| PostgreSQL | internal only      | `127.0.0.1:5433:5432`         |
+| Dragonfly  | internal only      | `127.0.0.1:6380:6379`         |
+| API        | `:8088` (host)     | `127.0.0.1:8089:8088`         |
+| Worker     | no host port       | no host port (same)           |
+| Bull Board | `:9090` -> `:8080` | `:9091` -> `:8080` (optional) |
+| Coolify UI | n/a                | `:18000` / `:18443`           |
 
 ---
 
@@ -119,18 +81,18 @@ ufw allow 18443/tcp
 # DO NOT open 8088 — Portainer stack already binds it
 ```
 
-Browse to `https://<VPS_IP>:18443` → create admin account.
+Browse to `https://<VPS_IP>:18443` -> create admin account.
 
 ---
 
 ## Phase 2 — Provision infrastructure in Coolify
 
-In Coolify UI: **+ New → Project** → "Healthcare Backend" → **+ New →
-Environment** → "Production"
+In Coolify UI: **+ New -> Project** -> "Healthcare Backend" -> **+ New ->
+Environment** -> "Production"
 
 ### 2.1 PostgreSQL
 
-**+ New → Database → PostgreSQL**
+**+ New -> Database -> PostgreSQL**
 
 | Setting       | Value                                   |
 | ------------- | --------------------------------------- |
@@ -144,7 +106,7 @@ Environment** → "Production"
 
 ### 2.2 Dragonfly (Redis)
 
-**+ New → Database → Redis** (use custom image)
+**+ New -> Database -> Redis** (use custom image)
 
 | Setting | Value                                                                                                                               |
 | ------- | ----------------------------------------------------------------------------------------------------------------------------------- |
@@ -158,7 +120,7 @@ Environment** → "Production"
 
 ## Phase 3 — Deploy the API service
 
-**+ New → Application**
+**+ New -> Application**
 
 | Setting           | Value                                                                            |
 | ----------------- | -------------------------------------------------------------------------------- |
@@ -259,13 +221,13 @@ In Coolify's **Deploy** section, set the startup command:
 sh -c "node scripts/run-prisma.js migrate && node dist/main.js"
 ```
 
-This runs Prisma migrations before starting the NestJS app — same as Portainer.
+This runs Prisma migrations before starting the NestJS app -- same as Portainer.
 
 ---
 
 ## Phase 4 — Deploy the Worker
 
-**+ New → Application**
+**+ New -> Application**
 
 | Setting                    | Value                       |
 | -------------------------- | --------------------------- |
@@ -303,16 +265,16 @@ At this point, **both stacks are running simultaneously**. Verify each
 independently:
 
 ```bash
-# Portainer API — should still respond
+# Portainer API -- should still respond
 curl -i http://localhost:8088/health
 
-# Coolify API — responds on its own port
+# Coolify API -- responds on its own port
 curl -i http://127.0.0.1:8089/health
 
-# Portainer worker — should still process jobs
+# Portainer worker -- should still process jobs
 docker compose -f docker-compose.prod.yml logs --tail=20 worker
 
-# Coolify worker — check logs in Coolify UI
+# Coolify worker -- check logs in Coolify UI
 # Look for: "Worker is running and processing queues..."
 ```
 
@@ -328,7 +290,7 @@ docker exec postgres psql -U postgres -c "SELECT count(*) FROM users;"
 docker exec postgres-healthcare psql -U postgres -c "SELECT count(*) FROM users;"
 ```
 
-Portainer returns real data. Coolify returns `0` (fresh DB — expected at this
+Portainer returns real data. Coolify returns `0` (fresh DB -- expected at this
 stage).
 
 ---
@@ -363,27 +325,27 @@ docker exec dragonfly dragonfly-cli -p 6379 --scan --count 100000 > /tmp/redis-d
 docker exec -i dragonfly-healthcare dragonfly-cli -p 6379 --pipe < /tmp/redis-dump.txt
 ```
 
-Or simply let caches rebuild — cache data is ephemeral by design.
+Or simply let caches rebuild -- cache data is ephemeral by design.
 
 ---
 
 ## Phase 8 — Cut over DNS / proxy
 
-### Option A — Coolify manages proxy (Traefik)
+### Option A -- Coolify manages proxy (Traefik)
 
-1. In Coolify, enable **Public Port** for `api-healthcare` → set to `80` and
+1. In Coolify, enable **Public Port** for `api-healthcare` -> set to `80` and
    `443`
 2. Set your domain's A record to the VPS IP
 3. Coolify's Traefik will auto-provision TLS via Let's Encrypt
 
-### Option B — Keep existing Nginx/Caddy proxy
+### Option B -- Keep existing Nginx/Caddy proxy
 
 1. Re-point your proxy config from `127.0.0.1:8088` to `127.0.0.1:8089`
 2. Reload proxy: `nginx -s reload` or equivalent
 
 ### Verification window
 
-Watch both stacks for **24–48 hours**. Check:
+Watch both stacks for **24-48 hours**. Check:
 
 ```bash
 # API health every minute
@@ -431,9 +393,9 @@ docker volume rm <dragonfly_volume_name>
 ```bash
 # Check logs in Coolify UI
 # Common causes:
-# 1. DATABASE_URL points to wrong host — verify postgres-healthcare DNS resolves
-# 2. Prisma migrations failed — check startup command output
-# 3. Port conflict — ensure 8089 isn't already bound
+# 1. DATABASE_URL points to wrong host -- verify postgres-healthcare DNS resolves
+# 2. Prisma migrations failed -- check startup command output
+# 3. Port conflict -- ensure 8089 isn't already bound
 ```
 
 ### Worker hangs at NestFactory.create()
@@ -442,8 +404,8 @@ This is a known issue. The no-op healthcheck masks it. Check worker logs in
 Coolify UI:
 
 - If you see `[WorkerBootstrap] Starting application creation` but never
-  `Application created successfully` → the NestJS bootstrap is hanging
-- If you see `Worker is running and processing queues...` → worker is healthy
+  `Application created successfully` -> the NestJS bootstrap is hanging
+- If you see `Worker is running and processing queues...` -> worker is healthy
 
 ### BullMQ jobs stuck in "waiting"
 
@@ -466,8 +428,8 @@ If Coolify services fail to start due to port conflicts:
 # Find what's using a port
 ss -tlnp | grep 8089
 
-# Coolify's own proxy might bind 80/443 — disable it if you use your own proxy
-# In Coolify: Settings → Advanced → Disable "Public Port"
+# Coolify's own proxy might bind 80/443 -- disable it if you use your own proxy
+# In Coolify: Settings -> Advanced -> Disable "Public Port"
 ```
 
 ---
@@ -479,7 +441,7 @@ If Coolify fails and you need to revert to Portainer immediately:
 ```bash
 # Stop Coolify services (in UI or via API)
 # Re-point DNS/proxy back to Portainer's :8088
-# Portainer stack was never touched — it continues running
+# Portainer stack was never touched -- it continues running
 ```
 
 No rollback of data is needed because Portainer's database was never modified.
@@ -495,4 +457,4 @@ No rollback of data is needed because Portainer's database was never modified.
 | API        | `latest-api` (`:8088`) | `api-healthcare` (`127.0.0.1:8089`)     |
 | Worker     | `latest-worker`        | `worker-healthcare`                     |
 | Bull Board | `:9090`                | `:9091` (optional)                      |
-| Coolify UI | —                      | `:18000` / `:18443`                     |
+| Coolify UI | --                     | `:18000` / `:18443`                     |
