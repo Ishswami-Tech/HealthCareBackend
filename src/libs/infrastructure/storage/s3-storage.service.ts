@@ -99,7 +99,7 @@ export class S3StorageService implements OnModuleInit {
     const bucket = this.configService.get<string>('S3_BUCKET', '');
 
     // Auto-generate Contabo CDN URL if provider is Contabo and CDN_URL not explicitly set
-    let cdnUrl = this.configService.get<string>('CDN_URL');
+    let cdnUrl = this.configService.get<string>('CDN_URL', '');
     if (!cdnUrl && provider === 'contabo' && endpoint && accessKeyId && bucket) {
       // Contabo CDN URL format: https://{endpoint}/{access-key-id}:{bucket}
       // Example: https://eu2.contabostorage.com/{access-key-id}:healthcaredata
