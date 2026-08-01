@@ -883,12 +883,16 @@ jobs:
             echo "=== ZERO-DOWNTIME DEPLOY START ==="
             docker rm -f "\${NEXT}" 2>/dev/null || true
 
-            # If old container is restarting (from previous failed deploy),
-            # force-kill it so Docker allows removal
-            if docker ps -a --format '{{.Names}}\t{{.Status}}' | grep -q "^latest-api[[:space:]]*restarting"; then
-              echo "Old container is restarting -- force-killing"
-              docker kill --signal=SIGKILL latest-api 2>/dev/null || true
-              sleep 2
+            # Force-kill ALL restarting containers (Docker blocks docker rm on them)
+            # Previous failed deploys leave containers stuck in restart loops
+            RESTARTING=$(docker ps -a --filter "status=restarting" --format '{{.ID}}' 2>/dev/null)
+            if [ -n "\${RESTARTING}" ]; then
+              echo "Found restarting containers, force-killing:"
+              echo "\${RESTARTING}"
+              echo "\${RESTARTING}" | while read cid; do
+                docker kill --signal=SIGKILL "\${cid}" 2>/dev/null || true
+              done
+              sleep 3
             fi
 
             IS_ROLLING=false
