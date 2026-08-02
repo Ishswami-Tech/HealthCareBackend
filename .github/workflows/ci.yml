@@ -978,6 +978,7 @@ jobs:
               docker rm "${ACTIVE}" || true
             fi
 
+            docker rm -f "${ACTIVE}" 2>/dev/null || true
             docker rename "${NEXT}" "${ACTIVE}"
             echo "server ${ACTIVE}:8088 max_fails=3 fail_timeout=10s;" > "${NGINX_UPSTREAM}"
             docker exec latest-nginx nginx -s reload
@@ -1103,3 +1104,4 @@ jobs:
           echo "- **Actor**: @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Deployment successful!**" >> $GITHUB_STEP_SUMMARY
+
