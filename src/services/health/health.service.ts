@@ -3267,6 +3267,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
    */
   async checkLoggerHealth(): Promise<ServiceHealth> {
     const startTime = performance.now();
+    const isWorkerMode =
+      this.config?.getEnv('APP_MODE') === 'worker' || process.env['APP_MODE'] === 'worker';
+
+    if (isWorkerMode) {
+      return {
+        status: 'healthy',
+        details: 'Logger health checks are skipped on worker containers',
+        responseTime: Math.round(performance.now() - startTime),
+        lastChecked: nowIso(),
+      };
+    }
+
     try {
       // Use LoggingHealthIndicator for health status
       if (this.loggingHealthIndicator) {

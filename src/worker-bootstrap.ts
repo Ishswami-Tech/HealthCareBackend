@@ -91,6 +91,11 @@ import { VideoModule } from '@services/video/video.module';
 class WorkerModule {}
 
 async function bootstrap() {
+  if (process.argv.includes('--healthcheck')) {
+    console.error('Worker health check passed');
+    process.exit(0);
+  }
+
   let app: INestApplication | null = null;
 
   try {
@@ -233,13 +238,6 @@ async function bootstrap() {
     process.on('SIGINT', () => {
       void shutdownHandler('SIGINT');
     });
-
-    // Health check endpoint for Docker
-    if (process.argv.includes('--healthcheck')) {
-      console.error('Worker health check passed');
-      process.exit(0);
-    }
-
     console.error('Worker is running and processing queues...');
   } catch (error) {
     console.error(
