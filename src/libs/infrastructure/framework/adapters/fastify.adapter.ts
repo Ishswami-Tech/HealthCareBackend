@@ -130,11 +130,14 @@ export class FastifyFrameworkAdapter implements IFastifyFrameworkAdapter {
         pluginTimeout: 30000,
       }),
 
-      // HTTP/2 support - enabled by default in production, can be disabled via ENABLE_HTTP2=false
-      // Use helper function (which uses dotenv) for environment variable access
+      // HTTP/2 support: only enable when TLS is available (certs configured)
+      // Without TLS, HTTP/2 breaks plain-HTTP clients (curl, wget, nginx proxy)
+      // The `enableHttp2` option and ENABLE_HTTP2 env var still take precedence
       ...(options.environment === 'production' &&
       options.enableHttp2 !== false &&
-      getEnvBoolean('ENABLE_HTTP2', true)
+      getEnvBoolean('ENABLE_HTTP2', true) &&
+      process.env.HTTPS_CERT_PATH &&
+      process.env.HTTPS_KEY_PATH
         ? ({ http2: true } as { http2: true })
         : {}),
     };

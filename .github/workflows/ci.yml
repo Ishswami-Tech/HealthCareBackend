@@ -785,6 +785,7 @@ jobs:
           PRISMA_SCHEMA_PATH=${{ vars.PRISMA_SCHEMA_PATH }}
           DOCKER_ENV=true
           DOCKER_NETWORK=app-network
+          ENABLE_HTTP2=false
           ENVEOF
 
       - name: Validate required env vars
