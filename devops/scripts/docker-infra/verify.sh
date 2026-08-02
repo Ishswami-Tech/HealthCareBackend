@@ -283,13 +283,48 @@ ensure_public_ingress() {
     local upstream_file="${nginx_root}/upstream.conf"
     local compose_file="${deploy_root}/devops/docker/docker-compose.prod.yml"
 
+    # Use the public Host header so the app's request routing works correctly
+    local curl_opts=(
+        --max-time 5
+        -H "Host: backend-service-v1.ishswami.in"
+        -H "X-Forwarded-Proto: https"
+    )
+    local wget_opts=(--timeout=5 --header="Host: backend-service-v1.ishswami.in")
+
+    # Find any other healthy API container for warm standby failover
+    local failover_container=""
+    for candidate in "${CONTAINER_PREFIX}api-green" "${CONTAINER_PREFIX}api-blue"; do
+        if [[ "$candidate" != "$api_container" ]] && container_running "$candidate"; then
+            local cand_health=$(docker inspect --format='{{.State.Health.Status}}' "$candidate" 2>/dev/null || echo "unknown")
+            if [[ "$cand_health" == "healthy" ]]; then
+                failover_container="$candidate"
+                break
+            fi
+        fi
+    done
+
+    # Write dual upstream: primary + warm standby
+    if [[ -n "$failover_container" ]]; then
+        printf 'server %s:8088 max_fails=3 fail_timeout=10s;\nserver %s:8088 max_fails=3 fail_timeout=10s backup;\n' \
+            "$api_container" "$failover_container" > "$upstream_file"
+        log_info "Wrote dual upstream: ${api_container} (primary) + ${failover_container} (backup)"
+    else
+        printf 'server %s:8088 max_fails=3 fail_timeout=10s;\n' "$api_container" > "$upstream_file"
+    fi
+
+    if container_running "latest-nginx"; then
+        docker exec latest-nginx nginx -t >/dev/null 2>&1 && \
+            docker exec latest-nginx nginx -s reload >/dev/null 2>&1 || true
+        sleep 2
+    fi
+
     if command -v curl >/dev/null 2>&1; then
-        if curl -fsS --max-time 5 "$host_health_url" >/dev/null 2>&1; then
+        if curl -fsS "${curl_opts[@]}" "$host_health_url" >/dev/null 2>&1; then
             log_success "Public ingress health check passed"
             return 0
         fi
     elif command -v wget >/dev/null 2>&1; then
-        if wget -q -O - "$host_health_url" >/dev/null 2>&1; then
+        if wget -q "${wget_opts[@]}" -O - "$host_health_url" >/dev/null 2>&1; then
             log_success "Public ingress health check passed"
             return 0
         fi
@@ -325,12 +360,12 @@ ensure_public_ingress() {
     fi
 
     if command -v curl >/dev/null 2>&1; then
-        if curl -fsS --max-time 5 "$host_health_url" >/dev/null 2>&1; then
+        if curl -fsS "${curl_opts[@]}" "$host_health_url" >/dev/null 2>&1; then
             log_success "Public ingress auto-heal succeeded"
             return 0
         fi
     elif command -v wget >/dev/null 2>&1; then
-        if wget -q -O - "$host_health_url" >/dev/null 2>&1; then
+        if wget -q "${wget_opts[@]}" -O - "$host_health_url" >/dev/null 2>&1; then
             log_success "Public ingress auto-heal succeeded"
             return 0
         fi
@@ -470,7 +505,6 @@ verify_deployment() {
         log_info "This is usually temporary - API may need more time to start"
 
         # Show API container logs for debugging
-        local api_container="${CONTAINER_PREFIX}api"
         if [[ -n "$api_container" ]]; then
             show_container_logs "$api_container" 50
         fi
@@ -483,8 +517,8 @@ verify_deployment() {
         log_info "=== Showing diagnostic information for failed containers ==="
 
         # Show application container logs
-        local api_container="${CONTAINER_PREFIX}api"
-        local worker_container="${CONTAINER_PREFIX}worker"
+        # Use the containers already resolved by find_running_container above,
+        # not the hardcoded CONTAINER_PREFIX name (which may be a dead legacy container)
 
         if ! container_running "$api_container"; then
             log_error "API container ($api_container) is not running"
