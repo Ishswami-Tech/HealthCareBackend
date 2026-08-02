@@ -988,13 +988,41 @@ jobs:
             echo "nginx switched to ${NEXT}"
             sleep 2
 
-            if [[ "$IS_ROLLING" == "true" ]]; then
-              echo "Draining old container: ${ACTIVE} (30s)"
-              docker stop "${ACTIVE}" --time=30 || true
-              docker rm "${ACTIVE}" || true
+            # === WARM STANDBY: keep old container as live failover ===
+            # Write both to upstream.conf: new as primary, old as backup.
+            # Nginx 'backup' flag means all traffic goes to ${NEXT} by default,
+            # but if ${NEXT} goes down mid-traffic, nginx routes to ${ACTIVE}.
+            echo "server ${NEXT}:8088 max_fails=3 fail_timeout=10s;" > "${NGINX_UPSTREAM}"
+            if [[ "$IS_ROLLING" == "true" ]] && docker ps --format '{{.Names}}' | grep -q "^${ACTIVE}$"; then
+                echo "server ${ACTIVE}:8088 max_fails=3 fail_timeout=10s backup;" >> "${NGINX_UPSTREAM}"
+                echo "Wrote dual upstream: ${NEXT} (primary) + ${ACTIVE} (backup)"
             fi
+            docker exec latest-nginx nginx -s reload
 
-            docker rm -f "${ACTIVE}" 2>/dev/null || true
+            if [[ "$IS_ROLLING" == "true" ]] && docker ps --format '{{.Names}}' | grep -q "^${ACTIVE}$"; then
+                echo "Warm standby period: ${ACTIVE} stays alive as failover (60s)"
+                sleep 60
+
+                # Verify new container is still healthy before removing old one
+                STATUS=$(docker inspect --format='{{.State.Health.Status}}' "${NEXT}" 2>/dev/null || echo "unknown")
+                if [[ "$STATUS" == "healthy" ]]; then
+                    echo "New container stable — draining old: ${ACTIVE} (30s)"
+                    docker stop "${ACTIVE}" --time=30 || true
+                    docker rm "${ACTIVE}" || true
+                    # Switch back to single-server upstream (cleaner, no stale server)
+                    echo "server ${NEXT}:8088 max_fails=3 fail_timeout=10s;" > "${NGINX_UPSTREAM}"
+                    docker exec latest-nginx nginx -s reload
+                    echo "Old container removed, single-server upstream restored"
+                else
+                    echo "::warning::New container unhealthy during warm standby — reverting to ${ACTIVE}"
+                    # Revert: make ACTIVE primary again, remove NEXT
+                    echo "server ${ACTIVE}:8088 max_fails=3 fail_timeout=10s;" > "${NGINX_UPSTREAM}"
+                    docker exec latest-nginx nginx -s reload
+                    docker rm -f "${NEXT}" || true
+                    echo "::error::Deployment reverted — old container restored"
+                    exit 1
+                fi
+            fi
             echo "=== ZERO-DOWNTIME DEPLOY COMPLETE: ${NEXT} ==="
 
             # ZERO-DOWNTIME: Blue-Green Worker Deploy
@@ -1060,12 +1088,24 @@ jobs:
               docker rm -f "${WORKER_NEXT}"; exit 1
             fi
 
-            if [ -n "$CURRENT_WORKER_ACTIVE" ]; then
-              echo "Draining old worker container: ${WORKER_ACTIVE} (30s)"
-              docker stop "${WORKER_ACTIVE}" --time=30 || true
-              docker rm "${WORKER_ACTIVE}" || true
+            if [[ "$IS_ROLLING" == "true" ]]; then
+                echo "Warm standby: new worker healthy, old ${WORKER_ACTIVE} stays alive as failover (30s)"
+                sleep 30
+
+                STATUS=$(docker inspect --format='{{.State.Health.Status}}' "${WORKER_NEXT}" 2>/dev/null || echo "unknown")
+                if [[ "$STATUS" == "healthy" ]]; then
+                    echo "New worker stable — draining old: ${WORKER_ACTIVE} (30s)"
+                    docker stop "${WORKER_ACTIVE}" --time=30 || true
+                    docker rm "${WORKER_ACTIVE}" || true
+                else
+                    echo "::warning::New worker unhealthy during warm standby — reverting to ${WORKER_ACTIVE}"
+                    docker stop "${WORKER_NEXT}" --time=15 || true
+                    docker rm -f "${WORKER_NEXT}" || true
+                    echo "::error::Worker deployment reverted — old container restored"
+                    exit 1
+                fi
             fi
-            
+
             # Catch old legacy non-blue/green worker just in case
             docker rm -f latest-worker 2>/dev/null || true
 
