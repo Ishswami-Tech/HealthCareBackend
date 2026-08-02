@@ -629,12 +629,12 @@ export class LoggingController {
       },
     },
   })
-  getHealth(): Promise<{
+  getHealth(): {
     status: 'healthy';
     service: 'logging';
     timestamp: string;
     message: string;
-  }> {
+  } {
     return {
       status: 'healthy',
       service: 'logging',
