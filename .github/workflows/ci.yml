@@ -261,13 +261,13 @@ jobs:
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-check.sh
           scp ${{ env.SSH_OPTS }} devops/scripts/shared/utils.sh \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+          ssh -T ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
             'chmod +x /tmp/health-check.sh /tmp/utils.sh'
 
       - name: Run infrastructure health check
         id: health-check
         run: |
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+          ssh -T ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             export SCRIPT_DIR="/tmp"
             /tmp/health-check.sh > /tmp/health-status.json 2>&1
             echo "EXIT_CODE=$?" > /tmp/health-exit.txt
@@ -387,7 +387,7 @@ jobs:
         id: backup
         continue-on-error: true
         run: |
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+          ssh -T ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             set -e
             export SCRIPT_DIR="/tmp"
             export BASE_DIR="${{ secrets.SERVER_DEPLOY_PATH }}"
@@ -468,7 +468,7 @@ jobs:
           echo "::notice::Recreating: ${UNHEALTHY:-all infra (postgres dragonfly)}"
           [[ -z "$BACKUP_ID" ]] && echo "::warning::No backup-id - restore step will be skipped"
 
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+          ssh -T ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             set -e
             cp /tmp/docker-compose.prod.yml ${{ secrets.SERVER_DEPLOY_PATH }}/devops/docker/docker-compose.prod.yml
             cd ${{ secrets.SERVER_DEPLOY_PATH }}/devops/docker
@@ -577,7 +577,7 @@ jobs:
 
       - name: Restore from backup
         run: |
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+          ssh -T ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             export SCRIPT_DIR="/tmp"
             export BASE_DIR="${{ secrets.SERVER_DEPLOY_PATH }}"
             source /tmp/utils.sh
@@ -641,7 +641,7 @@ jobs:
 
       - name: Verify post-recreation health
         run: |
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+          ssh -T ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             export SCRIPT_DIR="/tmp"
             chmod +x /tmp/health-check.sh /tmp/utils.sh
             if /tmp/health-check.sh; then
@@ -827,12 +827,12 @@ jobs:
           scp ${{ env.SSH_OPTS }} devops/docker/docker-compose.prod.yml \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/docker-compose.prod.yml
           # Nginx config (for zero-downtime router)
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+          ssh -T ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
             'mkdir -p ${{ secrets.SERVER_DEPLOY_PATH }}/nginx ${{ secrets.SERVER_DEPLOY_PATH }}/logs/nginx'
           scp ${{ env.SSH_OPTS }} devops/docker/nginx/nginx.conf \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ secrets.SERVER_DEPLOY_PATH }}/nginx/nginx.conf
           # Seed upstream.conf only if not already present (first deploy)
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+          ssh -T ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
             'test -f ${{ secrets.SERVER_DEPLOY_PATH }}/nginx/upstream.conf || echo "server latest-api-blue:8088 max_fails=3 fail_timeout=10s;" > ${{ secrets.SERVER_DEPLOY_PATH }}/nginx/upstream.conf'
 
       - name: Zero-Downtime Deploy (Blue-Green API + Graceful Worker)
@@ -841,7 +841,7 @@ jobs:
           DEPLOY_MODE="$([[ "$INFRA_HEALTHY" == 'true' ]] && echo 'healthy' || echo 'recovery')"
           echo "::notice::Deploy mode: ${DEPLOY_MODE} | Image: ${{ steps.deploy-image.outputs.image }}:main-${{ github.sha }}"
 
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+          ssh -T ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             set -e
             export DOCKER_IMAGE="${{ steps.deploy-image.outputs.image }}:main-${{ github.sha }}"
             export SERVER_DEPLOY_PATH="${{ secrets.SERVER_DEPLOY_PATH }}"
@@ -1124,7 +1124,7 @@ jobs:
 
       - name: Verify deployment
         run: |
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+          ssh -T ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             export SCRIPT_DIR="/tmp"
             export BASE_DIR="${{ secrets.SERVER_DEPLOY_PATH }}"
             source /tmp/utils.sh
@@ -1139,7 +1139,7 @@ jobs:
 
       - name: Start success backup (async on server)
         run: |
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+          ssh -T ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             export SCRIPT_DIR="/tmp"
             export BASE_DIR="${{ secrets.SERVER_DEPLOY_PATH }}"
             source /tmp/utils.sh

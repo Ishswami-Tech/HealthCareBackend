@@ -1,6 +1,6 @@
 #!/bin/bash
 # Infrastructure health check for the deployment stack.
-# Checks PostgreSQL and Dragonfly (portainer removed — use Coolify UI for management).
+# Checks PostgreSQL and Dragonfly (portainer removed - use Coolify UI for management).
 
 set -euo pipefail
 
@@ -39,6 +39,65 @@ set_service_status() {
     SERVICE_DETAILS["$service"]="$details"
 }
 
+compose_file() {
+    local candidates=(
+        "/opt/healthcare-backend/devops/docker/docker-compose.prod.yml"
+        "$(cd "$(dirname "${BASH_SOURCE[0]}")/../docker" 2>/dev/null && pwd)/docker-compose.prod.yml"
+        "/tmp/docker-compose.prod.yml"
+    )
+
+    for candidate in "${candidates[@]}"; do
+        if [[ -f "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+auto_recreate_enabled() {
+    local flag="${AUTO_RECREATE_SERVICES:-${AUTO_RECREATE_MISSING:-false}}"
+    [[ "$flag" == "true" ]]
+}
+
+recreate_service() {
+    local service="$1"
+    local label="$2"
+
+    if ! auto_recreate_enabled; then
+        return 1
+    fi
+
+    local compose
+    if ! compose=$(compose_file); then
+        set_service_status "$service" "missing" "{\"status\":\"missing\",\"error\":\"Compose file not found\"}"
+        return 1
+    fi
+
+    echo "INFO: Auto-recreating ${label} using docker compose" >&2
+    if docker compose -f "$compose" up -d --no-deps --force-recreate "$service" >/dev/null 2>&1; then
+        sleep 5
+        return 0
+    fi
+
+    echo "WARNING: Failed to recreate ${label} using docker compose" >&2
+    return 1
+}
+
+postgres_healthy() {
+    local container="postgres"
+
+    docker exec "$container" pg_isready -U postgres -d userdb >/dev/null 2>&1 && \
+        docker exec "$container" psql -U postgres -d userdb -c "SELECT 1" >/dev/null 2>&1
+}
+
+dragonfly_healthy() {
+    local container="dragonfly"
+
+    docker exec "$container" redis-cli -p 6379 ping >/dev/null 2>&1
+}
+
 check_postgres() {
     local container="postgres"
 
@@ -47,22 +106,27 @@ check_postgres() {
         return 1
     fi
 
-    if ! container_running "$container"; then
-        set_service_status "postgres" "missing" '{"status":"missing","error":"Container not running"}'
-        return 1
-    fi
-
-    if docker exec "$container" pg_isready -U postgres -d userdb >/dev/null 2>&1; then
-        if docker exec "$container" psql -U postgres -d userdb -c "SELECT 1" >/dev/null 2>&1; then
+    if container_running "$container"; then
+        if postgres_healthy; then
             set_service_status "postgres" "healthy" '{"status":"healthy","ready":true,"port":5432}'
             return 0
         fi
 
-        set_service_status "postgres" "unhealthy" '{"status":"unhealthy","error":"Test query failed"}'
+        if recreate_service "postgres" "PostgreSQL" && container_running "$container" && postgres_healthy; then
+            set_service_status "postgres" "healthy" '{"status":"healthy","ready":true,"port":5432,"recreated":true}'
+            return 0
+        fi
+
+        set_service_status "postgres" "unhealthy" '{"status":"unhealthy","error":"PostgreSQL probe failed"}'
         return 1
     fi
 
-    set_service_status "postgres" "unhealthy" '{"status":"unhealthy","error":"pg_isready failed"}'
+    if recreate_service "postgres" "PostgreSQL" && container_running "$container" && postgres_healthy; then
+        set_service_status "postgres" "healthy" '{"status":"healthy","ready":true,"port":5432,"recreated":true}'
+        return 0
+    fi
+
+    set_service_status "postgres" "missing" '{"status":"missing","error":"Container not running"}'
     return 1
 }
 
@@ -74,20 +138,29 @@ check_dragonfly() {
         return 1
     fi
 
-    if ! container_running "$container"; then
-        set_service_status "dragonfly" "missing" '{"status":"missing","error":"Container not running"}'
+    if container_running "$container"; then
+        if dragonfly_healthy; then
+            set_service_status "dragonfly" "healthy" '{"status":"healthy","ready":true,"port":6379,"ping":"PONG"}'
+            return 0
+        fi
+
+        if recreate_service "dragonfly" "Dragonfly" && container_running "$container" && dragonfly_healthy; then
+            set_service_status "dragonfly" "healthy" '{"status":"healthy","ready":true,"port":6379,"ping":"PONG","recreated":true}'
+            return 0
+        fi
+
+        set_service_status "dragonfly" "unhealthy" '{"status":"unhealthy","error":"PING failed"}'
         return 1
     fi
 
-    if docker exec "$container" redis-cli -p 6379 ping >/dev/null 2>&1; then
-        set_service_status "dragonfly" "healthy" '{"status":"healthy","ready":true,"port":6379,"ping":"PONG"}'
+    if recreate_service "dragonfly" "Dragonfly" && container_running "$container" && dragonfly_healthy; then
+        set_service_status "dragonfly" "healthy" '{"status":"healthy","ready":true,"port":6379,"ping":"PONG","recreated":true}'
         return 0
     fi
 
-    set_service_status "dragonfly" "unhealthy" '{"status":"unhealthy","error":"PING failed"}'
+    set_service_status "dragonfly" "missing" '{"status":"missing","error":"Container not running"}'
     return 1
 }
-
 
 emit_json() {
     local overall_status="$1"

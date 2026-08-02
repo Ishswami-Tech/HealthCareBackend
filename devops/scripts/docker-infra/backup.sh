@@ -181,20 +181,12 @@ setup_cron_backups() {
     # Remove existing healthcare backup cron jobs
     crontab -l 2>/dev/null | grep -v "healthcare-backend/devops/scripts/docker-infra/backup.sh" | crontab - 2>/dev/null || true
     
-    # Define cron jobs
-    CRON_HOURLY="0 * * * * $BACKUP_SCRIPT hourly >> $LOG_DIR/hourly.log 2>&1"
-    CRON_DAILY="0 2 * * * $BACKUP_SCRIPT daily >> $LOG_DIR/daily.log 2>&1"
-    CRON_WEEKLY="0 3 * * 0 $BACKUP_SCRIPT weekly >> $LOG_DIR/weekly.log 2>&1"
+    # Define cron job
+    CRON_12H="0 */12 * * * $BACKUP_SCRIPT 12h >> $LOG_DIR/12h.log 2>&1"
     
-    # Add cron jobs
-    log_info "Adding hourly backup cron job (every hour)"
-    (crontab -l 2>/dev/null; echo "$CRON_HOURLY") | crontab -
-    
-    log_info "Adding daily backup cron job (2 AM daily)"
-    (crontab -l 2>/dev/null; echo "$CRON_DAILY") | crontab -
-    
-    log_info "Adding weekly backup cron job (Sunday 3 AM)"
-    (crontab -l 2>/dev/null; echo "$CRON_WEEKLY") | crontab -
+    # Add cron job
+    log_info "Adding backup cron job (every 12 hours)"
+    (crontab -l 2>/dev/null; echo "$CRON_12H") | crontab -
     
     # Setup log rotation
     LOG_ROTATE_CONF="/etc/logrotate.d/healthcare-backups"
@@ -231,9 +223,7 @@ EOF
     
     log_success "Automated backup setup completed!"
     log_info "Backups will run:"
-    log_info "  - Hourly: Every hour (keeps last 24 hours)"
-    log_info "  - Daily: 2 AM daily (keeps last 7 days)"
-    log_info "  - Weekly: Sunday 3 AM (keeps last 4 weeks)"
+    log_info "  - 12-hour: Every 12 hours (keeps last 2 weeks)"
     log_info "Logs are stored in: $LOG_DIR"
 }
 
@@ -247,12 +237,12 @@ main_backup() {
     
     # Validate backup type
     case "$backup_type" in
-        hourly|daily|weekly|pre-deployment|success)
+        12h|hourly|daily|weekly|pre-deployment|success)
             log_info "Backup type: $backup_type"
             ;;
         *)
             log_error "Invalid backup type: $backup_type"
-            log_error "Valid types: hourly, daily, weekly, pre-deployment, success"
+            log_error "Valid types: 12h, hourly, daily, weekly, pre-deployment, success"
             exit 1
             ;;
     esac
@@ -757,6 +747,10 @@ cleanup_old_backups_by_type() {
     local backup_type="$1"
     
     case "$backup_type" in
+        12h)
+            # Keep last 28 twelve-hour backups
+            cleanup_backup_type "12h" 28
+            ;;
         hourly)
             # Keep last 24 hourly backups
             cleanup_backup_type "hourly" 24
@@ -788,15 +782,15 @@ usage() {
     echo "Usage: $0 <command> [options]"
     echo ""
     echo "Commands:"
-    echo "  hourly|daily|weekly|pre-deployment|success  Create backup of specified type"
+    echo "  12h|hourly|daily|weekly|pre-deployment|success  Create backup of specified type"
     echo "  retry                                         Retry failed S3 uploads"
     echo "  setup-cron                                    Setup automated backup cron jobs"
     echo ""
     echo "Examples:"
-    echo "  $0 hourly              # Create hourly backup"
+    echo "  $0 12h                 # Create 12-hour backup"
     echo "  $0 pre-deployment      # Create pre-deployment backup"
     echo "  $0 retry               # Retry failed S3 uploads"
-    echo "  $0 setup-cron          # Setup automated backups"
+    echo "  $0 setup-cron          # Setup automated backups (12-hour schedule)"
     exit 1
 }
 
@@ -804,7 +798,7 @@ main() {
     local command="${1:-}"
     
     case "$command" in
-        hourly|daily|weekly|pre-deployment|success)
+        12h|hourly|daily|weekly|pre-deployment|success)
             main_backup "$@"
             ;;
         retry)

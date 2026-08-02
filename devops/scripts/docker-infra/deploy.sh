@@ -2085,11 +2085,8 @@ setTimeout(()=>{console.log('TIMEOUT');process.exit(1)},10000);
             log_error "One-shot migration failed with exit code: $oneshot_migration_exit_code"
             log_error "Full output saved to /tmp/migration.log"
             echo "$oneshot_migration_output" > /tmp/migration.log 2>&1 || true
-            
-            # Rollback if we have a backup
             if [[ -n "$PRE_MIGRATION_BACKUP" ]]; then
-                log_warning "Rolling back to pre-migration backup..."
-                restore_backup "$PRE_MIGRATION_BACKUP"
+                log_warning "Pre-migration backup preserved for manual recovery: $PRE_MIGRATION_BACKUP"
             fi
             return 1
         fi
@@ -2615,8 +2612,7 @@ console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'
         else
             log_error "Schema validation failed after migration"
             if [[ -n "$PRE_MIGRATION_BACKUP" ]]; then
-                log_warning "Rolling back to pre-migration backup..."
-                restore_backup "$PRE_MIGRATION_BACKUP"
+                log_warning "Pre-migration backup preserved for manual recovery: $PRE_MIGRATION_BACKUP"
             fi
             return 1
         fi
@@ -2897,10 +2893,7 @@ BASELINE_SQL
             log_warning "Migration recovery summary: ${migration_recovery_action}"
         fi
         if [[ -n "$PRE_MIGRATION_BACKUP" ]]; then
-            log_warning "Rolling back to pre-migration backup..."
-            restore_backup "$PRE_MIGRATION_BACKUP" || {
-                log_error "CRITICAL: Backup restore also failed - database may be in inconsistent state"
-            }
+            log_warning "Pre-migration backup preserved for manual recovery: $PRE_MIGRATION_BACKUP"
         fi
         
         # CRITICAL: Always return error code to ensure deployment fails

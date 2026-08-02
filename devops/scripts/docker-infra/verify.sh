@@ -38,6 +38,39 @@ POSTGRES_CONTAINER="postgres"
 # Ensure BACKUP_DIR is set (from utils.sh, but provide fallback)
 BACKUP_DIR="${BACKUP_DIR:-/opt/healthcare-backend/backups}"
 
+find_running_container() {
+    local label="$1"
+    shift
+
+    for candidate in "$@"; do
+        if [[ -n "$candidate" ]] && validate_container_name "$candidate" && container_running "$candidate"; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
+    log_warning "No running ${label} container found among: $*"
+    return 1
+}
+
+count_rows_with_fallback() {
+    local container="$1"
+    local primary_query="$2"
+    local fallback_query="$3"
+
+    local count=""
+    count=$(docker exec "$container" psql -U postgres -d userdb -tAc "$primary_query" 2>/dev/null | xargs || true)
+    if [[ -z "$count" ]] && [[ -n "$fallback_query" ]]; then
+        count=$(docker exec "$container" psql -U postgres -d userdb -tAc "$fallback_query" 2>/dev/null | xargs || true)
+    fi
+
+    if [[ -z "$count" ]]; then
+        echo "0"
+    else
+        echo "$count"
+    fi
+}
+
 # ============================================================================
 # DEPLOYMENT VERIFICATION FUNCTIONS
 # ============================================================================
@@ -45,12 +78,12 @@ BACKUP_DIR="${BACKUP_DIR:-/opt/healthcare-backend/backups}"
 # Verify infrastructure
 verify_infrastructure() {
     log_info "Verifying infrastructure..."
-    
+
     local all_ok=true
     local health_check_retries=3
     local health_check_attempt=0
     local health_check_passed=false
-    
+
     # Check containers (INFRASTRUCTURE ONLY - use fixed names)
     # Infrastructure containers: postgres, dragonfly (fixed names, no prefix)
     # Application containers: api, worker (use prefix, checked separately)
@@ -58,24 +91,24 @@ verify_infrastructure() {
         log_error "${POSTGRES_CONTAINER} is not running"
         all_ok=false
     fi
-    
+
     # Use fixed name for dragonfly (infrastructure container)
     local dragonfly_container="dragonfly"
     if ! container_running "$dragonfly_container"; then
         log_error "${dragonfly_container} is not running"
         all_ok=false
     fi
-    
+
     # Check health with retry logic and auto-fix
     while [[ $health_check_attempt -lt $health_check_retries ]] && ! $health_check_passed; do
         health_check_attempt=$((health_check_attempt + 1))
         log_info "Health check attempt $health_check_attempt/$health_check_retries..."
-        
+
         # Run health check with auto-recovery enabled (capture output to check for recovery)
         export AUTO_RECREATE_MISSING="true"
         local health_check_output
         local health_check_exit
-        
+
         # Run health check and capture both stdout and stderr
         # CRITICAL: Ensure health-check.sh exists and is executable
         local health_check_script="${SCRIPT_DIR}/health-check.sh"
@@ -94,7 +127,7 @@ verify_infrastructure() {
                 health_check_output="ERROR: health-check.sh script not found"
             fi
         fi
-        
+
         if [[ -f "$health_check_script" ]]; then
             # Ensure script is executable
             chmod +x "$health_check_script" 2>/dev/null || true
@@ -106,14 +139,14 @@ verify_infrastructure() {
             health_check_exit=127
             health_check_output="ERROR: health-check.sh script not found (exit code 127)"
         fi
-        
+
         # Log important messages from health check (filter JSON but keep logs)
         echo "$health_check_output" | grep -E "^(INFO|WARNING|ERROR|SUCCESS|===|Auto-|Recovery|Recreating|Starting)" | while IFS= read -r line; do
             if [[ -n "$line" ]]; then
                 echo "$line" >&2
             fi
         done || true
-        
+
         # Check if health check passed (exit code 0)
         if [[ $health_check_exit -eq 0 ]]; then
             health_check_passed=true
@@ -127,7 +160,7 @@ verify_infrastructure() {
                 # Wait longer for containers to stabilize after recovery (recovery takes time)
                 # Individual container recovery can take longer, especially for postgres/dragonfly
                 sleep 60
-                
+
                 # Re-run health check to see if recovery succeeded (without auto-recovery to avoid loops)
                 log_info "Re-checking health after recovery..."
                 local health_check_script="${SCRIPT_DIR}/health-check.sh"
@@ -154,19 +187,19 @@ verify_infrastructure() {
                     log_info "This may indicate that AUTO_RECREATE_MISSING is not being set correctly"
                 fi
             fi
-            
+
             if [[ $health_check_attempt -lt $health_check_retries ]] && ! $health_check_passed; then
                 log_info "Waiting for infrastructure to stabilize before retry..."
                 sleep $((health_check_attempt * 10))  # Wait 10s, 20s
             fi
         fi
     done
-    
+
     if ! $health_check_passed; then
         log_error "Health check failed after $health_check_retries attempts"
         all_ok=false
     fi
-    
+
     if $all_ok; then
         echo "all_running"
         return 0
@@ -179,14 +212,18 @@ verify_infrastructure() {
 # Verify data integrity
 verify_data_integrity() {
     log_info "Verifying data integrity..."
-    
+
     local container="${POSTGRES_CONTAINER}"
-    
+
     # Test query
     if docker exec "$container" psql -U postgres -d userdb -c "SELECT 1" >/dev/null 2>&1; then
         # Check critical tables
-        local user_count=$(docker exec "$container" psql -U postgres -d userdb -t -c "SELECT count(*) FROM \"User\" LIMIT 1;" 2>/dev/null | xargs || echo "0")
-        log_info "User table has ${user_count} records"
+        local user_count
+        user_count=$(count_rows_with_fallback "$container" "SELECT count(*) FROM users;" "SELECT count(*) FROM \"User\";")
+        local clinic_count
+        clinic_count=$(count_rows_with_fallback "$container" "SELECT count(*) FROM clinics;" "SELECT count(*) FROM \"Clinic\";")
+        log_info "users table has ${user_count} records"
+        log_info "clinics table has ${clinic_count} records"
         echo "verified"
         return 0
     else
@@ -200,11 +237,11 @@ verify_data_integrity() {
 show_container_logs() {
     local container_name="$1"
     local lines="${2:-50}"  # Default to last 50 lines
-    
+
     if [[ -z "$container_name" ]]; then
         return 1
     fi
-    
+
     # Check if container exists (even if stopped)
     if docker ps -a --format "{{.Names}}" | grep -q "^${container_name}$"; then
         log_info "=== Container Logs: ${container_name} (last ${lines} lines) ==="
@@ -220,11 +257,11 @@ show_container_logs() {
 # Show container status
 show_container_status() {
     local container_name="$1"
-    
+
     if [[ -z "$container_name" ]]; then
         return 1
     fi
-    
+
     log_info "=== Container Status: ${container_name} ==="
     if docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E "(NAMES|${container_name})" || true; then
         # Show exit code if container exited
@@ -240,20 +277,30 @@ show_container_status() {
 # Verify application readiness
 verify_application() {
     log_info "Verifying application readiness..."
-    
-    local api_container="${CONTAINER_PREFIX}api"
-    local worker_container="${CONTAINER_PREFIX}worker"
-    
-    # Security: Validate container names
-    if ! validate_container_name "$api_container"; then
-        log_error "Invalid API container name: ${api_container}"
-        return 1
+
+    local api_container=""
+    local worker_container=""
+    local api_candidates=(
+        "${CONTAINER_PREFIX}api-green"
+        "${CONTAINER_PREFIX}api-blue"
+        "${CONTAINER_PREFIX}api-next"
+        "${CONTAINER_PREFIX}api"
+    )
+    local worker_candidates=(
+        "${CONTAINER_PREFIX}worker-green"
+        "${CONTAINER_PREFIX}worker-blue"
+        "${CONTAINER_PREFIX}worker-next"
+        "${CONTAINER_PREFIX}worker"
+    )
+
+    if api_container=$(find_running_container "API" "${api_candidates[@]}"); then
+        log_info "Using API container: ${api_container}"
     fi
-    if ! validate_container_name "$worker_container"; then
-        log_error "Invalid worker container name: ${worker_container}"
-        return 1
+
+    if worker_container=$(find_running_container "worker" "${worker_candidates[@]}"); then
+        log_info "Using worker container: ${worker_container}"
     fi
-    
+
     local api_ready=false
     local worker_ready=false
     # Check API for 4 minutes (240 seconds) every 30 seconds = 8 attempts
@@ -261,24 +308,24 @@ verify_application() {
     local api_interval=30
     local api_elapsed=0
     local api_attempt=0
-    
+
     # Check worker (simpler check - just running)
-    if container_running "$worker_container"; then
+    if [[ -n "$worker_container" ]]; then
         worker_ready=true
         log_success "Worker container is running"
     else
         log_warning "Worker container is not running"
-        show_container_status "$worker_container"
-        show_container_logs "$worker_container" 30
+        show_container_status "${CONTAINER_PREFIX}worker"
+        show_container_logs "${CONTAINER_PREFIX}worker" 30
     fi
-    
+
     # Check API with retry logic (it may need time to start - up to 4 minutes)
-    if container_running "$api_container"; then
+    if [[ -n "$api_container" ]]; then
         log_info "API container is running, checking health endpoint (max ${api_max_wait}s, checking every ${api_interval}s)..."
         while [[ $api_elapsed -lt $api_max_wait ]] && ! $api_ready; do
             api_attempt=$((api_attempt + 1))
             log_info "API health check attempt $api_attempt (${api_elapsed}/${api_max_wait}s)..."
-            
+
             if docker exec "$api_container" wget -q --spider http://localhost:8088/infra-health 2>/dev/null; then
                 api_ready=true
                 log_success "API is ready and responding"
@@ -290,17 +337,17 @@ verify_application() {
                 fi
             fi
         done
-        
+
         if ! $api_ready; then
             log_warning "API did not become ready after ${api_max_wait}s (${api_attempt} attempts)"
             show_container_logs "$api_container" 50
         fi
     else
         log_warning "API container is not running"
-        show_container_status "$api_container"
-        show_container_logs "$api_container" 50
+        show_container_status "${CONTAINER_PREFIX}api"
+        show_container_logs "${CONTAINER_PREFIX}api" 50
     fi
-    
+
     # Return status based on readiness
     if $api_ready && $worker_ready; then
         echo "ready"
@@ -318,13 +365,13 @@ verify_application() {
 # Post-deployment verification (default mode)
 verify_deployment() {
     log_info "Starting deployment verification..."
-    
+
     check_docker || exit 1
-    
+
     local infra_status=$(verify_infrastructure)
     local data_status=$(verify_data_integrity)
     local app_status=$(verify_application)
-    
+
     # Determine overall status
     local overall_status="failure"
     if [[ "$infra_status" == "all_running" ]] && [[ "$data_status" == "verified" ]] && [[ "$app_status" == "ready" ]]; then
@@ -332,7 +379,7 @@ verify_deployment() {
     elif [[ "$infra_status" == "all_running" ]] && [[ "$data_status" == "verified" ]] && [[ "$app_status" == "partial" ]]; then
         overall_status="partial"  # Infrastructure OK, but API not ready yet
     fi
-    
+
     # Output JSON
     {
         json_start
@@ -343,7 +390,7 @@ verify_deployment() {
         json_object "application_readiness" "{\"api\":\"${app_status}\",\"worker\":\"ready\"}"
         json_end
     } | json_fix_trailing
-    
+
     # Exit codes: 0 = success, 1 = partial (infrastructure OK but API not ready), 2 = failure
     if [[ "$overall_status" == "success" ]]; then
         log_success "Deployment verification passed"
@@ -351,40 +398,40 @@ verify_deployment() {
     elif [[ "$overall_status" == "partial" ]]; then
         log_warning "Deployment verification partial - infrastructure is healthy but API is not ready yet"
         log_info "This is usually temporary - API may need more time to start"
-        
+
         # Show API container logs for debugging
         local api_container="${CONTAINER_PREFIX}api"
         if [[ -n "$api_container" ]]; then
             show_container_logs "$api_container" 50
         fi
-        
+
         exit 1  # Still exit 1, but with warning instead of error
     else
         log_error "Deployment verification failed"
-        
+
         # Show logs for all failed containers
         log_info "=== Showing diagnostic information for failed containers ==="
-        
+
         # Show application container logs
         local api_container="${CONTAINER_PREFIX}api"
         local worker_container="${CONTAINER_PREFIX}worker"
-        
+
         if ! container_running "$api_container"; then
             log_error "API container ($api_container) is not running"
             show_container_status "$api_container"
             show_container_logs "$api_container" 100
         fi
-        
+
         if ! container_running "$worker_container"; then
             log_error "Worker container ($worker_container) is not running"
             show_container_status "$worker_container"
             show_container_logs "$worker_container" 100
         fi
-        
+
         # Show all container statuses
         log_info "=== All Container Statuses ==="
         docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | head -20 || true
-        
+
         exit 1
     fi
 }
@@ -396,22 +443,22 @@ verify_deployment() {
 # Verify single backup
 verify_single_backup() {
     local backup_id="$1"
-    
+
     log_info "Verifying backup: $backup_id"
-    
+
     # Find metadata
     local metadata_file="${BACKUP_DIR}/metadata/${backup_id}.json"
     if [[ ! -f "$metadata_file" ]]; then
         log_error "Metadata not found: $metadata_file"
         return 1
     fi
-    
+
     # Parse metadata to find backup files
     local postgres_file=$(jq -r '.postgres.local_path' "$metadata_file" 2>/dev/null)
     local dragonfly_file=$(jq -r '.dragonfly.local_path' "$metadata_file" 2>/dev/null)
-    
+
     local status="PASS"
-    
+
     # Verify PostgreSQL backup
     if [[ -n "$postgres_file" ]] && [[ -f "$postgres_file" ]]; then
         if verify_backup "$postgres_file" "$metadata_file"; then
@@ -424,7 +471,7 @@ verify_single_backup() {
         log_warning "PostgreSQL backup file not found"
         status="PARTIAL"
     fi
-    
+
     # Verify Dragonfly backup
     if [[ -n "$dragonfly_file" ]] && [[ -f "$dragonfly_file" ]]; then
         if verify_backup "$dragonfly_file" "$metadata_file"; then
@@ -439,7 +486,7 @@ verify_single_backup() {
             status="PARTIAL"
         fi
     fi
-    
+
     echo "$status"
 }
 
@@ -453,27 +500,27 @@ verify_backup_mode() {
         echo "  $0 backup all"
         exit 1
     fi
-    
+
     local BACKUP_ID="$1"
-    
+
     if [[ "$BACKUP_ID" == "all" ]]; then
         log_info "Verifying all backups..."
-        
+
         TOTAL=0
         PASSED=0
         FAILED=0
         PARTIAL=0
-        
+
         for metadata_file in "${BACKUP_DIR}/metadata"/*.json; do
             if [[ ! -f "$metadata_file" ]]; then
                 continue
             fi
-            
+
             backup_id=$(basename "$metadata_file" .json)
             TOTAL=$((TOTAL + 1))
-            
+
             result=$(verify_single_backup "$backup_id")
-            
+
             case "$result" in
                 "PASS")
                     PASSED=$((PASSED + 1))
@@ -485,16 +532,16 @@ verify_backup_mode() {
                     PARTIAL=$((PARTIAL + 1))
                     ;;
             esac
-            
+
             echo "---"
         done
-        
+
         log_info "=== VERIFICATION SUMMARY ==="
         log_info "Total backups: $TOTAL"
         log_success "Passed: $PASSED"
         log_warning "Partial: $PARTIAL"
         log_error "Failed: $FAILED"
-        
+
         if [[ $FAILED -gt 0 ]]; then
             send_alert "ERROR" "Backup verification: $FAILED backups failed"
             exit 1
@@ -511,9 +558,9 @@ verify_backup_mode() {
             log_error "Invalid backup ID"
             exit 1
         fi
-        
+
         result=$(verify_single_backup "$BACKUP_ID")
-        
+
         if [[ "$result" == "PASS" ]]; then
             log_success "Backup verification passed!"
             exit 0
@@ -532,25 +579,25 @@ verify_backup_mode() {
 verify_container_image() {
     local container_name="$1"
     local expected_image="${2:-}"
-    
+
     if [[ -z "$container_name" ]]; then
         return 1
     fi
-    
+
     if ! container_running "$container_name"; then
         log_error "Container $container_name is not running"
         return 1
     fi
-    
+
     local current_image=$(docker inspect --format='{{.Config.Image}}' "$container_name" 2>/dev/null || echo "")
     local current_image_id=$(docker inspect --format='{{.Image}}' "$container_name" 2>/dev/null || echo "")
     local created_at=$(docker inspect --format='{{.Created}}' "$container_name" 2>/dev/null || echo "")
-    
+
     log_info "Container: $container_name"
     log_info "  Image: $current_image"
     log_info "  Image ID: ${current_image_id:0:12}"
     log_info "  Created: $created_at"
-    
+
     if [[ -n "$expected_image" ]]; then
         if [[ "$current_image" == "$expected_image" ]] || [[ "$current_image" == *"$expected_image"* ]]; then
             log_success "  ✓ Image matches expected: $expected_image"
@@ -562,27 +609,27 @@ verify_container_image() {
             return 1
         fi
     fi
-    
+
     return 0
 }
 
 # Verify all application containers are using latest image
 verify_app_images() {
     log_info "Verifying application container images..."
-    
+
     local api_container="${CONTAINER_PREFIX}api"
     local worker_container="${CONTAINER_PREFIX}worker"
     local expected_image="${DOCKER_IMAGE:-}"
-    
+
     local all_ok=true
-    
+
     # Get expected image from environment or default
     if [[ -z "$expected_image" ]]; then
         expected_image="ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest"
     fi
-    
+
     log_info "Expected image: $expected_image"
-    
+
     # Verify API container
     if container_running "$api_container"; then
         if ! verify_container_image "$api_container" "$expected_image"; then
@@ -592,7 +639,7 @@ verify_app_images() {
         log_error "API container ($api_container) is not running"
         all_ok=false
     fi
-    
+
     # Verify Worker container
     if container_running "$worker_container"; then
         if ! verify_container_image "$worker_container" "$expected_image"; then
@@ -602,7 +649,7 @@ verify_app_images() {
         log_error "Worker container ($worker_container) is not running"
         all_ok=false
     fi
-    
+
     if $all_ok; then
         log_success "All application containers are using the expected image"
         echo "verified"
@@ -619,17 +666,17 @@ verify_and_fix_images() {
     log_info "=========================================="
     log_info "=== IMAGE VERIFICATION AND AUTO-FIX ==="
     log_info "=========================================="
-    
+
     local api_container="${CONTAINER_PREFIX}api"
     local worker_container="${CONTAINER_PREFIX}worker"
     local expected_image="${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest}"
-    
+
     # Get current running images
     local api_image=$(docker inspect --format='{{.Config.Image}}' "$api_container" 2>/dev/null || echo "")
     local api_image_id=$(docker inspect --format='{{.Image}}' "$api_container" 2>/dev/null || echo "")
     local worker_image=$(docker inspect --format='{{.Config.Image}}' "$worker_container" 2>/dev/null || echo "")
     local worker_image_id=$(docker inspect --format='{{.Image}}' "$worker_container" 2>/dev/null || echo "")
-    
+
     # Pull latest image from registry
     log_info "Pulling latest image from registry..."
     if docker pull "$expected_image" 2>&1; then
@@ -638,44 +685,44 @@ verify_and_fix_images() {
         log_error "Failed to pull latest image"
         return 1
     fi
-    
+
     local latest_image_id=$(docker images --format "{{.ID}}" "$expected_image" 2>/dev/null | head -n 1)
     log_info "Latest image ID: ${latest_image_id:0:12}"
-    
+
     # Compare and fix
     local needs_fix=false
-    
+
     if [[ -z "$api_image_id" ]] || [[ "$api_image_id" != "$latest_image_id" ]]; then
         log_warning "API container is not using latest image"
         needs_fix=true
     fi
-    
+
     if [[ -z "$worker_image_id" ]] || [[ "$worker_image_id" != "$latest_image_id" ]]; then
         log_warning "Worker container is not using latest image"
         needs_fix=true
     fi
-    
+
     if $needs_fix; then
         log_info "Fixing containers to use latest image..."
-        
+
         # Stop and remove containers
         docker stop "$api_container" "$worker_container" 2>&1 || true
         docker rm -f "$api_container" "$worker_container" 2>&1 || true
-        
+
         # Start with latest image
         export DOCKER_IMAGE="$expected_image"
         local compose_file="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
-        
+
         if [[ -f "$compose_file" ]]; then
             cd "$(dirname "$compose_file")" || return 1
             if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
                 log_info "Containers recreated, waiting for startup..."
                 sleep 10
-                
+
                 # Verify fix
                 local new_api_image_id=$(docker inspect --format='{{.Image}}' "$api_container" 2>/dev/null || echo "")
                 local new_worker_image_id=$(docker inspect --format='{{.Image}}' "$worker_container" 2>/dev/null || echo "")
-                
+
                 if [[ "$new_api_image_id" == "$latest_image_id" ]] && [[ "$new_worker_image_id" == "$latest_image_id" ]]; then
                     log_success "✓ Containers now using latest image"
                     return 0
@@ -702,22 +749,22 @@ show_deployment_status() {
     log_info "=========================================="
     log_info "=== DEPLOYMENT STATUS ==="
     log_info "=========================================="
-    
+
     local api_container="${CONTAINER_PREFIX}api"
     local worker_container="${CONTAINER_PREFIX}worker"
-    
+
     # Infrastructure containers
     log_info ""
     log_info "Infrastructure Containers:"
     log_info "─────────────────────────────────────"
     docker ps --filter "name=postgres" --filter "name=dragonfly" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | head -10 || true
-    
+
     # Application containers
     log_info ""
     log_info "Application Containers:"
     log_info "─────────────────────────────────────"
     docker ps --filter "name=${api_container}" --filter "name=${worker_container}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
-    
+
     # Image information
     log_info ""
     log_info "Container Images:"
@@ -731,7 +778,7 @@ show_deployment_status() {
     else
         log_warning "API: NOT RUNNING"
     fi
-    
+
     if container_running "$worker_container"; then
         local worker_image=$(docker inspect --format='{{.Config.Image}}' "$worker_container" 2>/dev/null || echo "N/A")
         local worker_image_id=$(docker inspect --format='{{.Image}}' "$worker_container" 2>/dev/null || echo "N/A")
@@ -741,14 +788,14 @@ show_deployment_status() {
     else
         log_warning "Worker: NOT RUNNING"
     fi
-    
+
     # Available backup images
     log_info ""
     log_info "Backup Images Available:"
     log_info "─────────────────────────────────────"
     local image_base="ghcr.io/ishswami-tech/healthcarebackend/healthcare-api"
     docker images "$image_base" --format "{{.Repository}}:{{.Tag}}" | grep "rollback-backup" | head -5 || echo "  No backup images found"
-    
+
     # Health status
     log_info ""
     log_info "Infra Health Status:"
@@ -761,7 +808,7 @@ show_deployment_status() {
             log_warning "API Infra Health: $health_code"
         fi
     fi
-    
+
     log_info ""
     log_info "=========================================="
 }
@@ -793,7 +840,7 @@ usage() {
 
 main() {
     local mode="${1:-deployment}"
-    
+
     case "$mode" in
         deployment|"")
             verify_deployment
