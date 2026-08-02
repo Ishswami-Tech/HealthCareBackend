@@ -1165,4 +1165,3 @@ jobs:
           echo "- **Actor**: @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Deployment successful!**" >> $GITHUB_STEP_SUMMARY
-

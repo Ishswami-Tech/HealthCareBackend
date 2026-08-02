@@ -275,6 +275,71 @@ show_container_status() {
 }
 
 # Verify application readiness
+ensure_public_ingress() {
+    local api_container="$1"
+    local host_health_url="http://127.0.0.1:8088/health"
+    local deploy_root="${BASE_DIR:-/opt/healthcare-backend}"
+    local nginx_root="${deploy_root}/nginx"
+    local upstream_file="${nginx_root}/upstream.conf"
+    local compose_file="${deploy_root}/devops/docker/docker-compose.prod.yml"
+
+    if command -v curl >/dev/null 2>&1; then
+        if curl -fsS --max-time 5 "$host_health_url" >/dev/null 2>&1; then
+            log_success "Public ingress health check passed"
+            return 0
+        fi
+    elif command -v wget >/dev/null 2>&1; then
+        if wget -q -O - "$host_health_url" >/dev/null 2>&1; then
+            log_success "Public ingress health check passed"
+            return 0
+        fi
+    else
+        log_error "Neither curl nor wget is available for public ingress verification"
+        return 1
+    fi
+
+    log_warning "Public ingress health check failed - attempting nginx upstream auto-heal"
+
+    if ! container_running "latest-nginx" && [[ -f "$compose_file" ]]; then
+        log_info "Starting nginx router before retry..."
+        docker compose -f "$compose_file" up -d --no-deps nginx >/dev/null 2>&1 || true
+        sleep 3
+    fi
+
+    if [[ ! -d "$nginx_root" ]]; then
+        log_error "Nginx upstream directory not found: $nginx_root"
+        return 1
+    fi
+
+    printf 'server %s:8088 max_fails=3 fail_timeout=10s;\n' "$api_container" > "$upstream_file"
+    log_info "Rewrote nginx upstream to ${api_container}"
+
+    if container_running "latest-nginx"; then
+        if docker exec latest-nginx nginx -t >/dev/null 2>&1; then
+            docker exec latest-nginx nginx -s reload >/dev/null 2>&1 || true
+            sleep 2
+        else
+            log_error "nginx config test failed during auto-heal"
+            return 1
+        fi
+    fi
+
+    if command -v curl >/dev/null 2>&1; then
+        if curl -fsS --max-time 5 "$host_health_url" >/dev/null 2>&1; then
+            log_success "Public ingress auto-heal succeeded"
+            return 0
+        fi
+    elif command -v wget >/dev/null 2>&1; then
+        if wget -q -O - "$host_health_url" >/dev/null 2>&1; then
+            log_success "Public ingress auto-heal succeeded"
+            return 0
+        fi
+    fi
+
+    log_error "Public ingress remains unhealthy after nginx auto-heal"
+    return 1
+}
+
 verify_application() {
     log_info "Verifying application readiness..."
 
@@ -350,8 +415,13 @@ verify_application() {
 
     # Return status based on readiness
     if $api_ready && $worker_ready; then
-        echo "ready"
-        return 0
+        if ensure_public_ingress "$api_container"; then
+            echo "ready"
+            return 0
+        fi
+        log_warning "Public ingress could not be repaired automatically"
+        echo "partial"
+        return 1
     elif $worker_ready; then
         # Worker is ready but API is not - return partial status
         echo "partial"
