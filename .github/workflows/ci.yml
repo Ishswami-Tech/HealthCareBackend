@@ -1010,6 +1010,11 @@ jobs:
               -e PORT=8080 \
               -v /opt/healthcare-backend/logs:/app/logs \
               -p 9090:8080 \
+              --health-cmd 'node dist/worker-bootstrap.js --healthcheck' \
+              --health-interval=30s \
+              --health-timeout=10s \
+              --health-retries=3 \
+              --health-start-period=30s \
               --restart=unless-stopped \
               --label app.type=worker \
               --label app.version="${{ github.sha }}" \

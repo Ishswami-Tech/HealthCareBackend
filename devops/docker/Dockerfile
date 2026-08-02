@@ -289,7 +289,7 @@ ENV GC_INTERVAL=10800
 EXPOSE 8088
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
-  CMD wget -q --spider http://localhost:8088/health || exit 1
+  CMD sh -c 'if [ "${APP_MODE:-api}" = "worker" ]; then node dist/worker-bootstrap.js --healthcheck; else wget -q --spider http://localhost:${PORT:-8088}/infra-health || exit 1; fi'
 
 # Set entrypoint (runs before CMD)
 # Entrypoint will verify Prisma Client exists (generated during build)
