@@ -136,8 +136,8 @@ export class FastifyFrameworkAdapter implements IFastifyFrameworkAdapter {
       ...(options.environment === 'production' &&
       options.enableHttp2 !== false &&
       getEnvBoolean('ENABLE_HTTP2', true) &&
-      process.env.HTTPS_CERT_PATH &&
-      process.env.HTTPS_KEY_PATH
+      process.env['HTTPS_CERT_PATH'] &&
+      process.env['HTTPS_KEY_PATH']
         ? ({ http2: true } as { http2: true })
         : {}),
     };

@@ -34,11 +34,11 @@ export class QueueHealthIndicator extends BaseHealthIndicator<QueueHealthMonitor
     // Queue processing runs on worker containers only.
     // On API instances, queue health is expected to be unavailable — return not-applicable
     // rather than failing the overall health check.
-    const appMode = process.env.APP_MODE;
+    const appMode = process.env['APP_MODE'];
     if (appMode === 'api') {
       return {
         healthy: true,
-        connection: { connected: false, note: 'Queue runs on worker container' },
+        connection: { connected: false },
         metrics: {
           totalJobs: 0,
           activeJobs: 0,
