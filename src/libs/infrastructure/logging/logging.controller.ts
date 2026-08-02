@@ -610,6 +610,39 @@ export class LoggingController {
     return reply.send(this.getHtmlTemplate('logs'));
   }
 
+  @Get('health')
+  @Public() // Public - no authentication required
+  @ApiOperation({
+    summary: 'Logger health check',
+    description: 'Lightweight health endpoint for internal logging service checks.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Logger service is healthy',
+    schema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', example: 'healthy' },
+        service: { type: 'string', example: 'logging' },
+        timestamp: { type: 'string', example: '2026-08-02T09:45:00.000Z' },
+        message: { type: 'string', example: 'Logging service is available' },
+      },
+    },
+  })
+  getHealth(): Promise<{
+    status: 'healthy';
+    service: 'logging';
+    timestamp: string;
+    message: string;
+  }> {
+    return {
+      status: 'healthy',
+      service: 'logging',
+      timestamp: new Date().toISOString(),
+      message: 'Logging service is available',
+    };
+  }
+
   @Get('ui/events')
   @Public() // Public - no authentication required
   async getEventsPage(@Res() reply: FastifyReply) {

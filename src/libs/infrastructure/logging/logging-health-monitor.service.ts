@@ -467,7 +467,10 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
         'PORT',
         this.configService.getEnvNumber('VIRTUAL_PORT', 8088)
       );
-      const loggerUrlPath = this.configService.getEnv('LOGGER_URL', '/logger');
+      const loggerUrlPath =
+        this.configService.getEnv('LOGGER_HEALTH_URL') ||
+        this.configService.getEnv('LOGGER_URL') ||
+        '/logger/health';
       // Use localhost for internal health check (same container)
       const loggerUrl = `http://localhost:${loggerPort}${loggerUrlPath}`;
 
