@@ -468,7 +468,7 @@ jobs:
           echo "::notice::Recreating: ${UNHEALTHY:-all infra (postgres dragonfly)}"
           [[ -z "$BACKUP_ID" ]] && echo "::warning::No backup-id - restore step will be skipped"
 
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << ENDSSH
+          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             set -e
             cp /tmp/docker-compose.prod.yml ${{ secrets.SERVER_DEPLOY_PATH }}/devops/docker/docker-compose.prod.yml
             cd ${{ secrets.SERVER_DEPLOY_PATH }}/devops/docker
@@ -840,7 +840,7 @@ jobs:
           DEPLOY_MODE="$([[ "$INFRA_HEALTHY" == 'true' ]] && echo 'healthy' || echo 'recovery')"
           echo "::notice::Deploy mode: ${DEPLOY_MODE} | Image: ${{ steps.deploy-image.outputs.image }}:main-${{ github.sha }}"
 
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << ENDSSH
+          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             set -e
             export DOCKER_IMAGE="${{ steps.deploy-image.outputs.image }}:main-${{ github.sha }}"
             export SERVER_DEPLOY_PATH="${{ secrets.SERVER_DEPLOY_PATH }}"
