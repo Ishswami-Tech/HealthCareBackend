@@ -844,31 +844,31 @@ jobs:
             set -e
             export DOCKER_IMAGE="${{ steps.deploy-image.outputs.image }}:main-${{ github.sha }}"
             export SERVER_DEPLOY_PATH="${{ secrets.SERVER_DEPLOY_PATH }}"
-            export NGINX_UPSTREAM="\${SERVER_DEPLOY_PATH}/nginx/upstream.conf"
+            export NGINX_UPSTREAM="${SERVER_DEPLOY_PATH}/nginx/upstream.conf"
             ACTIVE="latest-api"
             NEXT="latest-api-next"
 
-            mkdir -p "\${SERVER_DEPLOY_PATH}/backups/"{postgres,dragonfly,metadata}
-            mkdir -p "\${SERVER_DEPLOY_PATH}/data/"{postgres,dragonfly}
-            mkdir -p "\${SERVER_DEPLOY_PATH}/logs" "\${SERVER_DEPLOY_PATH}/nginx"
+            mkdir -p "${SERVER_DEPLOY_PATH}/backups/"{postgres,dragonfly,metadata}
+            mkdir -p "${SERVER_DEPLOY_PATH}/data/"{postgres,dragonfly}
+            mkdir -p "${SERVER_DEPLOY_PATH}/logs" "${SERVER_DEPLOY_PATH}/nginx"
 
-            mv /tmp/.env.production "\${SERVER_DEPLOY_PATH}/.env.production"
-            chmod 600 "\${SERVER_DEPLOY_PATH}/.env.production"
-            mv /tmp/docker-compose.prod.yml "\${SERVER_DEPLOY_PATH}/devops/docker/docker-compose.prod.yml"
-            find "\${SERVER_DEPLOY_PATH}/devops/scripts" -name '*.sh' -exec chmod +x {} \;
+            mv /tmp/.env.production "${SERVER_DEPLOY_PATH}/.env.production"
+            chmod 600 "${SERVER_DEPLOY_PATH}/.env.production"
+            mv /tmp/docker-compose.prod.yml "${SERVER_DEPLOY_PATH}/devops/docker/docker-compose.prod.yml"
+            find "${SERVER_DEPLOY_PATH}/devops/scripts" -name '*.sh' -exec chmod +x {} \;
 
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
             for attempt in 1 2 3 4 5; do
-              docker pull "\${DOCKER_IMAGE}" && break
-              [[ \$attempt -eq 5 ]] && { echo "Pull failed"; exit 1; }
-              echo "Retry \${attempt}/5 in 10s..."; sleep 10
+              docker pull "${DOCKER_IMAGE}" && break
+              [[ $attempt -eq 5 ]] && { echo "Pull failed"; exit 1; }
+              echo "Retry ${attempt}/5 in 10s..."; sleep 10
             done
 
-            cd "\${SERVER_DEPLOY_PATH}/devops/docker"
+            cd "${SERVER_DEPLOY_PATH}/devops/docker"
             docker run --rm --network app-network \
-              --env-file "\${SERVER_DEPLOY_PATH}/.env.production" \
-              "\${DOCKER_IMAGE}" \
+              --env-file "${SERVER_DEPLOY_PATH}/.env.production" \
+              "${DOCKER_IMAGE}" \
               sh -c "node scripts/run-prisma.js migrate" \
               || echo "Migration: already up to date or non-fatal"
 
@@ -877,29 +877,29 @@ jobs:
 
             # ZERO-DOWNTIME: Blue-Green API Deploy
             echo "=== ZERO-DOWNTIME DEPLOY START ==="
-            docker rm -f "\${NEXT}" 2>/dev/null || true
+            docker rm -f "${NEXT}" 2>/dev/null || true
 
             # Force-kill ALL restarting containers (Docker blocks docker rm on them)
             # Previous failed deploys leave containers stuck in restart loops
             RESTARTING=$(docker ps -a --filter "status=restarting" --format '{{.ID}}' 2>/dev/null)
-            if [ -n "\${RESTARTING}" ]; then
+            if [ -n "${RESTARTING}" ]; then
               echo "Found restarting containers, force-killing:"
-              echo "\${RESTARTING}"
-              echo "\${RESTARTING}" | while read cid; do
-                docker kill --signal=SIGKILL "\${cid}" 2>/dev/null || true
+              echo "${RESTARTING}"
+              echo "${RESTARTING}" | while read cid; do
+                docker kill --signal=SIGKILL "${cid}" 2>/dev/null || true
               done
               sleep 3
             fi
 
             IS_ROLLING=false
-            docker ps --format '{{.Names}}' | grep -q "^\${ACTIVE}$" && IS_ROLLING=true
+            docker ps --format '{{.Names}}' | grep -q "^${ACTIVE}$" && IS_ROLLING=true
 
-            echo "Starting new container: \${NEXT}"
+            echo "Starting new container: ${NEXT}"
             docker run -d \
-              --name "\${NEXT}" \
+              --name "${NEXT}" \
               --hostname api \
               --network app-network \
-              --env-file "\${SERVER_DEPLOY_PATH}/.env.production" \
+              --env-file "${SERVER_DEPLOY_PATH}/.env.production" \
               -e NODE_ENV=production \
               -e DOCKER_ENV=true \
               -e DRAGONFLY_HOST=dragonfly \
@@ -916,30 +916,30 @@ jobs:
               --restart=no \
               --label app.type=api \
               --label app.version="${{ github.sha }}" \
-              "\${DOCKER_IMAGE}"
+              "${DOCKER_IMAGE}"
 
-            echo "Waiting for \${NEXT} to become healthy (max 3 min)..."
+            echo "Waiting for ${NEXT} to become healthy (max 3 min)..."
             HEALTHY=false
-            for i in \$(seq 1 36); do
-              STATUS=\$(docker inspect --format='{{.State.Health.Status}}' "\${NEXT}" 2>/dev/null || echo "starting")
-              echo "  [\${i}/36] health: \${STATUS}"
-              if [[ "\$STATUS" == "healthy" ]]; then HEALTHY=true; break
-              elif [[ "\$STATUS" == "unhealthy" ]]; then
+            for i in $(seq 1 36); do
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' "${NEXT}" 2>/dev/null || echo "starting")
+              echo "  [${i}/36] health: ${STATUS}"
+              if [[ "$STATUS" == "healthy" ]]; then HEALTHY=true; break
+              elif [[ "$STATUS" == "unhealthy" ]]; then
                 echo "::error::New container unhealthy -- rollback"
-                docker logs --tail=50 "\${NEXT}" || true
-                docker rm -f "\${NEXT}"; exit 1
+                docker logs --tail=50 "${NEXT}" || true
+                docker rm -f "${NEXT}"; exit 1
               fi
               sleep 5
             done
 
-            if [[ "\$HEALTHY" != "true" ]]; then
+            if [[ "$HEALTHY" != "true" ]]; then
               echo "::error::Timeout -- rollback"
-              docker logs --tail=50 "\${NEXT}" || true
-              docker rm -f "\${NEXT}"; exit 1
+              docker logs --tail=50 "${NEXT}" || true
+              docker rm -f "${NEXT}"; exit 1
             fi
 
-            echo "\${NEXT} healthy -- switching nginx upstream (zero downtime)"
-            echo "server \${NEXT}:8088 max_fails=3 fail_timeout=10s;" > "\${NGINX_UPSTREAM}"
+            echo "${NEXT} healthy -- switching nginx upstream (zero downtime)"
+            echo "server ${NEXT}:8088 max_fails=3 fail_timeout=10s;" > "${NGINX_UPSTREAM}"
             
             # Ensure nginx router is actually running before we exec into it.
             # docker ps can still show a container that is restarting, so check state explicitly.
@@ -948,7 +948,7 @@ jobs:
             if [[ "$NGINX_STATUS" != "running" ]]; then
               echo "Starting nginx router (current status: ${NGINX_STATUS})..."
               docker rm -f latest-nginx 2>/dev/null || true
-              docker compose -f "\${SERVER_DEPLOY_PATH}/devops/docker/docker-compose.prod.yml" up -d --no-deps nginx
+              docker compose -f "${SERVER_DEPLOY_PATH}/devops/docker/docker-compose.prod.yml" up -d --no-deps nginx
             fi
 
             for i in $(seq 1 15); do
@@ -965,24 +965,24 @@ jobs:
               echo "--- NGINX LOGS ---"
               docker logs latest-nginx || true
               echo "------------------"
-              echo "server \${ACTIVE}:8088 max_fails=3 fail_timeout=10s;" > "\${NGINX_UPSTREAM}"
-              docker rm -f "\${NEXT}"; exit 1
+              echo "server ${ACTIVE}:8088 max_fails=3 fail_timeout=10s;" > "${NGINX_UPSTREAM}"
+              docker rm -f "${NEXT}"; exit 1
             }
             docker exec latest-nginx nginx -s reload
-            echo "nginx switched to \${NEXT}"
+            echo "nginx switched to ${NEXT}"
             sleep 2
 
-            if [[ "\$IS_ROLLING" == "true" ]]; then
-              echo "Draining old container: \${ACTIVE} (30s)"
-              docker stop "\${ACTIVE}" --time=30 || true
-              docker rm "\${ACTIVE}" || true
+            if [[ "$IS_ROLLING" == "true" ]]; then
+              echo "Draining old container: ${ACTIVE} (30s)"
+              docker stop "${ACTIVE}" --time=30 || true
+              docker rm "${ACTIVE}" || true
             fi
 
-            docker rename "\${NEXT}" "\${ACTIVE}"
-            echo "server \${ACTIVE}:8088 max_fails=3 fail_timeout=10s;" > "\${NGINX_UPSTREAM}"
+            docker rename "${NEXT}" "${ACTIVE}"
+            echo "server ${ACTIVE}:8088 max_fails=3 fail_timeout=10s;" > "${NGINX_UPSTREAM}"
             docker exec latest-nginx nginx -s reload
-            docker update --restart=unless-stopped "\${ACTIVE}"
-            echo "=== ZERO-DOWNTIME DEPLOY COMPLETE: \${ACTIVE} ==="
+            docker update --restart=unless-stopped "${ACTIVE}"
+            echo "=== ZERO-DOWNTIME DEPLOY COMPLETE: ${ACTIVE} ==="
 
             # Worker: graceful restart (BullMQ jobs stay in queue during restart)
             echo "Deploying worker..."
@@ -992,7 +992,7 @@ jobs:
               --name latest-worker \
               --hostname worker \
               --network app-network \
-              --env-file "\${SERVER_DEPLOY_PATH}/.env.production" \
+              --env-file "${SERVER_DEPLOY_PATH}/.env.production" \
               -e NODE_ENV=production \
               -e DOCKER_ENV=true \
               -e DRAGONFLY_HOST=dragonfly \
@@ -1004,7 +1004,7 @@ jobs:
               --restart=unless-stopped \
               --label app.type=worker \
               --label app.version="${{ github.sha }}" \
-              "\${DOCKER_IMAGE}"
+              "${DOCKER_IMAGE}"
             echo "Worker deployed"
 
             echo "Container status:"
