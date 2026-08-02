@@ -993,12 +993,26 @@ jobs:
             docker rm -f "${ACTIVE}" 2>/dev/null || true
             echo "=== ZERO-DOWNTIME DEPLOY COMPLETE: ${NEXT} ==="
 
-            # Worker: graceful restart (BullMQ jobs stay in queue during restart)
-            echo "Deploying worker..."
-            docker stop latest-worker --time=30 2>/dev/null || true
-            docker rm latest-worker 2>/dev/null || true
+            # ZERO-DOWNTIME: Blue-Green Worker Deploy
+            echo "=== ZERO-DOWNTIME WORKER DEPLOY START ==="
+            CURRENT_WORKER_ACTIVE=$(docker ps --format '{{.Names}}' | grep -E '^latest-worker-(blue|green)$' || true)
+            if [ "$CURRENT_WORKER_ACTIVE" == "latest-worker-blue" ]; then
+              WORKER_ACTIVE="latest-worker-blue"
+              WORKER_NEXT="latest-worker-green"
+            elif [ "$CURRENT_WORKER_ACTIVE" == "latest-worker-green" ]; then
+              WORKER_ACTIVE="latest-worker-green"
+              WORKER_NEXT="latest-worker-blue"
+            else
+              WORKER_ACTIVE="latest-worker-blue"
+              WORKER_NEXT="latest-worker-green"
+            fi
+            echo "Current worker active: ${WORKER_ACTIVE}, Deploying to: ${WORKER_NEXT}"
+
+            docker rm -f "${WORKER_NEXT}" 2>/dev/null || true
+
+            echo "Starting new worker container: ${WORKER_NEXT}"
             docker run -d \
-              --name latest-worker \
+              --name "${WORKER_NEXT}" \
               --hostname worker \
               --network app-network \
               --env-file "${SERVER_DEPLOY_PATH}/.env.production" \
@@ -1019,6 +1033,37 @@ jobs:
               --label app.type=worker \
               --label app.version="${{ github.sha }}" \
               "${DOCKER_IMAGE}"
+
+            echo "Waiting for ${WORKER_NEXT} to become healthy (max 3 min)..."
+            WORKER_HEALTHY=false
+            for i in $(seq 1 12); do
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' "${WORKER_NEXT}" 2>/dev/null || echo "starting")
+              echo "  [${i}/12] health: ${STATUS}"
+              if [[ "$STATUS" == "healthy" ]]; then WORKER_HEALTHY=true; break
+              elif [[ "$STATUS" == "unhealthy" ]]; then
+                echo "::error::New worker container unhealthy -- rollback"
+                docker logs --tail=50 "${WORKER_NEXT}" || true
+                docker rm -f "${WORKER_NEXT}"; exit 1
+              fi
+              sleep 15
+            done
+
+            if [[ "$WORKER_HEALTHY" != "true" ]]; then
+              echo "::error::Worker Timeout -- rollback"
+              docker logs --tail=50 "${WORKER_NEXT}" || true
+              docker rm -f "${WORKER_NEXT}"; exit 1
+            fi
+
+            if [ -n "$CURRENT_WORKER_ACTIVE" ]; then
+              echo "Draining old worker container: ${WORKER_ACTIVE} (30s)"
+              docker stop "${WORKER_ACTIVE}" --time=30 || true
+              docker rm "${WORKER_ACTIVE}" || true
+            fi
+            
+            # Catch old legacy non-blue/green worker just in case
+            docker rm -f latest-worker 2>/dev/null || true
+
+            echo "=== ZERO-DOWNTIME WORKER DEPLOY COMPLETE: ${WORKER_NEXT} ==="
             echo "Worker deployed"
 
             echo "Container status:"
