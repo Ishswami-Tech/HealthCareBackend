@@ -943,7 +943,8 @@ jobs:
             
             # Ensure nginx router is actually running before we exec into it.
             # docker ps can still show a container that is restarting, so check state explicitly.
-            NGINX_STATUS=$(docker inspect --format='{{.State.Status}}' latest-nginx 2>/dev/null || echo "missing")
+            NGINX_STATUS=$(docker inspect --format='{{.State.Status}}' latest-nginx 2>/dev/null || true)
+            NGINX_STATUS=${NGINX_STATUS:-missing}
             if [[ "$NGINX_STATUS" != "running" ]]; then
               echo "Starting nginx router (current status: ${NGINX_STATUS})..."
               docker rm -f latest-nginx 2>/dev/null || true
@@ -951,7 +952,8 @@ jobs:
             fi
 
             for i in $(seq 1 15); do
-              NGINX_STATUS=$(docker inspect --format='{{.State.Status}}' latest-nginx 2>/dev/null || echo "missing")
+              NGINX_STATUS=$(docker inspect --format='{{.State.Status}}' latest-nginx 2>/dev/null || true)
+              NGINX_STATUS=${NGINX_STATUS:-missing}
               if [[ "$NGINX_STATUS" == "running" ]]; then
                 break
               fi
