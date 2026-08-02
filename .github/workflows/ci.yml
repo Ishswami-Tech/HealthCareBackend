@@ -1009,7 +1009,7 @@ jobs:
             fi
             echo "Current worker active: ${WORKER_ACTIVE}, Deploying to: ${WORKER_NEXT}"
 
-            # Stop and remove legacy single-worker first (frees the published port)
+            # Stop and remove legacy single-worker first
             docker rm -f latest-worker 2>/dev/null || true
 
             docker rm -f "${WORKER_NEXT}" 2>/dev/null || true
@@ -1027,7 +1027,6 @@ jobs:
               -e APP_MODE=worker \
               -e PORT=8080 \
               -v /opt/healthcare-backend/logs:/app/logs \
-              -p 9010:8080 \
               --health-cmd 'node dist/worker-bootstrap.js --healthcheck' \
               --health-interval=30s \
               --health-timeout=15s \
