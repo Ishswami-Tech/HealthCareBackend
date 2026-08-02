@@ -869,7 +869,7 @@ jobs:
             docker run --rm --network app-network \
               --env-file "\${SERVER_DEPLOY_PATH}/.env.production" \
               "\${DOCKER_IMAGE}" \
-              sh -c "yarn prisma migrate deploy --schema=\${PRISMA_SCHEMA_PATH:-/app/src/libs/infrastructure/database/prisma/schema.prisma}" \
+              sh -c "node scripts/run-prisma.js migrate" \
               || echo "Migration: already up to date or non-fatal"
 
             # We will start nginx later, right before switching traffic, 
@@ -941,14 +941,23 @@ jobs:
             echo "\${NEXT} healthy -- switching nginx upstream (zero downtime)"
             echo "server \${NEXT}:8088 max_fails=3 fail_timeout=10s;" > "\${NGINX_UPSTREAM}"
             
-            # Ensure nginx router is running (it might have crashed previously or never started)
-            if ! docker ps --format '{{.Names}}' | grep -q '^latest-nginx$'; then
-              echo "Starting nginx router..."
+            # Ensure nginx router is actually running before we exec into it.
+            # docker ps can still show a container that is restarting, so check state explicitly.
+            NGINX_STATUS=$(docker inspect --format='{{.State.Status}}' latest-nginx 2>/dev/null || echo "missing")
+            if [[ "$NGINX_STATUS" != "running" ]]; then
+              echo "Starting nginx router (current status: ${NGINX_STATUS})..."
               docker rm -f latest-nginx 2>/dev/null || true
-              docker compose -f "\${SERVER_DEPLOY_PATH}/devops/docker/docker-compose.prod.yml" up -d --no-deps nginx || true
-              sleep 3
+              docker compose -f "\${SERVER_DEPLOY_PATH}/devops/docker/docker-compose.prod.yml" up -d --no-deps nginx
             fi
 
+            for i in $(seq 1 15); do
+              NGINX_STATUS=$(docker inspect --format='{{.State.Status}}' latest-nginx 2>/dev/null || echo "missing")
+              if [[ "$NGINX_STATUS" == "running" ]]; then
+                break
+              fi
+              echo "Waiting for nginx router to be running (${i}/15)..."
+              sleep 2
+            done
             docker exec latest-nginx nginx -t || {
               echo "::error::nginx config test failed -- reverting"
               echo "--- NGINX LOGS ---"

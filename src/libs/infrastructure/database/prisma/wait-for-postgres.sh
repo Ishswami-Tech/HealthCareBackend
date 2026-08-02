@@ -44,7 +44,7 @@ fi
 
 # Run Prisma Migrations
 echo "Running Prisma Migrations..."
-yarn prisma migrate deploy --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js
+node scripts/run-prisma.js migrate
 
 # Don't automatically reset the database in production-like environments
 if [ "$NODE_ENV" = "development" ] || [ "$APP_ENV" = "development" ]; then
