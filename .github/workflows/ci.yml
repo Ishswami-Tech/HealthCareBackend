@@ -951,6 +951,9 @@ jobs:
 
             docker exec latest-nginx nginx -t || {
               echo "::error::nginx config test failed -- reverting"
+              echo "--- NGINX LOGS ---"
+              docker logs latest-nginx || true
+              echo "------------------"
               echo "server \${ACTIVE}:8088 max_fails=3 fail_timeout=10s;" > "\${NGINX_UPSTREAM}"
               docker rm -f "\${NEXT}"; exit 1
             }
