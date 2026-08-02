@@ -179,6 +179,7 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.healthcare-api.rule=Host(`backend-service-v1.ishswami.in`)"
       - "traefik.http.services.healthcare-api.loadbalancer.server.port=8088"
+      - "traefik.docker.network=coolify"
 
   # API - NestJS Backend
   api:
