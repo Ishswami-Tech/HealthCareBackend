@@ -875,6 +875,7 @@ jobs:
             # Ensure nginx router is running
             if ! docker ps --format '{{.Names}}' | grep -q '^latest-nginx$'; then
               echo "Starting nginx router..."
+              docker rm -f latest-nginx 2>/dev/null || true
               docker compose -f "\${SERVER_DEPLOY_PATH}/devops/docker/docker-compose.prod.yml" up -d --no-deps nginx || true
               sleep 3
             fi
