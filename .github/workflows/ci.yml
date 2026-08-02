@@ -846,6 +846,9 @@ jobs:
             export DOCKER_IMAGE="${{ steps.deploy-image.outputs.image }}:main-${{ github.sha }}"
             export SERVER_DEPLOY_PATH="${{ secrets.SERVER_DEPLOY_PATH }}"
             export NGINX_UPSTREAM="${SERVER_DEPLOY_PATH}/nginx/upstream.conf"
+            # Clean up legacy single-container (non blue/green) from old deploy
+            docker rm -f latest-api 2>/dev/null || true
+
             CURRENT_ACTIVE=$(docker ps --format '{{.Names}}' | grep -E '^latest-api-(blue|green)$' || true)
             if [ "$CURRENT_ACTIVE" == "latest-api-blue" ]; then
               ACTIVE="latest-api-blue"
