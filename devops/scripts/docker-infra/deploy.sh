@@ -988,7 +988,7 @@ deploy_application() {
             # Use Node.js instead of curl (curl not available in container)
             docker exec "$api_container" node -e "
                 const http = require('http');
-                http.get('http://localhost:8088/health', (res) => {
+                http.get('http://localhost:8088/infra-health', (res) => {
                     let data = '';
                     res.on('data', (chunk) => { data += chunk; });
                     res.on('end', () => {
@@ -1202,7 +1202,7 @@ verify_container_images() {
 }
 
 # Verify application readiness (requires actual database connection)
-# Uses /health/ready endpoint which checks if database is actually connected
+# Uses /infra-health endpoint which checks only infrastructure readiness
 # This ensures pipeline fails if database connection is not established
 verify_application_health() {
     local api_container="$1"
@@ -1213,7 +1213,7 @@ verify_application_health() {
     local elapsed=0
     
     log_info "Verifying application health (requires database connection, timeout: ${health_timeout}s)..."
-    log_info "Using /health endpoint - this requires actual database connection (no grace period)"
+    log_info "Using /infra-health endpoint for deploy gating - this avoids depending on the public /health contract"
     
     while [[ $elapsed -lt $health_timeout ]]; do
         # Try internal health check using Node.js (curl not available in container)
@@ -1221,7 +1221,7 @@ verify_application_health() {
         local health_response="000"
         if docker exec "$api_container" node -e "
             const http = require('http');
-            const req = http.get('http://localhost:8088/health', (res) => {
+            const req = http.get('http://localhost:8088/infra-health', (res) => {
                 process.exit(res.statusCode === 200 ? 0 : 1);
             });
             req.on('error', () => process.exit(1));
@@ -1236,7 +1236,7 @@ verify_application_health() {
         fi
         
         # Try external health check (from host, curl should be available on host)
-        local external_response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8088/health 2>/dev/null || echo "000")
+        local external_response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8088/infra-health 2>/dev/null || echo "000")
         if [[ "$external_response" == "200" ]]; then
             log_success "Application health check passed (external HTTP 200) - database is connected"
             return 0

@@ -832,7 +832,7 @@ jobs:
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ secrets.SERVER_DEPLOY_PATH }}/nginx/nginx.conf
           # Seed upstream.conf only if not already present (first deploy)
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            'test -f ${{ secrets.SERVER_DEPLOY_PATH }}/nginx/upstream.conf || echo "server latest-api:8088 max_fails=3 fail_timeout=10s;" > ${{ secrets.SERVER_DEPLOY_PATH }}/nginx/upstream.conf'
+            'test -f ${{ secrets.SERVER_DEPLOY_PATH }}/nginx/upstream.conf || echo "server latest-api-blue:8088 max_fails=3 fail_timeout=10s;" > ${{ secrets.SERVER_DEPLOY_PATH }}/nginx/upstream.conf'
 
       - name: Zero-Downtime Deploy (Blue-Green API + Graceful Worker)
         run: |
@@ -845,8 +845,18 @@ jobs:
             export DOCKER_IMAGE="${{ steps.deploy-image.outputs.image }}:main-${{ github.sha }}"
             export SERVER_DEPLOY_PATH="${{ secrets.SERVER_DEPLOY_PATH }}"
             export NGINX_UPSTREAM="${SERVER_DEPLOY_PATH}/nginx/upstream.conf"
-            ACTIVE="latest-api"
-            NEXT="latest-api-next"
+            CURRENT_ACTIVE=$(docker ps --format '{{.Names}}' | grep -E '^latest-api-(blue|green)$' || true)
+            if [ "$CURRENT_ACTIVE" == "latest-api-blue" ]; then
+              ACTIVE="latest-api-blue"
+              NEXT="latest-api-green"
+            elif [ "$CURRENT_ACTIVE" == "latest-api-green" ]; then
+              ACTIVE="latest-api-green"
+              NEXT="latest-api-blue"
+            else
+              ACTIVE="latest-api-blue"
+              NEXT="latest-api-green"
+            fi
+            echo "Current active: ${ACTIVE}, Deploying to: ${NEXT}"
 
             mkdir -p "${SERVER_DEPLOY_PATH}/backups/"{postgres,dragonfly,metadata}
             mkdir -p "${SERVER_DEPLOY_PATH}/data/"{postgres,dragonfly}
@@ -892,7 +902,9 @@ jobs:
             fi
 
             IS_ROLLING=false
-            docker ps --format '{{.Names}}' | grep -q "^${ACTIVE}$" && IS_ROLLING=true
+            if [ -n "$CURRENT_ACTIVE" ]; then
+              IS_ROLLING=true
+            fi
 
             echo "Starting new container: ${NEXT}"
             docker run -d \
@@ -909,11 +921,11 @@ jobs:
               -e PORT=8088 \
               -v /opt/healthcare-backend/logs:/app/logs \
               -v /etc/letsencrypt:/etc/letsencrypt:ro \
-              --health-cmd 'wget -q --spider http://localhost:8088/health || exit 1' \
+              --health-cmd 'wget -q --spider http://localhost:8088/infra-health || exit 1' \
               --health-interval=10s \
               --health-retries=12 \
               --health-start-period=120s \
-              --restart=no \
+              --restart=unless-stopped \
               --label app.type=api \
               --label app.version="${{ github.sha }}" \
               "${DOCKER_IMAGE}"
@@ -979,11 +991,7 @@ jobs:
             fi
 
             docker rm -f "${ACTIVE}" 2>/dev/null || true
-            docker rename "${NEXT}" "${ACTIVE}"
-            echo "server ${ACTIVE}:8088 max_fails=3 fail_timeout=10s;" > "${NGINX_UPSTREAM}"
-            docker exec latest-nginx nginx -s reload
-            docker update --restart=unless-stopped "${ACTIVE}"
-            echo "=== ZERO-DOWNTIME DEPLOY COMPLETE: ${ACTIVE} ==="
+            echo "=== ZERO-DOWNTIME DEPLOY COMPLETE: ${NEXT} ==="
 
             # Worker: graceful restart (BullMQ jobs stay in queue during restart)
             echo "Deploying worker..."

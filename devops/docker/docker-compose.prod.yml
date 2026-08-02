@@ -10,10 +10,11 @@
 #
 # Zero-downtime deploy flow:
 #   1. CI starts latest-api-next alongside latest-api
-#   2. latest-api-next health check passes
+#   2. latest-api-next /infra-health check passes
 #   3. CI writes upstream.conf -> latest-api-next, nginx reload (0 dropped connections)
 #   4. latest-api drains (30s SIGTERM grace), removed
-#   5. latest-api-next renamed to latest-api, upstream.conf updated
+#
+# Public ingress: Coolify / Traefik -> latest-nginx -> active API container
 #
 # Network: app-network (172.18.0.0/16)
 #   postgres  -> 172.18.0.2
@@ -148,7 +149,7 @@ services:
     container_name: latest-nginx
     hostname: nginx
     ports:
-      - "${PORT:-8088}:8088"     # External entry point (was direct API port)
+      - "${PORT:-8088}:8088"     # Public ingress terminates at Coolify; this is the internal router port
     volumes:
       - /opt/healthcare-backend/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - /opt/healthcare-backend/nginx/upstream.conf:/etc/nginx/conf.d/upstream.conf
@@ -243,7 +244,7 @@ services:
         required: false
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${PORT:-8088}/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${PORT:-8088}/infra-health"]
       interval: 30s
       timeout: 10s
       retries: 3

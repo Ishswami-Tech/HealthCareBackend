@@ -1,79 +1,46 @@
-# Architecture & Deployment: The Source of Truth
+# Architecture & Deployment: Source of Truth
 
-This document outlines the **Hybrid Enterprise Architecture** for the Healthcare
-Backend. It exists to prevent confusion regarding the roles of Coolify, Nginx,
-and GitHub Actions on our single-VPS setup.
+This document describes the production traffic path for the Healthcare Backend.
+It separates public ingress, internal routing, and deploy-time health checks so
+we can keep `/health` stable for the app while using a lightweight endpoint for
+infra checks.
 
-## The Problem (Why this architecture?)
+## Summary
 
-We wanted a true **Zero-Downtime (Blue-Green) Deployment** strategy so that
-users are never dropped when we ship new code. However, we also wanted the
-convenience of **Automatic SSL (HTTPS) Certificates** provided by Coolify.
-Coolify natively causes downtime when it deploys (tearing down old containers to
-start new ones).
+- **Coolify** owns public HTTPS termination and domain ingress.
+- **Internal Nginx** owns blue-green switching between `latest-api` and
+  `latest-api-next`.
+- **GitHub Actions** owns image build, deploy orchestration, and health gating.
+- **`/health`** remains the public application readiness contract.
+- **`/infra-health`** is the deploy-time liveness check used by Coolify and CI.
 
-To get the best of both worlds, we split responsibilities into three distinct
-layers.
+## Public Request Flow
 
----
+1. User requests `https://backend-service-v1.ishswami.in`.
+2. Coolify Traefik receives the request on ports `80` and `443` and terminates
+   TLS.
+3. Traefik forwards the request to the internal `latest-nginx` router on port
+   `8088`.
+4. Internal Nginx reads `upstream.conf`.
+5. Nginx forwards traffic to the active API container.
 
-## 1. Edge Proxy & SSL (Coolify Traefik)
+## Blue-Green Switch
 
-**Role:** The Front Door & Certificate Manager
+- GitHub Actions starts `latest-api-next` alongside `latest-api`.
+- The new container is checked with `/infra-health`.
+- When healthy, the pipeline rewrites `upstream.conf` and reloads Nginx.
+- Existing requests continue on the old container until they drain.
+- New requests flow to the new container without dropping connections.
 
-- **What it does:** Coolify's Traefik proxy listens on ports `80` and `443` to
-  the public internet. It handles the automatic generation and renewal of Let's
-  Encrypt SSL certificates.
-- **What it DOES NOT do:** It does **not** know about blue-green deployments or
-  our specific application logic.
-- **Routing:** Once it decrypts the HTTPS traffic, it blindly routes it
-  internally to our Nginx router on port `8088`.
+## Endpoint Contract
 
-## 2. Blue-Green Traffic Switcher (Internal Nginx)
+- `GET /health` stays unchanged for the application contract.
+- `GET /infra-health` returns a lightweight 200 OK for deploy gating.
+- `/infra-health` must not depend on database, cache, queue, or external
+  services.
 
-**Role:** The Zero-Downtime Router
+## Why this layout
 
-- **What it does:** Listens strictly on the internal port `8088`. It holds the
-  `upstream` configuration that tells traffic whether to go to the `latest-api`
-  container or the `latest-api-next` container.
-- **What it DOES NOT do:** It does **not** handle SSL/HTTPS. It assumes traffic
-  hitting it has already been decrypted by Coolify Traefik.
-- **Routing:** When GitHub Actions completes a health check on new code, it
-  hot-swaps this Nginx configuration and reloads Nginx, switching the traffic
-  instantly without dropping connections.
-
-## 3. The Deployment Owner (GitHub Actions)
-
-**Role:** The Absolute Orchestrator
-
-- **What it does:** Owns the complete CI/CD lifecycle. It builds the Docker
-  images, pushes them to GHCR, SSHs into the VPS, runs database migrations,
-  starts new containers (`latest-api-next`), waits for them to become healthy,
-  and triggers the Nginx hot-swap.
-- **What it DOES NOT do:** It does not rely on Coolify's API to trigger
-  deployments. Coolify's "Auto Deploy" feature must remain turned OFF.
-
-## 4. Host-Managed Services (PostgreSQL & Dragonfly)
-
-- **Role:** Persistent runtime infrastructure.
-- These are defined in `devops/docker/docker-compose.prod.yml` alongside the API
-  and Nginx router. They are strictly separated from application redeploys to
-  ensure data integrity.
-
----
-
-## The Request Flow
-
-1. User makes a request to `https://api.yourdomain.com`
-2. **Coolify Traefik** (Port 443) receives the request and decrypts the SSL.
-3. **Coolify Traefik** forwards the raw HTTP request to `localhost:8088`.
-4. **Internal Nginx** (Port 8088) receives the request.
-5. **Internal Nginx** checks its `upstream.conf` and forwards the request to the
-   currently active API container (`latest-api`).
-
-## Why not just use Coolify for everything?
-
-If we used Coolify to deploy our code, we would lose Zero-Downtime deployments,
-self-healing rollbacks, and tight integration with our GitHub testing pipelines.
-Coolify is an excellent operational dashboard and SSL manager, but GitHub
-Actions is a far superior, enterprise-grade deployment orchestrator.
+This split avoids coupling deploy success to the slower readiness path used by
+clients and monitoring. The public app contract stays stable while the
+infrastructure check stays fast and predictable.

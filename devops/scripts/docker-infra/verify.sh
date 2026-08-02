@@ -279,7 +279,7 @@ verify_application() {
             api_attempt=$((api_attempt + 1))
             log_info "API health check attempt $api_attempt (${api_elapsed}/${api_max_wait}s)..."
             
-            if docker exec "$api_container" wget -q --spider http://localhost:8088/health 2>/dev/null; then
+            if docker exec "$api_container" wget -q --spider http://localhost:8088/infra-health 2>/dev/null; then
                 api_ready=true
                 log_success "API is ready and responding"
             else
@@ -751,14 +751,14 @@ show_deployment_status() {
     
     # Health status
     log_info ""
-    log_info "Health Status:"
+    log_info "Infra Health Status:"
     log_info "─────────────────────────────────────"
     if container_running "$api_container"; then
-        local health_code=$(docker exec "$api_container" curl -s -o /dev/null -w "%{http_code}" http://localhost:8088/health 2>/dev/null || echo "000")
+        local health_code=$(docker exec "$api_container" curl -s -o /dev/null -w "%{http_code}" http://localhost:8088/infra-health 2>/dev/null || echo "000")
         if [[ "$health_code" == "200" ]]; then
-            log_success "API Health: OK (HTTP 200)"
+            log_success "API Infra Health: OK (HTTP 200)"
         else
-            log_warning "API Health: $health_code"
+            log_warning "API Infra Health: $health_code"
         fi
     fi
     
