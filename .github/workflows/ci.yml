@@ -988,10 +988,26 @@ jobs:
             if [[ "$IS_ROLLING" == "true" ]]; then
               echo "Draining old container: ${ACTIVE} (30s)"
               docker stop "${ACTIVE}" --time=30 || true
-              docker rm "${ACTIVE}" || true
+
+              # Keep old container as backup for instant rollback (rename with timestamp)
+              BACKUP_NAME="latest-api-backup-$(date +%Y%m%d-%H%M%S)"
+              echo "Renaming old container to backup: ${BACKUP_NAME}"
+              docker rename "${ACTIVE}" "${BACKUP_NAME}" 2>/dev/null || {
+                echo "WARNING: Failed to rename container, removing instead"
+                docker rm -f "${ACTIVE}" 2>/dev/null || true
+              }
+
+              # Clean up old backups (keep only last 1)
+              OLD_BACKUPS=$(docker ps -a --filter "name=^latest-api-backup-" --format '{{.Names}}' | sort | head -n -1 2>/dev/null || true)
+              if [ -n "$OLD_BACKUPS" ]; then
+                echo "Cleaning up old backups:"
+                echo "$OLD_BACKUPS" | while read old_backup; do
+                  echo "  Removing: $old_backup"
+                  docker rm -f "$old_backup" 2>/dev/null || true
+                done
+              fi
             fi
 
-            docker rm -f "${ACTIVE}" 2>/dev/null || true
             echo "=== ZERO-DOWNTIME DEPLOY COMPLETE: ${NEXT} ==="
 
             # ZERO-DOWNTIME: Blue-Green Worker Deploy
