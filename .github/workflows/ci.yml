@@ -880,8 +880,7 @@ jobs:
             docker run --rm --network app-network \
               --env-file "${SERVER_DEPLOY_PATH}/.env.production" \
               "${DOCKER_IMAGE}" \
-              sh -c "node scripts/run-prisma.js migrate" \
-              || echo "Migration: already up to date or non-fatal"
+              sh -c "node scripts/run-prisma.js migrate"
 
             # We will start nginx later, right before switching traffic, 
             # to avoid crashing if 'latest-api' doesn't exist yet on first deploy.

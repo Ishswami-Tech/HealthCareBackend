@@ -358,11 +358,21 @@ verify_application() {
         "${CONTAINER_PREFIX}worker"
     )
 
-    if api_container=$(find_running_container "API" "${api_candidates[@]}"); then
+    # Exclude backup containers (old renamed containers from blue-green deploy)
+    local api_non_backup=()
+    for c in "${api_candidates[@]}"; do
+        [[ "$c" == *"backup-"* ]] || api_non_backup+=("$c")
+    done
+    local worker_non_backup=()
+    for c in "${worker_candidates[@]}"; do
+        [[ "$c" == *"backup-"* ]] || worker_non_backup+=("$c")
+    done
+
+    if api_container=$(find_running_container "API" "${api_non_backup[@]}"); then
         log_info "Using API container: ${api_container}"
     fi
 
-    if worker_container=$(find_running_container "worker" "${worker_candidates[@]}"); then
+    if worker_container=$(find_running_container "worker" "${worker_non_backup[@]}"); then
         log_info "Using worker container: ${worker_container}"
     fi
 
