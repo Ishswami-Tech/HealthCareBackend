@@ -873,6 +873,29 @@ jobs:
 
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
+            # DISK SPACE CHECK BEFORE PULL
+            # Prevents cryptic "no space left" errors mid-deploy
+            # Image is ~1.2GB, allow 3GB total buffer (image + extraction + Docker cache)
+            AVAILABLE_KB=$(df -P "${SERVER_DEPLOY_PATH}" | awk 'NR==2 {print $4}')
+            AVAILABLE_GB=$((AVAILABLE_KB / 1024 / 1024))
+            REQUIRED_GB=3
+            if [[ "${AVAILABLE_GB}" -lt "${REQUIRED_GB}" ]]; then
+              echo "::error::Insufficient disk space: ${AVAILABLE_GB}GB available, ${REQUIRED_GB}GB required before docker pull"
+              echo "::error::Run cleanup: docker system prune -af && sudo rm -rf ${SERVER_DEPLOY_PATH}/backups/postgres/*.sql.gz.old"
+              exit 1
+            fi
+            echo "::notice::Disk space OK: ${AVAILABLE_GB}GB available (need ${REQUIRED_GB}GB)"
+
+            # Save rollback image tag — enables one-command manual rollback if deploy fails
+            ROLLBACK_TAG="${SERVER_DEPLOY_PATH}/.rollback-image-tag"
+            CURRENT_IMAGE=$(docker inspect --format='{{.Config.Image}}' "${ACTIVE}" 2>/dev/null || echo "")
+            if [[ -n "${CURRENT_IMAGE}" ]]; then
+              echo "${CURRENT_IMAGE}" > "${ROLLBACK_TAG}"
+              echo "::notice::Saved rollback image: ${CURRENT_IMAGE}"
+            else
+              echo "::warning::Could not read image from ${ACTIVE}, no rollback tag saved"
+            fi
+
             for attempt in 1 2 3 4 5; do
               docker pull "${DOCKER_IMAGE}" && break
               [[ $attempt -eq 5 ]] && { echo "Pull failed"; exit 1; }
@@ -883,8 +906,7 @@ jobs:
             docker run --rm --network app-network \
               --env-file "${SERVER_DEPLOY_PATH}/.env.production" \
               "${DOCKER_IMAGE}" \
-              sh -c "node scripts/run-prisma.js migrate" \
-              || echo "Migration: already up to date or non-fatal"
+              sh -c "node scripts/run-prisma.js migrate"
 
             # We will start nginx later, right before switching traffic, 
             # to avoid crashing if 'latest-api' doesn't exist yet on first deploy.
@@ -1006,8 +1028,8 @@ jobs:
                 # Verify new container is still healthy before removing old one
                 STATUS=$(docker inspect --format='{{.State.Health.Status}}' "${NEXT}" 2>/dev/null || echo "unknown")
                 if [[ "$STATUS" == "healthy" ]]; then
-                    echo "New container stable — draining old: ${ACTIVE} (30s)"
-                    docker stop "${ACTIVE}" --time=30 || true
+                    echo "New container stable — draining old: ${ACTIVE} (120s)"
+                    docker stop "${ACTIVE}" --time=120 || true
                     docker rm "${ACTIVE}" || true
                     # Switch back to single-server upstream (cleaner, no stale server)
                     echo "server ${NEXT}:8088 max_fails=3 fail_timeout=10s;" > "${NGINX_UPSTREAM}"
@@ -1094,8 +1116,8 @@ jobs:
 
                 STATUS=$(docker inspect --format='{{.State.Health.Status}}' "${WORKER_NEXT}" 2>/dev/null || echo "unknown")
                 if [[ "$STATUS" == "healthy" ]]; then
-                    echo "New worker stable — draining old: ${WORKER_ACTIVE} (30s)"
-                    docker stop "${WORKER_ACTIVE}" --time=30 || true
+                    echo "New worker stable — draining old: ${WORKER_ACTIVE} (120s)"
+                    docker stop "${WORKER_ACTIVE}" --time=120 || true
                     docker rm "${WORKER_ACTIVE}" || true
                 else
                     echo "::warning::New worker unhealthy during warm standby — reverting to ${WORKER_ACTIVE}"
@@ -1123,7 +1145,7 @@ jobs:
           echo "- **Image**: ${{ steps.deploy-image.outputs.image }}:main-${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Strategy**: Blue-Green (zero downtime)" >> $GITHUB_STEP_SUMMARY
           echo "- **API**: start new -> healthcheck -> nginx switch -> drain old (30s)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Worker**: graceful restart (30s job drain)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Worker**: graceful restart (120s job drain)" >> $GITHUB_STEP_SUMMARY
           echo "- **Infra**: ${{ needs.check-infrastructure.outputs.infra-healthy == 'true' && 'untouched (healthy path)' || 'was recreated (recovery path)' }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Status**: Deployed" >> $GITHUB_STEP_SUMMARY
 
@@ -1194,16 +1216,14 @@ jobs:
             export S3_FORCE_PATH_STYLE="${{ vars.S3_FORCE_PATH_STYLE }}"
             command -v rclone &>/dev/null || (curl -fsSL https://rclone.org/install.sh | sudo bash) || true
             chmod +x /tmp/backup.sh
-            nohup /tmp/backup.sh success >> /tmp/success-backup.log 2>&1 &
-            echo "Success backup started (PID: $!)"
-            echo "Monitor: tail -f /tmp/success-backup.log"
+            /tmp/backup.sh success 2>&1 | tee /tmp/success-backup.log
           ENDSSH
 
       - name: Final Summary
         run: |
           echo "## Post-Deployment" >> $GITHUB_STEP_SUMMARY
           echo "- **Verification**: Passed" >> $GITHUB_STEP_SUMMARY
-          echo "- **Success Backup**: Started async on server" >> $GITHUB_STEP_SUMMARY
+          echo "- **Success Backup**: Completed synchronously" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Actor**: @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

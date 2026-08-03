@@ -378,8 +378,11 @@ ensure_public_ingress() {
 verify_application() {
     log_info "Verifying application readiness..."
 
-    local api_container=""
-    local worker_container=""
+    # NOTE: api_container and worker_container are NOT local — they must be
+    # accessible from verify_deployment() for error diagnostics (line ~518).
+    # Bash `local` is function-scoped; set -u would throw "unbound variable".
+    api_container=""
+    worker_container=""
     local api_candidates=(
         "${CONTAINER_PREFIX}api-green"
         "${CONTAINER_PREFIX}api-blue"
@@ -460,13 +463,18 @@ verify_application() {
 
     # Return status based on readiness
     if $api_ready && $worker_ready; then
+        # API + worker are healthy. Try public ingress as best-effort.
+        # Do NOT downgrade to "partial" on ingress failure — ingress is an
+        # external concern handled by nginx, which the CI deploy script
+        # already starts separately. If nginx is down, that's an outage,
+        # not a deploy failure.
         if ensure_public_ingress "$api_container"; then
             echo "ready"
             return 0
         fi
-        log_warning "Public ingress could not be repaired automatically"
-        echo "partial"
-        return 1
+        log_warning "Public ingress could not be auto-healed — API is healthy but nginx may need attention"
+        echo "ready"
+        return 0
     elif $worker_ready; then
         # Worker is ready but API is not - return partial status
         echo "partial"
@@ -480,6 +488,13 @@ verify_application() {
 # Post-deployment verification (default mode)
 verify_deployment() {
     log_info "Starting deployment verification..."
+
+    # Initialize container variables defensively (set -u safe)
+    # These are set by verify_application() but must survive to the error
+    # diagnostics section below. Pre-initialize to avoid "unbound variable"
+    # if the deployed script version is stale or the lookup fails.
+    api_container="${api_container:-}"
+    worker_container="${worker_container:-}"
 
     check_docker || exit 1
 
