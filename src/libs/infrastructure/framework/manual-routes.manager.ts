@@ -20,6 +20,7 @@ interface IAppController {
 
 interface IHealthController {
   getHealth?: (reply: FastifyReply) => Promise<unknown>;
+  getInfraHealth?: (reply: FastifyReply) => Promise<unknown>;
 }
 
 export async function registerManualRoutes(
@@ -52,6 +53,7 @@ export async function registerManualRoutes(
 
     await registerRootRoute(app, fastifyInstance, loggingService);
     await registerHealthRoute(app, fastifyInstance, loggingService);
+    await registerInfraHealthRoute(app, fastifyInstance, loggingService);
     await registerSocketTestRoute(app, fastifyInstance, loggingService);
   } catch (error) {
     await loggingService.log(
@@ -113,7 +115,7 @@ async function registerHealthRoute(
 ): Promise<void> {
   try {
     const healthController = await app.resolve(HealthController);
-    const typedHealthController = healthController as IHealthController | null;
+    const typedHealthController = healthController as unknown as IHealthController | null;
 
     if (typedHealthController && typeof typedHealthController.getHealth === 'function') {
       fastifyInstance.get?.('/health', async (_request: unknown, reply: FastifyReply) => {
@@ -142,6 +144,48 @@ async function registerHealthRoute(
       LogType.SYSTEM,
       LogLevel.WARN,
       `Failed to register health route: ${error instanceof Error ? error.message : String(error)}`,
+      'ManualRoutesManager',
+      { error: error instanceof Error ? error.stack : String(error) }
+    );
+  }
+}
+
+async function registerInfraHealthRoute(
+  app: INestApplication,
+  fastifyInstance: FastifyInstance,
+  loggingService: LoggingService
+): Promise<void> {
+  try {
+    const healthController = await app.resolve(HealthController);
+    const typedHealthController = healthController as unknown as IHealthController | null;
+
+    if (typedHealthController && typeof typedHealthController.getInfraHealth === 'function') {
+      fastifyInstance.get?.('/infra-health', async (_request: unknown, reply: FastifyReply) => {
+        if (typedHealthController.getInfraHealth) {
+          return typedHealthController.getInfraHealth(reply);
+        }
+        return reply.code(500).send({ error: 'Infra health handler not available' });
+      });
+      fastifyInstance.options?.('/infra-health', async (_request: unknown, reply: FastifyReply) => {
+        return reply
+          .code(200)
+          .header('Access-Control-Allow-Origin', '*')
+          .header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+          .header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+          .send();
+      });
+      await loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Infra-health route /infra-health manually registered for Fastify (GET and OPTIONS)',
+        'ManualRoutesManager'
+      );
+    }
+  } catch (error) {
+    await loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.WARN,
+      `Failed to register infra-health route: ${error instanceof Error ? error.message : String(error)}`,
       'ManualRoutesManager',
       { error: error instanceof Error ? error.stack : String(error) }
     );

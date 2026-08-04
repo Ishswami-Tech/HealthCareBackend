@@ -19,6 +19,7 @@ package-lock.json
 .env*.local
 # Build output
 dist/
+dist-sync/
 build/
 out/
 .next/

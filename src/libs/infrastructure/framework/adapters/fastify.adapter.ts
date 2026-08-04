@@ -130,8 +130,7 @@ export class FastifyFrameworkAdapter implements IFastifyFrameworkAdapter {
         pluginTimeout: 30000,
       }),
 
-      // HTTP/2 support - enabled by default in production, can be disabled via ENABLE_HTTP2=false
-      // Use helper function (which uses dotenv) for environment variable access
+      // HTTP/2 support: controlled by enableHttp2 option and ENABLE_HTTP2 env var
       ...(options.environment === 'production' &&
       options.enableHttp2 !== false &&
       getEnvBoolean('ENABLE_HTTP2', true)

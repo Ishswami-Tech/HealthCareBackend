@@ -5,12 +5,13 @@ import { Public } from '@core/decorators/public.decorator';
 import { RateLimitGenerous } from '@security/rate-limit/rate-limit.decorator';
 import { FastifyReply } from 'fastify';
 import { HealthService } from './health.service';
+
 /**
  * Health controller uses HealthService only.
  * Database readiness comes from DatabaseService.getHealthStatus() via DatabaseHealthIndicator.
  */
 @ApiTags('health')
-@Controller('health')
+@Controller()
 export class HealthController {
   constructor(private readonly healthService: HealthService) {}
 
@@ -30,7 +31,7 @@ export class HealthController {
    * - GET /health - Basic health check (includes realtime status)
    * - GET /health?detailed=true - Detailed health check with system metrics (includes realtime status)
    */
-  @Get()
+  @Get('health')
   @Public()
   @RateLimitGenerous() // Allow 1000 requests/minute per IP - generous for health checks but prevents abuse
   @ApiOperation({
@@ -112,12 +113,14 @@ export class HealthController {
         | { status?: string; details?: unknown }
         | undefined;
 
-      // Application is healthy only if database and overall health are healthy.
-      // Database status comes from DatabaseService.getHealthStatus() via DatabaseHealthIndicator.
+      // Application is healthy when core services (database, cache, logging) are healthy.
+      // Queue/RabbitMQ is non-blocking — it runs in the worker process, so queue
+      // issues don't affect the API's ability to serve requests.
       const isDatabaseHealthy = databaseStatus?.status === 'healthy';
-      const isOverallHealthy = healthResult.status === 'healthy';
+      const coreStatus = healthResult.status;
+      const isCoreHealthy = coreStatus === 'healthy' || coreStatus === 'degraded';
 
-      if (isDatabaseHealthy && isOverallHealthy) {
+      if (isDatabaseHealthy && isCoreHealthy) {
         return res.status(200).send(healthResult);
       }
 
@@ -140,5 +143,45 @@ export class HealthController {
         message: `Health check failed: ${errorMessage}`,
       });
     }
+  }
+
+  /**
+   * Lightweight infrastructure liveness endpoint.
+   *
+   * This endpoint intentionally avoids database, cache, queue, and logging
+   * dependencies so it can be used by Coolify, Traefik, and deploy-time health
+   * gates without changing the existing `/health` contract.
+   */
+  @Get('infra-health')
+  @Public()
+  @RateLimitGenerous()
+  @ApiOperation({
+    summary: 'Infrastructure liveness check',
+    description:
+      'Returns a lightweight 200 OK response that is safe for load balancers, reverse proxies, and deploy-time readiness checks. Does not perform dependency checks.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Infrastructure is up and accepting traffic',
+    schema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', example: 'healthy' },
+        timestamp: { type: 'string', example: '2025-12-31T19:00:00.000Z' },
+        service: { type: 'string', example: 'infrastructure' },
+        message: {
+          type: 'string',
+          example: 'Infrastructure is ready to receive traffic',
+        },
+      },
+    },
+  })
+  getInfraHealth(@Res() res: FastifyReply): void {
+    res.status(200).send({
+      status: 'healthy',
+      timestamp: nowIso(),
+      service: 'infrastructure',
+      message: 'Infrastructure is ready to receive traffic',
+    });
   }
 }

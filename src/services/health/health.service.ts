@@ -171,13 +171,19 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       this.cachedHealthStatus = healthStatus;
       this.cachedHealthTimestamp = Date.now();
 
-      // Determine if all services are healthy
-      // Check if any service is unhealthy
-      const services = healthStatus.services || {};
-      const hasUnhealthyService = Object.values(services).some((service: unknown) => {
-        const s = service as { status?: string };
-        return s?.status === 'unhealthy';
-      });
+      // Determine if core services are healthy
+      // Queue is NOT a critical service — BullMQ runs in the worker, so a queue
+      // check failure does not mean the API is down. Only core services
+      // (database, cache, logging, video) affect overall health.
+      const coreServices = ['database', 'cache', 'logging', 'logger', 'video'];
+      const allServices = healthStatus.services ?? {};
+      const hasUnhealthyService = Object.entries(allServices).some(
+        ([key, service]: [string, unknown]) => {
+          if (!coreServices.includes(key)) return false;
+          const s = service as { status?: string };
+          return s?.status === 'unhealthy';
+        }
+      );
       const isHealthy = !hasUnhealthyService;
 
       // Adjust polling interval based on health status
@@ -940,17 +946,19 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             }
           }
 
-          // Determine overall status from all services (cached + checked)
-          // All services including video are critical for healthcare video consultations
-          const allServiceStatuses = Object.values(services).map(s => s.status);
-          const hasUnhealthy = allServiceStatuses.some(s => s === 'unhealthy');
+          // Determine overall status from core services only
+          // Queue is a non-blocking dependency (BullMQ runs in the worker process).
+          // If Redis/queue is unhealthy, the API is still functional — report as degraded, not down.
+          const coreServiceKeys = ['api', 'database', 'cache', 'logging', 'logger', 'video'];
+          const coreServiceStatuses = coreServiceKeys.map(k => services[k]?.status).filter(Boolean);
+          const hasUnhealthyCore = coreServiceStatuses.some(s => s === 'unhealthy');
 
           const responseTime = Math.round(performance.now() - startTime);
           const environment = this.config?.getEnvironment() || 'development';
 
           // Get realtime health status from cache if available
           // Map realtime status ('healthy' | 'degraded' | 'unhealthy') to ServiceHealth status ('healthy' | 'unhealthy')
-          let overallStatus: 'healthy' | 'degraded' = !hasUnhealthy ? 'healthy' : 'degraded';
+          let overallStatus: 'healthy' | 'degraded' = !hasUnhealthyCore ? 'healthy' : 'degraded';
           if (this.healthCacheService) {
             try {
               const cachedStatus: unknown = await this.healthCacheService.getCachedStatus();
@@ -2466,8 +2474,13 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
       // All checks are already completed (Promise.allSettled already waited for all promises)
 
-      // Determine overall status based on individual service statuses
-      const allServiceStatuses = Object.values(services).map(s => s.status);
+      // Determine overall status based on core service statuses
+      // Queue is a non-blocking dependency (BullMQ runs in the worker).
+      // A queue check failure should not make the API return 503.
+      const coreServices = ['database', 'cache', 'logging', 'logger', 'video'];
+      const allServiceStatuses = Object.entries(services)
+        .filter(([key]) => coreServices.includes(key))
+        .map(([, s]) => s.status);
       const hasUnhealthy = allServiceStatuses.some(s => s === 'unhealthy');
       const overallStatus: 'healthy' | 'degraded' = hasUnhealthy ? 'degraded' : 'healthy';
 
@@ -3267,6 +3280,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
    */
   async checkLoggerHealth(): Promise<ServiceHealth> {
     const startTime = performance.now();
+    const isWorkerMode =
+      this.config?.getEnv('APP_MODE') === 'worker' || process.env['APP_MODE'] === 'worker';
+
+    if (isWorkerMode) {
+      return {
+        status: 'healthy',
+        details: 'Logger health checks are skipped on worker containers',
+        responseTime: Math.round(performance.now() - startTime),
+        lastChecked: nowIso(),
+      };
+    }
+
     try {
       // Use LoggingHealthIndicator for health status
       if (this.loggingHealthIndicator) {

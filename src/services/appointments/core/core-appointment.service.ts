@@ -160,6 +160,110 @@ export class CoreAppointmentService {
         // But should have address information
       }
 
+      // 1a. Validate appointment date is not in the past and not a weekend
+      const appointmentDateIso = (createDto as unknown as Record<string, unknown>)[
+        'appointmentDate'
+      ] as string | undefined;
+      if (appointmentDateIso) {
+        const utcDate = new Date(appointmentDateIso);
+        if (!Number.isNaN(utcDate.getTime())) {
+          // Use Intl to correctly convert the UTC date to IST date components
+          const istFormatted = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'Asia/Kolkata',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+          }).format(utcDate);
+
+          const [aptYearStr, aptMonthStr, aptDayStr] = istFormatted.split('-');
+          const aptYear = Number(aptYearStr);
+          const aptMonth = Number(aptMonthStr);
+          const aptDay = Number(aptDayStr);
+
+          // Get today's date in IST using the same Intl approach
+          const todayFormatted = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'Asia/Kolkata',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+          }).format(new Date());
+          const [todayYearStr, todayMonthStr, todayDayStr] = todayFormatted.split('-');
+          const todayYear = Number(todayYearStr);
+          const todayMonth = Number(todayMonthStr);
+          const todayDay = Number(todayDayStr);
+
+          // Get current time in IST for past-time check
+          const nowTimeParts = new Intl.DateTimeFormat('en-GB', {
+            timeZone: 'Asia/Kolkata',
+            hour: '2-digit',
+            minute: '2-digit',
+          }).formatToParts(new Date());
+          const nowHour = Number(
+            nowTimeParts.find((p: { type: string }) => p.type === 'hour')?.value ?? '0'
+          );
+          const nowMinute = Number(
+            nowTimeParts.find((p: { type: string }) => p.type === 'minute')?.value ?? '0'
+          );
+
+          // Get appointment time in IST
+          const aptTimeParts = new Intl.DateTimeFormat('en-GB', {
+            timeZone: 'Asia/Kolkata',
+            hour: '2-digit',
+            minute: '2-digit',
+          }).formatToParts(utcDate);
+          const aptHour = Number(
+            aptTimeParts.find((p: { type: string }) => p.type === 'hour')?.value ?? '0'
+          );
+          const aptMinute = Number(
+            aptTimeParts.find((p: { type: string }) => p.type === 'minute')?.value ?? '0'
+          );
+
+          // Past date check (numeric comparison)
+          const aptDateNum = aptYear * 10000 + aptMonth * 100 + aptDay;
+          const todayDateNum = todayYear * 10000 + todayMonth * 100 + todayDay;
+
+          if (aptDateNum < todayDateNum) {
+            return {
+              success: false,
+              error: 'VALIDATION_ERROR',
+              message:
+                'Cannot book an appointment in the past. Please select today or a future date.',
+              metadata: { processingTime: Date.now() - startTime },
+            };
+          }
+
+          // Weekend check — get the IST day name and reject Sat/Sun
+          const istDayName = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'Asia/Kolkata',
+            weekday: 'long',
+          }).format(utcDate);
+          if (istDayName === 'Saturday' || istDayName === 'Sunday') {
+            return {
+              success: false,
+              error: 'VALIDATION_ERROR',
+              message:
+                'Appointments cannot be booked on weekends (Saturday and Sunday). Please select a weekday.',
+              metadata: { processingTime: Date.now() - startTime },
+            };
+          }
+
+          // If booking for today, check time hasn't passed (IST)
+          if (aptDateNum === todayDateNum) {
+            const aptMinutes = aptHour * 60 + aptMinute;
+            const nowMinutes = nowHour * 60 + nowMinute;
+            if (aptMinutes < nowMinutes) {
+              return {
+                success: false,
+                error: 'VALIDATION_ERROR',
+                message:
+                  'Cannot book an appointment for a time that has already passed. Please select a future time slot.',
+                metadata: { processingTime: Date.now() - startTime },
+              };
+            }
+          }
+        }
+      }
+
       // 2. Validate business rules
       const businessRuleValidation = await this.businessRules.validateAppointmentCreation(
         createDto,
