@@ -113,12 +113,14 @@ export class HealthController {
         | { status?: string; details?: unknown }
         | undefined;
 
-      // Application is healthy only if database and overall health are healthy.
-      // Database status comes from DatabaseService.getHealthStatus() via DatabaseHealthIndicator.
+      // Application is healthy when core services (database, cache, logging) are healthy.
+      // Queue/RabbitMQ is non-blocking — it runs in the worker process, so queue
+      // issues don't affect the API's ability to serve requests.
       const isDatabaseHealthy = databaseStatus?.status === 'healthy';
-      const isOverallHealthy = healthResult.status === 'healthy';
+      const coreStatus = healthResult.status;
+      const isCoreHealthy = coreStatus === 'healthy' || coreStatus === 'degraded';
 
-      if (isDatabaseHealthy && isOverallHealthy) {
+      if (isDatabaseHealthy && isCoreHealthy) {
         return res.status(200).send(healthResult);
       }
 
