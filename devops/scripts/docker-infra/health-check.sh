@@ -1,8 +1,72 @@
 #!/bin/bash
-# Infrastructure health check for the deployment stack.
-# Checks PostgreSQL and Dragonfly (portainer removed - use Coolify UI for management).
+# ============================================================================
+# health-check.sh — Multi-environment infrastructure health checker
+# ----------------------------------------------------------------------------
+# Usage:
+#   ./health-check.sh --env production|preprod [--json]
+#
+# Environment variables:
+#   DEPLOY_ENV         - Target environment (production|preprod)
+#   CONTAINER_PREFIX    - "latest-" or "preprod-"
+#   COMPOSE_FILE       - docker-compose.prod.yml or docker-compose.preprod.yml
+#   BASE_DIR           - Base deployment directory (default: /opt/healthcare-backend)
+# ----------------------------------------------------------------------------
 
 set -euo pipefail
+
+# ----------------------------------------------------------------------------
+# Defaults and argument parsing
+# ----------------------------------------------------------------------------
+DEPLOY_ENV="${DEPLOY_ENV:-production}"
+CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
+BASE_DIR="${BASE_DIR:-/opt/healthcare-backend}"
+OUTPUT_JSON=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --env)
+            DEPLOY_ENV="$2"
+            shift 2
+            ;;
+        --json)
+            OUTPUT_JSON=true
+            shift
+            ;;
+        -h|--help)
+            cat <<EOF
+Usage: $0 [OPTIONS]
+
+Options:
+  --env ENV              Target environment: production|preprod (default: production)
+  --json                 Output JSON format
+  -h, --help             Show this help
+EOF
+            exit 0
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+# ----------------------------------------------------------------------------
+# Auto-configure based on environment
+# ----------------------------------------------------------------------------
+case "$DEPLOY_ENV" in
+    production)
+        [[ "$CONTAINER_PREFIX" == "latest-" ]] || CONTAINER_PREFIX="latest-"
+        [[ "$COMPOSE_FILE" == "docker-compose.prod.yml" ]] || COMPOSE_FILE="docker-compose.prod.yml"
+        ;;
+    preprod)
+        [[ "$CONTAINER_PREFIX" == "preprod-" ]] || CONTAINER_PREFIX="preprod-"
+        [[ "$COMPOSE_FILE" == "docker-compose.preprod.yml" ]] || COMPOSE_FILE="docker-compose.preprod.yml"
+        ;;
+esac
+
+# Fixed container names for infrastructure (never change, regardless of env)
+POSTGRES_CONTAINER="postgres"
+DRAGONFLY_CONTAINER="dragonfly"
 
 validate_container_name() {
     local container="$1"
@@ -41,9 +105,9 @@ set_service_status() {
 
 compose_file() {
     local candidates=(
-        "/opt/healthcare-backend/devops/docker/docker-compose.prod.yml"
-        "$(cd "$(dirname "${BASH_SOURCE[0]}")/../docker" 2>/dev/null && pwd)/docker-compose.prod.yml"
-        "/tmp/docker-compose.prod.yml"
+        "${BASE_DIR}/devops/docker/${COMPOSE_FILE}"
+        "$(cd "$(dirname "${BASH_SOURCE[0]}")/../docker" 2>/dev/null && pwd)/${COMPOSE_FILE}"
+        "/tmp/${COMPOSE_FILE}"
     )
 
     for candidate in "${candidates[@]}"; do

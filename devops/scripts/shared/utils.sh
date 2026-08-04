@@ -30,11 +30,25 @@ log_error() {
 
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve environment file based on DEPLOY_ENV (preprod | production | staging | development)
+# Falls back to .env.production if DEPLOY_ENV is unset/unknown, preserving previous behavior.
+resolve_env_file() {
+    local deploy_env="${DEPLOY_ENV:-production}"
+    local env_file="${BASE_DIR}/.env.${deploy_env}"
+    if [[ ! -f "${env_file}" ]]; then
+        log_warning "Env file not found for DEPLOY_ENV='${deploy_env}': ${env_file}"
+        log_info "Falling back to ${BASE_DIR}/.env.production"
+        env_file="${BASE_DIR}/.env.production"
+    fi
+    echo "${env_file}"
+}
+
 # Base directory for application (can be overridden by environment)
 BASE_DIR="${BASE_DIR:-/opt/healthcare-backend}"
 BACKUP_DIR="${BASE_DIR}/backups"
 LOG_DIR="/var/log/deployments"
-ENV_FILE="${BASE_DIR}/.env.production"
+# Resolved lazily via resolve_env_file() so DEPLOY_ENV changes are respected.
+ENV_FILE="$(resolve_env_file)"
 
 # Ensure directories exist
 ensure_directories() {
