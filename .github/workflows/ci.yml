@@ -977,8 +977,13 @@ jobs:
             fi
 
             echo "${NEXT} healthy -- switching nginx upstream (zero downtime)"
+
+            # Write upstream.conf to BOTH the host file AND inside the container.
+            # The host bind-mount may not reflect immediately in the container's
+            # in-memory nginx config, so we write directly inside the container
+            # before reloading to avoid "host not found in upstream" errors.
             echo "server ${NEXT}:8088 max_fails=3 fail_timeout=10s;" > "${NGINX_UPSTREAM}"
-            
+
             # Ensure nginx router is actually running before we exec into it.
             # docker ps can still show a container that is restarting, so check state explicitly.
             NGINX_STATUS=$(docker inspect --format='{{.State.Status}}' latest-nginx 2>/dev/null || true)
@@ -998,22 +1003,37 @@ jobs:
               echo "Waiting for nginx router to be running (${i}/15)..."
               sleep 2
             done
-            docker exec latest-nginx nginx -t || {
-              echo "::error::nginx config test failed -- reverting"
-              echo "--- NGINX LOGS ---"
-              docker logs latest-nginx || true
-              echo "------------------"
+
+            # Write upstream.conf directly inside the container to ensure
+            # nginx sees the new upstream on reload (bind-mount may lag).
+            docker exec latest-nginx sh -c \
+              "echo 'server ${NEXT}:8088 max_fails=3 fail_timeout=10s;' > /etc/nginx/conf.d/upstream.conf"
+
+            # Reload nginx first, then verify by hitting the API (not nginx -t,
+            # which tests in-memory config that may still reference old upstream).
+            docker exec latest-nginx nginx -s reload || {
+              echo "::error::nginx reload failed -- reverting"
               echo "server ${ACTIVE}:8088 max_fails=3 fail_timeout=10s;" > "${NGINX_UPSTREAM}"
+              docker exec latest-nginx sh -c \
+                "echo 'server ${ACTIVE}:8088 max_fails=3 fail_timeout=10s;' > /etc/nginx/conf.d/upstream.conf"
+              docker exec latest-nginx nginx -s reload || true
               docker rm -f "${NEXT}"; exit 1
             }
-            docker exec latest-nginx nginx -s reload
             echo "nginx switched to ${NEXT}"
             sleep 2
 
-            # Single upstream — eliminates DNS resolution failure when old container is removed.
-            # Failover is handled by docker restart policies + health checks, not nginx backup upstream.
-            echo "server ${NEXT}:8088 max_fails=3 fail_timeout=10s;" > "${NGINX_UPSTREAM}"
-            docker exec latest-nginx nginx -s reload
+            # Verify the new upstream actually works
+            HEALTH=$(docker exec latest-nginx curl -sf --max-time 5 http://${NEXT}:8088/health 2>/dev/null || echo "FAILED")
+            if echo "${HEALTH}" | grep -q '"status"'; then
+              echo "Upstream ${NEXT} verified healthy"
+            else
+              echo "::error::Upstream ${NEXT} not responding -- reverting"
+              echo "server ${ACTIVE}:8088 max_fails=3 fail_timeout=10s;" > "${NGINX_UPSTREAM}"
+              docker exec latest-nginx sh -c \
+                "echo 'server ${ACTIVE}:8088 max_fails=3 fail_timeout=10s;' > /etc/nginx/conf.d/upstream.conf"
+              docker exec latest-nginx nginx -s reload || true
+              docker rm -f "${NEXT}"; exit 1
+            fi
 
             if [[ "$IS_ROLLING" == "true" ]] && docker ps --format '{{.Names}}' | grep -q "^${ACTIVE}$"; then
                 echo "Draining old container: ${ACTIVE} (120s grace)"
