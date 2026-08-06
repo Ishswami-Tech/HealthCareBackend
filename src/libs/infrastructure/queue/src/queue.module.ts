@@ -205,7 +205,7 @@ export class QueueModule {
         QueueHealthMonitorService,
         QueueProcessor,
         // QueueStatusGateway depends on QueueService and LoggingService (via LoggingModule import)
-        ...(serviceName !== 'worker' ? [QueueStatusGateway] : []),
+        ...(serviceName === 'worker' ? [QueueStatusGateway] : []),
         // Enhanced worker configuration for 1M users
         ...(serviceName === 'worker'
           ? [
@@ -325,7 +325,7 @@ export class QueueModule {
         // Export health monitor for HealthService
         QueueHealthMonitorService,
 
-        ...(serviceName !== 'worker' ? [QueueStatusGateway] : []),
+        ...(serviceName === 'worker' ? [QueueStatusGateway] : []),
       ],
     };
   }

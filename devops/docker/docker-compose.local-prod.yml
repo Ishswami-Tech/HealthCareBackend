@@ -269,6 +269,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:-your-super-secret-key-change-in-production}
       BULL_WORKER_CONCURRENCY: "10"
       BULL_MAX_JOBS_PER_WORKER: "100"
+      ENABLE_BULL_BOARD: "true"
+      BULL_BOARD_URL: "/queue-dashboard"
       LOG_LEVEL: info
       ENABLE_AUDIT_LOGS: "true"
       AWS_REGION: ${AWS_REGION:-}
@@ -288,6 +290,8 @@ services:
       - "worker:172.28.0.6"
       - "postgres:172.28.0.2"
       - "dragonfly:172.28.0.4"
+    ports:
+      - "${WORKER_PORT:-8089}:${PORT:-8088}"
     depends_on:
       postgres:
         condition: service_healthy
