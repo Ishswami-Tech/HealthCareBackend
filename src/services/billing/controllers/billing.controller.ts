@@ -1005,7 +1005,7 @@ export class BillingController {
    *    and ALSO enqueue a background job so the file is treated as "persisted"
    *    for subsequent WhatsApp delivery / admin use.
    */
-  @Get('invoices/:id/pdf-download')
+  @Get(['invoices/:id/pdf-download', 'invoices/:id/download'])
   @Roles(
     Role.SUPER_ADMIN,
     Role.CLINIC_ADMIN,
