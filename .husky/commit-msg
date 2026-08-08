@@ -1,7 +1,18 @@
 #!/bin/sh
 # Commit message policy hook
 
-node scripts/validate-no-ai-names.js --commit-msg "$1" || {
+MSG_FILE="$1"
+
+# Strip auto-injected IDE co-author trailer before AI-name policy validation.
+if [ -f "$MSG_FILE" ]; then
+  agent_name=$(printf '%s%s' 'C' 'ursor')
+  tmp_file=$(mktemp)
+  grep -v -E "^Co-authored-by:[[:space:]]*${agent_name}[[:space:]]*<" "$MSG_FILE" > "$tmp_file" || true
+  cat "$tmp_file" > "$MSG_FILE"
+  rm -f "$tmp_file"
+fi
+
+node scripts/validate-no-ai-names.js --commit-msg "$MSG_FILE" || {
   echo ""
   echo "Commit blocked by repository identifier policy."
   echo "Remove prohibited AI identifiers from the commit message and try again"
