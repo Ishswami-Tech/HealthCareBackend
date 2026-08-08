@@ -522,9 +522,7 @@ export class SecurityConfigService {
     // Cookie configuration
     const secureCookies = this.configService.getEnvBoolean('SESSION_SECURE_COOKIES', true);
     const sameSite = (this.configService.getEnv('SESSION_SAME_SITE', 'strict') || 'strict') as
-      | 'strict'
-      | 'lax'
-      | 'none';
+      'strict' | 'lax' | 'none';
 
     const sessionOptions: Record<string, unknown> = {
       secret: sessionSecret,

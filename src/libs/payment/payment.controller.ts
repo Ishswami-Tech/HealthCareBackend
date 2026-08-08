@@ -1202,8 +1202,7 @@ export class PaymentController {
       const resolvedOrderId = orderId || verifiedPayload.orderId;
       const resolvedPaymentId = paymentId || verifiedPayload.paymentId;
       const resolvedProvider = (provider || verifiedPayload.provider) as
-        | PaymentProvider
-        | undefined;
+        PaymentProvider | undefined;
       const verificationPaymentId = resolvedPaymentId || resolvedOrderId;
 
       // 2. Forward to billing service for payment status update
