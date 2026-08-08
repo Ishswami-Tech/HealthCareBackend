@@ -376,7 +376,9 @@ services:
       # BullMQ Worker Configuration
       BULL_WORKER_CONCURRENCY: "5"
       BULL_MAX_JOBS_PER_WORKER: "100"
-      
+      ENABLE_BULL_BOARD: "true"
+      BULL_BOARD_URL: "/queue-dashboard"
+
       # Logging Configuration
       LOG_LEVEL: debug
       ENABLE_AUDIT_LOGS: "true"
