@@ -5,13 +5,7 @@
  * and exposes API endpoints for notification logs
  */
 
-import {
-  Controller,
-  Get,
-  Query,
-  Param,
-  Res,
-} from '@nestjs/common';
+import { Controller, Get, Query, Param, Res } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery, ApiResponse } from '@nestjs/swagger';
 import { FastifyReply } from 'fastify';
 import { CommunicationService } from '../communication.service';
@@ -372,16 +366,30 @@ export class NotificationDashboardController {
       result.logs = (result.logs as Record<string, unknown>[]).filter(log => {
         const n = (log['notification'] || {}) as Record<string, unknown>;
         const searchStr = [
-          n['message'], n['title'], n['body'], n['email'], n['phone'],
-          n['recipient'], log['channel'], log['status'], log['failureReason'], n['type'],
-        ].filter(Boolean).join(' ').toLowerCase();
+          n['message'],
+          n['title'],
+          n['body'],
+          n['email'],
+          n['phone'],
+          n['recipient'],
+          log['channel'],
+          log['status'],
+          log['failureReason'],
+          n['type'],
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
         return searchStr.includes(searchLower);
       });
       result.limit = +limit;
       result.skip = +skip;
       result.logs = result.logs.slice(+skip, +skip + +limit);
     } else {
-      result = await this.communicationService.getDeliveryLogs(filter, { limit: +limit, skip: +skip });
+      result = await this.communicationService.getDeliveryLogs(filter, {
+        limit: +limit,
+        skip: +skip,
+      });
     }
 
     return result;
@@ -404,7 +412,10 @@ export class NotificationDashboardController {
       const client = prisma as unknown as {
         notificationDeliveryLog: {
           count: (args?: { where?: Record<string, unknown> }) => Promise<number>;
-          groupBy: (args: { by: string[]; where?: Record<string, unknown> }) => Promise<Array<Record<string, unknown>>>;
+          groupBy: (args: {
+            by: string[];
+            where?: Record<string, unknown>;
+          }) => Promise<Array<Record<string, unknown>>>;
         };
         notification: {
           count: (args?: { where?: Record<string, unknown> }) => Promise<number>;
