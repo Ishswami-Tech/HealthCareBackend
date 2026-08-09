@@ -43,6 +43,7 @@ export class ProviderFactory {
   private smsAdapterCache = new Map<string, SMSProviderAdapter>();
 
   constructor(
+    @Inject(forwardRef(() => CommunicationConfigService))
     private readonly configService: CommunicationConfigService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,

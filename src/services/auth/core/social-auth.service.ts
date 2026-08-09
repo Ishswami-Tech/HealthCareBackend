@@ -147,17 +147,34 @@ export class SocialAuthService {
         ...(clinicId ? { clinicId } : {}),
       });
     } catch (_error) {
+      const message = _error instanceof Error ? _error.message : String(_error);
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Google authentication failed',
         'SocialAuthService',
         {
-          error: _error instanceof Error ? _error.message : String(_error),
+          error: message,
           stack: _error instanceof Error ? _error.stack : 'No stack trace available',
         }
       );
-      throw new BadRequestException('Google authentication failed');
+      // Preserve specific client-facing failures (e.g. clinic not found) instead of a generic 400.
+      if (_error instanceof BadRequestException) {
+        throw _error;
+      }
+      if (
+        typeof _error === 'object' &&
+        _error !== null &&
+        'getStatus' in _error &&
+        typeof (_error as { getStatus: () => number }).getStatus === 'function'
+      ) {
+        throw _error;
+      }
+      throw new BadRequestException(
+        message.startsWith('Clinic ') || message.includes('Clinic not found')
+          ? message
+          : `Google authentication failed: ${message}`
+      );
     }
   }
 
@@ -367,11 +384,14 @@ export class SocialAuthService {
     }
 
     try {
-      // Verify the ID token
-      // Google ID tokens are JWT tokens that contain user information
+      // Prefer ConfigService client ID as audience; do not rely on OAuth2Client private fields.
+      const audience =
+        this.configService.getEnv('GOOGLE_CLIENT_ID', '') ||
+        (this.googleOAuthClient as { _clientId?: string })._clientId ||
+        '';
       const ticket = await this.googleOAuthClient.verifyIdToken({
         idToken: token,
-        audience: (this.googleOAuthClient as { _clientId?: string })._clientId || '',
+        audience,
       });
 
       const payload = ticket.getPayload();

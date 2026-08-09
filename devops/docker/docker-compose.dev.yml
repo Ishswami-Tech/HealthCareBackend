@@ -176,7 +176,8 @@ services:
       "
 
   postgres:
-    image: postgres:18
+    # Volume healthcare_postgres_data is PG16; postgres:18 refuses that layout and crash-loops.
+    image: postgres:16
     platform: linux/amd64
     container_name: healthcare-postgres
     # NOTE: Port 5432 exposed for local development convenience
