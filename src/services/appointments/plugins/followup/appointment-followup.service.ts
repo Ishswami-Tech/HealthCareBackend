@@ -683,7 +683,11 @@ export class AppointmentFollowUpService {
         type: 'follow_up' as const,
         priority: followUp.priority,
         channels: ['email', 'whatsapp', 'push'] as (
-          'socket' | 'push' | 'email' | 'sms' | 'whatsapp'
+          | 'socket'
+          | 'push'
+          | 'email'
+          | 'sms'
+          | 'whatsapp'
         )[],
         templateData: {
           patientName: 'Patient', // This should be fetched from user data
@@ -725,7 +729,11 @@ export class AppointmentFollowUpService {
         type: 'follow_up' as const,
         priority: followUp.priority,
         channels: ['email', 'whatsapp', 'push'] as (
-          'socket' | 'push' | 'email' | 'sms' | 'whatsapp'
+          | 'socket'
+          | 'push'
+          | 'email'
+          | 'sms'
+          | 'whatsapp'
         )[],
         templateData: {
           patientName: 'Patient', // This should be fetched from user data

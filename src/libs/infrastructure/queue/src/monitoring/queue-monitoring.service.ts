@@ -773,7 +773,9 @@ export class QueueMonitoringService {
 
   private async emitManualAlertEvent(
     eventType:
-      'queue.alert.manual.created' | 'queue.alert.manual.updated' | 'queue.alert.manual.deleted',
+      | 'queue.alert.manual.created'
+      | 'queue.alert.manual.updated'
+      | 'queue.alert.manual.deleted',
     alert: QueueAlert,
     action: 'created' | 'updated' | 'deleted',
     previousAlert?: QueueAlert
