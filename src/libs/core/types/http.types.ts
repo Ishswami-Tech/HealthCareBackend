@@ -176,7 +176,7 @@ export interface HttpRequestOptions extends Partial<AxiosRequestConfig> {
   /**
    * HTTP basic auth credentials
    */
-  auth?: NonNullable<AxiosRequestConfig['auth']>;
+  auth?: AxiosRequestConfig['auth'];
   /**
    * Maximum number of redirects to follow (0 = no redirects)
    */
