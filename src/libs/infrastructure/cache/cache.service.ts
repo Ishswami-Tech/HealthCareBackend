@@ -1107,6 +1107,10 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return this.getProvider().zrangebyscore(key, min, max);
   }
 
+  async zrem(key: string, member: string): Promise<number> {
+    return this.getProvider().zrem(key, member);
+  }
+
   async zremrangebyscore(key: string, min: number, max: number): Promise<number> {
     return this.getProvider().zremrangebyscore(key, min, max);
   }
@@ -1133,6 +1137,10 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
   async keys(pattern: string): Promise<string[]> {
     return this.getProvider().keys(pattern);
+  }
+
+  async scan(cursor: string, pattern?: string, count: number = 500): Promise<[string, string[]]> {
+    return this.getProvider().scan(cursor, pattern, count);
   }
 
   async multi(

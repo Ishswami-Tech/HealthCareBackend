@@ -4195,11 +4195,7 @@ export class AppointmentsController {
           doctorId: appointment.doctor?.id || '',
           clinicId,
           followUpType: createDto.followUpType as
-            | 'routine'
-            | 'urgent'
-            | 'specialist'
-            | 'therapy'
-            | 'surgery',
+            'routine' | 'urgent' | 'specialist' | 'therapy' | 'surgery',
           scheduledFor: result.scheduledFor,
           status: 'scheduled',
           priority: (createDto.priority || 'normal') as 'low' | 'normal' | 'high' | 'urgent',

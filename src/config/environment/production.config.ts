@@ -145,11 +145,7 @@ export default function createProductionConfig(): ProductionConfig {
       // Use helper functions (which use dotenv) for environment variable access
       level:
         (getEnvWithDefault(ENV_VARS.LOG_LEVEL, 'info') as
-          | 'error'
-          | 'warn'
-          | 'info'
-          | 'debug'
-          | 'verbose') || 'info',
+          'error' | 'warn' | 'info' | 'debug' | 'verbose') || 'info',
       enableAuditLogs: getEnvBoolean('ENABLE_AUDIT_LOGS', true),
     },
     email: {

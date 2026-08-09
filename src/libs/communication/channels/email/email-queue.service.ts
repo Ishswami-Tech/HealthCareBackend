@@ -203,18 +203,26 @@ export class EmailQueueService {
     }
     try {
       // Use direct queue access for recurring jobs (cron) as QueueService doesn't support repeat option
-      const job = await this.emailQueue.add('send-recurring-email', emailData, {
-        repeat: { pattern: cronExpression },
-        attempts: options?.attempts || 3,
-        backoff: options?.backoff
-          ? typeof options.backoff === 'number'
-            ? { type: 'exponential', delay: options.backoff }
-            : options.backoff
-          : { type: 'exponential', delay: 2000 },
-        priority: this.getPriorityValue(emailData.priority),
-        removeOnComplete: options?.removeOnComplete || 50,
-        removeOnFail: options?.removeOnFail || 20,
-      });
+      // BullMQ v6 moved `repeat` out of JobsOptions; must use upsertJobScheduler
+      const job = await this.emailQueue.upsertJobScheduler(
+        `recurring:${String(emailData.to)}`,
+        { pattern: cronExpression },
+        {
+          name: 'send-recurring-email',
+          data: emailData,
+          opts: {
+            attempts: options?.attempts || 3,
+            backoff: options?.backoff
+              ? typeof options.backoff === 'number'
+                ? { type: 'exponential', delay: options.backoff }
+                : options.backoff
+              : { type: 'exponential', delay: 2000 },
+            priority: this.getPriorityValue(emailData.priority),
+            removeOnComplete: options?.removeOnComplete || 50,
+            removeOnFail: options?.removeOnFail || 20,
+          },
+        }
+      );
 
       void this.loggingService.log(
         LogType.QUEUE,

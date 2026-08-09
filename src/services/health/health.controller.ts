@@ -110,8 +110,7 @@ export class HealthController {
         : await this.healthService.getHealth();
 
       const databaseStatus = healthResult.services?.database as
-        | { status?: string; details?: unknown }
-        | undefined;
+        { status?: string; details?: unknown } | undefined;
 
       // Application is healthy when core services (database, cache, logging) are healthy.
       // Queue/RabbitMQ is non-blocking — it runs in the worker process, so queue

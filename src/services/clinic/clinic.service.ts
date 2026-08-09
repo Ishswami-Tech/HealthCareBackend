@@ -241,7 +241,7 @@ export class ClinicService {
               language: data.language,
               createdBy: data.createdBy,
               isActive: data.isActive ?? true,
-              ...(data.settings && { settings: data.settings as never }),
+              ...(data.settings ? { settings: data.settings } : {}),
             } as PrismaDelegateArgs,
             include: {
               locations: {
