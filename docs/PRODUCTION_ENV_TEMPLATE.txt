@@ -127,7 +127,7 @@ QUEUE_DASHBOARD_PASSWORD=
 
 # WhatsApp Configuration (Meta Business API)
 # See: https://developers.facebook.com/docs/whatsapp/cloud-api
-WHATSAPP_ENABLED=false
+WHATSAPP_ENABLED=true
 WHATSAPP_API_URL=https://graph.facebook.com/v25.0
 WHATSAPP_API_KEY=
 WHATSAPP_PHONE_NUMBER_ID=

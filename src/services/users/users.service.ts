@@ -23,6 +23,7 @@ import type { UserUpdateInput, UserWhereInput } from '@core/types/input.types';
 import type { Doctor, Patient, Receptionist, ClinicAdmin, SuperAdmin, AuditLog } from '@core/types';
 import { AuditInfo } from '@core/types/database.types';
 import { formatISODateInIST, nowIso } from '../../libs/utils/date-time.util';
+import { normalizeAuthPhoneNumber } from '../auth/core/phone-normalizer.util';
 
 export interface ProfileCompletionValidationResult {
   isComplete: boolean;
@@ -834,7 +835,7 @@ export class UsersService {
       delete (cleanedData as Record<string, unknown>)['emailVerified'];
 
       if (typeof cleanedData.phone === 'string' && cleanedData.phone.trim()) {
-        const normalizedPhone = cleanedData.phone.trim();
+        const normalizedPhone = normalizeAuthPhoneNumber(cleanedData.phone);
         const existingUserRecord = existingUser as unknown as Record<string, unknown>;
         const existingPhoneUser = await this.databaseService.findUserByPhoneSafe(normalizedPhone);
         const isPhoneOwnedByAnotherUser = existingPhoneUser && existingPhoneUser.id !== id;
@@ -855,7 +856,8 @@ export class UsersService {
 
         // If the phone belongs to another incomplete account, transfer it.
         if (isPhoneOwnedByAnotherUser && !existingPhoneUserProfileComplete) {
-          const currentPhone = existingUserRecord['phone'] as string | null;
+          const currentPhoneRaw = existingUserRecord['phone'] as string | null;
+          const currentPhone = currentPhoneRaw ? normalizeAuthPhoneNumber(currentPhoneRaw) : null;
           const currentClinicId =
             typeof existingUserRecord['primaryClinicId'] === 'string'
               ? (existingUserRecord['primaryClinicId'] as string)
@@ -908,7 +910,9 @@ export class UsersService {
           );
         } else {
           // Only reset phone verification if the phone number actually changed
-          const currentPhone = existingUserRecord['phone'] as string | null;
+          // (compare normalized forms so "+91 7888..." vs "+917888..." don't wipe OTP verification)
+          const currentPhoneRaw = existingUserRecord['phone'] as string | null;
+          const currentPhone = currentPhoneRaw ? normalizeAuthPhoneNumber(currentPhoneRaw) : null;
           if (currentPhone !== normalizedPhone) {
             (cleanedData as Record<string, unknown>)['phoneVerified'] = false;
             (cleanedData as Record<string, unknown>)['phoneVerifiedAt'] = null;
@@ -2081,18 +2085,24 @@ export class UsersService {
 
       const userRole = user.role as Role;
 
-      // Validate profile completion using local method
-      // Merge DB user data with provided profile data so that fields like phoneVerified
-      // (set by backend during OTP login) are included in validation
+      // Validate profile completion using local method against persisted DB state.
       // SECURITY: Always use DB values for phoneVerified/emailVerified, not frontend input.
-      // The profile-completion form MUST verify any new phone via OTP first
-      // (see /auth/verify-phone endpoint); only then will the DB hold a verified phone.
+      const persistedUser = await this.databaseService.findUserByIdSafeFresh(userId);
+      if (!persistedUser) {
+        throw new BadRequestException('User not found');
+      }
+
+      // Apply only safe scalar overlays from the request that completeUserProfile will persist,
+      // but keep verification flags from DB.
       const validationData = {
-        ...(user as unknown as Record<string, unknown>),
+        ...(persistedUser as unknown as Record<string, unknown>),
         ...profileData,
-        // Override with DB truth for verification status
-        phoneVerified: (user as unknown as Record<string, unknown>)['phoneVerified'],
-        emailVerified: (user as unknown as Record<string, unknown>)['emailVerified'],
+        phone:
+          typeof profileData['phone'] === 'string' && profileData['phone'].trim()
+            ? normalizeAuthPhoneNumber(profileData['phone'] as string)
+            : (persistedUser as unknown as Record<string, unknown>)['phone'],
+        phoneVerified: (persistedUser as unknown as Record<string, unknown>)['phoneVerified'],
+        emailVerified: (persistedUser as unknown as Record<string, unknown>)['emailVerified'],
       };
       const validation = this.validateProfileCompletion(validationData, userRole);
 
@@ -2544,23 +2554,14 @@ export class UsersService {
       );
 
       // Re-read user with fresh DB state (cache-bypassing) for the completion decision.
-      // The cached `user` loaded at line 2519 may be stale, especially for users
-      // completing their profile for the first time or submitting multiple PATCHes.
+      // Do NOT re-merge raw request payload for validation — client phone formatting
+      // (spaces, missing +, etc.) can overwrite good DB values and falsely fail completion.
       const freshUser = await this.databaseService.findUserByIdSafeFresh(userId);
       if (!freshUser) {
         throw new BadRequestException('User not found after update');
       }
 
-      // Validate profile data using FRESH post-update state.
-      // SECURITY: Use DB values for phoneVerified/emailVerified, not frontend input.
-      // Frontend can send these fields (to pass DTO whitelist), but we don't trust them.
-      const validationData = {
-        ...(freshUser as unknown as Record<string, unknown>),
-        ...profileData,
-        // Override with DB truth for verification status
-        phoneVerified: (freshUser as unknown as Record<string, unknown>)['phoneVerified'],
-        emailVerified: (freshUser as unknown as Record<string, unknown>)['emailVerified'],
-      };
+      const validationData = freshUser as unknown as Record<string, unknown>;
       const validation = this.validateProfileCompletion(validationData, userRole);
 
       // If profile is now complete, mark it as such.
@@ -2569,14 +2570,26 @@ export class UsersService {
         validation.isComplete &&
         !(freshUser as unknown as Record<string, unknown>)['isProfileComplete']
       ) {
-        const completeResult = await this.completeUserProfile(userId, {
-          ...(freshUser as unknown as Record<string, unknown>),
-          ...profileData,
-        });
+        const completeResult = await this.completeUserProfile(userId, validationData);
 
         if (completeResult.success && completeResult.user) {
           return completeResult.user;
         }
+      }
+
+      if (!validation.isComplete) {
+        void this.loggingService.log(
+          LogType.AUDIT,
+          LogLevel.WARN,
+          `Profile update saved but completion not confirmed for ${userId}`,
+          'UsersService.updateUserProfileWithValidation',
+          {
+            missingFields: validation.missingFields,
+            errors: validation.errors,
+            phoneVerified: validationData['phoneVerified'],
+            hasPhone: Boolean(validationData['phone']),
+          }
+        );
       }
 
       return updatedUser;
@@ -2656,12 +2669,13 @@ export class UsersService {
     const isComplete = missingFields.length === 0 && errors.length === 0;
 
     if (!isComplete) {
+      const errorFields = errors.map(error => error.field);
       void this.loggingService.log(
         LogType.AUDIT,
         LogLevel.INFO,
-        `Profile incomplete for ${role}: missing ${missingFields.join(', ')}`,
+        `Profile incomplete for ${role}: missing ${missingFields.join(', ') || '(none)'}; errors=${errorFields.join(', ') || '(none)'}`,
         'UsersService.validateProfileCompletion',
-        { role, missingFields, errorCount: errors.length }
+        { role, missingFields, errors, errorCount: errors.length }
       );
     }
 
