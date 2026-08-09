@@ -43,7 +43,8 @@ export class DoctorSummaryService {
       return (
         (
           (prismaClient['doctor'] as Record<string, unknown> | undefined)?.['findUnique'] as
-            ((args: unknown) => Promise<{ id: string; userId: string } | null>) | undefined
+            | ((args: unknown) => Promise<{ id: string; userId: string } | null>)
+            | undefined
         )?.({ where: { id: doctorId }, select: { id: true, userId: true } }) ?? null
       );
     });

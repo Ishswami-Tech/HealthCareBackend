@@ -145,7 +145,8 @@ export class ClinicEmailMapperService {
         if (fallback && Array.isArray(fallback)) {
           for (const fallbackConfig of fallback) {
             const fallbackCredentials = fallbackConfig['credentials'] as
-              Record<string, string> | undefined;
+              | Record<string, string>
+              | undefined;
             if (fallbackCredentials) {
               const fallbackFromEmail =
                 fallbackCredentials['fromEmail'] || fallbackCredentials['from'];

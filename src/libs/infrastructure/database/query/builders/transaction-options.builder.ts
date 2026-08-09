@@ -11,7 +11,10 @@
  * Transaction isolation levels
  */
 export type TransactionIsolationLevel =
-  'ReadUncommitted' | 'ReadCommitted' | 'RepeatableRead' | 'Serializable';
+  | 'ReadUncommitted'
+  | 'ReadCommitted'
+  | 'RepeatableRead'
+  | 'Serializable';
 
 /**
  * Transaction options
