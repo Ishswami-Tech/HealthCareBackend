@@ -49,6 +49,10 @@ export class SessionManagementService implements OnModuleInit {
   private readonly USER_SESSIONS_PREFIX = 'user_sessions:';
   private readonly BLACKLIST_PREFIX = 'blacklist:';
   private readonly CLINIC_SESSIONS_PREFIX = 'clinic_sessions:';
+  private readonly SESSION_META_PREFIX = 'session_meta:';
+  private readonly SESSION_REGISTRY_KEY = 'session_registry:all';
+  private readonly SESSION_EXPIRY_INDEX_KEY = 'session_index:expires';
+  private readonly SESSION_ACTIVITY_INDEX_KEY = 'session_index:activity';
 
   private config!: SessionConfig;
 
@@ -71,9 +75,7 @@ export class SessionManagementService implements OnModuleInit {
       extendOnActivity: this.configService.getEnvBoolean('SESSION_EXTEND_ON_ACTIVITY', true),
       secureCookies: this.configService.getEnvBoolean('SESSION_SECURE_COOKIES', true),
       sameSite: (this.configService.getEnv('SESSION_SAME_SITE', 'strict') || 'strict') as
-        | 'strict'
-        | 'lax'
-        | 'none',
+        'strict' | 'lax' | 'none',
       distributed: this.configService.getEnvBoolean('SESSION_DISTRIBUTED', true),
       partitions: this.configService.getEnvNumber('SESSION_PARTITIONS', 16),
     };
@@ -127,6 +129,7 @@ export class SessionManagementService implements OnModuleInit {
 
       // 2. Store session with distributed partitioning
       await this.storeSession(sessionData);
+      await this.persistSessionState(sessionData);
 
       // 3. Add to user sessions index (Redis Set)
       await this.addUserSession(createSessionDto.userId, sessionId);
@@ -219,6 +222,7 @@ export class SessionManagementService implements OnModuleInit {
     };
 
     await this.storeSession(restoredSession);
+    await this.persistSessionState(restoredSession);
     await this.addUserSession(restoreDto.userId, sessionId);
     if (restoreDto.clinicId) {
       await this.addClinicSession(restoreDto.clinicId, sessionId);
@@ -316,6 +320,11 @@ export class SessionManagementService implements OnModuleInit {
       }
 
       await this.storeSession(session);
+      await this.persistSessionState(session);
+      await this.addUserSession(session.userId, session.sessionId);
+      if (session.clinicId) {
+        await this.addClinicSession(session.clinicId, session.sessionId);
+      }
       return true;
     } catch (error) {
       await this.loggingService.log(
@@ -366,6 +375,7 @@ export class SessionManagementService implements OnModuleInit {
       // Remove from session storage
       const sessionKey = this.getSessionKey(sessionId);
       await this.cacheService.del(sessionKey);
+      await this.removeSessionState(sessionId);
 
       // Remove from user sessions index
       await this.removeUserSession(session.userId, sessionId);
@@ -524,21 +534,29 @@ export class SessionManagementService implements OnModuleInit {
    */
   async getSessionSummary(): Promise<SessionSummary> {
     try {
-      // MED-3: This method returns placeholder zeros.
-      // A real implementation requires a Redis SCAN over session:* keys or a
-      // dedicated sorted-set counter maintained on every createSession/invalidateSession call.
-      // TODO: Implement using a Redis sorted set (ZADD/ZCOUNT) keyed by expiresAt.
-      const totalSessions = 0;
-      const activeSessions = 0;
-      const expiredSessions = 0;
+      const now = Date.now();
+      const sessions = await this.collectStoredSessions();
+      const activeSessionsList = sessions.filter(
+        session => session.isActive && session.expiresAt.getTime() > now
+      );
       const sessionsPerUser: Record<string, number> = {};
       const sessionsPerClinic: Record<string, number> = {};
-      const recentActivity: SessionData[] = [];
+
+      for (const session of activeSessionsList) {
+        sessionsPerUser[session.userId] = (sessionsPerUser[session.userId] || 0) + 1;
+        if (session.clinicId) {
+          sessionsPerClinic[session.clinicId] = (sessionsPerClinic[session.clinicId] || 0) + 1;
+        }
+      }
+
+      const recentActivity = [...activeSessionsList]
+        .sort((a, b) => b.lastActivity.getTime() - a.lastActivity.getTime())
+        .slice(0, 10);
 
       return {
-        totalSessions,
-        activeSessions,
-        expiredSessions,
+        totalSessions: sessions.length,
+        activeSessions: activeSessionsList.length,
+        expiredSessions: Math.max(0, sessions.length - activeSessionsList.length),
         sessionsPerUser,
         sessionsPerClinic,
         recentActivity,
@@ -568,21 +586,91 @@ export class SessionManagementService implements OnModuleInit {
    * Detect suspicious sessions (auto-runs every 30 minutes)
    * @returns Object containing suspicious sessions and reasons
    */
-  detectSuspiciousSessions(): {
+  async detectSuspiciousSessions(): Promise<{
     suspicious: SessionData[];
     reasons: Record<string, string[]>;
-  } {
-    // MED-2: This method is a stub — it always returns an empty array.
-    // A real implementation would require maintaining per-user IP sets and
-    // iterating via Redis SCAN, which is a future TODO.
-    // Removing the misleading "detection completed" log to avoid false confidence.
-    //
-    // TODO: Implement checks for:
-    // 1. Multiple concurrent sessions from different IPs (> 3)
-    // 2. Unusual user agent patterns (bots, crawlers)
-    // 3. Long inactive sessions (> 24 hours)
-    // 4. Rapid geographical location changes
-    return { suspicious: [], reasons: {} };
+  }> {
+    try {
+      const sessions = await this.collectStoredSessions();
+      const suspiciousReasons = new Map<string, Set<string>>();
+      const suspiciousSessions = new Map<string, SessionData>();
+      const userAgentPattern =
+        /(bot|crawler|spider|scrapy|headless|curl|wget|python-requests|postman|okhttp|libwww-perl)/i;
+      const inactiveThresholdMs = 24 * 60 * 60 * 1000;
+      const rapidChangeWindowMs = 60 * 60 * 1000;
+      const sessionsByUser = new Map<string, SessionData[]>();
+
+      const markSuspicious = (session: SessionData, reason: string): void => {
+        suspiciousSessions.set(session.sessionId, session);
+        const current = suspiciousReasons.get(session.sessionId) ?? new Set<string>();
+        current.add(reason);
+        suspiciousReasons.set(session.sessionId, current);
+      };
+
+      for (const session of sessions) {
+        const userId = session.userId?.trim();
+        if (!userId) {
+          continue;
+        }
+
+        const userSessions = sessionsByUser.get(userId) ?? [];
+        userSessions.push(session);
+        sessionsByUser.set(userId, userSessions);
+      }
+
+      for (const sessionsForUser of sessionsByUser.values()) {
+        const sessionsWithIp = sessionsForUser.filter(session => session.ipAddress);
+        const distinctIps = new Set(sessionsWithIp.map(session => session.ipAddress as string));
+        if (distinctIps.size > 3) {
+          for (const session of sessionsWithIp) {
+            markSuspicious(session, 'Multiple concurrent sessions from different IP addresses');
+          }
+        }
+
+        for (const session of sessionsForUser) {
+          if (session.userAgent && userAgentPattern.test(session.userAgent)) {
+            markSuspicious(session, 'Suspicious user agent pattern detected');
+          }
+
+          if (Date.now() - session.lastActivity.getTime() > inactiveThresholdMs) {
+            markSuspicious(session, 'Session has been inactive for more than 24 hours');
+          }
+        }
+
+        const recentSessions = sessionsWithIp
+          .filter(session => Date.now() - session.lastActivity.getTime() <= rapidChangeWindowMs)
+          .sort((a, b) => b.lastActivity.getTime() - a.lastActivity.getTime());
+
+        if (recentSessions.length >= 3) {
+          const recentIps = new Set(recentSessions.map(session => session.ipAddress as string));
+          if (recentIps.size >= 3) {
+            for (const session of recentSessions) {
+              markSuspicious(session, 'Rapid IP changes detected within a short period');
+            }
+          }
+        }
+      }
+
+      return {
+        suspicious: [...suspiciousSessions.values()].sort(
+          (a, b) => b.lastActivity.getTime() - a.lastActivity.getTime()
+        ),
+        reasons: Object.fromEntries(
+          [...suspiciousReasons.entries()].map(([sessionId, reasons]) => [sessionId, [...reasons]])
+        ),
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to detect suspicious sessions',
+        'SessionManagementService',
+        {
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      return { suspicious: [], reasons: {} };
+    }
   }
 
   /**
@@ -689,6 +777,164 @@ export class SessionManagementService implements OnModuleInit {
   }
 
   /**
+   * Get metadata key for a session.
+   */
+  private getSessionMetaKey(sessionId: string): string {
+    return `${this.SESSION_META_PREFIX}${sessionId}`;
+  }
+
+  /**
+   * Normalize session data read back from cache.
+   */
+  private normalizeSessionData(
+    raw:
+      | Partial<SessionData>
+      | null
+      | undefined
+      | {
+          sessionId?: string;
+          userId?: string;
+          loginTime?: string | Date;
+          lastActivity?: string | Date;
+          expiresAt?: string | Date;
+          isActive?: boolean;
+          metadata?: Record<string, unknown>;
+          clinicId?: string;
+          userAgent?: string;
+          ipAddress?: string;
+          deviceId?: string;
+        }
+  ): SessionData | null {
+    if (!raw || !raw.sessionId || !raw.userId) {
+      return null;
+    }
+
+    const toDate = (value: unknown, fallback?: Date): Date | null => {
+      if (value instanceof Date) {
+        return value;
+      }
+      if (typeof value === 'string' || typeof value === 'number') {
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+      }
+      return fallback ?? null;
+    };
+
+    const loginTime = toDate(raw.loginTime, new Date()) ?? new Date();
+    const lastActivity = toDate(raw.lastActivity, loginTime) ?? loginTime;
+    const expiresAt = toDate(raw.expiresAt, loginTime) ?? loginTime;
+
+    return {
+      sessionId: raw.sessionId,
+      userId: raw.userId,
+      ...(raw.clinicId && { clinicId: raw.clinicId }),
+      ...(raw.userAgent && { userAgent: raw.userAgent }),
+      ...(raw.ipAddress && { ipAddress: raw.ipAddress }),
+      ...(raw.deviceId && { deviceId: raw.deviceId }),
+      loginTime,
+      lastActivity,
+      expiresAt,
+      isActive: raw.isActive ?? true,
+      metadata: raw.metadata && typeof raw.metadata === 'object' ? { ...raw.metadata } : {},
+    };
+  }
+
+  /**
+   * Read a session record from the metadata index or live session payload.
+   */
+  private async readStoredSession(sessionId: string): Promise<SessionData | null> {
+    const liveSessionKey = this.getSessionKey(sessionId);
+    const liveSession = await this.cacheService.get<SessionData>(liveSessionKey);
+    const normalizedLive = this.normalizeSessionData(liveSession);
+    if (normalizedLive) {
+      return normalizedLive;
+    }
+
+    const metaKey = this.getSessionMetaKey(sessionId);
+    const storedMeta = await this.cacheService.get<SessionData>(metaKey);
+    return this.normalizeSessionData(storedMeta);
+  }
+
+  /**
+   * Persist bookkeeping data for a session.
+   */
+  private async persistSessionState(sessionData: SessionData): Promise<void> {
+    await Promise.all([
+      this.cacheService.set(this.getSessionMetaKey(sessionData.sessionId), sessionData),
+      this.cacheService.sAdd(this.SESSION_REGISTRY_KEY, sessionData.sessionId),
+      this.cacheService.zadd(
+        this.SESSION_EXPIRY_INDEX_KEY,
+        sessionData.expiresAt.getTime(),
+        sessionData.sessionId
+      ),
+      this.cacheService.zadd(
+        this.SESSION_ACTIVITY_INDEX_KEY,
+        sessionData.lastActivity.getTime(),
+        sessionData.sessionId
+      ),
+    ]);
+  }
+
+  /**
+   * Remove bookkeeping data for a session.
+   */
+  private async removeSessionState(sessionId: string): Promise<void> {
+    await Promise.all([
+      this.cacheService.sRem(this.SESSION_REGISTRY_KEY, sessionId),
+      this.cacheService.zrem(this.SESSION_EXPIRY_INDEX_KEY, sessionId),
+      this.cacheService.zrem(this.SESSION_ACTIVITY_INDEX_KEY, sessionId),
+      this.cacheService.del(this.getSessionMetaKey(sessionId)),
+    ]);
+  }
+
+  /**
+   * Load all currently tracked sessions for reporting.
+   */
+  private async collectStoredSessions(): Promise<SessionData[]> {
+    const sessionIdList = await this.cacheService.sMembers(this.SESSION_REGISTRY_KEY);
+    const sessionIds = new Set(sessionIdList);
+
+    if (sessionIds.size === 0) {
+      return [];
+    }
+
+    const staleIds: string[] = [];
+    const sessions = await Promise.all(
+      sessionIdList.map(async sessionId => this.readStoredSession(sessionId))
+    );
+
+    const activeSessions = sessions.filter((session): session is SessionData => session !== null);
+
+    for (let index = 0; index < sessions.length; index += 1) {
+      if (sessions[index] === null) {
+        const sessionId = sessionIdList[index];
+        if (sessionId) {
+          staleIds.push(sessionId);
+        }
+      }
+    }
+
+    if (staleIds.length > 0) {
+      void Promise.all(staleIds.map(sessionId => this.removeSessionState(sessionId))).catch(
+        async (error: unknown) => {
+          await this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.WARN,
+            'Failed to prune stale session registry entries',
+            'SessionManagementService',
+            {
+              staleCount: staleIds.length,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          );
+        }
+      );
+    }
+
+    return activeSessions;
+  }
+
+  /**
    * Check if session is blacklisted
    * @param sessionId - Session identifier
    * @returns True if session is blacklisted
@@ -750,19 +996,62 @@ export class SessionManagementService implements OnModuleInit {
    * Cleanup expired sessions
    */
   private async cleanupExpiredSessions(): Promise<void> {
-    // MED-1: Partial implementation — pruning ghost IDs via getUserSessions() is now
-    // handled inline (CRIT-2 fix). This method handles the periodic pass to proactively
-    // clean the Set TTL and log actual activity counts.
-    //
-    // Full implementation TODO: Use Redis SCAN over 'session:*' keys or maintain a
-    // ZSET sorted by expiresAt for O(log N) cleanup.
     try {
+      const now = Date.now();
+      const expiredSessionIds = await this.cacheService.zrangebyscore(
+        this.SESSION_EXPIRY_INDEX_KEY,
+        '-inf',
+        now
+      );
+
+      let cleanedCount = 0;
+      let staleCount = 0;
+      let refreshedCount = 0;
+
+      for (const sessionId of expiredSessionIds) {
+        const session = await this.readStoredSession(sessionId);
+
+        if (session && session.expiresAt.getTime() <= now) {
+          await Promise.all([
+            this.cacheService.del(this.getSessionKey(sessionId)),
+            this.removeUserSession(session.userId, sessionId),
+            session.clinicId
+              ? this.removeClinicSession(session.clinicId, sessionId)
+              : Promise.resolve(),
+            this.removeSessionState(sessionId),
+          ]);
+          cleanedCount++;
+          continue;
+        }
+
+        if (session) {
+          await this.persistSessionState(session);
+          await this.addUserSession(session.userId, sessionId);
+          if (session.clinicId) {
+            await this.addClinicSession(session.clinicId, sessionId);
+          }
+          refreshedCount++;
+          continue;
+        }
+
+        await Promise.all([
+          this.cacheService.del(this.getSessionKey(sessionId)),
+          this.removeSessionState(sessionId),
+        ]);
+        staleCount++;
+      }
+
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.DEBUG,
-        'Periodic session cleanup tick (full SCAN cleanup not yet implemented)',
+        'Periodic session cleanup tick',
         'SessionManagementService',
-        {}
+        {
+          expiredCount: expiredSessionIds.length,
+          cleanedCount,
+          staleCount,
+          refreshedCount,
+        }
       );
     } catch (error) {
       await this.loggingService.log(
@@ -892,19 +1181,21 @@ export class SessionManagementService implements OnModuleInit {
       60 * 60 * 1000
     );
 
-    // Check for suspicious sessions every 30 minutes (stub — no-op until real detection is implemented)
+    // Check for suspicious sessions every 30 minutes
     setInterval(
       () => {
-        const { suspicious } = this.detectSuspiciousSessions();
-        if (suspicious.length > 0) {
-          void this.loggingService.log(
-            LogType.SECURITY,
-            LogLevel.WARN,
-            `Detected ${suspicious.length} suspicious sessions`,
-            'SessionManagementService',
-            { suspiciousCount: suspicious.length }
-          );
-        }
+        void (async () => {
+          const { suspicious } = await this.detectSuspiciousSessions();
+          if (suspicious.length > 0) {
+            await this.loggingService.log(
+              LogType.SECURITY,
+              LogLevel.WARN,
+              `Detected ${suspicious.length} suspicious sessions`,
+              'SessionManagementService',
+              { suspiciousCount: suspicious.length }
+            );
+          }
+        })();
       },
       30 * 60 * 1000
     );

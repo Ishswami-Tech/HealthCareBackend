@@ -7,7 +7,6 @@ import { LoggingService } from '@infrastructure/logging';
 import { EmailService } from '@communication/channels/email/email.service';
 import { EmailTemplatesService } from '@communication/channels/email/email-templates.service';
 import { LogType, LogLevel, AppointmentStatus } from '@core/types';
-import { formatCurrencyFromMinorUnits } from '@utils/currency.util';
 
 /**
  * Email address that receives an internal notification every time a
@@ -700,7 +699,13 @@ export class BillingEventsListener {
   }): Promise<void> {
     try {
       const subject = `Payment Received — ${details.patientName} / ${details.clinicName}`;
-      const formattedAmount = formatCurrencyFromMinorUnits(details.amount ?? 0);
+      const rawAmount = details.amount ?? 0;
+      const formattedAmount = new Intl.NumberFormat('en-IN', {
+        style: 'currency',
+        currency: 'INR',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(rawAmount);
       const body = `
         <h2>New Payment Received</h2>
         <p>A patient payment has been confirmed. Details below:</p>
@@ -709,11 +714,11 @@ export class BillingEventsListener {
           <tr><td style="padding: 8px 12px; font-weight: bold;">Doctor</td><td style="padding: 8px 12px;">${details.doctorName}</td></tr>
           <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">Clinic</td><td style="padding: 8px 12px;">${details.clinicName}</td></tr>
           <tr><td style="padding: 8px 12px; font-weight: bold;">Phone No.</td><td style="padding: 8px 12px;">${details.phoneNumber || 'N/A'}</td></tr>
-          <tr><td style="padding: 8px 12px; font-weight: bold;">Appointment Type</td><td style="padding: 8px 12px;">${details.appointmentType}</td></tr>
-          <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">Date</td><td style="padding: 8px 12px;">${details.appointmentDate}</td></tr>
-          <tr><td style="padding: 8px 12px; font-weight: bold;">Time</td><td style="padding: 8px 12px;">${details.appointmentTime}</td></tr>
-          <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">Location</td><td style="padding: 8px 12px;">${details.locationName}</td></tr>
-          <tr><td style="padding: 8px 12px; font-weight: bold;">Amount</td><td style="padding: 8px 12px;">${formattedAmount}</td></tr>
+          <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">Appointment Type</td><td style="padding: 8px 12px;">${details.appointmentType}</td></tr>
+          <tr><td style="padding: 8px 12px; font-weight: bold;">Date</td><td style="padding: 8px 12px;">${details.appointmentDate ? new Date(details.appointmentDate).toLocaleString('en-IN', { dateStyle: 'medium', timeZone: 'Asia/Kolkata' }) : '-'}</td></tr>
+          <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">Time</td><td style="padding: 8px 12px;">${details.appointmentTime}</td></tr>
+          <tr><td style="padding: 8px 12px; font-weight: bold;">Location</td><td style="padding: 8px 12px;">${details.locationName}</td></tr>
+          <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">Amount</td><td style="padding: 8px 12px;">${formattedAmount}</td></tr>
           <tr><td style="padding: 8px 12px; font-weight: bold;">Payment ID</td><td style="padding: 8px 12px;">${details.paymentId}</td></tr>
           <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">PhonePe Payment ID</td><td style="padding: 8px 12px;">${details.phonePePaymentId || details.paymentId}</td></tr>
           <tr><td style="padding: 8px 12px; font-weight: bold;">Appointment Link</td><td style="padding: 8px 12px;"><a href="${details.appointmentLink || '#'}" target="_blank" rel="noreferrer noopener">${details.appointmentLink || 'Open appointment'}</a></td></tr>

@@ -1,18 +1,15 @@
 {
   "compilerOptions": {
-    "baseUrl": "./",
     "types": ["node"],
     "lib": ["es2021", "dom"],
     "module": "commonjs",
-    "ignoreDeprecations": "6.0",
-    "declaration": true,
+    "noEmit": true,
+    "declaration": false,
     "removeComments": true,
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
     "target": "es2021",
-    "sourceMap": true,
-    "outDir": "./dist",
     "incremental": true,
     "skipLibCheck": true,
     "strict": true,
@@ -25,7 +22,6 @@
     "rewriteRelativeImportExtensions": true,
     "noUncheckedIndexedAccess": true,
     "noPropertyAccessFromIndexSignature": true,
-    "exactOptionalPropertyTypes": true,
     "useUnknownInCatchVariables": true,
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
@@ -33,6 +29,7 @@
     "allowJs": false,
     "resolveJsonModule": true,
     "paths": {
+      "*": ["./*"],
       "@database/*": ["./src/libs/infrastructure/database/*"],
       "@infrastructure/*": ["./src/libs/infrastructure/*"],
       "@services/*": ["./src/services/*"],
@@ -53,7 +50,8 @@
       "@config/*": ["./src/config/*"],
       "@nestjs/swagger": ["./src/shims/nest-swagger"],
       "@generated/prisma": ["./src/libs/infrastructure/database/prisma/generated"],
-      "@prisma/client": ["./src/libs/infrastructure/database/prisma/generated"]
+      "@prisma/client": ["./src/libs/infrastructure/database/prisma/generated"],
+      "axios": ["./node_modules/axios"]
     }
   },
   "include": ["src/**/*.ts", "scripts/**/*.ts"],
@@ -63,7 +61,5 @@
     "**/prisma.config.js",
     "src/libs/infrastructure/database/prisma/generated",
     "src/libs/infrastructure/database/prisma/seed.ts"
-    // Prisma generated: excluded from compilation (pre-generated JS); paths["@prisma/client"] still resolves for types
-    // seed.ts: excluded, used only for dev/testing
   ]
 }

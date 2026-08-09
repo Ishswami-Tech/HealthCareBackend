@@ -472,8 +472,7 @@ export class NotificationEventListener implements OnModuleInit {
         const appointmentId =
           (payload.metadata?.['appointmentId'] as string | undefined) ||
           ((payload as unknown as Record<string, unknown>)?.['appointmentId'] as
-            | string
-            | undefined);
+            string | undefined);
         if (appointmentId) {
           recipients.push({
             socketRoom: `appointment:${appointmentId}`,
@@ -722,8 +721,7 @@ export class NotificationEventListener implements OnModuleInit {
         const appointmentId =
           (payload.metadata?.['appointmentId'] as string | undefined) ||
           ((payload as unknown as Record<string, unknown>)?.['appointmentId'] as
-            | string
-            | undefined);
+            string | undefined);
         if (appointmentId) {
           recipients.push({
             socketRoom: `appointment:${appointmentId}`,
