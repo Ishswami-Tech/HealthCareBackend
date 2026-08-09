@@ -1,54 +1,147 @@
 #!/bin/bash
-# Smart Deployment Orchestrator
-# Implements intelligent deployment logic based on infrastructure and application changes
+# ============================================================================
+# deploy.sh — Multi-environment Docker deployment orchestrator
+# ----------------------------------------------------------------------------
+# Handles deployments for both production and preprod environments.
+# Production uses blue-green (zero-downtime) deployment when BLUE_GREEN=true.
+# Preprod uses standard rolling deploy.
+#
+# Usage:
+#   ./deploy.sh --env production|preprod [--blue-green] [--dry-run]
+#
+# Environment variables (set by CI or defaults):
+#   DEPLOY_ENV         - Target environment (production|preprod)
+#   CONTAINER_PREFIX    - "latest-" for production, "preprod-" for preprod
+#   COMPOSE_FILE       - docker-compose.prod.yml or docker-compose.preprod.yml
+#   BLUE_GREEN         - "true" to enable blue-green for production
+#   INFRA_CHANGED      - "true" if infra files changed (triggers infra deploy)
+#   APP_CHANGED        - "true" if app code changed (triggers app deploy)
+#
+# Requirements: 1.x, 4.x, 6.x, 7.x, 8.x, 10.x
+# ============================================================================
 
 set -euo pipefail
+
+# ----------------------------------------------------------------------------
+# Defaults
+# ----------------------------------------------------------------------------
+DEPLOY_ENV="${DEPLOY_ENV:-production}"
+CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
+BLUE_GREEN="${BLUE_GREEN:-false}"
+DRY_RUN="${DRY_RUN:-false}"
+INFRA_CHANGED="${INFRA_CHANGED:-true}"
+APP_CHANGED="${APP_CHANGED:-true}"
+INFRA_HEALTHY="${INFRA_HEALTHY:-false}"
+INFRA_ALREADY_HANDLED="${INFRA_ALREADY_HANDLED:-false}"
+BACKUP_ID="${BACKUP_ID:-}"
+POSTGRES_CONTAINER="postgres"
+DRAGONFLY_CONTAINER="dragonfly"
+
+# ----------------------------------------------------------------------------
+# Argument parsing
+# ----------------------------------------------------------------------------
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --env)
+            DEPLOY_ENV="$2"
+            shift 2
+            ;;
+        --blue-green)
+            BLUE_GREEN="true"
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN="true"
+            shift
+            ;;
+        --compose-file)
+            COMPOSE_FILE="$2"
+            shift 2
+            ;;
+        --container-prefix)
+            CONTAINER_PREFIX="$2"
+            shift 2
+            ;;
+        --infra-changed)
+            INFRA_CHANGED="true"
+            shift
+            ;;
+        --app-changed)
+            APP_CHANGED="true"
+            shift
+            ;;
+        --skip-infra)
+            INFRA_ALREADY_HANDLED="true"
+            shift
+            ;;
+        -h|--help)
+            cat <<EOF
+Usage: $0 [OPTIONS]
+
+Options:
+  --env ENV              Target environment: production|preprod (default: production)
+  --blue-green           Enable blue-green deployment (production only)
+  --dry-run              Print actions without executing
+  --compose-file FILE    Override compose file (default: auto from env)
+  --container-prefix P   Override container prefix (default: auto from env)
+  --infra-changed        Force infrastructure deployment
+  --app-changed          Force application deployment
+  --skip-infra           Skip infrastructure (already handled by CI)
+  -h, --help             Show this help
+
+Environment Variables:
+  DEPLOY_ENV         - Target environment (production|preprod)
+  CONTAINER_PREFIX    - "latest-" or "preprod-"
+  COMPOSE_FILE       - docker-compose.prod.yml or docker-compose.preprod.yml
+  BLUE_GREEN         - "true" for zero-downtime production deploy
+EOF
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            exit 2
+            ;;
+    esac
+done
+
+# ----------------------------------------------------------------------------
+# Validate environment
+# ----------------------------------------------------------------------------
+if [[ "$DEPLOY_ENV" != "production" && "$DEPLOY_ENV" != "preprod" ]]; then
+    echo "ERROR: --env must be 'production' or 'preprod'" >&2
+    exit 2
+fi
+
+# ----------------------------------------------------------------------------
+# Auto-configure based on environment
+# ----------------------------------------------------------------------------
+auto_configure() {
+    case "$DEPLOY_ENV" in
+        production)
+            [[ "$CONTAINER_PREFIX" == "latest-" ]] || CONTAINER_PREFIX="latest-"
+            [[ "$COMPOSE_FILE" == "docker-compose.prod.yml" ]] || COMPOSE_FILE="docker-compose.prod.yml"
+            BLUE_GREEN="${BLUE_GREEN:-true}"
+            ;;
+        preprod)
+            [[ "$CONTAINER_PREFIX" == "preprod-" ]] || CONTAINER_PREFIX="preprod-"
+            [[ "$COMPOSE_FILE" == "docker-compose.preprod.yml" ]] || COMPOSE_FILE="docker-compose.preprod.yml"
+            BLUE_GREEN="false"
+            ;;
+    esac
+    echo "Deploy config: env=${DEPLOY_ENV} prefix=${CONTAINER_PREFIX} compose=${COMPOSE_FILE} blue_green=${BLUE_GREEN}"
+}
 
 # Save deploy script directory BEFORE sourcing utils.sh (which sets its own SCRIPT_DIR)
 DEPLOY_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_DIR="${DEPLOY_SCRIPT_DIR}"  # Will be overwritten by utils.sh, but we keep original
 source "${DEPLOY_SCRIPT_DIR}/../shared/utils.sh"
 # Restore deploy script directory after sourcing utils.sh
-# Restore deploy script directory after sourcing utils.sh
 SCRIPT_DIR="${DEPLOY_SCRIPT_DIR}"
 
 log_info "Deploy script started"
 log_info "Using BASE_DIR: ${BASE_DIR}"
 log_info "Using ENV_FILE: ${ENV_FILE}"
-
-# Verify environment file exists
-if [ ! -f "${ENV_FILE}" ]; then
-    log_error "CRITICAL: Environment file not found at ${ENV_FILE}"
-    log_error "This will cause migration and container startup failures."
-    log_error "Ensure CI/CD is creating the file in the correct location: ${BASE_DIR}/.env.production"
-    exit 1
-fi
-
-# This script is Docker-specific for production deployments
-
-# Container prefix (only for app containers, infrastructure uses fixed names)
-CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
-
-# Fixed container names for infrastructure (never change)
-POSTGRES_CONTAINER="postgres"
-DRAGONFLY_CONTAINER="dragonfly"
-
-# Parse environment variables with defaults
-# These are set by CI/CD workflow, but we provide safe defaults for manual execution
-INFRA_CHANGED="${INFRA_CHANGED:-false}"
-# CRITICAL: Default APP_CHANGED to true for production deployments (main branch)
-# This ensures we always deploy the latest image, preventing Docker from using cached :latest images
-# Note: This script is only called for production deployments (main branch) via CI/CD
-# For other branches, the deploy job doesn't run, so this default only affects production
-APP_CHANGED="${APP_CHANGED:-true}"
-INFRA_HEALTHY="${INFRA_HEALTHY:-true}"
-INFRA_STATUS="${INFRA_STATUS:-healthy}"
-BACKUP_ID="${BACKUP_ID:-}"
-
-# Flag to indicate if infrastructure operations were already handled by CI/CD
-# When INFRA_ALREADY_HANDLED=true, skip infrastructure operations in deploy.sh
-# (They were already done by separate GitHub Actions jobs)
-INFRA_ALREADY_HANDLED="${INFRA_ALREADY_HANDLED:-false}"
 
 # Normalize boolean values (handle "true"/"false" strings and actual booleans)
 normalize_bool() {
@@ -988,7 +1081,7 @@ deploy_application() {
             # Use Node.js instead of curl (curl not available in container)
             docker exec "$api_container" node -e "
                 const http = require('http');
-                http.get('http://localhost:8088/health', (res) => {
+                http.get('http://localhost:8088/infra-health', (res) => {
                     let data = '';
                     res.on('data', (chunk) => { data += chunk; });
                     res.on('end', () => {
@@ -1202,7 +1295,7 @@ verify_container_images() {
 }
 
 # Verify application readiness (requires actual database connection)
-# Uses /health/ready endpoint which checks if database is actually connected
+# Uses /infra-health endpoint which checks only infrastructure readiness
 # This ensures pipeline fails if database connection is not established
 verify_application_health() {
     local api_container="$1"
@@ -1213,7 +1306,7 @@ verify_application_health() {
     local elapsed=0
     
     log_info "Verifying application health (requires database connection, timeout: ${health_timeout}s)..."
-    log_info "Using /health endpoint - this requires actual database connection (no grace period)"
+    log_info "Using /infra-health endpoint for deploy gating - this avoids depending on the public /health contract"
     
     while [[ $elapsed -lt $health_timeout ]]; do
         # Try internal health check using Node.js (curl not available in container)
@@ -1221,7 +1314,7 @@ verify_application_health() {
         local health_response="000"
         if docker exec "$api_container" node -e "
             const http = require('http');
-            const req = http.get('http://localhost:8088/health', (res) => {
+            const req = http.get('http://localhost:8088/infra-health', (res) => {
                 process.exit(res.statusCode === 200 ? 0 : 1);
             });
             req.on('error', () => process.exit(1));
@@ -1236,7 +1329,7 @@ verify_application_health() {
         fi
         
         # Try external health check (from host, curl should be available on host)
-        local external_response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8088/health 2>/dev/null || echo "000")
+        local external_response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8088/infra-health 2>/dev/null || echo "000")
         if [[ "$external_response" == "200" ]]; then
             log_success "Application health check passed (external HTTP 200) - database is connected"
             return 0
@@ -2085,11 +2178,8 @@ setTimeout(()=>{console.log('TIMEOUT');process.exit(1)},10000);
             log_error "One-shot migration failed with exit code: $oneshot_migration_exit_code"
             log_error "Full output saved to /tmp/migration.log"
             echo "$oneshot_migration_output" > /tmp/migration.log 2>&1 || true
-            
-            # Rollback if we have a backup
             if [[ -n "$PRE_MIGRATION_BACKUP" ]]; then
-                log_warning "Rolling back to pre-migration backup..."
-                restore_backup "$PRE_MIGRATION_BACKUP"
+                log_warning "Pre-migration backup preserved for manual recovery: $PRE_MIGRATION_BACKUP"
             fi
             return 1
         fi
@@ -2615,8 +2705,7 @@ console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'
         else
             log_error "Schema validation failed after migration"
             if [[ -n "$PRE_MIGRATION_BACKUP" ]]; then
-                log_warning "Rolling back to pre-migration backup..."
-                restore_backup "$PRE_MIGRATION_BACKUP"
+                log_warning "Pre-migration backup preserved for manual recovery: $PRE_MIGRATION_BACKUP"
             fi
             return 1
         fi
@@ -2897,10 +2986,7 @@ BASELINE_SQL
             log_warning "Migration recovery summary: ${migration_recovery_action}"
         fi
         if [[ -n "$PRE_MIGRATION_BACKUP" ]]; then
-            log_warning "Rolling back to pre-migration backup..."
-            restore_backup "$PRE_MIGRATION_BACKUP" || {
-                log_error "CRITICAL: Backup restore also failed - database may be in inconsistent state"
-            }
+            log_warning "Pre-migration backup preserved for manual recovery: $PRE_MIGRATION_BACKUP"
         fi
         
         # CRITICAL: Always return error code to ensure deployment fails

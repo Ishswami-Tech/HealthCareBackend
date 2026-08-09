@@ -1,28 +1,29 @@
-# docker-compose.prod.yml — Production environment services
-# Dynamic configuration via env vars; same logic as docker-compose.preprod.yml.
-# Container prefix resolves to "latest-" for production, "preprod-" for preprod.
-# Networks: no static IPs (resolved by Docker DNS); ICC disabled per-network.
-# ============================================================================
-
+# docker-compose.preprod.yml — Preprod environment services
+# Isolated on its own Docker network (preprod-network, subnet 172.19.0.0/16).
+# Container name prefix: preprod- (Req 2.2, 7.4)
+# Nginx listens on host port 8089 via Traefik routing (Req 7.5)
+# Separate data dirs, env file, and key prefix from production.
+# Resource limits are reduced vs production (Req 7.6).
 services:
-  # DATABASE - PostgreSQL 18 (production)
-  postgres:
+  # DATABASE - PostgreSQL 18 (preprod)
+  preprod-postgres:
     image: postgres:18
-    container_name: ${CONTAINER_PREFIX:-latest-}postgres
-    hostname: postgres
+    container_name: preprod-postgres
+    hostname: preprod-postgres
     volumes:
-      - ${CONTAINER_PREFIX:-latest_}postgres_data:/var/lib/postgresql/data/pgdata
+      - preprod_postgres_data:/var/lib/postgresql/data/pgdata
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: userdb
-      POSTGRES_MAX_CONNECTIONS: 120
-      POSTGRES_SHARED_BUFFERS: 2GB
+      POSTGRES_DB: userdb_preprod
+      POSTGRES_MAX_CONNECTIONS: 80
+      POSTGRES_SHARED_BUFFERS: 1GB
       PGDATA: /var/lib/postgresql/data/pgdata
     networks:
-      app-network:
+      preprod-network:
+        ipv4_address: 172.19.0.2
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d userdb" ]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d userdb_preprod" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -30,32 +31,32 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "3.0"
-          memory: 10G
-        reservations:
           cpus: "1.5"
-          memory: 3G
+          memory: 4G
+        reservations:
+          cpus: "0.75"
+          memory: 2G
     restart: unless-stopped
     shm_size: 256mb
     stop_grace_period: 1m
     command: >
       postgres
-        -c max_connections=120
-        -c shared_buffers=2GB
-        -c effective_cache_size=12GB
-        -c maintenance_work_mem=256MB
+        -c max_connections=80
+        -c shared_buffers=1GB
+        -c effective_cache_size=6GB
+        -c maintenance_work_mem=128MB
         -c checkpoint_completion_target=0.9
-        -c wal_buffers=32MB
+        -c wal_buffers=16MB
         -c default_statistics_target=100
         -c random_page_cost=1.1
-        -c effective_io_concurrency=200
-        -c work_mem=16MB
-        -c min_wal_size=2GB
-        -c max_wal_size=8GB
-        -c max_worker_processes=8
-        -c max_parallel_workers_per_gather=4
-        -c max_parallel_workers=8
-        -c max_parallel_maintenance_workers=4
+        -c effective_io_concurrency=100
+        -c work_mem=8MB
+        -c min_wal_size=1GB
+        -c max_wal_size=4GB
+        -c max_worker_processes=4
+        -c max_parallel_workers_per_gather=2
+        -c max_parallel_workers=4
+        -c max_parallel_maintenance_workers=2
         -c idle_in_transaction_session_timeout=60000
         -c statement_timeout=60000
         -c lock_timeout=60000
@@ -67,28 +68,29 @@ services:
         -c tcp_keepalives_count=3
     labels:
       - "com.docker.compose.service=postgres"
-      - "env=production"
+      - "env=preprod"
       - "app.component=database"
       - "app.type=postgres"
       - "app.healthcheck=enabled"
       - "app.persist=true"
 
-  # CACHE - DragonflyDB (production)
-  dragonfly:
+  # CACHE - DragonflyDB (preprod)
+  preprod-dragonfly:
     image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
-    container_name: ${CONTAINER_PREFIX:-latest-}dragonfly
-    hostname: dragonfly
+    container_name: preprod-dragonfly
+    hostname: preprod-dragonfly
     command: >
       --alsologtostderr
       --cache_mode=false
-      --maxmemory=4gb
-      --proactor_threads=6
+      --maxmemory=2gb
+      --proactor_threads=4
       --logtostderr
       --default_lua_flags=allow-undeclared-keys
     volumes:
-      - ${CONTAINER_PREFIX:-latest_}dragonfly_data:/data
+      - preprod_dragonfly_data:/data
     networks:
-      app-network:
+      preprod-network:
+        ipv4_address: 172.19.0.4
     healthcheck:
       test: [ "CMD-SHELL", "redis-cli -p 6379 ping || exit 1" ]
       interval: 10s
@@ -98,11 +100,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "1.5"
-          memory: 4G
-        reservations:
           cpus: "0.5"
-          memory: 1G
+          memory: 2G
+        reservations:
+          cpus: "0.25"
+          memory: 512M
     restart: unless-stopped
     sysctls:
       net.core.somaxconn: 2048
@@ -113,24 +115,25 @@ services:
         hard: 65535
     labels:
       - "com.docker.compose.service=dragonfly"
-      - "env=production"
+      - "env=preprod"
       - "app.component=cache"
       - "app.type=dragonfly"
       - "app.healthcheck=enabled"
 
-  # ROUTER — Nginx (production, zero-downtime gateway)
-  nginx:
+  # ROUTER — Nginx (preprod, zero-downtime gateway)
+  preprod-nginx:
     image: nginx:alpine
-    container_name: ${CONTAINER_PREFIX:-latest-}nginx
-    hostname: nginx
+    container_name: preprod-nginx
+    hostname: preprod-nginx
     ports:
-      - "${NGINX_PORT:-8088}:${NGINX_PORT:-8088}"
+      - "${NGINX_PORT:-8089}:${NGINX_PORT:-8089}"
     volumes:
-      - ${DEPLOY_PATH:-/opt/healthcare-backend}/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ${DEPLOY_PATH:-/opt/healthcare-backend}/nginx/upstream.conf:/etc/nginx/conf.d/upstream.conf
-      - ${DEPLOY_PATH:-/opt/healthcare-backend}/logs/nginx:/var/log/nginx
+      - ${DEPLOY_PATH:-/opt/healthcare-preprod}/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${DEPLOY_PATH:-/opt/healthcare-preprod}/nginx/upstream.conf:/etc/nginx/conf.d/upstream.conf
+      - ${DEPLOY_PATH:-/opt/healthcare-preprod}/logs/nginx:/var/log/nginx
     networks:
-      app-network:
+      preprod-network:
+        ipv4_address: 172.19.0.7
       coolify:
     restart: unless-stopped
     healthcheck:
@@ -142,32 +145,32 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.5"
-          memory: 128M
+          cpus: "0.25"
+          memory: 64M
         reservations:
           cpus: "0.1"
-          memory: 64M
+          memory: 32M
     labels:
       - "com.docker.compose.service=nginx"
-      - "env=production"
+      - "env=preprod"
       - "app.component=router"
       - "app.type=nginx"
       - "traefik.enable=true"
-      - "traefik.http.routers.healthcare-api.rule=Host(\`backend-service-v1.ishswami.in\`)"
-      - "traefik.http.routers.healthcare-api.entrypoints=http,https"
-      - "traefik.http.routers.healthcare-api.tls=true"
-      - "traefik.http.services.healthcare-api.loadbalancer.server.port=${NGINX_PORT:-8088}"
+      - "traefik.http.routers.healthcare-api-preprod.rule=Host(\`preprod-backend.ishswami.in\`)"
+      - "traefik.http.routers.healthcare-api-preprod.entrypoints=http,https"
+      - "traefik.http.routers.healthcare-api-preprod.tls=true"
+      - "traefik.http.services.healthcare-api-preprod.loadbalancer.server.port=8089"
       - "traefik.docker.network=coolify"
 
-  # API - NestJS Backend (production)
-  api:
-    image: ${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest}
-    container_name: ${CONTAINER_PREFIX:-latest-}api
+  # API - NestJS Backend (preprod)
+  preprod-api:
+    image: ${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:preprod}
+    container_name: preprod-api
     hostname: api
     env_file:
-      - ${DEPLOY_PATH:-/opt/healthcare-backend}/.env.production
+      - ${DEPLOY_PATH:-/opt/healthcare-preprod}/.env.preprod
     volumes:
-      - ${DEPLOY_PATH:-/opt/healthcare-backend}/logs:/app/logs
+      - ${DEPLOY_PATH:-/opt/healthcare-preprod}/logs:/app/logs
       - /etc/letsencrypt:/etc/letsencrypt:ro
     environment:
       NODE_ENV: production
@@ -178,9 +181,9 @@ services:
       ENABLE_HTTP2: "false"
       CACHE_PROVIDER: dragonfly
       DRAGONFLY_ENABLED: "true"
-      DRAGONFLY_HOST: ${CONTAINER_PREFIX:-latest-}dragonfly
+      DRAGONFLY_HOST: preprod-dragonfly
       DRAGONFLY_PORT: 6379
-      DRAGONFLY_KEY_PREFIX: "healthcare:"
+      DRAGONFLY_KEY_PREFIX: "healthcare-preprod:"
       TRUST_PROXY: 1
       LOG_LEVEL: info
       ENABLE_AUDIT_LOGS: "true"
@@ -188,7 +191,7 @@ services:
       SECURITY_RATE_LIMIT_MAX: 4000
       SECURITY_RATE_LIMIT_WINDOW_MS: 1000
       CACHE_TTL: 3600
-      CACHE_PREFIX: "healthcare:"
+      CACHE_PREFIX: "healthcare-preprod:"
       RATE_LIMIT_TTL: 60
       RATE_LIMIT_MAX: 600
       API_RATE_LIMIT: 1000
@@ -200,18 +203,19 @@ services:
     expose:
       - "${API_PORT:-8088}"
     networks:
-      app-network:
+      preprod-network:
+        ipv4_address: 172.19.0.5
         aliases:
-          - backend-service-v1.ishswami.in
+          - preprod-backend.ishswami.in
     extra_hosts:
-      - "api:${CONTAINER_PREFIX:-latest-}api"
-      - "postgres:${CONTAINER_PREFIX:-latest-}postgres"
-      - "dragonfly:${CONTAINER_PREFIX:-latest-}dragonfly"
-      - "worker:${CONTAINER_PREFIX:-latest-}worker"
+      - "api:172.19.0.5"
+      - "postgres:172.19.0.2"
+      - "dragonfly:172.19.0.4"
+      - "worker:172.19.0.6"
     depends_on:
-      postgres:
+      preprod-postgres:
         condition: service_healthy
-      dragonfly:
+      preprod-dragonfly:
         condition: service_healthy
         required: false
     restart: unless-stopped
@@ -224,24 +228,24 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "3.0"
-          memory: 8G
-        reservations:
           cpus: "1.5"
+          memory: 4G
+        reservations:
+          cpus: "0.75"
           memory: 2G
     labels:
       - "com.docker.compose.service=api"
-      - "env=production"
+      - "env=preprod"
       - "app.component=backend"
       - "app.type=api"
 
-  # WORKER - Background Job Processor (production)
-  worker:
-    image: ${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest}
-    container_name: ${CONTAINER_PREFIX:-latest-}worker
+  # WORKER - Background Job Processor (preprod)
+  preprod-worker:
+    image: ${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:preprod}
+    container_name: preprod-worker
     hostname: worker
     env_file:
-      - ${DEPLOY_PATH:-/opt/healthcare-backend}/.env.production
+      - ${DEPLOY_PATH:-/opt/healthcare-preprod}/.env.preprod
     environment:
       NODE_ENV: production
       APP_MODE: worker
@@ -255,11 +259,11 @@ services:
       CACHE_PROVIDER: dragonfly
       CACHE_ENABLED: "true"
       DRAGONFLY_ENABLED: "true"
-      DRAGONFLY_HOST: ${CONTAINER_PREFIX:-latest-}dragonfly
+      DRAGONFLY_HOST: preprod-dragonfly
       DRAGONFLY_PORT: 6379
-      DRAGONFLY_KEY_PREFIX: "healthcare:"
-      BULL_WORKER_CONCURRENCY: "10"
-      BULL_MAX_JOBS_PER_WORKER: "100"
+      DRAGONFLY_KEY_PREFIX: "healthcare-preprod:"
+      BULL_WORKER_CONCURRENCY: "5"
+      BULL_MAX_JOBS_PER_WORKER: "50"
       LOG_LEVEL: info
       ENABLE_AUDIT_LOGS: "true"
       ENABLE_BULL_BOARD: "true"
@@ -267,25 +271,26 @@ services:
       QUEUE_DASHBOARD_USER: ${QUEUE_DASHBOARD_USER:-bullboard_admin}
       QUEUE_DASHBOARD_PASSWORD: ${QUEUE_DASHBOARD_PASSWORD}
     volumes:
-      - ${DEPLOY_PATH:-/opt/healthcare-backend}/logs:/app/logs
+      - ${DEPLOY_PATH:-/opt/healthcare-preprod}/logs:/app/logs
     ports:
-      - "9090:8080"
+      - "9091:8080"
     networks:
-      app-network:
+      preprod-network:
+        ipv4_address: 172.19.0.6
         aliases:
           - worker.ishswami.in
     extra_hosts:
-      - "worker:${CONTAINER_PREFIX:-latest-}worker"
-      - "postgres:${CONTAINER_PREFIX:-latest-}postgres"
-      - "dragonfly:${CONTAINER_PREFIX:-latest-}dragonfly"
-      - "api:${CONTAINER_PREFIX:-latest-}api"
+      - "worker:172.19.0.6"
+      - "postgres:172.19.0.2"
+      - "dragonfly:172.19.0.4"
+      - "api:172.19.0.5"
     depends_on:
-      postgres:
+      preprod-postgres:
         condition: service_healthy
-      dragonfly:
+      preprod-dragonfly:
         condition: service_healthy
         required: false
-      api:
+      preprod-api:
         condition: service_started
     restart: unless-stopped
     healthcheck:
@@ -297,37 +302,37 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "1.0"
-          memory: 2G
-        reservations:
           cpus: "0.5"
-          memory: 512M
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
     command: ["node", "dist/worker-bootstrap.js"]
     labels:
       - "com.docker.compose.service=worker"
-      - "env=production"
+      - "env=preprod"
       - "app.component=worker"
       - "app.type=worker"
 
 volumes:
-  postgres_data:
+  preprod_postgres_data:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: ${DEPLOY_PATH:-/opt/healthcare-backend}/data/postgres
-  dragonfly_data:
+      device: ${DEPLOY_PATH:-/opt/healthcare-preprod}/data/postgres
+  preprod_dragonfly_data:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: ${DEPLOY_PATH:-/opt/healthcare-backend}/data/dragonfly
+      device: ${DEPLOY_PATH:-/opt/healthcare-preprod}/data/dragonfly
 
 networks:
-  app-network:
-    name: app-network
+  preprod-network:
+    name: preprod-network
     ipam:
       config:
-        - subnet: ${PROD_SUBNET:-172.18.0.0/16}
+        - subnet: 172.19.0.0/16
   coolify:
     external: true

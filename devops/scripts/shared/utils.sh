@@ -30,11 +30,25 @@ log_error() {
 
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve environment file based on DEPLOY_ENV (preprod | production | staging | development)
+# Falls back to .env.production if DEPLOY_ENV is unset/unknown, preserving previous behavior.
+resolve_env_file() {
+    local deploy_env="${DEPLOY_ENV:-production}"
+    local env_file="${BASE_DIR}/.env.${deploy_env}"
+    if [[ ! -f "${env_file}" ]]; then
+        log_warning "Env file not found for DEPLOY_ENV='${deploy_env}': ${env_file}"
+        log_info "Falling back to ${BASE_DIR}/.env.production"
+        env_file="${BASE_DIR}/.env.production"
+    fi
+    echo "${env_file}"
+}
+
 # Base directory for application (can be overridden by environment)
 BASE_DIR="${BASE_DIR:-/opt/healthcare-backend}"
 BACKUP_DIR="${BASE_DIR}/backups"
 LOG_DIR="/var/log/deployments"
-ENV_FILE="${BASE_DIR}/.env.production"
+# Resolved lazily via resolve_env_file() so DEPLOY_ENV changes are respected.
+ENV_FILE="$(resolve_env_file)"
 
 # Ensure directories exist
 ensure_directories() {
@@ -54,7 +68,12 @@ ensure_directories() {
         mkdir -p "${BACKUP_DIR}/dragonfly"
         log_info "Created directory: ${BACKUP_DIR}/dragonfly"
     fi
-    
+
+    if [[ ! -d "${BACKUP_DIR}/env" ]]; then
+        mkdir -p "${BACKUP_DIR}/env"
+        log_info "Created directory: ${BACKUP_DIR}/env"
+    fi
+
     if [[ ! -d "${BACKUP_DIR}/metadata" ]]; then
         mkdir -p "${BACKUP_DIR}/metadata"
         log_info "Created directory: ${BACKUP_DIR}/metadata"
@@ -870,6 +889,7 @@ cleanup_old_backups_aggressive() {
     # Remove hourly backups older than 24 hours
     find "${BACKUP_DIR}/postgres/hourly" -type f -mtime +1 -delete 2>/dev/null || true
     find "${BACKUP_DIR}/dragonfly/hourly" -type f -mtime +1 -delete 2>/dev/null || true
+    find "${BACKUP_DIR}/env/hourly" -type f -mtime +1 -delete 2>/dev/null || true
     
     # Remove daily backups older than 7 days
     find "${BACKUP_DIR}/postgres/daily" -type f -mtime +7 -delete 2>/dev/null || true
@@ -891,17 +911,22 @@ cleanup_old_backups_aggressive() {
 cleanup_backup_type() {
     local backup_type="$1"
     local keep_count="$2"
-    
+
     # Find and remove old backups of this type
     local postgres_dir="${BACKUP_DIR}/postgres/${backup_type}"
     local dragonfly_dir="${BACKUP_DIR}/dragonfly/${backup_type}"
-    
+    local env_dir="${BACKUP_DIR}/env/${backup_type}"
+
     if [[ -d "$postgres_dir" ]]; then
         ls -t "$postgres_dir"/*.sql.gz 2>/dev/null | tail -n +$((keep_count + 1)) | xargs rm -f 2>/dev/null || true
     fi
-    
+
     if [[ -d "$dragonfly_dir" ]]; then
         ls -t "$dragonfly_dir"/*.rdb.gz 2>/dev/null | tail -n +$((keep_count + 1)) | xargs rm -f 2>/dev/null || true
+    fi
+
+    if [[ -d "$env_dir" ]]; then
+        ls -t "$env_dir"/*.tar.gz 2>/dev/null | tail -n +$((keep_count + 1)) | xargs rm -f 2>/dev/null || true
     fi
 }
 

@@ -1,5 +1,5 @@
 # Build stage — Ubuntu server–optimized: Bookworm (Debian 12) matches glibc/kernel of Ubuntu 24.04
-FROM node:24-bookworm-slim AS builder
+FROM node:22-bookworm-slim AS builder
 
 LABEL stage=builder
 LABEL app.component=backend
@@ -141,7 +141,7 @@ RUN mkdir -p /app/dist/libs/infrastructure/database/prisma && \
   cp -r /app/src/libs/infrastructure/database/prisma/generated /app/dist/libs/infrastructure/database/prisma/
 
 # Production stage — Ubuntu server–optimized: same base as builder for consistency
-FROM node:24-bookworm-slim AS production
+FROM node:22-bookworm-slim AS production
 
 LABEL app.component=backend
 LABEL app.stage=production
@@ -289,7 +289,7 @@ ENV GC_INTERVAL=10800
 EXPOSE 8088
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
-  CMD wget -q --spider http://localhost:8088/health || exit 1
+  CMD sh -c 'if [ "${APP_MODE:-api}" = "worker" ]; then node dist/worker-bootstrap.js --healthcheck; else wget -q --spider http://localhost:${PORT:-8088}/infra-health || exit 1; fi'
 
 # Set entrypoint (runs before CMD)
 # Entrypoint will verify Prisma Client exists (generated during build)
