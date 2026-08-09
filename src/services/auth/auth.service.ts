@@ -1257,6 +1257,13 @@ export class AuthService {
         : 'Future User';
       const otpCode = this.otpService.generateOtp();
 
+      void this.logging.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `🔑 [DEVELOPMENT OTP]: ${otpCode} generated for ${requestDto.identifier}`,
+        'AuthService.requestOtp'
+      );
+
       this.logOtp('Generated OTP for requestOtp', {
         identifier: requestDto.identifier,
         normalizedIdentifier,

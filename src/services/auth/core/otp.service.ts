@@ -248,6 +248,14 @@ export class OtpService {
 
       // Generate and store OTP
       const otp = providedOtp || this.generateOtp();
+
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `==================================================\n🔑 [DEVELOPMENT OTP]: ${otp} for ${email}\n==================================================`,
+        'OtpService'
+      );
+
       const otpKey = `otp:${normalizedEmail}`;
       const expirySeconds = this.config.expiryMinutes * 60;
       const otpEntry = this.buildOtpCacheEntry(otp);
@@ -396,6 +404,14 @@ export class OtpService {
 
       // Generate and store OTP (reusing email logic logic but with phone key)
       const otp = providedOtp || this.generateOtp();
+
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `==================================================\n🔑 [DEVELOPMENT OTP]: ${otp} for ${phone}\n==================================================`,
+        'OtpService'
+      );
+
       const otpKey = `otp:${normalizedPhone}`;
       const expirySeconds = this.config.expiryMinutes * 60;
       const otpEntry = this.buildOtpCacheEntry(otp);
