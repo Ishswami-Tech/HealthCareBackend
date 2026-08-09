@@ -693,6 +693,7 @@ export interface IAdvancedCacheProvider extends ICacheProvider {
   zcard(key: string): Promise<number>;
   zrevrange(key: string, start: number, stop: number): Promise<string[]>;
   zrangebyscore(key: string, min: string | number, max: string | number): Promise<string[]>;
+  zrem(key: string, member: string): Promise<number>;
   zremrangebyscore(key: string, min: number, max: number): Promise<number>;
 
   // Pub/Sub operations
@@ -700,6 +701,7 @@ export interface IAdvancedCacheProvider extends ICacheProvider {
   subscribe(channel: string, callback: (message: string) => void): Promise<void>;
 
   // Utility operations
+  scan(cursor: string, pattern?: string, count?: number): Promise<[string, string[]]>;
   expireAt(key: string, timestamp: number): Promise<number>;
   incr(key: string): Promise<number>;
   keys(pattern: string): Promise<string[]>;

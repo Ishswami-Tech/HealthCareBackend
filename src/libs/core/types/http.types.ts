@@ -5,9 +5,9 @@
  * Provides strict TypeScript types for HttpService usage throughout the application
  */
 
-import type { AxiosResponse, AxiosRequestConfig } from 'axios';
 import type { Observable } from 'rxjs';
 import type { HttpService } from '@nestjs/axios';
+import type { AxiosResponse, AxiosRequestConfig } from 'axios';
 
 /**
  * Type guard to check if HttpService is available and ready to use
@@ -169,6 +169,18 @@ export interface HttpRequestOptions extends Partial<AxiosRequestConfig> {
    * Custom timeout in milliseconds
    */
   timeout?: number;
+  /**
+   * URL query parameters
+   */
+  params?: AxiosRequestConfig['params'];
+  /**
+   * HTTP basic auth credentials
+   */
+  auth?: AxiosRequestConfig['auth'];
+  /**
+   * Maximum number of redirects to follow (0 = no redirects)
+   */
+  maxRedirects?: number;
   /**
    * Additional headers to merge
    */

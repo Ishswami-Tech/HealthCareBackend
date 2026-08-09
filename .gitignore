@@ -23,6 +23,8 @@ dist-sync/
 build/
 out/
 .next/
+# TypeScript build info
+*.tsbuildinfo
 # IDE and editor files
 .idea/
 .vscode/

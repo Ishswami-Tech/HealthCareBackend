@@ -1044,6 +1044,19 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
     return this.retryOperation(() => this.client.keys(pattern));
   }
 
+  async scan(cursor: string, pattern?: string, count: number = 500): Promise<[string, string[]]> {
+    return this.retryOperation(() => {
+      const options = pattern ? { MATCH: pattern, COUNT: count } : { COUNT: count };
+      const scanClient = this.client as unknown as {
+        scan(
+          cursor: string,
+          options: { MATCH?: string; COUNT: number }
+        ): Promise<[string, string[]]>;
+      };
+      return scanClient.scan(cursor, options);
+    });
+  }
+
   async ttl(key: string): Promise<number> {
     return this.retryOperation(() => this.client.ttl(key));
   }
@@ -1595,6 +1608,10 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
 
   async zrangebyscore(key: string, min: string | number, max: string | number): Promise<string[]> {
     return this.retryOperation(() => this.client.zrangebyscore(key, min, max));
+  }
+
+  async zrem(key: string, member: string): Promise<number> {
+    return this.retryOperation(() => this.client.zrem(key, member));
   }
 
   async multi(

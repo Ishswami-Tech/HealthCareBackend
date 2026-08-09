@@ -293,6 +293,10 @@ export class RedisCacheProvider implements IAdvancedCacheProvider {
     return this.redisService.zrangebyscore(key, min, max);
   }
 
+  async zrem(key: string, member: string): Promise<number> {
+    return this.redisService.zrem(key, member);
+  }
+
   async zremrangebyscore(key: string, min: number, max: number): Promise<number> {
     return this.redisService.zremrangebyscore(key, min, max);
   }
@@ -317,6 +321,10 @@ export class RedisCacheProvider implements IAdvancedCacheProvider {
 
   async keys(pattern: string): Promise<string[]> {
     return this.redisService.keys(pattern);
+  }
+
+  async scan(cursor: string, pattern?: string, count: number = 500): Promise<[string, string[]]> {
+    return this.redisService.scan(cursor, pattern, count);
   }
 
   async multi(
