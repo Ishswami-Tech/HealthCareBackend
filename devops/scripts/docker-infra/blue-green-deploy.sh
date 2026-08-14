@@ -181,13 +181,42 @@ is_valid_database_url() {
 }
 
 resolve_env_file_path() {
+    local deploy_root=""
+    local script_root=""
+    local candidates=()
+
     if [[ -n "$UPSTREAM_CONF" ]]; then
-        echo "${UPSTREAM_CONF%/*}/../${ENV_FILE}"
-    else
-        local script_root
-        script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-        echo "${script_root}/${ENV_FILE}"
+        deploy_root="$(cd "$(dirname "$UPSTREAM_CONF")/.." && pwd)"
     fi
+
+    script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+
+    if [[ "$ENV_FILE" == ".env.preprod" ]]; then
+        candidates=(
+            "${deploy_root}/devops/docker/.env.preprod"
+            "${deploy_root}/.env.preprod"
+            "${deploy_root}/.env.production"
+            "${script_root}/devops/docker/.env.preprod"
+            "${script_root}/.env.preprod"
+            "${script_root}/.env.production"
+        )
+    else
+        candidates=(
+            "${deploy_root}/.env.production"
+            "${deploy_root}/devops/docker/.env.production"
+            "${script_root}/.env.production"
+            "${script_root}/devops/docker/.env.production"
+        )
+    fi
+
+    for candidate in "${candidates[@]}"; do
+        if [[ -f "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
+    echo "${candidates[0]}"
 }
 
 resolve_database_url() {
