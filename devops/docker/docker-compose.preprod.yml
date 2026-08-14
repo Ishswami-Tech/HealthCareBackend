@@ -1,18 +1,152 @@
 services:
-  # Blue-green deploy creates preprod-api/worker containers dynamically
-  # This compose only defines preprod-nginx (the static reverse proxy)
+  api:
+    image: ${DOCKER_IMAGE:-localhost:5000/healthcare-api:preprod}
+    container_name: preprod-api
+    hostname: api
+    env_file:
+      - ../../.env.production
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb_preprod?schema=public
+      DRAGONFLY_KEY_PREFIX: "preprod:"
+      CACHE_PREFIX: "preprod:"
+      NODE_ENV: production
+      APP_MODE: api
+      SERVICE_NAME: api
+      DEV_MODE: "false"
+      DOCKER_ENV: "true"
+      CRON_TIMEZONE: Asia/Kolkata
+      TZ: Asia/Kolkata
+      PORT: 8088
+      HOST: 0.0.0.0
+      PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
+      CACHE_PROVIDER: dragonfly
+      CACHE_ENABLED: "true"
+      DRAGONFLY_ENABLED: "true"
+      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET}
+      ENABLE_HTTP2: "false"
+      TRUST_PROXY: 1
+      LOG_LEVEL: info
+      ENABLE_AUDIT_LOGS: "true"
+      SECURITY_RATE_LIMIT: "true"
+      SECURITY_RATE_LIMIT_MAX: 4000
+      SECURITY_RATE_LIMIT_WINDOW_MS: 1000
+      CACHE_TTL: 3600
+      RATE_LIMIT_TTL: 60
+      RATE_LIMIT_MAX: 600
+      API_RATE_LIMIT: 1000
+      AUTH_RATE_LIMIT: 30
+      HEAVY_RATE_LIMIT: 50
+      USER_RATE_LIMIT: 500
+      HEALTH_RATE_LIMIT: 2000
+      NPM_CONFIG_LOGLEVEL: error
+    expose:
+      - "8088"
+    ports:
+      - "8088:8088"
+    volumes:
+      - ../../logs:/app/logs
+    networks:
+      preprod-network:
+    extra_hosts:
+      - "postgres:postgres"
+      - "dragonfly:dragonfly"
+      - "worker:preprod-worker"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8088/infra-health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "1.0"
+          memory: 1G
+    labels:
+      - "com.docker.compose.service=api"
+      - "env=preprod"
+      - "app.component=backend"
+      - "app.type=api"
+
+  worker:
+    image: ${DOCKER_IMAGE:-localhost:5000/healthcare-api:preprod}
+    container_name: preprod-worker
+    hostname: worker
+    env_file:
+      - ../../.env.production
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb_preprod?schema=public
+      DRAGONFLY_KEY_PREFIX: "preprod:"
+      CACHE_PREFIX: "preprod:"
+      NODE_ENV: production
+      APP_MODE: worker
+      SERVICE_NAME: worker
+      DEV_MODE: "false"
+      DOCKER_ENV: "true"
+      CRON_TIMEZONE: Asia/Kolkata
+      TZ: Asia/Kolkata
+      CACHE_PROVIDER: dragonfly
+      CACHE_ENABLED: "true"
+      DRAGONFLY_ENABLED: "true"
+      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_PORT: 6379
+      BULL_WORKER_CONCURRENCY: "10"
+      BULL_MAX_JOBS_PER_WORKER: "100"
+      LOG_LEVEL: info
+      ENABLE_AUDIT_LOGS: "true"
+      ENABLE_BULL_BOARD: "true"
+      BULL_BOARD_URL: "/queue-dashboard"
+    volumes:
+      - ../../logs:/app/logs
+    ports:
+      - "8089:8088"
+    networks:
+      preprod-network:
+    extra_hosts:
+      - "postgres:postgres"
+      - "dragonfly:dragonfly"
+      - "api:preprod-api"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    command: ["node", "dist/worker-bootstrap.js"]
+    labels:
+      - "com.docker.compose.service=worker"
+      - "env=preprod"
+      - "app.component=worker"
+      - "app.type=worker"
+
   preprod-nginx:
     image: nginx:alpine
     container_name: preprod-nginx
     hostname: preprod-nginx
-    networks:
-      - default
     ports:
       - "8090:8090"
     volumes:
       - /opt/healthcare-preprod/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - /opt/healthcare-preprod/nginx/upstream.conf:/etc/nginx/conf.d/upstream.conf:ro
       - /opt/healthcare-preprod/logs/nginx:/var/log/nginx
+    extra_hosts:
+      - "preprod-api:preprod-api"
+      - "preprod-worker:preprod-worker"
     restart: always
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/nginx-health"]
@@ -20,8 +154,13 @@ services:
       timeout: 5s
       retries: 3
       start_period: 5s
+    labels:
+      - "com.docker.compose.service=nginx"
+      - "env=preprod"
+      - "app.component=router"
+      - "app.type=nginx"
 
 networks:
-  default:
+  preprod-network:
     name: preprod-network
     external: true

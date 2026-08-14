@@ -552,9 +552,8 @@ jobs:
 
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
             cd ${DEPLOY_PATH} &&
-            docker compose -f ${COMPOSE_FILE} pull api worker 2>/dev/null || true &&
-            sed -i 's|image:.*healthcare-api:.*|image: ${LOCAL_IMAGE}|' ${COMPOSE_FILE} &&
-            docker compose -f ${COMPOSE_FILE} up -d --force-recreate api worker
+            DOCKER_IMAGE='${LOCAL_IMAGE}' docker compose -f ${COMPOSE_FILE} pull api worker 2>/dev/null || true &&
+            DOCKER_IMAGE='${LOCAL_IMAGE}' docker compose -f ${COMPOSE_FILE} up -d --force-recreate api worker
           "
           echo "Deployed ${IMAGE} as ${LOCAL_IMAGE}"
 
