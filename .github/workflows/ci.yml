@@ -287,25 +287,14 @@ jobs:
             /tmp/healthcare-api-preprod.tar \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/registry-import/image.tar
 
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} bash -s <<'REMOTE'
-            set -euo pipefail
-            IMAGE_SHA="${IMAGE_SHA}"
-            LOCAL_IMAGE="${LOCAL_IMAGE}"
-
-            echo "Loading image on VPS..."
-            docker load -i /tmp/registry-import/image.tar
-
-            echo "Tagging as ${LOCAL_IMAGE}..."
-            docker tag "${IMAGE_SHA}" "${LOCAL_IMAGE}"
-
-            echo "Pushing ${LOCAL_IMAGE} to local registry..."
-            docker push "${LOCAL_IMAGE}"
-            echo "Local registry updated: ${LOCAL_IMAGE}"
-REMOTE
+          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            "docker load -i /tmp/registry-import/image.tar && \
+             docker tag \${IMAGE_SHA} \${LOCAL_IMAGE} && \
+             docker push \${LOCAL_IMAGE} && \
+             echo 'Local registry updated: \${LOCAL_IMAGE}'"
 
   # ============================================================================
   # JOB: ensure-infrastructure-health — Check shared infra (postgres + dragonfly)
-  # Both environments use the same shared infra, so this runs for both.
   # ============================================================================
   ensure-infrastructure-health:
     name: "Ensure Infrastructure Health"
@@ -335,15 +324,13 @@ REMOTE
       - name: Run infrastructure health check
         id: health
         continue-on-error: true
+        env:
+          DEPLOY_ENV: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
+          CONTAINER_PREFIX: ${{ github.ref == 'refs/heads/main' && 'latest-' || 'preprod-' }}
+          COMPOSE_FILE: ${{ github.ref == 'refs/heads/main' && 'docker-compose.prod.yml' || 'docker-compose.preprod.yml' }}
         run: |
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "DEPLOY_ENV='${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}' \
-             CONTAINER_PREFIX='${{ github.ref == 'refs/heads/main' && 'latest-' || 'preprod-' }}' \
-             COMPOSE_FILE='${{ github.ref == 'refs/heads/main' && 'docker-compose.prod.yml' || 'docker-compose.preprod.yml' }}' \
-             DEPLOY_PATH='${{ secrets.SERVER_DEPLOY_PATH }}' \
-             BASE_DIR='${{ secrets.SERVER_DEPLOY_PATH }}' \
-             /tmp/health-check.sh --env '${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}' \
-            " > /tmp/health-result.json 2>&1 || true
+            "/tmp/health-check.sh --env '${DEPLOY_ENV}'" > /tmp/health-result.json 2>&1 || true
 
           cat /tmp/health-result.json | sed 's/\\n/\n/g' > /tmp/health-pretty.json
           cat /tmp/health-pretty.json
@@ -445,17 +432,15 @@ REMOTE
             devops/scripts/docker-infra/validate-resources.sh \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/validate-resources.sh
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "chmod +x /tmp/validate-resources.sh && /tmp/validate-resources.sh --min-gb 3" \
-            > /tmp/resource-summary.json 2>&1 || {
-              echo "::error::Insufficient disk space. See cleanup suggestions above."
-              exit 1
-            }
+            "chmod +x /tmp/validate-resources.sh"
+          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            "/tmp/validate-resources.sh --min-free-gb 3" > /tmp/resource-summary.json 2>&1 || true
 
-          cat /tmp/resource-summary.json
+          cat /tmp/resource-summary.json | sed 's/\\n/\n/g' > /tmp/resource-pretty.json
+          cat /tmp/resource-pretty.json
+
           SUMMARY=$(cat /tmp/resource-summary.json)
-          echo "resource_summary<<EOF" >> $GITHUB_OUTPUT
-          echo "$SUMMARY" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "resource_summary=${SUMMARY}" >> $GITHUB_OUTPUT
 
       - name: Resource summary
         run: |
@@ -506,62 +491,6 @@ REMOTE
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Construct .env on target server from secrets
-        run: |
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} bash -s <<'REMOTE'
-            set -euo pipefail
-            DEPLOY_ENV="${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}"
-            DEPLOY_PATH="${{ secrets.SERVER_DEPLOY_PATH }}"
-            ENV_FILE="${DEPLOY_PATH}/.env.${DEPLOY_ENV}"
-
-            # DATABASE_URL: shared postgres, different DB per environment
-            if [ "${DEPLOY_ENV}" = "production" ]; then
-              DATABASE_URL="${{ secrets.DATABASE_URL }}"
-            else
-              # Construct preprod URL: same host/port/password as production,
-              # but point to userdb_preprod database (shared postgres container)
-              DATABASE_URL="postgresql://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@postgres:5432/userdb_preprod?schema=public"
-            fi
-
-            cat > "${ENV_FILE}" <<ENVEOF
-# Auto-generated by CI for ${DEPLOY_ENV} — do NOT edit manually
-NODE_ENV=production
-DEV_MODE=false
-DOCKER_ENV=true
-CRON_TIMEZONE=Asia/Kolkata
-TZ=Asia/Kolkata
-PORT=${{ vars.API_PORT }}
-HOST=0.0.0.0
-CACHE_PROVIDER=dragonfly
-DRAGONFLY_ENABLED=true
-DRAGONFLY_HOST=${{ github.ref == 'refs/heads/main' && 'latest-' || 'preprod-' }}dragonfly
-DRAGONFLY_PORT=6379
-DRAGONFLY_KEY_PREFIX=${{ github.ref == 'refs/heads/main' && 'healthcare:' || 'healthcare-preprod:' }}
-TRUST_PROXY=1
-LOG_LEVEL=info
-ENABLE_AUDIT_LOGS=true
-SECURITY_RATE_LIMIT=true
-SECURITY_RATE_LIMIT_MAX=4000
-SECURITY_RATE_LIMIT_WINDOW_MS=1000
-CACHE_TTL=3600
-CACHE_PREFIX=${{ github.ref == 'refs/heads/main' && 'healthcare:' || 'healthcare-preprod:' }}
-RATE_LIMIT_TTL=60
-RATE_LIMIT_MAX=600
-API_RATE_LIMIT=1000
-AUTH_RATE_LIMIT=30
-HEAVY_RATE_LIMIT: 50
-USER_RATE_LIMIT: 500
-HEALTH_RATE_LIMIT: 2000
-NPM_CONFIG_LOGLEVEL: error
-DATABASE_URL=${DATABASE_URL}
-POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-POSTGRES_USER=${POSTGRES_USER}
-ENVEOF
-
-            chmod 600 "${ENV_FILE}"
-            echo "Created ${ENV_FILE} for ${DEPLOY_ENV}"
-REMOTE
-
       - name: Copy deploy assets to server
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/preprod'
         run: |
@@ -585,32 +514,29 @@ REMOTE
         continue-on-error: true
         timeout-minutes: 5
         run: |
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} bash -s <<'REMOTE'
-            set -euo pipefail
-            DEPLOY_ENV="${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}"
-            IMAGE="${{ needs.docker-build.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}"
+          DEPLOY_ENV="${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}"
+          IMAGE="${{ needs.docker-build.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}"
 
-            # Construct DATABASE_URL (shared postgres, different DB per env)
-            if [ "${DEPLOY_ENV}" = "production" ]; then
-              DB_URL="${{ secrets.DATABASE_URL }}"
-            else
-              DB_URL="postgresql://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@postgres:5432/userdb_preprod?schema=public"
-            fi
+          # Construct DATABASE_URL (shared postgres, different DB per env)
+          if [ "${DEPLOY_ENV}" = "production" ]; then
+            DB_URL="${{ secrets.DATABASE_URL }}"
+          else
+            DB_URL="postgresql://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@postgres:5432/userdb_preprod?schema=public"
+          fi
 
-            echo "Running Prisma migrations for ${DEPLOY_ENV}..."
-            echo "Target database: ${DB_URL}"
-            docker run --rm \
-              --network "${{ github.ref == 'refs/heads/main' && 'app-network' || 'preprod-network' }}" \
-              -e DATABASE_URL="${DB_URL}" \
-              "${IMAGE}" \
-              bash -c "yarn prisma migrate deploy --schema=src/libs/infrastructure/database/prisma/schema.prisma" \
-              > /tmp/prisma-migrate.log 2>&1 || {
-                echo "Migration failed or timed out. Log:"
-                cat /tmp/prisma-migrate.log
-                exit 1
-              }
-            echo "Migrations complete."
-REMOTE
+          echo "Running Prisma migrations for ${DEPLOY_ENV}..."
+          echo "Target database: ${DB_URL}"
+          docker run --rm \
+            --network "${{ github.ref == 'refs/heads/main' && 'app-network' || 'preprod-network' }}" \
+            -e DATABASE_URL="${DB_URL}" \
+            "${IMAGE}" \
+            bash -c "yarn prisma migrate deploy --schema=src/libs/infrastructure/database/prisma/schema.prisma" \
+            > /tmp/prisma-migrate.log 2>&1 || {
+              echo "Migration failed or timed out. Log:"
+              cat /tmp/prisma-migrate.log
+              exit 1
+            }
+          echo "Migrations complete."
 
       - name: Blue-green deploy API
         id: deploy
@@ -732,31 +658,27 @@ REMOTE
           for i in 1 2 3; do
             echo "Attempt ${i}/3..."
             if curl -sS --max-time 10 "${URL}" 2>&1 | grep -q '"status"'; then
+              echo "Health check passed on attempt ${i}."
               echo "verified=true" >> $GITHUB_OUTPUT
-              echo "Post-deployment verification PASSED."
               exit 0
             fi
             sleep 10
           done
 
-          echo "::error::Post-deployment verification failed for ${{ steps.resolve.outputs.deploy_env }} at ${URL}"
+          echo "Health check failed after 3 attempts."
           echo "verified=false" >> $GITHUB_OUTPUT
           exit 1
 
-      - name: Verification summary
-        run: |
-          echo "Post-deployment verification: ${{ steps.verify.outputs.verified == 'true' && 'PASSED' || 'FAILED' }}" >> $GITHUB_STEP_SUMMARY
-
   # ============================================================================
-  # JOB: success-backup — (Production only) Backup after successful deploy
+  # JOB: post-deployment-backup — Trigger success backup on VPS
   # ============================================================================
-  success-backup:
-    name: "Success Backup (production)"
+  post-deployment-backup:
+    name: "Post-Deploy Backup (${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }})"
     runs-on: ubuntu-latest
     needs: [post-deployment-verification]
-    if: ${{ github.ref == 'refs/heads/main' && needs.post-deployment-verification.outputs.verified == 'true' }}
-    environment: production
-    timeout-minutes: 15
+    timeout-minutes: 10
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
+    if: always()
     steps:
       - uses: actions/checkout@v4
 
@@ -767,21 +689,18 @@ REMOTE
 
       - name: Trigger success backup on VPS
         run: |
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} bash -s <<'REMOTE'
-            set -euo pipefail
-            DEPLOY_ENV="production"
-            DEPLOY_PATH="/opt/healthcare-backend"
-            BACKUP_SCRIPT="${DEPLOY_PATH}/devops/scripts/docker-infra/backup.sh"
+          DEPLOY_ENV="${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}"
+          DEPLOY_PATH="${{ secrets.SERVER_DEPLOY_PATH }}"
+          BACKUP_SCRIPT="${DEPLOY_PATH}/devops/scripts/docker-infra/backup.sh"
 
-            if [[ ! -f "${BACKUP_SCRIPT}" ]]; then
-              echo "Backup script not found at ${BACKUP_SCRIPT}; skipping."
-              exit 0
-            fi
-
-            BACKUP_ID="success-$(date '+%Y-%m-%d-%H%M%S')"
-            echo "Creating success backup: ${BACKUP_ID}"
-            bash "${BACKUP_SCRIPT}" "${BACKUP_ID}" success || echo "Backup script failed (non-blocking)"
-REMOTE
+          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            "if [ -f '${BACKUP_SCRIPT}' ]; then \
+               BACKUP_ID='success-$(date '+%Y-%m-%d-%H%M%S')'; \
+               echo 'Creating success backup: '${BACKUP_ID}; \
+               bash '${BACKUP_SCRIPT}' '${BACKUP_ID}' success || echo 'Backup script failed (non-blocking)'; \
+             else \
+               echo 'Backup script not found at ${BACKUP_SCRIPT}; skipping.'; \
+             fi"
 
   # ============================================================================
   # JOB: portainer-sync — Optional Portainer stack metadata update
