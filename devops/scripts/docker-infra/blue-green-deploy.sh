@@ -65,7 +65,7 @@ error()   { echo -e "${RED}${LOG_PREFIX}${NC} $(date '+%Y-%m-%d %H:%M:%S') $*" >
 usage() {
     cat <<EOF
 Usage: $0 --container-prefix ENV --service NAME --image IMG \\
-          --network NET --upstream-conf PATH --nginx-container NAME \\
+          --network NET [--upstream-conf PATH --nginx-container NAME] \\
           [--health-endpoint EP] [--health-timeout SEC] \\
           [--drain-timeout SEC] [--api-port PORT]
 
@@ -94,6 +94,13 @@ Examples:
      --health-endpoint /infra-health --health-timeout 180 \\
      --drain-timeout 120 --api-port 8088
   # Creates: blue-api-latest or green-api-latest
+
+  # Worker deploy (no Nginx cutover)
+  $0 --container-prefix "preprod-" --service worker \\
+     --image "ghcr.io/org/healthcare-api:preprod-abc123" \\
+     --network preprod-network \\
+     --health-endpoint /infra-health --health-timeout 180 \\
+     --drain-timeout 120 --api-port 8088
 EOF
 }
 
@@ -137,8 +144,10 @@ parse_args() {
     [[ -z "$SERVICE" ]]          && missing+=("--service")
     [[ -z "$IMAGE" ]]            && missing+=("--image")
     [[ -z "$NETWORK" ]]          && missing+=("--network")
-    [[ -z "$UPSTREAM_CONF" ]]    && missing+=("--upstream-conf")
-    [[ -z "$NGINX_CONTAINER" ]]  && missing+=("--nginx-container")
+    if [[ "$SERVICE" == "api" ]]; then
+        [[ -z "$UPSTREAM_CONF" ]] && missing+=("--upstream-conf")
+        [[ -z "$NGINX_CONTAINER" ]] && missing+=("--nginx-container")
+    fi
 
     if (( ${#missing[@]} > 0 )); then
         error "Missing required arguments: ${missing[*]}"
@@ -194,6 +203,15 @@ start_new_container() {
     # e.g., blue-api-preprod, green-api-latest, blue-worker-preprod
     local env_suffix="${CONTAINER_PREFIX%-}"  # Strip trailing dash: "preprod-" → "preprod", "latest-" → "latest"
     local container_name="${color}-${SERVICE}-${env_suffix}"
+    local env_file_path=""
+
+    if [[ -n "$UPSTREAM_CONF" ]]; then
+        env_file_path="${UPSTREAM_CONF%/*}/../${ENV_FILE}"
+    else
+        local script_root
+        script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+        env_file_path="${script_root}/${ENV_FILE}"
+    fi
 
     NEW_CONTAINER_NAME="$container_name"
     info "Starting new container: ${container_name} (image=${IMAGE})"
@@ -206,7 +224,7 @@ start_new_container() {
         --hostname "${SERVICE}-${color}" \
         --network "$NETWORK" \
         --restart unless-stopped \
-        --env-file "${UPSTREAM_CONF%/*}/../${ENV_FILE}" \
+        --env-file "${env_file_path}" \
         -e NODE_ENV=production \
         -e DEV_MODE="false" \
         -e DOCKER_ENV="true" \
@@ -359,8 +377,8 @@ main() {
     info "Active color=${ACTIVE_COLOR} -> new color=${INACTIVE_COLOR}"
     info "Old container (to be drained): ${OLD_CONTAINER_NAME}"
 
-    # Save original upstream.conf for rollback
-    if [[ -f "$UPSTREAM_CONF" ]]; then
+    # Save original upstream.conf for rollback when the service uses Nginx cutover.
+    if [[ "$SERVICE" == "api" ]] && [[ -f "$UPSTREAM_CONF" ]]; then
         ORIGINAL_UPSTREAM=$(cat "$UPSTREAM_CONF")
     fi
 
@@ -377,28 +395,32 @@ main() {
         exit 1
     fi
 
-    # 4. Switch upstream + reload Nginx
-    write_upstream_conf "$NEW_CONTAINER_NAME" "$API_PORT"
+    if [[ "$SERVICE" == "api" ]]; then
+        # 4. Switch upstream + reload Nginx
+        write_upstream_conf "$NEW_CONTAINER_NAME" "$API_PORT"
 
-    if ! reload_nginx; then
-        error "Nginx reload failed; reverting upstream.conf and removing new container."
-        if [[ -n "$ORIGINAL_UPSTREAM" ]]; then
-            echo "$ORIGINAL_UPSTREAM" > "$UPSTREAM_CONF"
-            docker exec "$NGINX_CONTAINER" nginx -s reload || true
+        if ! reload_nginx; then
+            error "Nginx reload failed; reverting upstream.conf and removing new container."
+            if [[ -n "$ORIGINAL_UPSTREAM" ]]; then
+                echo "$ORIGINAL_UPSTREAM" > "$UPSTREAM_CONF"
+                docker exec "$NGINX_CONTAINER" nginx -s reload || true
+            fi
+            remove_container "$NEW_CONTAINER_NAME"
+            exit 1
         fi
-        remove_container "$NEW_CONTAINER_NAME"
-        exit 1
-    fi
 
-    # 5. Verify upstream via Nginx
-    if ! verify_upstream_health; then
-        error "Upstream verification failed; reverting."
-        if [[ -n "$ORIGINAL_UPSTREAM" ]]; then
-            echo "$ORIGINAL_UPSTREAM" > "$UPSTREAM_CONF"
-            docker exec "$NGINX_CONTAINER" nginx -s reload || true
+        # 5. Verify upstream via Nginx
+        if ! verify_upstream_health; then
+            error "Upstream verification failed; reverting."
+            if [[ -n "$ORIGINAL_UPSTREAM" ]]; then
+                echo "$ORIGINAL_UPSTREAM" > "$UPSTREAM_CONF"
+                docker exec "$NGINX_CONTAINER" nginx -s reload || true
+            fi
+            remove_container "$NEW_CONTAINER_NAME"
+            exit 1
         fi
-        remove_container "$NEW_CONTAINER_NAME"
-        exit 1
+    else
+        info "Service ${SERVICE} does not use Nginx cutover; skipping upstream switch."
     fi
 
     # 6. Drain old container

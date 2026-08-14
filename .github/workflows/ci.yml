@@ -324,24 +324,16 @@ jobs:
           printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
-      - name: Copy health-check script to server
-        run: |
-          scp ${{ env.SSH_OPTS }} \
-            devops/scripts/docker-infra/health-check.sh \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-check.sh
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "chmod +x /tmp/health-check.sh"
-
       - name: Run infrastructure health check
         id: health
         continue-on-error: true
         env:
           DEPLOY_ENV: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
           CONTAINER_PREFIX: ${{ github.ref == 'refs/heads/main' && 'latest-' || 'preprod-' }}
-          COMPOSE_FILE: ${{ github.ref == 'refs/heads/main' && 'docker-compose.prod.yml' || 'docker-compose.preprod.yml' }}
+          DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
         run: |
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "/tmp/health-check.sh --env '${DEPLOY_ENV}'" > /tmp/health-result.json 2>&1 || true
+            "cd '${DEPLOY_PATH}' && BASE_DIR='${DEPLOY_PATH}' DEPLOY_ENV='${DEPLOY_ENV}' CONTAINER_PREFIX='${CONTAINER_PREFIX}' devops/scripts/docker-infra/health-check.sh --env '${DEPLOY_ENV}'" > /tmp/health-result.json 2>&1 || true
 
           cat /tmp/health-result.json | sed 's/\\n/\n/g' > /tmp/health-pretty.json
           cat /tmp/health-pretty.json
@@ -438,16 +430,13 @@ jobs:
           printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
-      - name: Copy and run validate-resources.sh
+      - name: Run validate-resources.sh
         id: validate
+        env:
+          DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
         run: |
-          scp ${{ env.SSH_OPTS }} \
-            devops/scripts/docker-infra/validate-resources.sh \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/validate-resources.sh
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "chmod +x /tmp/validate-resources.sh"
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "/tmp/validate-resources.sh --min-free-gb 3" > /tmp/resource-summary.json 2>&1 || true
+            "cd '${DEPLOY_PATH}' && BASE_DIR='${DEPLOY_PATH}' devops/scripts/docker-infra/validate-resources.sh --min-free-gb 3" > /tmp/resource-summary.json 2>&1 || true
 
           cat /tmp/resource-summary.json | sed 's/\\n/\n/g' > /tmp/resource-pretty.json
           cat /tmp/resource-pretty.json
@@ -465,10 +454,71 @@ jobs:
   # ============================================================================
   # JOB: deploy — Blue-green deployment orchestration
   # ============================================================================
+  pre-deployment-backup:
+    name: "Pre-Deploy Backup"
+    runs-on: ubuntu-latest
+    needs: [ensure-infrastructure-health, validate-disk-space]
+    timeout-minutes: 20
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+      - name: Run pre-deployment backup
+        env:
+          DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
+        run: |
+          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            "cd '${DEPLOY_PATH}' && BASE_DIR='${DEPLOY_PATH}' bash devops/scripts/docker-infra/backup.sh pre-deployment" | tee /tmp/pre-deploy-backup.log
+
+  run-migrations:
+    name: "Run Migrations"
+    runs-on: ubuntu-latest
+    needs: [docker-build, pre-deployment-backup]
+    timeout-minutes: 20
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+      - name: Run Prisma migrations on VPS
+        env:
+          DEPLOY_ENV: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
+          DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
+          IMAGE: ${{ needs.docker-build.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}
+          NETWORK: ${{ github.ref == 'refs/heads/main' && 'app-network' || 'preprod-network' }}
+        run: |
+          if [ "${DEPLOY_ENV}" = "production" ]; then
+            DB_URL="${{ secrets.DATABASE_URL }}"
+          else
+            DB_URL="postgresql://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@postgres:5432/userdb_preprod?schema=public"
+          fi
+
+          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
+            set -euo pipefail
+            cd '${DEPLOY_PATH}'
+            docker pull '${IMAGE}'
+            docker run --rm \
+              --network '${NETWORK}' \
+              -e DATABASE_URL='${DB_URL}' \
+              '${IMAGE}' \
+              bash -c 'yarn prisma migrate deploy --schema=src/libs/infrastructure/database/prisma/schema.prisma'
+          "
+
   deploy:
     name: "Deploy (${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }})"
     runs-on: ubuntu-latest
-    needs: [docker-build, validate-secrets, validate-disk-space, ensure-infrastructure-health]
+    needs: [docker-build, validate-secrets, validate-disk-space, ensure-infrastructure-health, pre-deployment-backup, run-migrations]
     timeout-minutes: 60
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
     concurrency:
@@ -479,83 +529,63 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve environment
-        id: resolve
-        run: |
-          DEPLOY_ENV="${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}"
-          COMPOSE_FILE="${{ github.ref == 'refs/heads/main' && 'docker-compose.prod.yml' || 'docker-compose.preprod.yml' }}"
-          CONTAINER_PREFIX="${{ github.ref == 'refs/heads/main' && 'latest-' || 'preprod-' }}"
-          DOCKER_NETWORK="${{ github.ref == 'refs/heads/main' && 'app-network' || 'preprod-network' }}"
-          API_PORT="${{ vars.API_PORT }}"
-          NGINX_PORT="${{ github.ref == 'refs/heads/main' && vars.NGINX_PORT || vars.NGINX_PORT }}"
-          API_SUBDOMAIN="${{ github.ref == 'refs/heads/main' && vars.API_SUBDOMAIN || vars.API_SUBDOMAIN }}"
-          COMPOSE_DIR="${DEPLOY_PATH:-/opt}/${DEPLOY_ENV}/devops/docker"
-
-          echo "deploy_env=${DEPLOY_ENV}" >> $GITHUB_OUTPUT
-          echo "compose_file=${COMPOSE_FILE}" >> $GITHUB_OUTPUT
-          echo "container_prefix=${CONTAINER_PREFIX}" >> $GITHUB_OUTPUT
-          echo "docker_network=${DOCKER_NETWORK}" >> $GITHUB_OUTPUT
-          echo "api_port=${API_PORT}" >> $GITHUB_OUTPUT
-          echo "nginx_port=${NGINX_PORT}" >> $GITHUB_OUTPUT
-          echo "api_subdomain=${API_SUBDOMAIN}" >> $GITHUB_OUTPUT
-
       - name: Set up SSH key
         run: |
           mkdir -p ~/.ssh
           printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
-      - name: Run Prisma migrations
-        id: migrate
+      - name: Deploy API and worker with blue-green
+        id: deploy
         continue-on-error: true
-        timeout-minutes: 5
         run: |
           DEPLOY_ENV="${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}"
+          DEPLOY_PATH="${{ secrets.SERVER_DEPLOY_PATH }}"
+          CONTAINER_PREFIX="${{ github.ref == 'refs/heads/main' && 'latest-' || 'preprod-' }}"
+          NETWORK="${{ github.ref == 'refs/heads/main' && 'app-network' || 'preprod-network' }}"
           IMAGE="${{ needs.docker-build.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}"
-
-          # Construct DATABASE_URL (shared postgres, different DB per env)
-          if [ "${DEPLOY_ENV}" = "production" ]; then
-            DB_URL="${{ secrets.DATABASE_URL }}"
-          else
-            DB_URL="postgresql://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@postgres:5432/userdb_preprod?schema=public"
-          fi
-
-          echo "Running Prisma migrations for ${DEPLOY_ENV}..."
-          echo "Target database: ${DB_URL}"
-          docker run --rm \
-            --network "${{ github.ref == 'refs/heads/main' && 'app-network' || 'preprod-network' }}" \
-            -e DATABASE_URL="${DB_URL}" \
-            "${IMAGE}" \
-            bash -c "yarn prisma migrate deploy --schema=src/libs/infrastructure/database/prisma/schema.prisma" \
-            > /tmp/prisma-migrate.log 2>&1 || {
-              echo "Migration failed or timed out. Log:"
-              cat /tmp/prisma-migrate.log
-              exit 1
-            }
-          echo "Migrations complete."
-
-      - name: Blue-green deploy API
-        id: deploy
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/preprod'
-        run: |
-          BRANCH="${{ github.ref_name }}"
-          if [ "${BRANCH}" = "main" ]; then
-            COMPOSE_FILE="docker-compose.prod.yml"
-            DEPLOY_PATH="${{ secrets.SERVER_DEPLOY_PATH }}"
-          else
-            COMPOSE_FILE="docker-compose.preprod.yml"
-            DEPLOY_PATH="${{ secrets.SERVER_DEPLOY_PATH }}"
-          fi
-
-          IMAGE="${{ needs.docker-build.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}"
-          LOCAL_IMAGE="localhost:5000/healthcare-api:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}"
+          NGINX_CONTAINER="${CONTAINER_PREFIX}nginx"
+          UPSTREAM_CONF="${DEPLOY_PATH}/nginx/upstream.conf"
 
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
-            cd ${DEPLOY_PATH} &&
-            DOCKER_IMAGE='${LOCAL_IMAGE}' docker compose -f ${COMPOSE_FILE} pull api worker 2>/dev/null || true &&
-            DOCKER_IMAGE='${LOCAL_IMAGE}' docker compose -f ${COMPOSE_FILE} up -d --force-recreate api worker
+            set -euo pipefail
+            cd '${DEPLOY_PATH}'
+            docker pull '${IMAGE}'
+            bash devops/scripts/docker-infra/blue-green-deploy.sh \
+              --env '${DEPLOY_ENV}' \
+              --container-prefix '${CONTAINER_PREFIX}' \
+              --service api \
+              --image '${IMAGE}' \
+              --network '${NETWORK}' \
+              --upstream-conf '${UPSTREAM_CONF}' \
+              --nginx-container '${NGINX_CONTAINER}' \
+              --health-endpoint /infra-health \
+              --health-timeout 180 \
+              --drain-timeout 120 \
+              --api-port 8088
+            bash devops/scripts/docker-infra/blue-green-deploy.sh \
+              --env '${DEPLOY_ENV}' \
+              --container-prefix '${CONTAINER_PREFIX}' \
+              --service worker \
+              --image '${IMAGE}' \
+              --network '${NETWORK}' \
+              --health-endpoint /infra-health \
+              --health-timeout 180 \
+              --drain-timeout 120 \
+              --api-port 8088
           "
-          echo "Deployed ${IMAGE} as ${LOCAL_IMAGE}"
+          echo "Deployed ${IMAGE} to ${DEPLOY_ENV}"
+
+      - name: Record deploy status
+        id: status
+        if: always()
+        run: |
+          if [ "${{ steps.deploy.outcome }}" = "success" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+            exit 1
+          fi
 
   # ============================================================================
   # JOB: post-deployment-verification — Verify health via subdomain
@@ -577,29 +607,24 @@ jobs:
         run: |
           DEPLOY_ENV="${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}"
           API_SUBDOMAIN="${{ github.ref == 'refs/heads/main' && vars.API_SUBDOMAIN || vars.API_SUBDOMAIN }}"
+          DEPLOY_PATH="${{ secrets.SERVER_DEPLOY_PATH }}"
           echo "deploy_env=${DEPLOY_ENV}" >> $GITHUB_OUTPUT
           echo "api_subdomain=${API_SUBDOMAIN}" >> $GITHUB_OUTPUT
+          echo "deploy_path=${DEPLOY_PATH}" >> $GITHUB_OUTPUT
 
-      - name: Verify /health via subdomain
+      - name: Verify deployment on VPS
         id: verify
         continue-on-error: true
+        env:
+          DEPLOY_PATH: ${{ steps.resolve.outputs.deploy_path }}
         run: |
-          URL="https://${{ steps.resolve.outputs.api_subdomain }}/health"
-          echo "Verifying ${URL} (retry up to 3 times at 10s intervals)..."
-
-          for i in 1 2 3; do
-            echo "Attempt ${i}/3..."
-            if curl -sS --max-time 10 "${URL}" 2>&1 | grep -q '"status"'; then
-              echo "Health check passed on attempt ${i}."
-              echo "verified=true" >> $GITHUB_OUTPUT
-              exit 0
-            fi
-            sleep 10
-          done
-
-          echo "Health check failed after 3 attempts."
-          echo "verified=false" >> $GITHUB_OUTPUT
-          exit 1
+          if ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            "cd '${DEPLOY_PATH}' && BASE_DIR='${DEPLOY_PATH}' bash devops/scripts/docker-infra/verify.sh deployment"; then
+            echo "verified=true" >> $GITHUB_OUTPUT
+          else
+            echo "verified=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
 
   # ============================================================================
   # JOB: post-deployment-backup — Trigger success backup on VPS
@@ -610,7 +635,7 @@ jobs:
     needs: [post-deployment-verification]
     timeout-minutes: 10
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
-    if: always()
+    if: ${{ needs.post-deployment-verification.outputs.verified == 'true' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -622,22 +647,39 @@ jobs:
 
       - name: Trigger success backup on VPS
         run: |
-          DEPLOY_ENV="${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}"
           DEPLOY_PATH="${{ secrets.SERVER_DEPLOY_PATH }}"
-          BACKUP_SCRIPT="${DEPLOY_PATH}/devops/scripts/docker-infra/backup.sh"
-
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "if [ -f '${BACKUP_SCRIPT}' ]; then \
-               BACKUP_ID='success-$(date '+%Y-%m-%d-%H%M%S')'; \
-               echo 'Creating success backup: '${BACKUP_ID}; \
-               bash '${BACKUP_SCRIPT}' '${BACKUP_ID}' success || echo 'Backup script failed (non-blocking)'; \
-             else \
-               echo 'Backup script not found at ${BACKUP_SCRIPT}; skipping.'; \
-             fi"
+            "cd '${DEPLOY_PATH}' && BASE_DIR='${DEPLOY_PATH}' bash devops/scripts/docker-infra/backup.sh success"
 
   # ============================================================================
   # JOB: portainer-sync — Optional Portainer stack metadata update
   # ============================================================================
+  # ============================================================================
+  # JOB: failure-recovery â€” Roll back after deployment or verification failure
+  # ============================================================================
+  failure-recovery:
+    name: "Failure Recovery"
+    runs-on: ubuntu-latest
+    needs: [deploy, post-deployment-verification]
+    if: ${{ always() && (needs.deploy.result == 'failure' || needs.post-deployment-verification.result == 'failure') }}
+    timeout-minutes: 20
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+      - name: Trigger VPS incident recovery
+        env:
+          DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
+        run: |
+          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            "cd '${DEPLOY_PATH}' && BASE_DIR='${DEPLOY_PATH}' bash devops/scripts/docker-infra/incident-response.sh deployment-failed" || true
+
   portainer-sync:
     name: "Portainer Sync (${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }})"
     runs-on: ubuntu-latest
