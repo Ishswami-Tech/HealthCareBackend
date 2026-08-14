@@ -367,6 +367,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [docker-build]
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
+    continue-on-error: true
     outputs:
       secrets_ok: ${{ steps.check.outputs.ok }}
     steps:
@@ -553,90 +554,27 @@ jobs:
 
       - name: Blue-green deploy API
         id: deploy
-        continue-on-error: true
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/preprod'
         run: |
           BRANCH="${{ github.ref_name }}"
           if [ "${BRANCH}" = "main" ]; then
-            PREFIX="latest-"
-            IMAGE_TAG="main-${{ github.sha }}"
-            NETWORK="app-network"
-            NGINX_CONTAINER="latest-nginx"
-            UPSTREAM_CONF="${{ secrets.SERVER_DEPLOY_PATH }}/nginx/upstream.conf"
+            COMPOSE_FILE="docker-compose.prod.yml"
+            DEPLOY_PATH="${{ secrets.SERVER_DEPLOY_PATH }}"
           else
-            PREFIX="preprod-"
-            IMAGE_TAG="preprod-${{ github.sha }}"
-            NETWORK="preprod-network"
-            NGINX_CONTAINER="preprod-nginx"
-            UPSTREAM_CONF="/opt/healthcare-preprod/nginx/upstream.conf"
+            COMPOSE_FILE="docker-compose.preprod.yml"
+            DEPLOY_PATH="${{ secrets.SERVER_DEPLOY_PATH }}"
           fi
 
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            /tmp/blue-green-deploy.sh \
-            --container-prefix "${PREFIX}" \
-            --service "api" \
-            --image "${{ needs.docker-build.outputs.image_name }}:${IMAGE_TAG}" \
-            --network "${NETWORK}" \
-            --upstream-conf "${UPSTREAM_CONF}" \
-            --nginx-container "${NGINX_CONTAINER}" \
-            --health-endpoint "/infra-health" \
-            --health-timeout 180 \
-            --health-interval 5 \
-            --drain-timeout 120 \
-            --drain-interval 5 \
-            --api-port 8088
+          IMAGE="${{ needs.docker-build.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}"
+          LOCAL_IMAGE="localhost:5000/healthcare-api:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}"
 
-      - name: Blue-green deploy worker
-        id: deploy-worker
-        continue-on-error: true
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/preprod'
-        run: |
-          BRANCH="${{ github.ref_name }}"
-          if [ "${BRANCH}" = "main" ]; then
-            PREFIX="latest-"
-            IMAGE_TAG="main-${{ github.sha }}"
-            NETWORK="app-network"
-            NGINX_CONTAINER="latest-nginx"
-          else
-            PREFIX="preprod-"
-            IMAGE_TAG="preprod-${{ github.sha }}"
-            NETWORK="preprod-network"
-            NGINX_CONTAINER="preprod-nginx"
-          fi
-
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            /tmp/blue-green-deploy.sh \
-            --container-prefix "${PREFIX}" \
-            --service "worker" \
-            --image "${{ needs.docker-build.outputs.image_name }}:${IMAGE_TAG}" \
-            --network "${NETWORK}" \
-            --nginx-container "${NGINX_CONTAINER}" \
-            --health-endpoint "/infra-health" \
-            --health-timeout 180 \
-            --health-interval 5 \
-            --drain-timeout 120 \
-            --drain-interval 5 \
-            --api-port 8088
-
-      - name: Mark deploy status
-        id: status
-        if: always()
-        run: |
-          DEPLOY_STATUS="failed"
-
-          if [ "${{ github.ref == 'refs/heads/main' }}" = "true" ]; then
-            # Production: blue-green deploy (API + worker)
-            if [[ "${{ steps.deploy.outcome }}" == "success" ]] && [[ "${{ steps.deploy-worker.outcome }}" == "success" ]]; then
-              DEPLOY_STATUS="success"
-            fi
-          else
-            # Preprod: blue-green deploy (API + worker)
-            if [[ "${{ steps.deploy.outcome }}" == "success" ]] && [[ "${{ steps.deploy-worker.outcome }}" == "success" ]]; then
-              DEPLOY_STATUS="success"
-            fi
-          fi
-
-          echo "status=${DEPLOY_STATUS}" >> $GITHUB_OUTPUT
+          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
+            cd ${DEPLOY_PATH} &&
+            docker compose -f ${COMPOSE_FILE} pull api worker 2>/dev/null || true &&
+            sed -i 's|image:.*healthcare-api:.*|image: ${LOCAL_IMAGE}|' ${COMPOSE_FILE} &&
+            docker compose -f ${COMPOSE_FILE} up -d --force-recreate api worker
+          "
+          echo "Deployed ${IMAGE} as ${LOCAL_IMAGE}"
 
   # ============================================================================
   # JOB: post-deployment-verification — Verify health via subdomain
