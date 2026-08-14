@@ -505,24 +505,6 @@ jobs:
           printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
-      - name: Copy deploy assets to server
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/preprod'
-        run: |
-          # Blue-green deploy for both production and preprod
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "mkdir -p ${{ secrets.SERVER_DEPLOY_PATH }}/devops/docker/nginx"
-          scp ${{ env.SSH_OPTS }} \
-            devops/docker/${{ steps.resolve.outputs.compose_file }} \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ secrets.SERVER_DEPLOY_PATH }}/devops/docker/${{ steps.resolve.outputs.compose_file }}
-          scp ${{ env.SSH_OPTS }} \
-            devops/docker/nginx/nginx.conf \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ secrets.SERVER_DEPLOY_PATH }}/devops/docker/nginx/nginx.conf
-          scp ${{ env.SSH_OPTS }} \
-            devops/scripts/docker-infra/blue-green-deploy.sh \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/blue-green-deploy.sh
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "chmod +x /tmp/blue-green-deploy.sh"
-
       - name: Run Prisma migrations
         id: migrate
         continue-on-error: true
