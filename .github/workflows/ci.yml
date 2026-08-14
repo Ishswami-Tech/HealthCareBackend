@@ -396,22 +396,25 @@ jobs:
           DEPLOY_ENV: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
           DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
           IMAGE: ${{ needs.docker-build.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}
+          LOCAL_IMAGE: localhost:5000/healthcare-api:preprod
           NETWORK: ${{ github.ref == 'refs/heads/main' && 'app-network' || 'preprod-network' }}
         run: |
           if [ "${DEPLOY_ENV}" = "production" ]; then
             DB_URL="${{ secrets.DATABASE_URL }}"
+            TARGET_IMAGE="${IMAGE}"
           else
             DB_URL="postgresql://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@postgres:5432/userdb_preprod?schema=public"
+            TARGET_IMAGE="${LOCAL_IMAGE}"
           fi
 
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
             set -euo pipefail
             cd '${DEPLOY_PATH}'
-            docker pull '${IMAGE}'
+            docker pull '${TARGET_IMAGE}'
             docker run --rm \
               --network '${NETWORK}' \
               -e DATABASE_URL='${DB_URL}' \
-              '${IMAGE}' \
+              '${TARGET_IMAGE}' \
               bash -c 'yarn prisma migrate deploy --schema=src/libs/infrastructure/database/prisma/schema.prisma'
           "
 
