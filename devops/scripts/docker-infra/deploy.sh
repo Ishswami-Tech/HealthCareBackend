@@ -314,7 +314,7 @@ stop_infrastructure_gracefully() {
 deploy_infrastructure() {
     log_info "Deploying infrastructure..."
     
-    # Ensure docker-compose.prod.yml exists (restores from /tmp or git if missing)
+    # Ensure compose file exists (restores from /tmp or git if missing)
     if ! ensure_compose_file; then
         log_error "Failed to ensure docker-compose.prod.yml exists"
         return 1
@@ -344,7 +344,7 @@ deploy_infrastructure() {
         log_warning "Graceful stop had issues, but continuing..."
     }
     
-    # Pull infrastructure images (e.g. postgres:18) so server uses versions from docker-compose.prod.yml, not cached old images
+    # Pull infrastructure images so server uses versions from compose file, not cached old images
     log_info "Pulling infrastructure images (postgres:18, dragonfly, portainer)..."
     docker compose -f "$COMPOSE_FILE" --profile infrastructure pull --quiet || true
     
@@ -2963,7 +2963,7 @@ BASELINE_SQL
             
             log_error ""
             log_error "RECOMMENDED ACTIONS:"
-            log_error "1. Increase container memory limit in docker-compose.prod.yml"
+            log_error "1. Increase container memory limit in ${COMPOSE_FILE}"
             log_error "2. Check container logs: docker logs ${CONTAINER_PREFIX}api"
             log_error "3. Check system memory: free -h"
             log_error "4. Consider running migrations with lower memory footprint"

@@ -278,6 +278,9 @@ jobs:
           IMAGE_SHA: ${{ steps.image.outputs.image }}:preprod-${{ github.sha }}
           LOCAL_IMAGE: localhost:5000/healthcare-api:preprod
         run: |
+          echo "Pulling ${IMAGE_SHA} from GHCR to local..."
+          docker pull "${IMAGE_SHA}"
+
           echo "Saving ${IMAGE_SHA} and transferring to VPS local registry..."
           docker save "${IMAGE_SHA}" -o /tmp/healthcare-api-preprod.tar
 
