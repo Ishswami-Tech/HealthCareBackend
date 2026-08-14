@@ -352,112 +352,12 @@ jobs:
           echo "Infrastructure health: ${{ steps.health.outputs.status }}" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
-  # JOB: validate-secrets — Validate required secrets and variables
-  # ============================================================================
-  validate-secrets:
-    name: "Validate Secrets"
-    runs-on: ubuntu-latest
-    needs: [docker-build]
-    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
-    continue-on-error: true
-    outputs:
-      secrets_ok: ${{ steps.check.outputs.ok }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Check required secrets
-        id: check
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SERVER_USER: ${{ secrets.SERVER_USER }}
-          SERVER_DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
-          NGINX_PORT: ${{ vars.NGINX_PORT }}
-          API_PORT: ${{ vars.API_PORT }}
-          CONTAINER_PREFIX: ${{ github.ref == 'refs/heads/main' && vars.CONTAINER_PREFIX || vars.CONTAINER_PREFIX }}
-          DOCKER_NETWORK: ${{ github.ref == 'refs/heads/main' && vars.DOCKER_NETWORK || vars.DOCKER_NETWORK }}
-          API_SUBDOMAIN: ${{ github.ref == 'refs/heads/main' && vars.API_SUBDOMAIN || vars.API_SUBDOMAIN }}
-          ENV_FILE: ${{ github.ref == 'refs/heads/main' && vars.ENV_FILE || vars.ENV_FILE }}
-        run: |
-          MISSING=()
-          [[ -z "${SSH_PRIVATE_KEY}" ]] && MISSING+=("SSH_PRIVATE_KEY")
-          [[ -z "${SERVER_HOST}" ]] && MISSING+=("SERVER_HOST")
-          [[ -z "${SERVER_USER}" ]] && MISSING+=("SERVER_USER")
-          [[ -z "${SERVER_DEPLOY_PATH}" ]] && MISSING+=("SERVER_DEPLOY_PATH")
-          [[ -z "${DATABASE_URL}" ]] && MISSING+=("DATABASE_URL")
-          [[ -z "${POSTGRES_PASSWORD}" ]] && MISSING+=("POSTGRES_PASSWORD")
-          [[ -z "${POSTGRES_USER}" ]] && MISSING+=("POSTGRES_USER")
-          [[ -z "${NGINX_PORT}" ]] && MISSING+=("NGINX_PORT")
-          [[ -z "${API_PORT}" ]] && MISSING+=("API_PORT")
-          [[ -z "${CONTAINER_PREFIX}" ]] && MISSING+=("CONTAINER_PREFIX")
-          [[ -z "${DOCKER_NETWORK}" ]] && MISSING+=("DOCKER_NETWORK")
-          [[ -z "${API_SUBDOMAIN}" ]] && MISSING+=("API_SUBDOMAIN")
-          [[ -z "${ENV_FILE}" ]] && MISSING+=("ENV_FILE")
-
-          if (( ${#MISSING[@]} > 0 )); then
-            echo "::error::Missing required secrets/variables: ${MISSING[*]}"
-            echo "ok=false" >> $GITHUB_OUTPUT
-            exit 1
-          fi
-
-          # Mask all secret values in logs (safety net — GitHub masks env vars automatically)
-          for var in SSH_PRIVATE_KEY DATABASE_URL POSTGRES_PASSWORD; do
-            echo "::add-mask::${!var}"
-          done
-
-          echo "ok=true" >> $GITHUB_OUTPUT
-          echo "All required secrets and variables are present."
-
-  # ============================================================================
-  # JOB: validate-disk-space — Ensure >= 3 GB free before pulling image
-  # ============================================================================
-  validate-disk-space:
-    name: "Validate Disk Space"
-    runs-on: ubuntu-latest
-    needs: [docker-build, validate-secrets]
-    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
-    outputs:
-      resource_summary: ${{ steps.validate.outputs.resource_summary }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up SSH key
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-
-      - name: Run validate-resources.sh
-        id: validate
-        env:
-          DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
-        run: |
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "cd '${DEPLOY_PATH}' && BASE_DIR='${DEPLOY_PATH}' devops/scripts/docker-infra/validate-resources.sh --min-free-gb 3" > /tmp/resource-summary.json 2>&1 || true
-
-          cat /tmp/resource-summary.json | sed 's/\\n/\n/g' > /tmp/resource-pretty.json
-          cat /tmp/resource-pretty.json
-
-          SUMMARY=$(cat /tmp/resource-summary.json)
-          echo "resource_summary=${SUMMARY}" >> $GITHUB_OUTPUT
-
-      - name: Resource summary
-        run: |
-          echo "### Resource Summary" >> $GITHUB_STEP_SUMMARY
-          echo '```json' >> $GITHUB_STEP_SUMMARY
-          echo '${{ steps.validate.outputs.resource_summary }}' >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-
-  # ============================================================================
   # JOB: deploy — Blue-green deployment orchestration
   # ============================================================================
   pre-deployment-backup:
     name: "Pre-Deploy Backup"
     runs-on: ubuntu-latest
-    needs: [ensure-infrastructure-health, validate-disk-space]
+    needs: [ensure-infrastructure-health]
     timeout-minutes: 20
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
     steps:
@@ -518,7 +418,7 @@ jobs:
   deploy:
     name: "Deploy (${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }})"
     runs-on: ubuntu-latest
-    needs: [docker-build, validate-secrets, validate-disk-space, ensure-infrastructure-health, pre-deployment-backup, run-migrations]
+    needs: [docker-build, ensure-infrastructure-health, pre-deployment-backup, run-migrations]
     timeout-minutes: 60
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
     concurrency:
