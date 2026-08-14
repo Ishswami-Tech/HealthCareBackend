@@ -253,13 +253,14 @@ GOOGLE_CLIENT_SECRET=<from .env.production>
 
 ### Startup command
 
-In Coolify's **Deploy** section, set the startup command:
+In Coolify's **Deploy** section, keep the default app startup:
 
 ```
-sh -c "node scripts/run-prisma.js migrate && node dist/main.js"
+node dist/main.js
 ```
 
-This runs Prisma migrations before starting the NestJS app — same as Portainer.
+Prisma migrations are handled by the deploy job before blue-green rollout, so
+container startup stays deterministic and side-effect free.
 
 ---
 
@@ -432,7 +433,7 @@ docker volume rm <dragonfly_volume_name>
 # Check logs in Coolify UI
 # Common causes:
 # 1. DATABASE_URL points to wrong host — verify postgres-healthcare DNS resolves
-# 2. Prisma migrations failed — check startup command output
+# 2. Prisma migrations failed — check deploy job output
 # 3. Port conflict — ensure 8089 isn't already bound
 ```
 

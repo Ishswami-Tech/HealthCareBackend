@@ -167,7 +167,7 @@ RUN yarn install --production --frozen-lockfile --ignore-scripts --ignore-engine
 # We'll copy only the necessary @prisma packages from builder stage
 RUN rm -rf /app/node_modules/prisma /app/node_modules/@prisma
 
-# Copy prisma CLI for migrations (needed for prisma migrate deploy at startup)
+# Copy prisma CLI for deploy-time migrations
 COPY --from=builder /app/node_modules_real/prisma ./node_modules/prisma
 # Copy all @prisma packages EXCEPT client (we'll create symlink to generated client)
 # First, copy @prisma directory structure
@@ -200,7 +200,7 @@ COPY --from=builder /app/scripts ./scripts
 # Copy Prisma schema, config, migrations, and generated client to expected paths
 COPY --from=builder /app/src/libs/infrastructure/database/prisma/schema.prisma ./src/libs/infrastructure/database/prisma/schema.prisma
 COPY --from=builder /app/src/libs/infrastructure/database/prisma/prisma.config.js ./src/libs/infrastructure/database/prisma/prisma.config.js
-# Copy migrations folder for prisma migrate deploy (CRITICAL for production deployments)
+# Copy migrations folder for deploy-time prisma migrate deploy (CRITICAL for production deployments)
 # Without this, P3005 error occurs: "database schema is not empty" with no migrations
 COPY --from=builder /app/src/libs/infrastructure/database/prisma/migrations ./src/libs/infrastructure/database/prisma/migrations
 # Copy Prisma generated client from builder stage (generated during build to src/libs/infrastructure/database/prisma/generated)
