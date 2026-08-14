@@ -223,6 +223,7 @@ resolve_database_url() {
     local database_url=""
     local env_file_path
     env_file_path="$(resolve_env_file_path)"
+    info "Resolved env file path: ${env_file_path}"
 
     if is_valid_database_url "${DATABASE_URL:-}"; then
         database_url="${DATABASE_URL}"
@@ -264,13 +265,23 @@ run_prisma_migrations() {
     fi
 
     info "Running Prisma migrations before blue-green rollout..."
-    docker run --rm \
+    info "Migration image: ${IMAGE}"
+    info "Migration DB host: $(echo "${DATABASE_URL}" | sed -n 's|.*@\([^:/]*\).*|\1|p')"
+
+    local migration_output
+    if ! migration_output=$(docker run --rm \
         --network "$NETWORK" \
         -e "DATABASE_URL=${DATABASE_URL}" \
         -e "DIRECT_URL=" \
         --entrypoint bash \
         "$IMAGE" \
-        -lc 'cd /app && node scripts/run-prisma.js migrate'
+        -lc 'cd /app && node scripts/run-prisma.js migrate' 2>&1); then
+        error "Prisma migrations failed:"
+        echo "$migration_output"
+        return 1
+    fi
+
+    echo "$migration_output"
     success "Prisma migrations completed."
 }
 
