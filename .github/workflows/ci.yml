@@ -275,7 +275,7 @@ jobs:
       - name: Push image to local registry (preprod)
         if: github.ref == 'refs/heads/preprod'
         env:
-          IMAGE_SHA: ${{ needs.docker-build.outputs.image_name }}:preprod-${{ github.sha }}
+          IMAGE_SHA: ${{ steps.image.outputs.image }}:preprod-${{ github.sha }}
           LOCAL_IMAGE: localhost:5000/healthcare-api:preprod
         run: |
           echo "Saving ${IMAGE_SHA} and transferring to VPS local registry..."
