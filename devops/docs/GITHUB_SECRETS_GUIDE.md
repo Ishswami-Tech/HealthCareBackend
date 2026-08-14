@@ -53,7 +53,7 @@ Variables are defined per environment under the environment's **Variables** tab.
 | Variable name           | Environment(s)          | Default                          | Purpose                                                  |
 | ----------------------- | ----------------------- | -------------------------------- | -------------------------------------------------------- |
 | `NGINX_PORT`            | `production`            | `8088`                           | Internal port the production Nginx container listens on. |
-| `NGINX_PORT`            | `preprod`               | `8089`                           | Internal port the preprod Nginx container listens on.    |
+| `NGINX_PORT`            | `preprod`               | `8090`                           | Internal port the preprod Nginx container listens on.    |
 | `API_PORT`              | `production`, `preprod` | `8088`                           | Internal port the API container exposes.                 |
 | `WORKER_PORT`           | `production`, `preprod` | `8080`                           | Internal port the worker container exposes.              |
 | `API_SUBDOMAIN`         | `production`            | `backend-service-v1.ishswami.in` | Subdomain routed by Traefik to production Nginx.         |

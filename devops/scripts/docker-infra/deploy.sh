@@ -320,7 +320,7 @@ deploy_infrastructure() {
         return 1
     fi
     
-    local compose_file="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
+    local compose_file="${BASE_DIR}/devops/docker/${COMPOSE_FILE}"
     
     # Ensure directory exists before changing into it
     local compose_dir="$(dirname "$compose_file")"
@@ -346,11 +346,11 @@ deploy_infrastructure() {
     
     # Pull infrastructure images (e.g. postgres:18) so server uses versions from docker-compose.prod.yml, not cached old images
     log_info "Pulling infrastructure images (postgres:18, dragonfly, portainer)..."
-    docker compose -f docker-compose.prod.yml --profile infrastructure pull --quiet || true
+    docker compose -f "$COMPOSE_FILE" --profile infrastructure pull --quiet || true
     
     # Recreate infrastructure (volumes are preserved by docker compose)
     # Using --force-recreate to ensure containers are recreated with pulled images (e.g. PostgreSQL 18)
-    if docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate; then
+    if docker compose -f "$COMPOSE_FILE" --profile infrastructure up -d --force-recreate; then
         log_success "Infrastructure deployed"
         
         # Wait for health (using fixed container names) with retry logic
@@ -412,7 +412,7 @@ deploy_infrastructure() {
 deploy_application() {
     log_info "Deploying application..."
     
-    local compose_file="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
+    local compose_file="${BASE_DIR}/devops/docker/${COMPOSE_FILE}"
     cd "$(dirname "$compose_file")" || return 1
     
     # Validate container dependencies before deployment
@@ -678,7 +678,7 @@ deploy_application() {
     # NOTE: Only pulling api and worker, NOT infrastructure containers
     log_info "Pulling via docker compose to sync with compose file (ONLY api and worker images)..."
     # The --quiet flag suppresses output but still pulls the latest version
-    docker compose -f docker-compose.prod.yml --profile infrastructure --profile app pull --quiet api worker 2>&1 || {
+    docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app pull --quiet api worker 2>&1 || {
         log_warning "docker compose pull had issues, but direct pull succeeded - continuing..."
         log_info "Direct docker pull was successful, docker-compose will use that image"
     }
@@ -701,10 +701,10 @@ deploy_application() {
     local worker_container="${CONTAINER_PREFIX}worker"
     
     # Step 1: Stop via docker compose (graceful)
-    docker compose -f docker-compose.prod.yml --profile infrastructure --profile app stop api worker 2>&1 || true
+    docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app stop api worker 2>&1 || true
     
     # Step 2: Remove via docker compose
-    docker compose -f docker-compose.prod.yml --profile infrastructure --profile app rm -f api worker 2>&1 || true
+    docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app rm -f api worker 2>&1 || true
     
     # Step 3: ALWAYS force stop/remove directly (regardless of container state)
     # This ensures containers are removed even if docker compose didn't catch them
@@ -794,7 +794,7 @@ deploy_application() {
     # --no-deps ensures infrastructure containers (postgres, dragonfly, etc.) are NOT recreated
     # We specify api worker explicitly to only recreate these two containers
     # Note: Containers were already stopped and removed above, so this will create fresh ones with new image
-    if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1 | tee /tmp/docker-compose-up.log; then
+    if docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1 | tee /tmp/docker-compose-up.log; then
         log_info "Waiting for containers to start..."
         sleep 5
         
@@ -851,7 +851,7 @@ deploy_application() {
                 export DOCKER_IMAGE="${DOCKER_IMAGE}"
                 
                 # Force recreate with explicit image pull
-                if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api 2>&1; then
+                if docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api 2>&1; then
                     log_info "Container recreated, verifying again..."
                     sleep 3
                     local new_api_image_id=$(docker inspect --format='{{.Image}}' "$api_container" 2>/dev/null || echo "")
@@ -900,7 +900,7 @@ deploy_application() {
                 export DOCKER_IMAGE="${DOCKER_IMAGE}"
                 
                 # Force recreate with explicit image pull
-                if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps worker 2>&1; then
+                if docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps worker 2>&1; then
                     log_info "Container recreated, verifying again..."
                     sleep 3
                     local new_worker_image_id=$(docker inspect --format='{{.Image}}' "$worker_container" 2>/dev/null || echo "")
@@ -1397,7 +1397,7 @@ recover_containers() {
     
     # Start containers
     export DOCKER_IMAGE="${DOCKER_IMAGE}"
-    if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
+    if docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
         log_info "Containers started, waiting for startup..."
         sleep 10
         
@@ -1439,7 +1439,7 @@ fix_container_images() {
     
     # Start containers with fresh image
     export DOCKER_IMAGE="${DOCKER_IMAGE}"
-    if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
+    if docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
         sleep 5
         
         # Verify the fix
@@ -1491,7 +1491,7 @@ recover_unhealthy_containers() {
         sleep 3
         
         export DOCKER_IMAGE="${DOCKER_IMAGE}"
-        if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
+        if docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
             sleep 15
             
             if container_running "$api_container" && container_running "$worker_container"; then
@@ -1524,7 +1524,7 @@ fix_environment_variables() {
 
     # Start with explicit environment
     DOCKER_IMAGE="${DOCKER_IMAGE}" \
-        docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1 || {
+        docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1 || {
         log_error "Failed to start containers with fixed environment"
         return 1
     }
@@ -1584,7 +1584,7 @@ rollback_to_backup_image() {
     
     # Start containers with backup image
     export DOCKER_IMAGE="${DOCKER_IMAGE}"
-    if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --force-recreate --no-deps api worker 2>&1; then
+    if docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --force-recreate --no-deps api worker 2>&1; then
         sleep 10
         
         if container_running "$api_container" && container_running "$worker_container"; then
@@ -1761,7 +1761,7 @@ verify_and_deploy_latest_image() {
         # Start containers with latest image
         log_info "Starting containers with latest image..."
         export DOCKER_IMAGE="${DOCKER_IMAGE}"
-        if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
+        if docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
             log_info "Containers started, waiting for startup..."
             sleep 10
             
@@ -3047,7 +3047,7 @@ rollback_deployment() {
         
         # Stop and remove current containers
         log_info "Stopping current containers..."
-        local compose_file="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
+        local compose_file="${BASE_DIR}/devops/docker/${COMPOSE_FILE}"
         if [[ -f "$compose_file" ]]; then
             cd "$(dirname "$compose_file")" || {
                 log_error "Failed to change to compose directory"
@@ -3055,13 +3055,13 @@ rollback_deployment() {
             }
         fi
         
-        docker compose -f docker-compose.prod.yml --profile infrastructure --profile app stop api worker 2>&1 || true
-        docker compose -f docker-compose.prod.yml --profile infrastructure --profile app rm -f api worker 2>&1 || true
+        docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app stop api worker 2>&1 || true
+        docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app rm -f api worker 2>&1 || true
         
         # Start containers with backup image
         log_info "Starting containers with backup image..."
         export DOCKER_IMAGE="$OLD_IMAGE_BACKUP_TAG"
-        if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --no-deps api worker 2>&1; then
+        if docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --no-deps api worker 2>&1; then
             log_success "Containers restarted with backup image"
             # Wait a moment for containers to start
             sleep 5
@@ -3258,10 +3258,10 @@ main() {
                 log_info "Using backup script: ${backup_script}"
                 
                 # Ensure containers are running for backup (pull first so postgres:18 etc. from compose is used)
-                docker compose -f docker-compose.prod.yml --profile infrastructure pull --quiet postgres dragonfly 2>/dev/null || true
+                docker compose -f "$COMPOSE_FILE" --profile infrastructure pull --quiet postgres dragonfly 2>/dev/null || true
                 if ! container_running "${POSTGRES_CONTAINER}"; then
                     log_warning "PostgreSQL container not running - starting for backup..."
-                    docker compose -f docker-compose.prod.yml --profile infrastructure up -d postgres || {
+                    docker compose -f "$COMPOSE_FILE" --profile infrastructure up -d postgres || {
                         log_error "Failed to start PostgreSQL for backup"
                         exit $EXIT_CRITICAL
                     }
@@ -3273,7 +3273,7 @@ main() {
                 
                 if ! container_running "${DRAGONFLY_CONTAINER}"; then
                     log_warning "Dragonfly container not running - starting for backup..."
-                    docker compose -f docker-compose.prod.yml --profile infrastructure up -d dragonfly || {
+                    docker compose -f "$COMPOSE_FILE" --profile infrastructure up -d dragonfly || {
                         log_error "Failed to start Dragonfly for backup"
                         exit $EXIT_CRITICAL
                     }
@@ -3467,10 +3467,10 @@ main() {
                         log_info "Using backup script: ${backup_script}"
                         
                         # Ensure containers are running for backup (pull first so postgres:18 etc. from compose is used)
-                        docker compose -f docker-compose.prod.yml --profile infrastructure pull --quiet postgres dragonfly 2>/dev/null || true
+                        docker compose -f "$COMPOSE_FILE" --profile infrastructure pull --quiet postgres dragonfly 2>/dev/null || true
                         if ! container_running "${POSTGRES_CONTAINER}"; then
                             log_warning "PostgreSQL container not running - starting for backup..."
-                            docker compose -f docker-compose.prod.yml --profile infrastructure up -d postgres || {
+                            docker compose -f "$COMPOSE_FILE" --profile infrastructure up -d postgres || {
                                 log_error "Failed to start PostgreSQL for backup"
                                 exit $EXIT_CRITICAL
                             }
@@ -3482,7 +3482,7 @@ main() {
                         
                         if ! container_running "${DRAGONFLY_CONTAINER}"; then
                             log_warning "Dragonfly container not running - starting for backup..."
-                            docker compose -f docker-compose.prod.yml --profile infrastructure up -d dragonfly || {
+                            docker compose -f "$COMPOSE_FILE" --profile infrastructure up -d dragonfly || {
                                 log_error "Failed to start Dragonfly for backup"
                                 exit $EXIT_CRITICAL
                             }

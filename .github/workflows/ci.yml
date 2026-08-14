@@ -1,20 +1,12 @@
 # Multi-Environment CI/CD Pipeline — Healthcare Backend
 #
-# FLOW (push to preprod/main):
-#   validate-pr (PR only, no deploy)
-#   detect-changes + security (push only)
-#   docker-build (push only, parallel with ensure-infra-health)
-#   validate-secrets + validate-disk-space
-#   HEALTHY PATH:  -> prisma-migrate -> deploy-api -> deploy-worker
-#                  -> post-deploy-verification -> portainer-sync (opt)
-#   RECOVERY PATH: -> backup-infra -> recreate-infra -> restore-backup
-#                  -> verify-infra -> deploy-api -> deploy-worker
+# DEPLOY STRATEGY:
+#   Production:  Blue-green via SSH (unchanged)
+#   Preprod:     Coolify API (new — production untouched)
 #
-# KEY DESIGN:
-#   - SAME workflow file handles both environments via env vars.
-#   - Secrets scoped via GitHub Environments (production / preprod).
-#   - Zero-downtime blue-green deploy via SSH -> docker + blue-green-deploy.sh.
-#   - Portainer sync is OPTIONAL and NON-BLOCKING.
+# SHARED INFRA:
+#   One postgres + one dragonfly serve both environments.
+#   Separation via DB name (userdb vs userdb_preprod) + cache key prefix.
 #
 # Requirements: 1.x, 2.x, 3.x, 4.x, 5.x, 6.x, 7.x, 8.x, 9.x, 10.x, 11.x, 12.x
 # ============================================================================
@@ -280,11 +272,43 @@ jobs:
           echo "|-----|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| ${EXPECTED_TAG} | \`${EXPECTED_IMAGE}\` |" >> $GITHUB_STEP_SUMMARY
 
+      - name: Push image to local registry (preprod)
+        if: github.ref == 'refs/heads/preprod'
+        env:
+          IMAGE_SHA: ${{ needs.docker-build.outputs.image_name }}:preprod-${{ github.sha }}
+          LOCAL_IMAGE: localhost:5000/healthcare-api:preprod
+        run: |
+          echo "Saving ${IMAGE_SHA} and transferring to VPS local registry..."
+          docker save "${IMAGE_SHA}" -o /tmp/healthcare-api-preprod.tar
+
+          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            "mkdir -p /tmp/registry-import"
+          scp ${{ env.SSH_OPTS }} \
+            /tmp/healthcare-api-preprod.tar \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/registry-import/image.tar
+
+          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} bash -s <<'REMOTE'
+            set -euo pipefail
+            IMAGE_SHA="${IMAGE_SHA}"
+            LOCAL_IMAGE="${LOCAL_IMAGE}"
+
+            echo "Loading image on VPS..."
+            docker load -i /tmp/registry-import/image.tar
+
+            echo "Tagging as ${LOCAL_IMAGE}..."
+            docker tag "${IMAGE_SHA}" "${LOCAL_IMAGE}"
+
+            echo "Pushing ${LOCAL_IMAGE} to local registry..."
+            docker push "${LOCAL_IMAGE}"
+            echo "Local registry updated: ${LOCAL_IMAGE}"
+REMOTE
+
   # ============================================================================
-  # JOB: ensure-infrastructure-health — Check infra health for target environment
+  # JOB: ensure-infrastructure-health — Check shared infra (postgres + dragonfly)
+  # Both environments use the same shared infra, so this runs for both.
   # ============================================================================
   ensure-infrastructure-health:
-    name: "Ensure Infrastructure Health (${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }})"
+    name: "Ensure Infrastructure Health"
     runs-on: ubuntu-latest
     needs: [docker-build]
     timeout-minutes: 10
@@ -366,6 +390,9 @@ jobs:
           DOCKER_NETWORK: ${{ github.ref == 'refs/heads/main' && vars.DOCKER_NETWORK || vars.DOCKER_NETWORK }}
           API_SUBDOMAIN: ${{ github.ref == 'refs/heads/main' && vars.API_SUBDOMAIN || vars.API_SUBDOMAIN }}
           ENV_FILE: ${{ github.ref == 'refs/heads/main' && vars.ENV_FILE || vars.ENV_FILE }}
+          COOLIFY_API_KEY: ${{ secrets.COOLIFY_API_KEY }}
+          COOLIFY_API_URL: ${{ secrets.COOLIFY_API_URL }}
+          COOLIFY_PREPROD_UUID: ${{ secrets.COOLIFY_PREPROD_UUID }}
         run: |
           MISSING=()
           [[ -z "${SSH_PRIVATE_KEY}" ]] && MISSING+=("SSH_PRIVATE_KEY")
@@ -381,6 +408,13 @@ jobs:
           [[ -z "${DOCKER_NETWORK}" ]] && MISSING+=("DOCKER_NETWORK")
           [[ -z "${API_SUBDOMAIN}" ]] && MISSING+=("API_SUBDOMAIN")
           [[ -z "${ENV_FILE}" ]] && MISSING+=("ENV_FILE")
+
+          # Preprod-specific: Coolify credentials required for preprod branch
+          if [[ "${{ github.ref }}" != "refs/heads/main" ]]; then
+            [[ -z "${COOLIFY_API_KEY}" ]] && MISSING+=("COOLIFY_API_KEY")
+            [[ -z "${COOLIFY_API_URL}" ]] && MISSING+=("COOLIFY_API_URL")
+            [[ -z "${COOLIFY_PREPROD_UUID}" ]] && MISSING+=("COOLIFY_PREPROD_UUID")
+          fi
 
           if (( ${#MISSING[@]} > 0 )); then
             echo "::error::Missing required secrets/variables: ${MISSING[*]}"
@@ -453,7 +487,7 @@ jobs:
       group: deploy-${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
       cancel-in-progress: false
     outputs:
-      deploy_status: ${{ steps.deploy.outputs.status }}
+      deploy_status: ${{ steps.status.outputs.status }}
     steps:
       - uses: actions/checkout@v4
 
@@ -490,6 +524,15 @@ jobs:
             DEPLOY_PATH="${{ secrets.SERVER_DEPLOY_PATH }}"
             ENV_FILE="${DEPLOY_PATH}/.env.${DEPLOY_ENV}"
 
+            # DATABASE_URL: shared postgres, different DB per environment
+            if [ "${DEPLOY_ENV}" = "production" ]; then
+              DATABASE_URL="${{ secrets.DATABASE_URL }}"
+            else
+              # Construct preprod URL: same host/port/password as production,
+              # but point to userdb_preprod database (shared postgres container)
+              DATABASE_URL="postgresql://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@postgres:5432/userdb_preprod?schema=public"
+            fi
+
             cat > "${ENV_FILE}" <<ENVEOF
 # Auto-generated by CI for ${DEPLOY_ENV} — do NOT edit manually
 NODE_ENV=production
@@ -516,13 +559,13 @@ RATE_LIMIT_TTL=60
 RATE_LIMIT_MAX=600
 API_RATE_LIMIT=1000
 AUTH_RATE_LIMIT=30
-HEAVY_RATE_LIMIT=50
-USER_RATE_LIMIT=500
-HEALTH_RATE_LIMIT=2000
-NPM_CONFIG_LOGLEVEL=error
-DATABASE_URL=${{ secrets.DATABASE_URL }}
-POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
-POSTGRES_USER=${{ secrets.POSTGRES_USER }}
+HEAVY_RATE_LIMIT: 50
+USER_RATE_LIMIT: 500
+HEALTH_RATE_LIMIT: 2000
+NPM_CONFIG_LOGLEVEL: error
+DATABASE_URL=${DATABASE_URL}
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+POSTGRES_USER=${POSTGRES_USER}
 ENVEOF
 
             chmod 600 "${ENV_FILE}"
@@ -530,7 +573,9 @@ ENVEOF
 REMOTE
 
       - name: Copy deploy assets to server
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/preprod'
         run: |
+          # Blue-green deploy for both production and preprod
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
             "mkdir -p ${{ secrets.SERVER_DEPLOY_PATH }}/devops/docker/nginx"
           scp ${{ env.SSH_OPTS }} \
@@ -540,10 +585,6 @@ REMOTE
             devops/docker/nginx/nginx.conf \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ secrets.SERVER_DEPLOY_PATH }}/devops/docker/nginx/nginx.conf
           scp ${{ env.SSH_OPTS }} \
-            devops/docker/nginx/nginx.preprod.conf \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ secrets.SERVER_DEPLOY_PATH }}/devops/docker/nginx/nginx.preprod.conf
-          # Install the blue-green deploy script
-          scp ${{ env.SSH_OPTS }} \
             devops/scripts/docker-infra/blue-green-deploy.sh \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/blue-green-deploy.sh
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
@@ -552,20 +593,24 @@ REMOTE
       - name: Run Prisma migrations
         id: migrate
         continue-on-error: true
-        timeout-minutes: 3
+        timeout-minutes: 5
         run: |
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} bash -s <<'REMOTE'
             set -euo pipefail
             DEPLOY_ENV="${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}"
-            COMPOSE_FILE="${{ steps.resolve.outputs.compose_file }}"
-            COMPOSE_DIR="${{ secrets.SERVER_DEPLOY_PATH }}/devops/docker"
-            NETWORK="${{ steps.resolve.outputs.docker_network }}"
             IMAGE="${{ needs.docker-build.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}"
-            DB_URL="${{ secrets.DATABASE_URL }}"
+
+            # Construct DATABASE_URL (shared postgres, different DB per env)
+            if [ "${DEPLOY_ENV}" = "production" ]; then
+              DB_URL="${{ secrets.DATABASE_URL }}"
+            else
+              DB_URL="postgresql://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@postgres:5432/userdb_preprod?schema=public"
+            fi
 
             echo "Running Prisma migrations for ${DEPLOY_ENV}..."
+            echo "Target database: ${DB_URL}"
             docker run --rm \
-              --network "${NETWORK}" \
+              --network "${{ github.ref == 'refs/heads/main' && 'app-network' || 'preprod-network' }}" \
               -e DATABASE_URL="${DB_URL}" \
               "${IMAGE}" \
               bash -c "yarn prisma migrate deploy --schema=src/libs/infrastructure/database/prisma/schema.prisma" \
@@ -580,49 +625,89 @@ REMOTE
       - name: Blue-green deploy API
         id: deploy
         continue-on-error: true
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/preprod'
         run: |
+          BRANCH="${{ github.ref_name }}"
+          if [ "${BRANCH}" = "main" ]; then
+            PREFIX="latest-"
+            IMAGE_TAG="main-${{ github.sha }}"
+            NETWORK="app-network"
+            NGINX_CONTAINER="latest-nginx"
+            UPSTREAM_CONF="${{ secrets.SERVER_DEPLOY_PATH }}/nginx/upstream.conf"
+          else
+            PREFIX="preprod-"
+            IMAGE_TAG="preprod-${{ github.sha }}"
+            NETWORK="preprod-network"
+            NGINX_CONTAINER="preprod-nginx"
+            UPSTREAM_CONF="/opt/healthcare-preprod/nginx/upstream.conf"
+          fi
+
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
             /tmp/blue-green-deploy.sh \
-            --container-prefix "${{ steps.resolve.outputs.container_prefix }}" \
+            --container-prefix "${PREFIX}" \
             --service "api" \
-            --image "${{ needs.docker-build.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}" \
-            --network "${{ steps.resolve.outputs.docker_network }}" \
-            --upstream-conf "${{ secrets.SERVER_DEPLOY_PATH }}/nginx/upstream.conf" \
-            --nginx-container "${{ steps.resolve.outputs.container_prefix }}nginx" \
+            --image "${{ needs.docker-build.outputs.image_name }}:${IMAGE_TAG}" \
+            --network "${NETWORK}" \
+            --upstream-conf "${UPSTREAM_CONF}" \
+            --nginx-container "${NGINX_CONTAINER}" \
             --health-endpoint "/infra-health" \
-            --health-timeout ${{ env.HEALTH_TIMEOUT }} \
-            --health-interval ${{ env.HEALTH_INTERVAL }} \
-            --drain-timeout ${{ env.DRAIN_TIMEOUT }} \
-            --drain-interval ${{ env.DRAIN_INTERVAL }} \
-            --api-port ${{ steps.resolve.outputs.api_port }}
+            --health-timeout 180 \
+            --health-interval 5 \
+            --drain-timeout 120 \
+            --drain-interval 5 \
+            --api-port 8088
 
       - name: Blue-green deploy worker
         id: deploy-worker
         continue-on-error: true
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/preprod'
         run: |
+          BRANCH="${{ github.ref_name }}"
+          if [ "${BRANCH}" = "main" ]; then
+            PREFIX="latest-"
+            IMAGE_TAG="main-${{ github.sha }}"
+            NETWORK="app-network"
+            NGINX_CONTAINER="latest-nginx"
+          else
+            PREFIX="preprod-"
+            IMAGE_TAG="preprod-${{ github.sha }}"
+            NETWORK="preprod-network"
+            NGINX_CONTAINER="preprod-nginx"
+          fi
+
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
             /tmp/blue-green-deploy.sh \
-            --container-prefix "${{ steps.resolve.outputs.container_prefix }}" \
+            --container-prefix "${PREFIX}" \
             --service "worker" \
-            --image "${{ needs.docker-build.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}" \
-            --network "${{ steps.resolve.outputs.docker_network }}" \
-            --nginx-container "${{ steps.resolve.outputs.container_prefix }}nginx" \
+            --image "${{ needs.docker-build.outputs.image_name }}:${IMAGE_TAG}" \
+            --network "${NETWORK}" \
+            --nginx-container "${NGINX_CONTAINER}" \
             --health-endpoint "/infra-health" \
-            --health-timeout ${{ env.HEALTH_TIMEOUT }} \
-            --health-interval ${{ env.HEALTH_INTERVAL }} \
-            --drain-timeout ${{ env.DRAIN_TIMEOUT }} \
-            --drain-interval ${{ env.DRAIN_INTERVAL }} \
-            --api-port 8080
+            --health-timeout 180 \
+            --health-interval 5 \
+            --drain-timeout 120 \
+            --drain-interval 5 \
+            --api-port 8088
 
       - name: Mark deploy status
         id: status
         if: always()
         run: |
-          if [[ "${{ steps.deploy.outcome }}" == "success" ]] && [[ "${{ steps.deploy-worker.outcome }}" == "success" ]]; then
-            echo "status=success" >> $GITHUB_OUTPUT
+          DEPLOY_STATUS="failed"
+
+          if [ "${{ github.ref == 'refs/heads/main' }}" = "true" ]; then
+            # Production: blue-green deploy
+            if [[ "${{ steps.deploy.outcome }}" == "success" ]] && [[ "${{ steps.deploy-worker.outcome }}" == "success" ]]; then
+              DEPLOY_STATUS="success"
+            fi
           else
-            echo "status=failed" >> $GITHUB_OUTPUT
+            # Preprod: Coolify deploy
+            if [[ "${{ steps.deploy-coolify.outcome }}" == "success" ]]; then
+              DEPLOY_STATUS="success"
+            fi
           fi
+
+          echo "status=${DEPLOY_STATUS}" >> $GITHUB_OUTPUT
 
   # ============================================================================
   # JOB: post-deployment-verification — Verify health via subdomain

@@ -840,11 +840,11 @@ verify_and_fix_images() {
 
         # Start with latest image
         export DOCKER_IMAGE="$expected_image"
-        local compose_file="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
+        local compose_file="${BASE_DIR}/devops/docker/${COMPOSE_FILE:-docker-compose.prod.yml}"
 
         if [[ -f "$compose_file" ]]; then
             cd "$(dirname "$compose_file")" || return 1
-            if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
+            if docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
                 log_info "Containers recreated, waiting for startup..."
                 sleep 10
 

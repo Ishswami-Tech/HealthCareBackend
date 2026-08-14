@@ -64,12 +64,28 @@ error()   { echo -e "${RED}${LOG_PREFIX}${NC} $(date '+%Y-%m-%d %H:%M:%S') $*" >
 
 usage() {
     cat <<EOF
-Usage: $0 --container-prefix PREFIX --service NAME --image IMG \\
+Usage: $0 --container-prefix ENV --service NAME --image IMG \\
           --network NET --upstream-conf PATH --nginx-container NAME \\
           [--health-endpoint EP] [--health-timeout SEC] \\
           [--drain-timeout SEC] [--api-port PORT]
 
-Example (production API):
+Container naming: {color}-{service}-{env}
+  color:     blue | green (toggled each deploy)
+  service:   api | worker
+  env:       preprod | latest
+
+Examples:
+  # Preprod API (CONTAINER_PREFIX=preprod-)
+  $0 --container-prefix "preprod-" --service api \\
+     --image "ghcr.io/org/healthcare-api:preprod-abc123" \\
+     --network preprod-network \\
+     --upstream-conf /opt/healthcare-preprod/nginx/upstream.conf \\
+     --nginx-container preprod-nginx \\
+     --health-endpoint /infra-health --health-timeout 180 \\
+     --drain-timeout 120 --api-port 8088
+  # Creates: blue-api-preprod or green-api-preprod
+
+  # Production API (CONTAINER_PREFIX=latest-)
   $0 --container-prefix "latest-" --service api \\
      --image "ghcr.io/org/healthcare-api:main-abc123" \\
      --network app-network \\
@@ -77,6 +93,7 @@ Example (production API):
      --nginx-container latest-nginx \\
      --health-endpoint /infra-health --health-timeout 180 \\
      --drain-timeout 120 --api-port 8088
+  # Creates: blue-api-latest or green-api-latest
 EOF
 }
 
@@ -173,7 +190,10 @@ detect_active_color() {
 # Start the new container with the inactive color.
 start_new_container() {
     local color="$1"
-    local container_name="${CONTAINER_PREFIX}${SERVICE}-${color}"
+    # Container naming: {color}-{service}-{env}
+    # e.g., blue-api-preprod, green-api-latest, blue-worker-preprod
+    local env_suffix="${CONTAINER_PREFIX%-}"  # Strip trailing dash: "preprod-" → "preprod", "latest-" → "latest"
+    local container_name="${color}-${SERVICE}-${env_suffix}"
 
     NEW_CONTAINER_NAME="$container_name"
     info "Starting new container: ${container_name} (image=${IMAGE})"
@@ -186,7 +206,7 @@ start_new_container() {
         --hostname "${SERVICE}-${color}" \
         --network "$NETWORK" \
         --restart unless-stopped \
-        --env-file "${UPSTREAM_CONF%/*/*}/../${ENV_FILE}" \
+        --env-file "${UPSTREAM_CONF%/*}/../${ENV_FILE}" \
         -e NODE_ENV=production \
         -e DEV_MODE="false" \
         -e DOCKER_ENV="true" \
@@ -328,13 +348,14 @@ main() {
     info "Network=${NETWORK}, upstream=${UPSTREAM_CONF}, nginx=${NGINX_CONTAINER}"
 
     # 1. Detect active color
+    local env_suffix="${CONTAINER_PREFIX%-}"
     ACTIVE_COLOR=$(detect_active_color)
     if [[ "$ACTIVE_COLOR" == "blue" ]]; then
         INACTIVE_COLOR="green"
     else
         INACTIVE_COLOR="blue"
     fi
-    OLD_CONTAINER_NAME="${CONTAINER_PREFIX}${SERVICE}-${ACTIVE_COLOR}"
+    OLD_CONTAINER_NAME="${ACTIVE_COLOR}-${SERVICE}-${env_suffix}"
     info "Active color=${ACTIVE_COLOR} -> new color=${INACTIVE_COLOR}"
     info "Old container (to be drained): ${OLD_CONTAINER_NAME}"
 
