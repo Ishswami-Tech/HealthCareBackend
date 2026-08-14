@@ -418,9 +418,6 @@ jobs:
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
             set -euo pipefail
             cd '${DEPLOY_PATH}'
-            DEPLOY_BRANCH='${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}'
-            git fetch origin "\$DEPLOY_BRANCH"
-            git reset --hard "origin/\$DEPLOY_BRANCH"
             docker pull '${TARGET_IMAGE}'
             if [ '${DEPLOY_ENV}' = 'preprod' ]; then
               export BASE_DIR='${DEPLOY_PATH}'
