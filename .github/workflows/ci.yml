@@ -299,9 +299,9 @@ jobs:
 
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
             "docker load -i /tmp/registry-import/image.tar && \
-             docker tag \${IMAGE_SHA} \${LOCAL_IMAGE} && \
-             docker push \${LOCAL_IMAGE} && \
-             echo 'Local registry updated: \${LOCAL_IMAGE}'"
+             docker tag '${IMAGE_SHA}' '${LOCAL_IMAGE}' && \
+             docker push '${LOCAL_IMAGE}' && \
+             echo 'Local registry updated: ${LOCAL_IMAGE}'"
 
   # ============================================================================
   # JOB: ensure-infrastructure-health — Check shared infra (postgres + dragonfly)
