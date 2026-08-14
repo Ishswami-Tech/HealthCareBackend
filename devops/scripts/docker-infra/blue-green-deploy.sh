@@ -237,6 +237,26 @@ resolve_database_url() {
         fi
     fi
 
+    if ! is_valid_database_url "$database_url" && container_running postgres; then
+        local pg_user=""
+        local pg_password=""
+        pg_user="$(docker exec postgres printenv POSTGRES_USER 2>/dev/null || true)"
+        pg_password="$(docker exec postgres printenv POSTGRES_PASSWORD 2>/dev/null || true)"
+
+        if [[ -n "$pg_user" && -n "$pg_password" ]]; then
+            if [[ "$DEPLOY_ENV" == "preprod" ]]; then
+                database_url="postgresql://${pg_user}:${pg_password}@postgres:5432/userdb_preprod?schema=public"
+            else
+                database_url="postgresql://${pg_user}:${pg_password}@postgres:5432/userdb?schema=public"
+            fi
+            if is_valid_database_url "$database_url"; then
+                success "Using DATABASE_URL from postgres container credentials"
+            else
+                database_url=""
+            fi
+        fi
+    fi
+
     if ! is_valid_database_url "$database_url" && [[ -f "$env_file_path" ]]; then
         database_url="$(grep -E '^DATABASE_URL=' "$env_file_path" | head -n 1 | sed 's/^DATABASE_URL=//' | sed "s/^['\"]//;s/['\"]$//")"
         if is_valid_database_url "$database_url"; then
