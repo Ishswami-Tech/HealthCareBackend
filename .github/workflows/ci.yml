@@ -37,7 +37,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_REPO: ${{ github.repository }}
   IMAGE_NAME: healthcare-api
-  SSH_OPTS: "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ServerAliveInterval=30 -o ServerAliveCountMax=60"
+  SSH_OPTS: "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o IdentitiesOnly=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=60"
   HEALTH_INTERVAL: 5
   DRAIN_INTERVAL: 5
   HEALTH_TIMEOUT: 180
