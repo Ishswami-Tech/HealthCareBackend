@@ -272,6 +272,13 @@ jobs:
           echo "|-----|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| ${EXPECTED_TAG} | \`${EXPECTED_IMAGE}\` |" >> $GITHUB_STEP_SUMMARY
 
+      - name: Set up SSH key for local registry push
+        if: github.ref == 'refs/heads/preprod'
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
       - name: Push image to local registry (preprod)
         if: github.ref == 'refs/heads/preprod'
         env:
