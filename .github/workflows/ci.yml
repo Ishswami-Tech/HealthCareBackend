@@ -2,7 +2,7 @@
 #
 # DEPLOY STRATEGY:
 #   Production:  Blue-green via SSH (via blue-green-deploy.sh)
-#   Preprod:     Blue-green via SSH (same script, different env)
+#   Preprod:     Standard deploy via SSH (via deploy.sh)
 #
 # SHARED INFRA:
 #   One postgres + one dragonfly serve both environments.
@@ -75,7 +75,7 @@ jobs:
           NGINX_PORT="${{ github.ref == 'refs/heads/main' && vars.NGINX_PORT || vars.NGINX_PORT }}"
           API_PORT="${{ vars.API_PORT }}"
           API_SUBDOMAIN="${{ github.ref == 'refs/heads/main' && vars.API_SUBDOMAIN || vars.API_SUBDOMAIN }}"
-          ENV_FILE="${{ github.ref == 'refs/heads/main' && '.env.production' || '.env.preprod' }}"
+          ENV_FILE="${{ github.ref == 'refs/heads/main' && '.env.production' || 'devops/docker/.env.preprod' }}"
 
           echo "deploy_env=${DEPLOY_ENV}" >> $GITHUB_OUTPUT
           echo "compose_file=${COMPOSE_FILE}" >> $GITHUB_OUTPUT
@@ -419,28 +419,40 @@ jobs:
             set -euo pipefail
             cd '${DEPLOY_PATH}'
             docker pull '${TARGET_IMAGE}'
-            bash devops/scripts/docker-infra/blue-green-deploy.sh \
-              --env '${DEPLOY_ENV}' \
-              --container-prefix '${CONTAINER_PREFIX}' \
-              --service api \
-              --image '${TARGET_IMAGE}' \
-              --network '${NETWORK}' \
-              --upstream-conf '${UPSTREAM_CONF}' \
-              --nginx-container '${NGINX_CONTAINER}' \
-              --health-endpoint /infra-health \
-              --health-timeout 180 \
-              --drain-timeout 120 \
-              --api-port 8088
-            bash devops/scripts/docker-infra/blue-green-deploy.sh \
-              --env '${DEPLOY_ENV}' \
-              --container-prefix '${CONTAINER_PREFIX}' \
-              --service worker \
-              --image '${TARGET_IMAGE}' \
-              --network '${NETWORK}' \
-              --health-endpoint /infra-health \
-              --health-timeout 180 \
-              --drain-timeout 120 \
-              --api-port 8088
+            if [ '${DEPLOY_ENV}' = 'preprod' ]; then
+              export BASE_DIR='${DEPLOY_PATH}'
+              export DOCKER_IMAGE='${TARGET_IMAGE}'
+              export DEPLOY_ENV='preprod'
+              export CONTAINER_PREFIX='${CONTAINER_PREFIX}'
+              export INFRA_ALREADY_HANDLED='true'
+              export INFRA_HEALTHY='true'
+              export INFRA_CHANGED='false'
+              export APP_CHANGED='true'
+              bash devops/scripts/docker-infra/deploy.sh --env preprod
+            else
+              bash devops/scripts/docker-infra/blue-green-deploy.sh \
+                --env '${DEPLOY_ENV}' \
+                --container-prefix '${CONTAINER_PREFIX}' \
+                --service api \
+                --image '${TARGET_IMAGE}' \
+                --network '${NETWORK}' \
+                --upstream-conf '${UPSTREAM_CONF}' \
+                --nginx-container '${NGINX_CONTAINER}' \
+                --health-endpoint /infra-health \
+                --health-timeout 180 \
+                --drain-timeout 120 \
+                --api-port 8088
+              bash devops/scripts/docker-infra/blue-green-deploy.sh \
+                --env '${DEPLOY_ENV}' \
+                --container-prefix '${CONTAINER_PREFIX}' \
+                --service worker \
+                --image '${TARGET_IMAGE}' \
+                --network '${NETWORK}' \
+                --health-endpoint /infra-health \
+                --health-timeout 180 \
+                --drain-timeout 120 \
+                --api-port 8088
+            fi
           "
           echo "Deployed ${IMAGE} to ${DEPLOY_ENV}"
 

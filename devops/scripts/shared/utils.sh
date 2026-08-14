@@ -31,16 +31,44 @@ log_error() {
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Resolve environment file based on DEPLOY_ENV (preprod | production | staging | development)
-# Falls back to .env.production if DEPLOY_ENV is unset/unknown, preserving previous behavior.
+# Preprod uses the repo-local devops/docker/.env.preprod file when available.
 resolve_env_file() {
     local deploy_env="${DEPLOY_ENV:-production}"
-    local env_file="${BASE_DIR}/.env.${deploy_env}"
-    if [[ ! -f "${env_file}" ]]; then
-        log_warning "Env file not found for DEPLOY_ENV='${deploy_env}': ${env_file}"
-        log_info "Falling back to ${BASE_DIR}/.env.production"
-        env_file="${BASE_DIR}/.env.production"
-    fi
-    echo "${env_file}"
+    local env_candidates=()
+
+    case "${deploy_env}" in
+        preprod)
+            env_candidates=(
+                "${BASE_DIR}/devops/docker/.env.preprod"
+                "${BASE_DIR}/.env.preprod"
+                "${BASE_DIR}/.env.production"
+            )
+            ;;
+        production)
+            env_candidates=(
+                "${BASE_DIR}/.env.production"
+                "${BASE_DIR}/devops/docker/.env.production"
+            )
+            ;;
+        *)
+            env_candidates=(
+                "${BASE_DIR}/.env.${deploy_env}"
+                "${BASE_DIR}/devops/docker/.env.${deploy_env}"
+                "${BASE_DIR}/.env.production"
+            )
+            ;;
+    esac
+
+    for env_file in "${env_candidates[@]}"; do
+        if [[ -f "${env_file}" ]]; then
+            echo "${env_file}"
+            return 0
+        fi
+    done
+
+    log_warning "Env file not found for DEPLOY_ENV='${deploy_env}' in any expected location"
+    log_info "Falling back to ${BASE_DIR}/.env.production"
+    echo "${BASE_DIR}/.env.production"
 }
 
 # Base directory for application (can be overridden by environment)

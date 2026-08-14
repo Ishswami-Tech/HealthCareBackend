@@ -1988,23 +1988,23 @@ run_migrations_safely() {
     }
     
     local database_url=""
-    local env_production_path="${BASE_DIR}/.env.production"
-    [[ ! -f "$env_production_path" ]] && env_production_path="${SCRIPT_DIR}/../../.env.production"
+    local env_file_path="${ENV_FILE:-${BASE_DIR}/.env.production}"
+    [[ ! -f "$env_file_path" ]] && env_file_path="${SCRIPT_DIR}/../../.env.production"
     
     # Priority 1: Check if DATABASE_URL is set in deployment script environment (from GitHub Actions)
     if [[ -n "${DATABASE_URL:-}" ]] && validate_database_url "${DATABASE_URL}"; then
         database_url="${DATABASE_URL}"
         log_info "Using DATABASE_URL from GitHub Actions/environment variable"
     else
-        # Priority 2: Try to read from .env.production file
-        log_info "DATABASE_URL not found in environment, checking .env.production file..."
-        if [[ -f "$env_production_path" ]]; then
+        # Priority 2: Try to read from the resolved env file
+        log_info "DATABASE_URL not found in environment, checking resolved env file..."
+        if [[ -f "$env_file_path" ]]; then
             local env_db_url
-            env_db_url=$(grep -E "^DATABASE_URL=" "$env_production_path" 2>/dev/null | head -n 1 | sed 's/^DATABASE_URL=//' | sed 's/^["'\'']//;s/["'\'']$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || echo "")
+            env_db_url=$(grep -E "^DATABASE_URL=" "$env_file_path" 2>/dev/null | head -n 1 | sed 's/^DATABASE_URL=//' | sed 's/^["'\'']//;s/["'\'']$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || echo "")
             
             if [[ -n "$env_db_url" ]] && validate_database_url "$env_db_url"; then
                 database_url="$env_db_url"
-                log_success "Using DATABASE_URL from .env.production file"
+                log_success "Using DATABASE_URL from resolved env file"
             fi
         fi
         
@@ -2025,7 +2025,7 @@ run_migrations_safely() {
             log_error "=========================================="
             log_error "DATABASE_URL must be provided via one of:"
             log_error "  1. GitHub Actions environment variable/secrets (recommended)"
-            log_error "  2. .env.production file"
+            log_error "  2. Resolved env file"
             log_error "  3. Existing running container environment"
             log_error "=========================================="
             return 1
@@ -2134,7 +2134,7 @@ setTimeout(()=>{console.log('TIMEOUT');process.exit(1)},10000);
         log_info "Running Prisma migration via one-shot container..."
         oneshot_migration_output=$(docker run --rm \
             --network app-network \
-            --env-file "${BASE_DIR}/.env.production" \
+            --env-file "${ENV_FILE}" \
             -e "DATABASE_URL=$database_url" \
             --entrypoint bash \
             "$migration_image" \
@@ -2290,38 +2290,38 @@ setTimeout(()=>{console.log('TIMEOUT');process.exit(1)},10000);
    
     
     local database_url
-    local env_production_path="${SCRIPT_DIR}/../../.env.production"
+    local env_file_path="${ENV_FILE:-${SCRIPT_DIR}/../../.env.production}"
     
     # Priority 1: Check if DATABASE_URL is set in deployment script environment (from GitHub Actions)
     if [[ -n "${DATABASE_URL:-}" ]] && validate_database_url "${DATABASE_URL}"; then
         database_url="${DATABASE_URL}"
         log_info "Using DATABASE_URL from GitHub Actions/environment variable"
     else
-        # Priority 2: Try to read from .env.production file (backup from previous deployment)
-        log_info "DATABASE_URL not found in environment, checking .env.production file..."
-        if [[ -f "$env_production_path" ]]; then
-            # Read DATABASE_URL from .env.production
+        # Priority 2: Try to read from the resolved env file
+        log_info "DATABASE_URL not found in environment, checking resolved env file..."
+        if [[ -f "$env_file_path" ]]; then
+            # Read DATABASE_URL from the resolved env file
             # Handle both formats: DATABASE_URL=value and DATABASE_URL="value" or DATABASE_URL='value'
             local env_db_url
-            env_db_url=$(grep -E "^DATABASE_URL=" "$env_production_path" 2>/dev/null | head -n 1 | sed 's/^DATABASE_URL=//' | sed 's/^["'\'']//;s/["'\'']$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || echo "")
+            env_db_url=$(grep -E "^DATABASE_URL=" "$env_file_path" 2>/dev/null | head -n 1 | sed 's/^DATABASE_URL=//' | sed 's/^["'\'']//;s/["'\'']$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || echo "")
             
             if [[ -n "$env_db_url" ]] && validate_database_url "$env_db_url"; then
                 database_url="$env_db_url"
-                log_success "Using DATABASE_URL from .env.production file (backup from previous deployment)"
+                log_success "Using DATABASE_URL from resolved env file (backup from previous deployment)"
             else
                 if [[ -n "$env_db_url" ]]; then
-                    log_warning "DATABASE_URL found in .env.production but is invalid format"
+                    log_warning "DATABASE_URL found in resolved env file but is invalid format"
                 else
-                    log_warning "DATABASE_URL not found in .env.production file"
+                    log_warning "DATABASE_URL not found in resolved env file"
                 fi
             fi
         else
-            log_warning ".env.production file not found at: $env_production_path"
+            log_warning "Resolved env file not found at: $env_file_path"
         fi
         
         # Priority 3: Try to read from existing container environment (if container is running)
         if [[ -z "${database_url:-}" ]]; then
-            log_info "DATABASE_URL not found in .env.production, checking existing container..."
+            log_info "DATABASE_URL not found in resolved env file, checking existing container..."
             if container_running "${CONTAINER_PREFIX}api"; then
                 local db_url_output
                 db_url_output=$(docker exec "${CONTAINER_PREFIX}api" printenv DATABASE_URL 2>&1)
@@ -2349,15 +2349,15 @@ setTimeout(()=>{console.log('TIMEOUT');process.exit(1)},10000);
             log_error "=========================================="
             log_error "DATABASE_URL must be provided via one of:"
             log_error "  1. GitHub Actions environment variable/secrets (recommended)"
-            log_error "  2. .env.production file (backup from previous deployment)"
+            log_error "  2. Resolved env file (backup from previous deployment)"
             log_error "  3. Existing running container environment"
             log_error ""
             log_error "For security reasons, no hardcoded DATABASE_URL is allowed."
-            log_error "Please ensure DATABASE_URL is set in GitHub Actions secrets or .env.production file."
+            log_error "Please ensure DATABASE_URL is set in GitHub Actions secrets or the resolved env file."
             log_error ""
             log_error "To fix:"
             log_error "  - Set DATABASE_URL in GitHub Actions workflow secrets/env vars"
-            log_error "  - Or ensure .env.production exists with DATABASE_URL"
+            log_error "  - Or ensure the resolved env file exists with DATABASE_URL"
             log_error "  - Or ensure container is running with DATABASE_URL in environment"
             log_error "=========================================="
             return 1
@@ -2419,7 +2419,7 @@ setTimeout(()=>{console.log('TIMEOUT');process.exit(1)},10000);
         log_error "Please verify:"
         log_error "  1. PostgreSQL container is running and healthy"
         log_error "  2. Password in DATABASE_URL matches POSTGRES_PASSWORD in docker-compose"
-        log_error "  3. .env.production file doesn't override DATABASE_URL with wrong password"
+        log_error "  3. The env file doesn't override DATABASE_URL with wrong password"
         log_error ""
         log_error "Database connection failed even after password fix attempt"
         log_error "This indicates a serious configuration issue"
