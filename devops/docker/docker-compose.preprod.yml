@@ -48,11 +48,7 @@ services:
     volumes:
       - ../../logs:/app/logs
     networks:
-      preprod-network:
-    extra_hosts:
-      - "postgres:postgres"
-      - "dragonfly:dragonfly"
-      - "worker:preprod-worker"
+      - preprod-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8088/infra-health"]
@@ -107,11 +103,7 @@ services:
     ports:
       - "8089:8088"
     networks:
-      preprod-network:
-    extra_hosts:
-      - "postgres:postgres"
-      - "dragonfly:dragonfly"
-      - "api:preprod-api"
+      - preprod-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "-e", "process.exit(0)"]
@@ -144,9 +136,8 @@ services:
       - /opt/healthcare-preprod/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - /opt/healthcare-preprod/nginx/upstream.conf:/etc/nginx/conf.d/upstream.conf:ro
       - /opt/healthcare-preprod/logs/nginx:/var/log/nginx
-    extra_hosts:
-      - "preprod-api:preprod-api"
-      - "preprod-worker:preprod-worker"
+    networks:
+      - preprod-network
     restart: always
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/nginx-health"]
