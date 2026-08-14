@@ -419,35 +419,6 @@ jobs:
             set -euo pipefail
             cd '${DEPLOY_PATH}'
             docker pull '${TARGET_IMAGE}'
-
-            if [ '${DEPLOY_ENV}' = 'production' ]; then
-              DATABASE_URL='${{ secrets.DATABASE_URL }}'
-            else
-              DATABASE_URL=\$(docker exec '${CONTAINER_PREFIX}api' printenv DATABASE_URL 2>/dev/null || true)
-
-              if [ -z \"\$DATABASE_URL\" ] && [ -f '${DEPLOY_PATH}/.env.preprod' ]; then
-                DATABASE_URL=\$(grep -E '^DATABASE_URL=' '${DEPLOY_PATH}/.env.preprod' | head -n 1 | sed 's/^DATABASE_URL=//' | sed 's/^["'\'']//;s/["'\'']$//')
-              fi
-
-              if [ -z \"\$DATABASE_URL\" ] && [ -f '${DEPLOY_PATH}/devops/docker/docker-compose.preprod.yml' ]; then
-                DATABASE_URL=\$(grep -E 'DATABASE_URL:' '${DEPLOY_PATH}/devops/docker/docker-compose.preprod.yml' | head -n 1 | sed 's/^[[:space:]]*DATABASE_URL:[[:space:]]*//')
-              fi
-            fi
-
-            if [ -z \"\$DATABASE_URL\" ]; then
-              echo 'ERROR: DATABASE_URL could not be resolved for migration/deploy.'
-              exit 1
-            fi
-
-            docker run --rm \
-              --network '${NETWORK}' \
-              -e DATABASE_URL=\"\$DATABASE_URL\" \
-              -e DIRECT_URL='' \
-              --entrypoint bash \
-              '${TARGET_IMAGE}' \
-              -lc 'cd /app && node scripts/run-prisma.js migrate'
-            export DATABASE_URL=\"\$DATABASE_URL\"
-            unset DIRECT_URL
             bash devops/scripts/docker-infra/blue-green-deploy.sh \
               --env '${DEPLOY_ENV}' \
               --container-prefix '${CONTAINER_PREFIX}' \

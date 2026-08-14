@@ -175,6 +175,76 @@ remove_container() {
     fi
 }
 
+is_valid_database_url() {
+    local url="$1"
+    [[ -n "$url" ]] && [[ "$url" == postgresql://* || "$url" == postgres://* ]] && [[ "$url" == *"@"* ]]
+}
+
+resolve_env_file_path() {
+    if [[ -n "$UPSTREAM_CONF" ]]; then
+        echo "${UPSTREAM_CONF%/*}/../${ENV_FILE}"
+    else
+        local script_root
+        script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+        echo "${script_root}/${ENV_FILE}"
+    fi
+}
+
+resolve_database_url() {
+    local database_url=""
+    local env_file_path
+    env_file_path="$(resolve_env_file_path)"
+
+    if is_valid_database_url "${DATABASE_URL:-}"; then
+        database_url="${DATABASE_URL}"
+        info "Using DATABASE_URL from environment"
+    elif [[ -n "${OLD_CONTAINER_NAME:-}" ]] && container_running "$OLD_CONTAINER_NAME"; then
+        database_url="$(docker exec "$OLD_CONTAINER_NAME" printenv DATABASE_URL 2>/dev/null || true)"
+        if is_valid_database_url "$database_url"; then
+            success "Using DATABASE_URL from existing container ${OLD_CONTAINER_NAME}"
+        else
+            database_url=""
+        fi
+    fi
+
+    if ! is_valid_database_url "$database_url" && [[ -f "$env_file_path" ]]; then
+        database_url="$(grep -E '^DATABASE_URL=' "$env_file_path" | head -n 1 | sed 's/^DATABASE_URL=//' | sed "s/^['\"]//;s/['\"]$//")"
+        if is_valid_database_url "$database_url"; then
+            success "Using DATABASE_URL from ${env_file_path}"
+        else
+            database_url=""
+        fi
+    fi
+
+    if ! is_valid_database_url "$database_url"; then
+        if [[ -n "${DEPLOY_ENV:-}" ]]; then
+            error "DATABASE_URL could not be resolved for ${DEPLOY_ENV} deployment."
+        else
+            error "DATABASE_URL could not be resolved."
+        fi
+        return 1
+    fi
+
+    export DATABASE_URL="$database_url"
+    return 0
+}
+
+run_prisma_migrations() {
+    if [[ "$SERVICE" != "api" ]]; then
+        return 0
+    fi
+
+    info "Running Prisma migrations before blue-green rollout..."
+    docker run --rm \
+        --network "$NETWORK" \
+        -e "DATABASE_URL=${DATABASE_URL}" \
+        -e "DIRECT_URL=" \
+        --entrypoint bash \
+        "$IMAGE" \
+        -lc 'cd /app && node scripts/run-prisma.js migrate'
+    success "Prisma migrations completed."
+}
+
 # Read current upstream.conf and detect active color (blue|green).
 detect_active_color() {
     if [[ ! -f "$UPSTREAM_CONF" ]]; then
@@ -386,9 +456,18 @@ main() {
     info "Active color=${ACTIVE_COLOR} -> new color=${INACTIVE_COLOR}"
     info "Old container (to be drained): ${OLD_CONTAINER_NAME}"
 
+    if ! resolve_database_url; then
+        exit 1
+    fi
+
     # Save original upstream.conf for rollback when the service uses Nginx cutover.
     if [[ "$SERVICE" == "api" ]] && [[ -f "$UPSTREAM_CONF" ]]; then
         ORIGINAL_UPSTREAM=$(cat "$UPSTREAM_CONF")
+    fi
+
+    if ! run_prisma_migrations; then
+        error "Migration step failed; aborting deployment."
+        exit 1
     fi
 
     # 2. Start new container
