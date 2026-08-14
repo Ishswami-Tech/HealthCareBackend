@@ -2082,7 +2082,8 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               if (!isHealthy) {
                 // Check for issues array (from CacheHealthMonitorStatus)
                 const connection = cacheResult?.['connection'] as
-                  Record<string, unknown> | undefined;
+                  | Record<string, unknown>
+                  | undefined;
                 const issues = cacheResult?.['issues'] as string[] | undefined;
                 if (issues && Array.isArray(issues) && issues.length > 0) {
                   errorDetails = issues.join('; ');
@@ -2181,7 +2182,8 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                   errorDetails = issues.join('; ');
                 } else {
                   const connection = queueResult?.['connection'] as
-                    Record<string, unknown> | undefined;
+                    | Record<string, unknown>
+                    | undefined;
                   if (
                     connection &&
                     typeof connection === 'object' &&
@@ -2278,7 +2280,8 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 } else {
                   const service = loggerResult?.['service'] as Record<string, unknown> | undefined;
                   const endpoint = loggerResult?.['endpoint'] as
-                    Record<string, unknown> | undefined;
+                    | Record<string, unknown>
+                    | undefined;
                   if (service && typeof service === 'object' && service['available'] === false) {
                     errorDetails = 'Logging service not available';
                   } else if (

@@ -131,16 +131,18 @@ export class DeadLetterQueueService {
     if (!this.dlqQueue) return [];
 
     const jobs = await this.dlqQueue.getJobs(['wait', 'active', 'delayed', 'failed'], 0, limit - 1);
-    return jobs.map((job: Job): DeadLetterEntry => ({
-      jobId: String(job.id),
-      originalQueue: (job.data as DeadLetterEntry)?.originalQueue ?? 'unknown',
-      name: job.name,
-      data: job.data,
-      error: (job.progress as string) ?? 'unknown',
-      stack: undefined,
-      attemptsMade: job.attemptsMade,
-      failedAt: job.timestamp ? new Date(job.timestamp) : new Date(),
-    }));
+    return jobs.map(
+      (job: Job): DeadLetterEntry => ({
+        jobId: String(job.id),
+        originalQueue: (job.data as DeadLetterEntry)?.originalQueue ?? 'unknown',
+        name: job.name,
+        data: job.data,
+        error: (job.progress as string) ?? 'unknown',
+        stack: undefined,
+        attemptsMade: job.attemptsMade,
+        failedAt: job.timestamp ? new Date(job.timestamp) : new Date(),
+      })
+    );
   }
 
   /**

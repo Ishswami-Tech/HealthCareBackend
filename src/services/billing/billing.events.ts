@@ -325,7 +325,8 @@ export class BillingEventsListener {
       clinicId:
         (inner['clinicId'] as string | undefined) ?? (rawPayload['clinicId'] as string | undefined),
       appointment: (inner['appointment'] ?? rawPayload['appointment']) as
-        { clinicId?: string; patientId?: string; doctorId?: string } | undefined,
+        | { clinicId?: string; patientId?: string; doctorId?: string }
+        | undefined,
       amount:
         (inner['amount'] as number | undefined) ?? (rawPayload['amount'] as number | undefined),
     };

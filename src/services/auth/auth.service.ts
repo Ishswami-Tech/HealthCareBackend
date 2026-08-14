@@ -639,7 +639,8 @@ export class AuthService {
       // Find user directly without caching for login (password must be fresh)
       // Use findUserByEmailForAuth which explicitly selects the password field
       const userResult = (await this.databaseService.findUserByEmailForAuth(loginDto.email)) as
-        (UserWithRelations & { password: string }) | null;
+        | (UserWithRelations & { password: string })
+        | null;
 
       if (!userResult) {
         await this.logging.log(
@@ -2105,7 +2106,12 @@ export class AuthService {
       profileComplete: boolean;
       requiresProfileCompletion: boolean;
       loginMethod?:
-        'password' | 'phone_otp' | 'email_otp' | 'google_oauth' | 'facebook_oauth' | 'apple_oauth';
+        | 'password'
+        | 'phone_otp'
+        | 'email_otp'
+        | 'google_oauth'
+        | 'facebook_oauth'
+        | 'apple_oauth';
     }
   ): UserProfile {
     // Email OTP login: email is verified since OTP was sent to and verified at that email

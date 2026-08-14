@@ -83,7 +83,10 @@ export class S3StorageService implements OnModuleInit {
     private readonly loggingService: LoggingService
   ) {
     const provider = this.configService.get<string>('S3_PROVIDER', 'contabo') as
-      'contabo' | 'aws' | 'wasabi' | 'custom';
+      | 'contabo'
+      | 'aws'
+      | 'wasabi'
+      | 'custom';
     const endpoint = this.configService.get<string>('S3_ENDPOINT');
     const region = this.configService.get<string>(
       'S3_REGION',
