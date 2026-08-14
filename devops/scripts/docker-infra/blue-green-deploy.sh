@@ -216,6 +216,14 @@ start_new_container() {
     NEW_CONTAINER_NAME="$container_name"
     info "Starting new container: ${container_name} (image=${IMAGE})"
 
+    local docker_env_args=()
+    if [[ -n "${DATABASE_URL:-}" ]]; then
+        docker_env_args+=(-e "DATABASE_URL=${DATABASE_URL}")
+    fi
+    if [[ -n "${DIRECT_URL:-}" ]]; then
+        docker_env_args+=(-e "DIRECT_URL=${DIRECT_URL}")
+    fi
+
     # Remove any leftover with the same name first
     remove_container "$container_name"
 
@@ -225,6 +233,7 @@ start_new_container() {
         --network "$NETWORK" \
         --restart unless-stopped \
         --env-file "${env_file_path}" \
+        "${docker_env_args[@]}" \
         -e NODE_ENV=production \
         -e DEV_MODE="false" \
         -e DOCKER_ENV="true" \

@@ -421,11 +421,8 @@ jobs:
             set -euo pipefail
             cd '${DEPLOY_PATH}'
             docker pull '${TARGET_IMAGE}'
-            docker run --rm \
-              --network '${NETWORK}' \
-              -e DATABASE_URL='${DATABASE_URL}' \
-              '${TARGET_IMAGE}' \
-              bash -c 'yarn prisma migrate deploy --schema=src/libs/infrastructure/database/prisma/schema.prisma'
+            export DATABASE_URL='${DATABASE_URL}'
+            unset DIRECT_URL
             bash devops/scripts/docker-infra/blue-green-deploy.sh \
               --env '${DEPLOY_ENV}' \
               --container-prefix '${CONTAINER_PREFIX}' \
