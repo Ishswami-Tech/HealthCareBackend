@@ -1,8 +1,8 @@
 # Multi-Environment CI/CD Pipeline — Healthcare Backend
 #
 # DEPLOY STRATEGY:
-#   Production:  Blue-green via SSH (unchanged)
-#   Preprod:     Coolify API (new — production untouched)
+#   Production:  Blue-green via SSH (via blue-green-deploy.sh)
+#   Preprod:     Blue-green via SSH (same script, different env)
 #
 # SHARED INFRA:
 #   One postgres + one dragonfly serve both environments.
@@ -390,9 +390,6 @@ REMOTE
           DOCKER_NETWORK: ${{ github.ref == 'refs/heads/main' && vars.DOCKER_NETWORK || vars.DOCKER_NETWORK }}
           API_SUBDOMAIN: ${{ github.ref == 'refs/heads/main' && vars.API_SUBDOMAIN || vars.API_SUBDOMAIN }}
           ENV_FILE: ${{ github.ref == 'refs/heads/main' && vars.ENV_FILE || vars.ENV_FILE }}
-          COOLIFY_API_KEY: ${{ secrets.COOLIFY_API_KEY }}
-          COOLIFY_API_URL: ${{ secrets.COOLIFY_API_URL }}
-          COOLIFY_PREPROD_UUID: ${{ secrets.COOLIFY_PREPROD_UUID }}
         run: |
           MISSING=()
           [[ -z "${SSH_PRIVATE_KEY}" ]] && MISSING+=("SSH_PRIVATE_KEY")
@@ -408,13 +405,6 @@ REMOTE
           [[ -z "${DOCKER_NETWORK}" ]] && MISSING+=("DOCKER_NETWORK")
           [[ -z "${API_SUBDOMAIN}" ]] && MISSING+=("API_SUBDOMAIN")
           [[ -z "${ENV_FILE}" ]] && MISSING+=("ENV_FILE")
-
-          # Preprod-specific: Coolify credentials required for preprod branch
-          if [[ "${{ github.ref }}" != "refs/heads/main" ]]; then
-            [[ -z "${COOLIFY_API_KEY}" ]] && MISSING+=("COOLIFY_API_KEY")
-            [[ -z "${COOLIFY_API_URL}" ]] && MISSING+=("COOLIFY_API_URL")
-            [[ -z "${COOLIFY_PREPROD_UUID}" ]] && MISSING+=("COOLIFY_PREPROD_UUID")
-          fi
 
           if (( ${#MISSING[@]} > 0 )); then
             echo "::error::Missing required secrets/variables: ${MISSING[*]}"
@@ -696,13 +686,13 @@ REMOTE
           DEPLOY_STATUS="failed"
 
           if [ "${{ github.ref == 'refs/heads/main' }}" = "true" ]; then
-            # Production: blue-green deploy
+            # Production: blue-green deploy (API + worker)
             if [[ "${{ steps.deploy.outcome }}" == "success" ]] && [[ "${{ steps.deploy-worker.outcome }}" == "success" ]]; then
               DEPLOY_STATUS="success"
             fi
           else
-            # Preprod: Coolify deploy
-            if [[ "${{ steps.deploy-coolify.outcome }}" == "success" ]]; then
+            # Preprod: blue-green deploy (API + worker)
+            if [[ "${{ steps.deploy.outcome }}" == "success" ]] && [[ "${{ steps.deploy-worker.outcome }}" == "success" ]]; then
               DEPLOY_STATUS="success"
             fi
           fi
