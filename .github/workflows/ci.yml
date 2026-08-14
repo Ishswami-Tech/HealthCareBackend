@@ -421,6 +421,13 @@ jobs:
             set -euo pipefail
             cd '${DEPLOY_PATH}'
             docker pull '${TARGET_IMAGE}'
+            docker run --rm \
+              --network '${NETWORK}' \
+              -e DATABASE_URL='${DATABASE_URL}' \
+              -e DIRECT_URL='' \
+              --entrypoint bash \
+              '${TARGET_IMAGE}' \
+              -lc 'cd /app && node scripts/run-prisma.js migrate'
             export DATABASE_URL='${DATABASE_URL}'
             unset DIRECT_URL
             bash devops/scripts/docker-infra/blue-green-deploy.sh \

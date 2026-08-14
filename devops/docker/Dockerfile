@@ -296,8 +296,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
 # Only regenerates if missing (should not happen in normal operation)
 ENTRYPOINT ["/app/entrypoint.sh"]
 
-# Run migrations only for API containers, not workers.
-# Blue-green deploy starts both api and worker containers, so this keeps
-# Prisma migration execution to once per deploy instead of once per container.
-CMD ["sh", "-c", "if [ \"${APP_MODE:-api}\" = \"worker\" ]; then echo 'Worker mode detected, skipping startup migrations.'; exec node dist/main.js; fi; if [ -d 'src/libs/infrastructure/database/prisma/migrations' ] && [ \"$(ls -A src/libs/infrastructure/database/prisma/migrations 2>/dev/null)\" ]; then echo 'Migrations found, running migrate deploy...'; node scripts/run-prisma.js migrate; else echo 'No migrations found, using db push for initial setup...'; node scripts/run-prisma.js push; fi && exec node dist/main.js"]
+# Container startup should never run migrations.
+# Deploy-time orchestration handles Prisma migrations exactly once per release.
+CMD ["node", "dist/main.js"]
 
