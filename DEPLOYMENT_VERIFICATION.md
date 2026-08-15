@@ -5,16 +5,15 @@ healthcare-backend deployment pipeline.
 
 > **Architecture summary:**
 >
-> - **Production & Preprod**: Both use Coolify blue-green deploys via
->   `coolify-deploy.sh`
-> - **Preprod**: Active — Coolify app with Traefik ingress + Let's Encrypt SSL
->   for `preprod-backend.ishswami.in`
-> - **Production**: Gated off — Coolify app ready, deploys enabled via
->   `ENABLE_PROD_DEPLOY=true`
-> - **Nginx**: Coolify's Traefik proxy handles ingress (80/443) for both
->   environments
-> - Postgres, Dragonfly are shared Docker volumes — never redeployed for
->   app-only deploys.
+> - **Preprod**: Active — Coolify-managed app with Traefik ingress + Let's
+>   Encrypt SSL for `preprod-backend.ishswami.in`. CI triggers deploys via
+>   Coolify API (`coolify-deploy.sh`).
+> - **Production**: Gated off — currently runs via `docker-compose.prod.yml`
+>   (latest-api/latest-worker). Deploys enabled via `ENABLE_PROD_DEPLOY=true`.
+> - **Ingress**: Coolify's Traefik proxy handles 80/443 for the preprod
+>   environment (host → coolify-proxy → api-ix9fceaxa914diauokjleeis:8080).
+> - **Shared infra**: Postgres and Dragonfly run once and serve both
+>   environments via separate database names and cache key prefixes.
 
 ---
 
@@ -84,7 +83,7 @@ healthcare-backend deployment pipeline.
 - Data integrity
 - Correct environment variables
 - Correct image version
-- Nginx config validity
+- Traefik routing (checks endpoint, not routing layer)
 
 **These must be verified manually for L1+ checks.**
 
@@ -186,9 +185,9 @@ echo "[7/8] Logs..."
 ssh $PREPROD_HOST 'docker logs --tail 50 api-ix9fceaxa914diauokjleeis 2>&1 | grep -iE "error|fatal" || echo "No errors"'
 ssh $PREPROD_HOST 'docker logs --tail 50 worker-ix9fceaxa914diauokjleeis 2>&1 | grep -iE "error|fatal" || echo "No errors"'
 
-# Step 8: Nginx
-echo "[8/8] Nginx..."
-ssh $PREPROD_HOST 'docker exec $(docker ps --filter "name=api-ix9" --format "{{.Names}}" | head -1) nginx -t'
+# Step 8: Health check
+echo "[8/8] Health..."
+ssh $PREPROD_HOST 'docker inspect --format "{{.State.Health.Status}}" $(docker ps --filter "name=api-ix9" --format "{{.Names}}" | head -1)'
 ```
 
 ### Acceptance Criteria
@@ -206,7 +205,7 @@ ssh $PREPROD_HOST 'docker exec $(docker ps --filter "name=api-ix9" --format "{{.
 | `DATABASE_URL`         | Contains `userdb_preprod` (preprod) or `userdb` (prod) | NOT localhost                                                         |
 | `DRAGONFLY_KEY_PREFIX` | `healthcare-preprod:` (preprod) / `healthcare:` (prod) | No collision                                                          |
 | `NODE_ENV`             | `production`                                           | Both environments                                                     |
-| Nginx config           | `nginx -t` → OK                                        | Valid config                                                          |
+| Container health       | `healthy`                                              | Docker health check passing                                           |
 | No error logs          | 0 errors in last 50 lines                              | Check API + Worker                                                    |
 
 ---
@@ -398,15 +397,14 @@ docker ps --filter "name=api-" --format "{{.Names}}\t{{.Ports}}"
 docker ps --filter "name=api-ix9" --format "{{.Names}}\t{{.Ports}}"
 ```
 
-### Nginx config
+### Ingress verification
 
 ```bash
-# Preprod nginx (Coolify-managed)
-PREPROD_NGINX=$(docker ps --filter "name=api-ix9" --format "{{.Names}}" | head -1)
-docker exec $PREPROD_NGINX nginx -t
+# Verify preprod is reachable through Coolify Traefik proxy
+curl -sI https://preprod-backend.ishswami.in/health | head -5
 
-# Production nginx (host-level)
-ssh <host> 'nginx -t'
+# Verify production is reachable through host nginx
+curl -sI https://backend-service-v1.ishswami.in/health | head -5
 ```
 
 ### DNS
@@ -472,7 +470,7 @@ docker logs --tail 200 api-ix9fceaxa914diauokjleeis 2>&1 | grep -iE "password|se
 docker exec api-ix9fceaxa914diauokjleeis sh -c 'echo ${DATABASE_URL:-NOT SET}' | grep -c "userdb_preprod"
 # Expected: 1 (must point to userdb_preprod, not userdb)
 
-# Verify ports are not exposed externally (except via nginx)
+# Verify ports are not exposed externally (except via Traefik/nginx)
 docker ps --filter "name=api-ix9" --format "{{.Names}}\t{{.Ports}}"
 # Should NOT show 0.0.0.0:8087 (if API port is only internal)
 ```

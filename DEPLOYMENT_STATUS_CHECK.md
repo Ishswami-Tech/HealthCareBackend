@@ -81,7 +81,7 @@ Run this **after** deploy job completes.
 ### CI Verification
 
 - [ ] `post-deployment-verification` job passed (HTTP 200 on `/health`)
-- [ ] `success-backup` job passed
+- [ ] `post-deployment-backup` job passed
 - [ ] No errors in deploy job logs
 
 ### Manual Verification

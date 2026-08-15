@@ -39,6 +39,19 @@ environments. Each environment has its own database name and cache key prefix.
 
 ---
 
+## Traffic Flow
+
+```
+Internet → coolify-proxy (Traefik, ports 80/443)
+           ├── preprod-backend.ishswami.in → api-ix9fceaxa914diauokjleeis:8080
+           └── backend-service-v1.ishswami.in → api-<prod-uuid>:8080
+```
+
+Coolify automatically configures Traefik routing rules for each managed app. No
+custom nginx proxy is needed for either environment.
+
+---
+
 ## The Two Environments
 
 | Property            | Preprod                           | Production                       |
@@ -204,9 +217,8 @@ The Coolify-generated `docker-compose.yml` lives at:
 
 | Container name                    | Image                                   | Network                  | Port mapping               |
 | --------------------------------- | --------------------------------------- | ------------------------ | -------------------------- |
-| `api-ix9fceaxa914diauokjleeis`    | `localhost:5000/healthcare-api:preprod` | preprod-network, coolify | Host 8087 → container 8088 |
+| `api-ix9fceaxa914diauokjleeis`    | `localhost:5000/healthcare-api:preprod` | preprod-network, coolify | Host 8087 → container 8080 |
 | `worker-ix9fceaxa914diauokjleeis` | `localhost:5000/healthcare-api:preprod` | preprod-network, coolify | No host port               |
-| `preprod-nginx`                   | `nginx:alpine`                          | proxy-network            | Host 8090 → container 80   |
 
 ### Environment
 

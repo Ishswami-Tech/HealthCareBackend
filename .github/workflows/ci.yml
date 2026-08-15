@@ -57,10 +57,8 @@ jobs:
     if: github.event_name == 'pull_request'
     outputs:
       deploy_env: ${{ steps.resolve.outputs.deploy_env }}
-      compose_file: ${{ steps.resolve.outputs.compose_file }}
       container_prefix: ${{ steps.resolve.outputs.container_prefix }}
       docker_network: ${{ steps.resolve.outputs.docker_network }}
-      nginx_port: ${{ steps.resolve.outputs.nginx_port }}
       api_port: ${{ steps.resolve.outputs.api_port }}
       api_subdomain: ${{ steps.resolve.outputs.api_subdomain }}
       env_file: ${{ steps.resolve.outputs.env_file }}
@@ -403,13 +401,10 @@ jobs:
             "$GITHUB_WORKSPACE/devops/scripts/docker-infra/verify.sh" \
             "$GITHUB_WORKSPACE/devops/scripts/docker-infra/backup.sh" \
             "$GITHUB_WORKSPACE/devops/scripts/docker-infra/incident-response.sh" \
-            "$GITHUB_WORKSPACE/devops/scripts/docker-infra/blue-green-deploy.sh" \
-            "$GITHUB_WORKSPACE/devops/scripts/docker-infra/deploy.sh" \
             "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${DEPLOY_PATH}/devops/scripts/docker-infra/"
 
       - name: Deploy
         id: deploy
-        continue-on-error: true
         env:
           DEPLOY_ENV: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
           DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
@@ -422,13 +417,6 @@ jobs:
           IMAGE_FULL="${{ needs.docker-build.outputs.image_name }}:${IMAGE_TAG}"
 
           echo "Deploying to: ${DEPLOY_ENV} (image: ${IMAGE_FULL})"
-
-          # ── Determine Coolify app UUID per environment ──────────────────────
-          if [ "${DEPLOY_ENV}" = "preprod" ]; then
-            COOLIFY_APP_UUID="${{ secrets.COOLIFY_PREPROD_APP_UUID }}"
-          else
-            COOLIFY_APP_UUID="${{ secrets.COOLIFY_PROD_APP_UUID }}"
-          fi
 
           # ── Gate: production deploys disabled until preprod is validated ────
           # To enable production deploys, set ENABLE_PROD_DEPLOY=true in GitHub
@@ -447,11 +435,10 @@ jobs:
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
             set -euo pipefail
             cd '${DEPLOY_PATH}'
+            DEPLOY_ENV='${DEPLOY_ENV}' \
             COOLIFY_API_TOKEN='${{ secrets.COOLIFY_API_TOKEN }}' \
-            COOLIFY_APP_UUID='${COOLIFY_APP_UUID}' \
-            IMAGE_TAG='${IMAGE_TAG}' \
             bash devops/scripts/docker-infra/coolify-deploy.sh \
-              --app-uuid '${COOLIFY_APP_UUID}' \
+              --app api \
               --image '${IMAGE_FULL}' \
               --wait \
               --force
