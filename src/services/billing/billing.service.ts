@@ -1512,7 +1512,7 @@ export class BillingService implements OnModuleInit {
             tax: data.tax || 0,
             discount: data.discount || 0,
             totalAmount,
-            status: InvoiceStatus.DRAFT,
+            status: InvoiceStatus.OPEN,
             dueDate: new Date(data.dueDate),
             ...(data.subscriptionId && { subscriptionId: data.subscriptionId }),
             ...(data.description && { description: data.description }),
@@ -1749,6 +1749,23 @@ export class BillingService implements OnModuleInit {
       status: InvoiceStatus.PAID,
       paidAt: new Date(),
     });
+
+    // Always regenerate the PDF after payment so the patient/WhatsApp copy
+    // shows PAID status and payment details (not the stale unpaid draft).
+    try {
+      await this.generateInvoicePDF(id);
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to regenerate invoice PDF after payment',
+        'BillingService',
+        {
+          invoiceId: id,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+    }
 
     await this.loggingService.log(
       LogType.SYSTEM,
@@ -4648,16 +4665,27 @@ export class BillingService implements OnModuleInit {
       discount: Number(invoice.discount ?? 0),
       total: Number(invoice.totalAmount ?? invoice.amount ?? 0),
 
-      ...(invoice.paidAt ? { paidAt: new Date(invoice.paidAt) } : {}),
-
-      notes: `Thank you for your payment. This invoice is for ${
-        subscriptionPlanName || 'services'
-      }.`,
-      termsAndConditions:
-        'Payment is due within 30 days. Please include the invoice number with your payment.',
+      notes: '',
+      termsAndConditions: '',
     };
 
-    if (invoice.paidAt && invoice.id) {
+    const invoiceStatus = String(invoice.status ?? 'OPEN').toUpperCase();
+    const isPaid = invoiceStatus === 'PAID' || Boolean(invoice.paidAt);
+    const serviceLabel = subscriptionPlanName || 'services';
+
+    if (isPaid) {
+      pdfData.paidAt = new Date(
+        invoice.paidAt ?? invoice.updatedAt ?? invoice.createdAt ?? Date.now()
+      );
+      pdfData.notes = `Payment received. Thank you. This invoice is for ${serviceLabel}.`;
+      pdfData.termsAndConditions = 'This invoice has been paid in full.';
+    } else {
+      pdfData.notes = `This invoice is awaiting payment for ${serviceLabel}.`;
+      pdfData.termsAndConditions =
+        'Payment is due by the due date. Please include the invoice number with your payment.';
+    }
+
+    if (isPaid && invoice.id) {
       const payments = await this.databaseService.findPaymentsSafe({
         invoiceId: String(invoice.id),
       });
@@ -4769,8 +4797,12 @@ export class BillingService implements OnModuleInit {
           throw new BadRequestException(`User ${userId} has no phone number`);
         }
 
-        // Generate PDF if not already generated
-        if (!invoice.pdfUrl || !invoice.pdfFilePath) {
+        // Always regenerate paid receipts so WhatsApp/PDF reflect PAID status.
+        // Unpaid invoices only generate when no PDF exists yet.
+        const invoiceStatus = String(invoice.status ?? '').toUpperCase();
+        const shouldRefreshPdf =
+          invoiceStatus === 'PAID' || !invoice.pdfUrl || !invoice.pdfFilePath;
+        if (shouldRefreshPdf) {
           await this.generateInvoicePDF(receiptId);
 
           // Fetch updated invoice
@@ -4781,6 +4813,10 @@ export class BillingService implements OnModuleInit {
           }
 
           invoice.pdfUrl = updatedInvoice.pdfUrl;
+          invoice.pdfFilePath = updatedInvoice.pdfFilePath ?? null;
+          if (updatedInvoice.paidAt) {
+            invoice.paidAt = updatedInvoice.paidAt;
+          }
         }
 
         // Send via WhatsApp - using type-safe access
