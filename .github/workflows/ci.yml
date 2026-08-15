@@ -406,6 +406,8 @@ jobs:
           # Copy the coolify-apps.env config so coolify-deploy.sh can resolve
           # app UUIDs per environment. Path on VPS mirrors the repo layout:
           #   devops/config/coolify-apps.env
+          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            "mkdir -p ${DEPLOY_PATH}/devops/config"
           scp ${{ env.SSH_OPTS }} \
             "$GITHUB_WORKSPACE/devops/config/coolify-apps.env" \
             "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${DEPLOY_PATH}/devops/config/"
