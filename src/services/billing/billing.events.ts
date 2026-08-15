@@ -242,10 +242,8 @@ export class BillingEventsListener {
         return;
       }
 
-      // Make the receipt artifact available first so billing updates are deterministic.
-      if (!invoiceRecord?.pdfUrl || !invoiceRecord?.pdfFilePath) {
-        await this.billingService.generateInvoicePDF(receiptId);
-      }
+      // Always refresh the PDF after payment so receipts show PAID (not a stale unpaid draft).
+      await this.billingService.generateInvoicePDF(receiptId);
 
       // Send receipt via WhatsApp
       const sent = await this.billingService.sendReceiptViaWhatsApp(
@@ -325,7 +323,8 @@ export class BillingEventsListener {
       clinicId:
         (inner['clinicId'] as string | undefined) ?? (rawPayload['clinicId'] as string | undefined),
       appointment: (inner['appointment'] ?? rawPayload['appointment']) as
-        { clinicId?: string; patientId?: string; doctorId?: string } | undefined,
+        | { clinicId?: string; patientId?: string; doctorId?: string }
+        | undefined,
       amount:
         (inner['amount'] as number | undefined) ?? (rawPayload['amount'] as number | undefined),
     };
