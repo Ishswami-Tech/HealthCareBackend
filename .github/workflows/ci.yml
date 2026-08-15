@@ -470,7 +470,7 @@ jobs:
           SSH_OPTS: ${{ vars.SSH_OPTS || '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' }}
           DEPLOY_PATH: ${{ steps.resolve.outputs.deploy_path }}
           CONTAINER_PREFIX: ${{ github.ref == 'refs/heads/main' && 'latest-' || 'preprod-' }}
-          VPS_API_PORT: ${{ github.ref == 'refs/heads/main' && '8088' || '8087' }}
+          VPS_API_PORT: ${{ github.ref == 'refs/heads/main' && '8088' || '8090' }}
           DEPLOY_ENV: ${{ steps.resolve.outputs.deploy_env }}
         run: |
           echo "Running post-deploy verification (env: ${DEPLOY_ENV})..."

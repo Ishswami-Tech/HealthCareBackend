@@ -4,7 +4,7 @@ services:
     container_name: preprod-api
     hostname: api
     env_file:
-      - ../../.env.production
+      - /opt/healthcare-preprod/.env.preprod
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb_preprod?schema=public
       DRAGONFLY_KEY_PREFIX: "preprod:"
@@ -75,7 +75,7 @@ services:
     container_name: preprod-worker
     hostname: worker
     env_file:
-      - ../../.env.production
+      - /opt/healthcare-preprod/.env.preprod
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb_preprod?schema=public
       DRAGONFLY_KEY_PREFIX: "preprod:"
@@ -140,7 +140,7 @@ services:
       - preprod-network
     restart: always
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/nginx-health"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8090/nginx-health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -157,7 +157,7 @@ services:
       - "traefik.http.routers.preprod-api.tls.certresolver=letsencrypt"
       - "traefik.http.routers.preprod-api.tls.options.mintlsversion=versionTLS12"
       - "traefik.http.routers.preprod-api.middlewares=gzip"
-      - "traefik.http.services.preprod-api.loadbalancer.server.port=${NGINX_PORT:-8088}"
+      - "traefik.http.services.preprod-api.loadbalancer.server.port=8090"
       - "traefik.docker.network=preprod-network"
 
 networks:

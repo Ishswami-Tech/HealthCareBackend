@@ -423,7 +423,8 @@ curl -sI https://preprod-backend.ishswami.in | head -5
 
 ```bash
 # Verify image exists in local registry
-curl -s http://localhost:5000/v2/healthcare-api/tags/list | jq .
+# List GHCR image tags (requires gh CLI)
+# gh api -X GET /repos/ishswami-tech/healthcarebackend/packages/container/healthcare-api/versions | jq '.[].name'
 
 # If missing, CI failed to push — rebuild and redeploy
 ```

@@ -83,7 +83,7 @@ Examples:
      --upstream-conf /opt/healthcare-backend/nginx/upstream.conf \\
      --health-endpoint /infra-health --health-timeout 180 \\
      --drain-timeout 120 --api-port 8088
-  # Creates: blue-api-latest:8088 or green-api-latest:8091
+  # Creates: blue-api-latest:8088 or green-api-latest:8088
 
   # Worker deploy (no Nginx cutover)
   $0 --env production --container-prefix "latest-" --service worker \\

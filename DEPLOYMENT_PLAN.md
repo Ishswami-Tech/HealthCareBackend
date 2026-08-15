@@ -34,7 +34,8 @@
 
 1. Push to `preprod` branch triggers CI
 2. CI builds & pushes Docker image to GHCR
-3. CI saves image and transfers to VPS local registry (`localhost:5000`)
+3. CI pushes image to GHCR
+   (`ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:preprod`)
 4. CI SSH to VPS, runs
    `coolify-deploy.sh --app api --image <image> --wait --force`
 5. Coolify receives API call, orchestrates blue-green deploy of

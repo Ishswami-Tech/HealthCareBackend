@@ -50,7 +50,7 @@ else
     NETWORK="preprod-network"
     OTHER_NETWORK="app-network"
     NGINX_CONTAINER="preprod-nginx"
-    NGINX_PORT="${NGINX_PORT:-8089}"
+    NGINX_PORT="${NGINX_PORT:-8090}"
 fi
 
 # Check that the network actually exists
@@ -87,9 +87,9 @@ RESULT2=$(docker run --rm \
     --network "$NETWORK" \
     --name "isolation-test-tcp-$$" \
     alpine:latest \
-    sh -c "timeout 5 nc -zv 172.19.0.7 8089" 2>&1 || true)
+    sh -c "timeout 5 nc -zv 172.19.0.7 8090" 2>&1 || true)
 if echo "$RESULT2" | grep -q "open\|succeeded"; then
-    echo "ISOLATION VIOLATED: ${NETWORK} reached 172.19.0.7:8089 (preprod nginx IP)"
+    echo "ISOLATION VIOLATED: ${NETWORK} reached 172.19.0.7:8090 (preprod nginx IP)"
     echo "Output: $RESULT2"
     exit 1
 fi

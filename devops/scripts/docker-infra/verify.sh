@@ -316,9 +316,9 @@ ensure_public_ingress() {
         local compose_file="${deploy_root}/devops/docker/docker-compose.prod.yml"
     fi
 
-    # Determine the correct Host header based on which port we're hitting
+    # Determine the correct Host header based on deploy environment
     local host_header="backend-service-v1.ishswami.in"
-    if [[ "${VPS_API_PORT:-8088}" == "8087" ]]; then
+    if [[ "$deploy_env" == "preprod" ]]; then
         host_header="preprod-backend.ishswami.in"
     fi
 

@@ -215,10 +215,10 @@ The Coolify-generated `docker-compose.yml` lives at:
 
 ### Containers
 
-| Container name                    | Image                                   | Network                  | Port mapping               |
-| --------------------------------- | --------------------------------------- | ------------------------ | -------------------------- |
-| `api-ix9fceaxa914diauokjleeis`    | `localhost:5000/healthcare-api:preprod` | preprod-network, coolify | Host 8087 → container 8080 |
-| `worker-ix9fceaxa914diauokjleeis` | `localhost:5000/healthcare-api:preprod` | preprod-network, coolify | No host port               |
+| Container name                    | Image                                                            | Network                  | Port mapping               |
+| --------------------------------- | ---------------------------------------------------------------- | ------------------------ | -------------------------- |
+| `api-ix9fceaxa914diauokjleeis`    | `ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:preprod` | preprod-network, coolify | Host 8087 → container 8080 |
+| `worker-ix9fceaxa914diauokjleeis` | `ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:preprod` | preprod-network, coolify | No host port               |
 
 ### Environment
 

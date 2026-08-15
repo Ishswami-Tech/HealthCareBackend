@@ -22,7 +22,8 @@ Push any commit to `main`. CI automatically:
 1. Runs lint, type-check, security audit
 2. Builds multi-arch Docker image
 3. Pushes to GHCR
-4. Transfers image to VPS local registry (`localhost:5000`)
+4. CI pushes image to GHCR
+   (`ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:preprod`)
 5. Triggers Coolify deploy via API (`coolify-deploy.sh --wait --force`)
 6. Verifies health via `https://preprod-backend.ishswami.in/health`
 7. Takes a success backup
@@ -78,14 +79,14 @@ CI triggers production deploy via `blue-green-deploy.sh`.
 docker build -t healthcare-api:manual -f devops/docker/Dockerfile .
 
 # Tag and push to local registry on VPS
-docker tag healthcare-api:manual localhost:5000/healthcarebackend/healthcare-api:preprod
-docker push localhost:5000/healthcarebackend/healthcare-api:preprod
+docker tag healthcare-api:manual ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:preprod
+docker push ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:preprod
 
 # Trigger Coolify deploy
 cd /opt/healthcare-backend
 bash devops/scripts/docker-infra/coolify-deploy.sh \
   --app api \
-  --image localhost:5000/healthcarebackend/healthcare-api:preprod \
+  --image ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:preprod \
   --wait --force
 ```
 
@@ -97,7 +98,7 @@ bash devops/scripts/docker-infra/blue-green-deploy.sh \
   --env production \
   --container-prefix "latest-" \
   --service api \
-  --image "localhost:5000/healthcare-api:latest" \
+  --image "ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest" \
   --network app-network \
   --nginx-container "latest-nginx" \
   --upstream-conf /opt/healthcare-backend/nginx/upstream.conf \
@@ -123,7 +124,7 @@ bash devops/scripts/docker-infra/blue-green-deploy.sh \
   --env production \
   --container-prefix "latest-" \
   --service api \
-  --image "localhost:5000/healthcare-api:<previous-tag>" \
+  --image "ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:<previous-tag>" \
   ...
 ```
 
