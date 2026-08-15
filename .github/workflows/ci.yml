@@ -341,7 +341,7 @@ jobs:
             "cd '${DEPLOY_PATH}' && BASE_DIR='${DEPLOY_PATH}' bash devops/scripts/docker-infra/backup.sh pre-deployment" | tee /tmp/pre-deploy-backup.log
 
   deploy:
-    name: "Deploy (${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }})"
+    name: "Deploy"
     runs-on: ubuntu-latest
     needs: [docker-build, ensure-infrastructure-health, pre-deployment-backup]
     timeout-minutes: 60
@@ -436,7 +436,7 @@ jobs:
   # JOB: post-deployment-verification — Verify health via subdomain
   # ============================================================================
   post-deployment-verification:
-    name: "Post-Deploy Verification (${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }})"
+    name: "Post-Deploy Verification"
     runs-on: ubuntu-latest
     needs: [deploy]
     timeout-minutes: 5
@@ -481,7 +481,7 @@ jobs:
   # JOB: post-deployment-backup — Trigger success backup on VPS
   # ============================================================================
   post-deployment-backup:
-    name: "Post-Deploy Backup (${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }})"
+    name: "Post-Deploy Backup"
     runs-on: ubuntu-latest
     needs: [post-deployment-verification]
     timeout-minutes: 10
@@ -503,10 +503,7 @@ jobs:
             "cd '${DEPLOY_PATH}' && BASE_DIR='${DEPLOY_PATH}' bash devops/scripts/docker-infra/backup.sh success"
 
   # ============================================================================
-  # JOB: portainer-sync — Optional Portainer stack metadata update
-  # ============================================================================
-  # ============================================================================
-  # JOB: failure-recovery â€” Roll back after deployment or verification failure
+  # JOB: failure-recovery — Roll back after deployment or verification failure
   # ============================================================================
   failure-recovery:
     name: "Failure Recovery"
@@ -532,7 +529,7 @@ jobs:
             "cd '${DEPLOY_PATH}' && BASE_DIR='${DEPLOY_PATH}' bash devops/scripts/docker-infra/incident-response.sh deployment-failed" || true
 
   portainer-sync:
-    name: "Portainer Sync (${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }})"
+    name: "Portainer Sync"
     runs-on: ubuntu-latest
     needs: [post-deployment-verification]
     if: ${{ needs.post-deployment-verification.outputs.verified == 'true' }}
