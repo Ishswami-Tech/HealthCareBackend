@@ -412,6 +412,7 @@ jobs:
             cd '${DEPLOY_PATH}'
             DEPLOY_ENV='${DEPLOY_ENV}' \
             IMAGE_FULL='${IMAGE_FULL}' \
+            COOLIFY_API_TOKEN='${{ secrets.COOLIFY_API_TOKEN }}' \
             bash devops/scripts/docker-infra/coolify-deploy.sh \
               --app api \
               --image '${IMAGE_FULL}' \
