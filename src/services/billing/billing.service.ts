@@ -1775,6 +1775,23 @@ export class BillingService implements OnModuleInit {
       { invoiceId: id }
     );
 
+    // Always regenerate the PDF after payment so the patient/WhatsApp copy
+    // shows PAID status and payment details (not the stale unpaid draft).
+    try {
+      await this.generateInvoicePDF(id);
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to regenerate invoice PDF after payment',
+        'BillingService',
+        {
+          invoiceId: id,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+    }
+
     await this.eventService.emit('billing.receipt.paid', { receiptId: id, invoice });
     await this.invalidateUserInvoiceCaches(existingInvoice.userId);
 
@@ -3252,7 +3269,24 @@ export class BillingService implements OnModuleInit {
             provider: normalizedProvider || 'unknown',
           }
         );
-        return { payment };
+
+        // Still reconcile the invoice if payment is already completed but the
+        // invoice was left unpaid (e.g. earlier callback partially applied).
+        let reconciledInvoice: unknown;
+        if (currentStatusLower === 'completed' && payment.invoiceId) {
+          const linkedInvoice = await this.databaseService.findInvoiceByIdSafe(payment.invoiceId);
+          if (
+            linkedInvoice &&
+            String(linkedInvoice.status).toUpperCase() !== String(InvoiceStatus.PAID)
+          ) {
+            reconciledInvoice = await this.markInvoiceAsPaid(payment.invoiceId);
+          }
+        }
+
+        return {
+          payment,
+          ...(reconciledInvoice ? { invoice: reconciledInvoice } : {}),
+        };
       }
 
       const callbackMetadata = this.asRecord(payment.metadata)
