@@ -100,19 +100,19 @@ the Coolify-managed stacks. All deploy logic lives in Coolify + CI.
 
 ## Coolify API Token
 
-The CI uses this API token to trigger deployments:
+> **Security**: The token is stored as a GitHub Actions secret
+> (`COOLIFY_API_TOKEN`). It is **never** committed to the repository. Rotate it
+> via the Coolify dashboard (`Settings → API Tokens`) if it was ever exposed.
 
-```
-GffEL3VJgAem16F5j2spVcC1X5IhBzFfIqYt4vQI3a7e489f
-```
+The CI uses this token to trigger Coolify deploys:
+
+| Stack      | Resource UUID                  |
+| ---------- | ------------------------------ |
+| Preprod    | `ix9fceaxa914diauokjleeis`     |
+| Production | `COOLIFY_PROD_APP_UUID` secret |
 
 **Deploy endpoint**:
 `POST http://<coolify-host>:8000/api/v1/applications/<uuid>/deploy`
-
-| Stack      | Resource UUID                      |
-| ---------- | ---------------------------------- |
-| Preprod    | `ix9fceaxa914diauokjleeis`         |
-| Production | See `COOLIFY_PROD_APP_UUID` secret |
 
 ---
 

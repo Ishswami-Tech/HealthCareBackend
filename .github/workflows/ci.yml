@@ -403,6 +403,13 @@ jobs:
             "$GITHUB_WORKSPACE/devops/scripts/docker-infra/incident-response.sh" \
             "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${DEPLOY_PATH}/devops/scripts/docker-infra/"
 
+          # Copy the coolify-apps.env config so coolify-deploy.sh can resolve
+          # app UUIDs per environment. Path on VPS mirrors the repo layout:
+          #   devops/config/coolify-apps.env
+          scp ${{ env.SSH_OPTS }} \
+            "$GITHUB_WORKSPACE/devops/config/coolify-apps.env" \
+            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${DEPLOY_PATH}/devops/config/"
+
       - name: Deploy
         id: deploy
         env:
