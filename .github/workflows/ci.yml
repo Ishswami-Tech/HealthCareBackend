@@ -433,13 +433,13 @@ jobs:
           fi
 
   # ============================================================================
-  # JOB: post-deployment-verification — Verify health via subdomain
+  # JOB: post-deploy — Verify deployment health + trigger success backup
   # ============================================================================
-  post-deployment-verification:
-    name: "Post-Deploy Verification"
+  post-deploy:
+    name: "Post-Deploy (Verify + Backup)"
     runs-on: ubuntu-latest
     needs: [deploy]
-    timeout-minutes: 5
+    timeout-minutes: 15
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
     if: ${{ always() && needs.deploy.result == 'success' }}
     outputs:
@@ -457,9 +457,17 @@ jobs:
           echo "api_subdomain=${API_SUBDOMAIN}" >> $GITHUB_OUTPUT
           echo "deploy_path=${DEPLOY_PATH}" >> $GITHUB_OUTPUT
 
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo -e "Host *\n  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null" >> ~/.ssh/config
+
       - name: Verify deployment on VPS
         id: verify
         env:
+          SSH_OPTS: ${{ vars.SSH_OPTS || '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' }}
           DEPLOY_PATH: ${{ steps.resolve.outputs.deploy_path }}
           CONTAINER_PREFIX: ${{ github.ref == 'refs/heads/main' && 'latest-' || 'preprod-' }}
           VPS_API_PORT: ${{ github.ref == 'refs/heads/main' && '8088' || '8087' }}
@@ -477,28 +485,12 @@ jobs:
             bash devops/scripts/docker-infra/verify.sh deployment
           " && echo "verified=true" >> $GITHUB_OUTPUT || echo "verified=false" >> $GITHUB_OUTPUT
 
-  # ============================================================================
-  # JOB: post-deployment-backup — Trigger success backup on VPS
-  # ============================================================================
-  post-deployment-backup:
-    name: "Post-Deploy Backup"
-    runs-on: ubuntu-latest
-    needs: [post-deployment-verification]
-    timeout-minutes: 10
-    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
-    if: ${{ always() && needs.post-deployment-verification.outputs.verified == 'true' }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up SSH key
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-
       - name: Trigger success backup on VPS
+        if: ${{ steps.verify.outputs.verified == 'true' }}
+        env:
+          SSH_OPTS: ${{ vars.SSH_OPTS || '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' }}
+          DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
         run: |
-          DEPLOY_PATH="${{ secrets.SERVER_DEPLOY_PATH }}"
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
             "cd '${DEPLOY_PATH}' && BASE_DIR='${DEPLOY_PATH}' bash devops/scripts/docker-infra/backup.sh success"
 
@@ -508,8 +500,8 @@ jobs:
   failure-recovery:
     name: "Failure Recovery"
     runs-on: ubuntu-latest
-    needs: [deploy, post-deployment-verification]
-    if: ${{ always() && (needs.deploy.result == 'failure' || needs.post-deployment-verification.result == 'failure') }}
+    needs: [deploy, post-deploy]
+    if: ${{ always() && (needs.deploy.result == 'failure' || needs.post-deploy.result == 'failure') }}
     timeout-minutes: 20
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
     steps:
