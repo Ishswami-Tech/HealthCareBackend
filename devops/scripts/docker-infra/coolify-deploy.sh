@@ -123,24 +123,30 @@ fi
 
 log_info "Resolved: $DEPLOY_ENV/$APP_NAME -> $APP_UUID"
 
+# ─── Extract tag from image (for logging/verification) ────────────────────────
+IMAGE_TAG="${IMAGE##*:}"
+
 # ─── Trigger Deploy ───────────────────────────────────────────────────────────
 log_info "Triggering Coolify deploy..."
 log_info "  Env:    $DEPLOY_ENV"
 log_info "  App:    $APP_NAME ($APP_UUID)"
 log_info "  Image:  $IMAGE"
+log_info "  Tag:   $IMAGE_TAG"
 log_info "  Force:  $FORCE"
 
-PAYLOAD=$(jq -n \
-  --arg img "$IMAGE" \
-  --argjson force "$FORCE" \
-  '{image: $img, force: $force}')
+# Coolify v4 deploy endpoint: POST /api/v1/deploy
+# Use uuid-only (not tag) — Coolify deploys whatever image the service is configured with
+REQUEST_BODY="{\"uuid\":\"${APP_UUID}\"}"
+if [[ "$FORCE" == "true" ]]; then
+  REQUEST_BODY="{\"uuid\":\"${APP_UUID}\",\"force\":true}"
+fi
 
 HTTP_CODE=$(curl -s -o /tmp/coolify-response.json -w "%{http_code}" \
   -X POST \
-  "${API_URL}/applications/${APP_UUID}/deploy" \
+  "${API_URL}/deploy" \
   -H "Authorization: Bearer ${API_TOKEN}" \
   -H "Content-Type: application/json" \
-  -d "$PAYLOAD" \
+  -d "$REQUEST_BODY" \
   --max-time 60) || {
     log_error "Failed to reach Coolify API at ${API_URL}"
     exit 1
@@ -156,10 +162,10 @@ if [[ ! "$HTTP_CODE" =~ ^2[0-9]{2}$ ]]; then
   exit 1
 fi
 
-# Extract deploy UUID from response for tracking
-DEPLOY_UUID=$(echo "$RESPONSE_BODY" | jq -r '.uuid // empty' 2>/dev/null || echo "")
-if [[ -n "$DEPLOY_UUID" ]]; then
-  log_info "Deploy UUID: $DEPLOY_UUID"
+# Coolify v4 returns { deployments: [{ message, resource_uuid }] }
+DEPLOY_MSG=$(echo "$RESPONSE_BODY" | jq -r '.deployments[0]?.message // empty' 2>/dev/null || echo "")
+if [[ -n "$DEPLOY_MSG" ]]; then
+  log_info "Coolify says: $DEPLOY_MSG"
 fi
 
 # ─── Wait for Completion ──────────────────────────────────────────────────────
@@ -170,8 +176,9 @@ if [[ "$WAIT" == "true" ]]; then
   POLL_INTERVAL=15
 
   while [[ $ELAPSED -lt $MAX_WAIT ]]; do
+    # Try services endpoint first (this is a Coolify service), fall back to applications
     APP_STATUS=$(curl -s \
-      "${API_URL}/applications/${APP_UUID}" \
+      "${API_URL}/services/${APP_UUID}" \
       -H "Authorization: Bearer ${API_TOKEN}" \
       --max-time 10) || APP_STATUS=""
 
