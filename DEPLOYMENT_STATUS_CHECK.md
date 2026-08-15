@@ -3,8 +3,18 @@
 Pre-deploy and post-deploy checklist for both production and preprod
 environments.
 
-> **Critical**: Only API and Worker containers are deployed/recreated. Postgres,
-> Dragonfly, and Nginx are untouched for app-only deploys.
+> **Architecture summary:**
+>
+> - **Production & Preprod**: Both managed by Coolify blue-green deploys via
+>   `coolify-deploy.sh`
+> - **Preprod**: Active — Coolify app with Traefik ingress + Let's Encrypt SSL
+>   for `preprod-backend.ishswami.in`
+> - **Production**: Gated off — Coolify app ready, deploys enabled via
+>   `ENABLE_PROD_DEPLOY=true`
+> - **Nginx**: Coolify's Traefik proxy handles ingress (80/443) for both
+>   environments
+> - Postgres, Dragonfly are shared Docker volumes — never redeployed for
+>   app-only deploys.
 
 ---
 
@@ -23,8 +33,8 @@ Run this **before** merging to main or triggering a deploy.
 ### Infrastructure Health
 
 ```bash
-ssh <host> 'bash /opt/healthcare-backend/devops/scripts/docker-infra/health-check.sh'
-# Expected: {"status":"healthy",...}
+ssh <host> 'docker ps --filter "name=postgres" --format "{{.Names}}\t{{.Status}}"'
+ssh <host> 'docker ps --filter "name=dragonfly" --format "{{.Names}}\t{{.Status}}"'
 ```
 
 - [ ] `postgres` container healthy
@@ -46,8 +56,7 @@ ssh <host> 'df -h /opt/healthcare-backend'
 - [ ] `JWT_SECRET` set
 - [ ] `GITHUB_TOKEN` set (for GHCR auth)
 - [ ] `GITHUB_USERNAME` set
-- [ ] All other required secrets present (`.env.production` mapped to GitHub
-      Secrets)
+- [ ] All other required secrets present
 
 ### Backup Status
 
@@ -83,31 +92,24 @@ curl -s https://backend-service-v1.ishswami.in/health | jq .
 # Expected: {"status":"healthy","services":{...}}
 
 # 2. Infra health (from VPS)
-ssh <host> 'docker exec latest-api wget -q --spider http://localhost:8088/infra-health && echo OK'
+# Find the production api container dynamically
+PROD_API=$(ssh <host> "docker ps --filter 'name=api-' --filter 'name=preprod' --filter 'name=latest' --format '{{.Names}}' | grep -v preprod | head -1")
+ssh <host> "docker exec $PROD_API wget -q --spider http://localhost:8088/infra-health && echo OK"
 
 # 3. Container status
-ssh <host> 'docker ps --filter "name=latest-api" --format "{{.Names}}\t{{.Status}}\t{{.Image}}"'
-ssh <host> 'docker ps --filter "name=latest-worker" --format "{{.Names}}\t{{.Status}}\t{{.Image}}"'
-
-# 4. Nginx upstream
-ssh <host> 'cat /opt/healthcare-backend/nginx/upstream.conf'
-
-# 5. Running image SHA matches deployed SHA
-ssh <host> 'docker inspect latest-api --format "{{.Config.Image}} {{.Image}}"'
+ssh <host> 'docker ps --filter "name=api-" --format "{{.Names}}\t{{.Status}}\t{{.Image}}"'
+ssh <host> 'docker ps --filter "name=worker-" --format "{{.Names}}\t{{.Status}}\t{{.Image}}"'
 ```
 
 - [ ] `/health` returns 200 with healthy status
 - [ ] `/infra-health` returns 200
-- [ ] `latest-api` and `latest-worker` containers running
-- [ ] Running image SHA matches expected tag
-- [ ] Nginx upstream.conf points to active container
+- [ ] `api-*` and `worker-*` containers running
+- [ ] Running image matches expected tag
 - [ ] No error logs in API/Worker (last 100 lines)
 
 ### Rollback Readiness
 
-- [ ] `rollback-backup-<timestamp>` image still exists (cleanup only runs after
-      success)
-- [ ] Previous container (blue/green) still exists during drain period
+- [ ] Previous deployment still available in Coolify (for manual rollback)
 
 ---
 
@@ -124,25 +126,27 @@ Run this **before** pushing to preprod branch.
 ### Infrastructure Health
 
 ```bash
-ssh <host> 'bash /opt/healthcare-preprod/devops/scripts/docker-infra/health-check.sh'
+ssh <host> 'docker ps --filter "name=postgres" --format "{{.Names}}\t{{.Status}}"'
+ssh <host> 'docker ps --filter "name=dragonfly" --format "{{.Names}}\t{{.Status}}"'
 ```
 
-- [ ] `preprod-postgres` container healthy
-- [ ] `preprod-dragonfly` container healthy
+- [ ] `postgres` container healthy
+- [ ] `dragonfly` container healthy
 
 ### Disk Space
 
 ```bash
-ssh <host> 'df -h /opt/healthcare-preprod'
+ssh <host> 'df -h /opt/healthcare-backend'
+# Required: ≥3 GB free (CI also checks this)
 ```
 
-- [ ] ≥3 GB free
+- [ ] ≥3 GB free on VPS
 
 ### Preprod Database
 
 ```bash
-# Verify preprod DB exists and is accessible
-ssh <host> 'docker exec -i preprod-postgres psql -U postgres -d userdb_preprod -c "SELECT 1"'
+# Verify preprod DB exists and is accessible (shared postgres container)
+ssh <host> 'docker exec -i postgres psql -U postgres -d userdb_preprod -c "SELECT 1"'
 ```
 
 - [ ] `userdb_preprod` exists and is accessible
@@ -151,11 +155,9 @@ ssh <host> 'docker exec -i preprod-postgres psql -U postgres -d userdb_preprod -
 
 ### Secrets
 
-- [ ] `.env.preprod` has correct `DATABASE_URL` →
-      `postgresql://postgres:<pass>@preprod-postgres:5432/userdb_preprod`
-- [ ] Dragonfly prefix set to `healthcare-preprod:`
-- [ ] Cache prefix set to `healthcare-preprod:`
-- [ ] Worker port `9091` is free on VPS
+- [ ] `.env.preprod` mounted correctly at `/opt/healthcare-preprod/.env.preprod`
+- [ ] `DATABASE_URL` points to `userdb_preprod`
+- [ ] `DRAGONFLY_KEY_PREFIX` = `healthcare-preprod:`
 
 ### Fresh DB Option (if needed)
 
@@ -164,8 +166,8 @@ If preprod DB is corrupted or migrations are broken:
 ```bash
 # DROP and recreate — production is unaffected
 ssh <host>
-docker exec -i preprod-postgres psql -U postgres -c "DROP DATABASE IF EXISTS userdb_preprod;"
-docker exec -i preprod-postgres psql -U postgres -c "CREATE DATABASE userdb_preprod;"
+docker exec -i postgres psql -U postgres -c "DROP DATABASE IF EXISTS userdb_preprod;"
+docker exec -i postgres psql -U postgres -c "CREATE DATABASE userdb_preprod;"
 # Then push to preprod branch → deploy will run migrations fresh
 ```
 
@@ -178,7 +180,7 @@ docker exec -i preprod-postgres psql -U postgres -c "CREATE DATABASE userdb_prep
 ### CI Verification
 
 - [ ] Deploy job passed
-- [ ] `post-deployment-verification` passed (or ran with acceptable warnings)
+- [ ] `post-deployment-verification` passed
 - [ ] No errors in deploy logs
 
 ### Manual Verification
@@ -189,17 +191,18 @@ curl -s https://preprod-backend.ishswami.in/health | jq .
 # Expected: {"status":"healthy",...}
 
 # 2. Infra health
-ssh <host> 'docker exec preprod-api wget -q --spider http://localhost:8088/infra-health && echo OK'
+ssh <host> 'docker exec api-ix9fceaxa914diauokjleeis wget -q --spider http://localhost:8088/infra-health && echo OK'
 
-# 3. Containers
-ssh <host> 'docker ps --filter "name=preprod-api" --format "{{.Names}}\t{{.Status}}\t{{.Image}}"'
-ssh <host> 'docker ps --filter "name=preprod-worker" --format "{{.Names}}\t{{.Status}}\t{{.Image}}"'
+# 3. Containers (Coolify-managed names)
+ssh <host> 'docker ps --filter "name=api-" --format "{{.Names}}\t{{.Status}}\t{{.Image}}"'
+ssh <host> 'docker ps --filter "name=worker-" --format "{{.Names}}\t{{.Status}}\t{{.Image}}"'
 
 # 4. Verify Nginx is routing correctly
-ssh <host> 'docker exec preprod-nginx nginx -t && echo "nginx config OK"'
+PREPROD_NGINX=$(ssh <host> "docker ps --filter 'name=api-ix9' --format '{{.Names}}' | head -1")
+ssh <host> "docker exec $PREPROD_NGINX nginx -t && echo 'nginx config OK'"
 
 # 5. Verify DATABASE_URL points to preprod DB
-ssh <host> 'docker exec preprod-api sh -c "echo \${DATABASE_URL:-NOT SET}"'
+ssh <host> 'docker exec api-ix9fceaxa914diauokjleeis sh -c "echo ${DATABASE_URL:-NOT SET}"'
 
 # 6. Verify queue dashboard accessible
 curl -s https://preprod-backend.ishswami.in/queue-dashboard/health
@@ -207,20 +210,20 @@ curl -s https://preprod-backend.ishswami.in/queue-dashboard/health
 
 - [ ] `/health` returns 200
 - [ ] `/infra-health` returns 200
-- [ ] `preprod-api` and `preprod-worker` running
-- [ ] Image SHA matches expected
+- [ ] `api-ix9fceaxa914diauokjleeis` and `worker-ix9fceaxa914diauokjleeis`
+      running
+- [ ] Image matches expected `preprod` tag
 - [ ] `DATABASE_URL` points to `userdb_preprod`
 - [ ] `DRAGONFLY_KEY_PREFIX` = `healthcare-preprod:`
 - [ ] Queue dashboard accessible
-- [ ] Worker healthcheck passes
-- [ ] Nginx config valid
+- [ ] Nginx config valid (port 8090)
 
 ### Data Verification
 
 ```bash
-# Check preprod has data
-ssh <host> 'docker exec -i preprod-postgres psql -U postgres -d userdb_preprod -c "SELECT COUNT(*) FROM users;"'
-ssh <host> 'docker exec -i preprod-postgres psql -U postgres -d userdb_preprod -c "SELECT COUNT(*) FROM clinics;"'
+# Check preprod has data (shared postgres container)
+ssh <host> 'docker exec -i postgres psql -U postgres -d userdb_preprod -c "SELECT COUNT(*) FROM users;"'
+ssh <host> 'docker exec -i postgres psql -U postgres -d userdb_preprod -c "SELECT COUNT(*) FROM clinics;"'
 ```
 
 - [ ] Expected tables exist
@@ -241,14 +244,14 @@ docker network ls | grep -E "app-network|preprod-network"
 ssh <host> 'docker exec -i postgres psql -U postgres -d userdb -c "\dt"'
 
 # 3. Preprod DB has only preprod data
-ssh <host> 'docker exec -i preprod-postgres psql -U postgres -d userdb_preprod -c "\dt"'
+ssh <host> 'docker exec -i postgres psql -U postgres -d userdb_preprod -c "\dt"'
 
 # 4. Containers are on correct networks
-ssh <host> 'docker inspect preprod-api --format "{{json .NetworkSettings.Networks}}" | jq .'
-ssh <host> 'docker inspect latest-api --format "{{json .NetworkSettings.Networks}}" | jq .'
+ssh <host> 'docker inspect $(docker ps --filter "name=api-" --format "{{.Names}}" | grep -v ix9 | head -1) --format "{{json .NetworkSettings.Networks}}" | jq .'
+ssh <host> 'docker inspect api-ix9fceaxa914diauokjleeis --format "{{json .NetworkSettings.Networks}}" | jq .'
 
 # 5. Dragonfly key prefixes don't collide
-ssh <host> 'docker exec preprod-dragonfly redis-cli --scan --pattern "healthcare-preprod:*" | wc -l'
+ssh <host> 'docker exec dragonfly redis-cli --scan --pattern "healthcare-preprod:*" | wc -l'
 ssh <host> 'docker exec dragonfly redis-cli --scan --pattern "healthcare:*" | wc -l'
 ```
 
@@ -265,11 +268,17 @@ ssh <host> 'docker exec dragonfly redis-cli --scan --pattern "healthcare:*" | wc
 ```bash
 # One-liner to check everything
 ssh <host> bash -c '
+  PROD_API=$(docker ps --filter "name=api-" --format "{{.Names}}" | grep -v ix9 | head -1)
+  PROD_WORKER=$(docker ps --filter "name=worker-" --format "{{.Names}}" | head -1)
+  PREPROD_NGINX=$(docker ps --filter "name=api-ix9" --format "{{.Names}}" | head -1)
   echo "=== PRODUCTION ==="
-  docker ps --filter "name=latest-" --format "{{.Names}}\t{{.Status}}\t{{.Ports}}"
+  docker ps --filter "name=$PROD_API" --format "{{.Names}}\t{{.Status}}\t{{.Ports}}"
+  docker ps --filter "name=$PROD_WORKER" --format "{{.Names}}\t{{.Status}}\t{{.Ports}}"
   echo ""
   echo "=== PREPROD ==="
-  docker ps --filter "name=preprod-" --format "{{.Names}}\t{{.Status}}\t{{.Ports}}"
+  docker ps --filter "name=api-ix9" --format "{{.Names}}\t{{.Status}}\t{{.Ports}}"
+  docker ps --filter "name=worker-ix9" --format "{{.Names}}\t{{.Status}}"
+  docker ps --filter "name=$PREPROD_NGINX" --format "{{.Names}}\t{{.Status}}\t{{.Ports}}"
   echo ""
   echo "=== INFRA ==="
   docker ps --filter "name=postgres" --format "{{.Names}}\t{{.Status}}"
@@ -286,13 +295,10 @@ ssh <host> bash -c '
 
 If any check fails and you cannot resolve within 15 minutes:
 
-| Severity             | Action                                                         |
-| -------------------- | -------------------------------------------------------------- |
-| Production down      | Rollback via blue-green (automatic) or manual redeploy         |
-| Preprod down         | Redeploy with `deploy.sh --env preprod`                        |
-| Data corruption      | Restore from backup (`restore.sh latest`)                      |
-| Infrastructure down  | `docker compose up -d --force-recreate` with volumes preserved |
-| Complete server loss | Follow Disaster Recovery procedure                             |
-
-See `DEPLOYMENT_RUNBOOK.md` section
-[12. Common Troubleshooting](#12-common-troubleshooting) for detailed steps.
+| Severity            | Action                                                          |
+| ------------------- | --------------------------------------------------------------- |
+| Production down     | Rollback via Coolify dashboard                                  |
+| Preprod down        | Redeploy via Coolify dashboard                                  |
+| Data corruption     | Restore from backup (`restore.sh latest`)                       |
+| Infrastructure down | Recreate container with `docker compose up -d --force-recreate` |
+| Coolify down        | Check Coolify container logs, restart if needed                 |

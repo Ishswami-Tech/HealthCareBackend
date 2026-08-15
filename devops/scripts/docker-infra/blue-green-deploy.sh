@@ -1,13 +1,14 @@
 #!/bin/bash
 # ============================================================================
 # blue-green-deploy.sh — Zero-downtime blue-green deployment orchestrator
-# ----------------------------------------------------------------------------
-# Used by CI for both production (CONTAINER_PREFIX=latest-) and preprod
-# (CONTAINER_PREFIX=preprod-). Same script, different env vars.
+# ============================================================================
+# Supports BOTH host nginx and Docker nginx containers.
+# For Docker nginx: use --nginx-container to exec reload inside the container.
+# For host nginx: use --nginx-reload-cmd (default: "nginx -s reload").
 #
 # Algorithm:
 #   1. Read upstream.conf to determine current active color (blue|green).
-#   2. Start the new container with the INACTIVE color alongside active.
+#   2. Start the new container with the INACTIVE color on a new host port.
 #   3. Poll new container's /infra-health every 5s up to --health-timeout.
 #   4. On health success: write new upstream.conf -> reload Nginx.
 #   5. Verify new upstream returns /health (HTTP 200) within 30s.
@@ -15,8 +16,6 @@
 #
 # On any failure: roll back by removing the new container, leave the old one
 # active. Exit non-zero so CI can annotate the failed deploy.
-#
-# Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8
 # ============================================================================
 
 set -euo pipefail
@@ -29,7 +28,6 @@ SERVICE=""
 IMAGE=""
 NETWORK=""
 UPSTREAM_CONF=""
-NGINX_CONTAINER=""
 HEALTH_ENDPOINT="/infra-health"
 HEALTH_TIMEOUT=180
 HEALTH_INTERVAL=5
@@ -38,12 +36,15 @@ DRAIN_INTERVAL=5
 API_PORT=8088
 NGINX_VERIFY_TIMEOUT=30
 ENV_FILE=""
+NGINX_RELOAD_CMD="nginx -s reload"
+NGINX_CONTAINER=""   # Docker nginx container name (if nginx runs in Docker)
 LOG_PREFIX="[blue-green]"
 
 # Internal state
 ACTIVE_COLOR=""
 INACTIVE_COLOR=""
 NEW_CONTAINER_NAME=""
+NEW_HOST_PORT=""
 OLD_CONTAINER_NAME=""
 ORIGINAL_UPSTREAM=""
 DEPLOY_ENV="${DEPLOY_ENV:-production}"
@@ -64,10 +65,9 @@ error()   { echo -e "${RED}${LOG_PREFIX}${NC} $(date '+%Y-%m-%d %H:%M:%S') $*" >
 
 usage() {
     cat <<EOF
-Usage: $0 --container-prefix ENV --service NAME --image IMG \\
-          --network NET [--upstream-conf PATH --nginx-container NAME] \\
-          [--health-endpoint EP] [--health-timeout SEC] \\
-          [--drain-timeout SEC] [--api-port PORT]
+Usage: $0 --container-prefix ENV --service NAME --image IMG --network NET \\
+          --upstream-conf PATH [--nginx-container NAME] [--health-endpoint EP] \\
+          [--health-timeout SEC] [--drain-timeout SEC] [--api-port PORT] [--nginx-reload-cmd CMD]
 
 Container naming: {color}-{service}-{env}
   color:     blue | green (toggled each deploy)
@@ -75,30 +75,29 @@ Container naming: {color}-{service}-{env}
   env:       preprod | latest
 
 Examples:
-  # Preprod API (CONTAINER_PREFIX=preprod-)
-  $0 --container-prefix "preprod-" --service api \\
-     --image "ghcr.io/org/healthcare-api:preprod-abc123" \\
-     --network preprod-network \\
-     --upstream-conf /opt/healthcare-preprod/nginx/upstream.conf \\
-     --nginx-container preprod-nginx \\
-     --health-endpoint /infra-health --health-timeout 180 \\
-     --drain-timeout 120 --api-port 8088
-  # Creates: blue-api-preprod or green-api-preprod
-
-  # Production API (CONTAINER_PREFIX=latest-)
-  $0 --container-prefix "latest-" --service api \\
+  # Production API (blue-green via Docker nginx)
+  $0 --env production --container-prefix "latest-" --service api \\
      --image "ghcr.io/org/healthcare-api:main-abc123" \\
      --network app-network \\
+     --nginx-container "latest-nginx" \\
      --upstream-conf /opt/healthcare-backend/nginx/upstream.conf \\
-     --nginx-container latest-nginx \\
      --health-endpoint /infra-health --health-timeout 180 \\
      --drain-timeout 120 --api-port 8088
-  # Creates: blue-api-latest or green-api-latest
+  # Creates: blue-api-latest:8088 or green-api-latest:8091
 
   # Worker deploy (no Nginx cutover)
-  $0 --container-prefix "preprod-" --service worker \\
+  $0 --env production --container-prefix "latest-" --service worker \\
+     --image "ghcr.io/org/healthcare-api:main-abc123" \\
+     --network app-network \\
+     --health-endpoint /infra-health --health-timeout 180 \\
+     --drain-timeout 120 --api-port 8088
+
+  # Preprod API (blue-green via Docker nginx)
+  $0 --env preprod --container-prefix "preprod-" --service api \\
      --image "ghcr.io/org/healthcare-api:preprod-abc123" \\
      --network preprod-network \\
+     --nginx-container "preprod-nginx" \\
+     --upstream-conf /opt/healthcare-preprod/nginx/upstream.conf \\
      --health-endpoint /infra-health --health-timeout 180 \\
      --drain-timeout 120 --api-port 8088
 EOF
@@ -116,7 +115,8 @@ parse_args() {
             --image)            IMAGE="$2"; shift 2 ;;
             --network)          NETWORK="$2"; shift 2 ;;
             --upstream-conf)    UPSTREAM_CONF="$2"; shift 2 ;;
-            --nginx-container)  NGINX_CONTAINER="$2"; shift 2 ;;
+            --nginx-reload-cmd) NGINX_RELOAD_CMD="$2"; shift 2 ;;
+            --nginx-container)   NGINX_CONTAINER="$2"; shift 2 ;;
             --health-endpoint)  HEALTH_ENDPOINT="$2"; shift 2 ;;
             --health-timeout)   HEALTH_TIMEOUT="$2"; shift 2 ;;
             --health-interval)  HEALTH_INTERVAL="$2"; shift 2 ;;
@@ -146,7 +146,6 @@ parse_args() {
     [[ -z "$NETWORK" ]]          && missing+=("--network")
     if [[ "$SERVICE" == "api" ]]; then
         [[ -z "$UPSTREAM_CONF" ]] && missing+=("--upstream-conf")
-        [[ -z "$NGINX_CONTAINER" ]] && missing+=("--nginx-container")
     fi
 
     if (( ${#missing[@]} > 0 )); then
@@ -188,24 +187,19 @@ resolve_env_file_path() {
     if [[ -n "$UPSTREAM_CONF" ]]; then
         deploy_root="$(cd "$(dirname "$UPSTREAM_CONF")/.." && pwd)"
     fi
-
     script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 
-    if [[ "$ENV_FILE" == ".env.preprod" ]]; then
+    if [[ "$DEPLOY_ENV" == "preprod" ]]; then
         candidates=(
-            "${deploy_root}/devops/docker/.env.preprod"
-            "${deploy_root}/.env.preprod"
-            "${deploy_root}/.env.production"
-            "${script_root}/devops/docker/.env.preprod"
-            "${script_root}/.env.preprod"
-            "${script_root}/.env.production"
+            "${deploy_root}/${ENV_FILE}"
+            "${script_root}/${ENV_FILE}"
+            "${script_root}/devops/docker/${ENV_FILE}"
         )
     else
         candidates=(
-            "${deploy_root}/.env.production"
-            "${deploy_root}/devops/docker/.env.production"
-            "${script_root}/.env.production"
-            "${script_root}/devops/docker/.env.production"
+            "${deploy_root}/${ENV_FILE}"
+            "${script_root}/${ENV_FILE}"
+            "${script_root}/devops/docker/${ENV_FILE}"
         )
     fi
 
@@ -237,22 +231,23 @@ resolve_database_url() {
         fi
     fi
 
-    if ! is_valid_database_url "$database_url" && container_running postgres; then
-        local pg_user=""
-        local pg_password=""
-        pg_user="$(docker exec postgres printenv POSTGRES_USER 2>/dev/null || true)"
-        pg_password="$(docker exec postgres printenv POSTGRES_PASSWORD 2>/dev/null || true)"
+    if ! is_valid_database_url "$database_url"; then
+        local pg_container="${CONTAINER_PREFIX}postgres"
+        if container_running "$pg_container"; then
+            local pg_user=""
+            local pg_password=""
+            pg_user="$(docker exec "$pg_container" printenv POSTGRES_USER 2>/dev/null || true)"
+            pg_password="$(docker exec "$pg_container" printenv POSTGRES_PASSWORD 2>/dev/null || true)"
 
-        if [[ -n "$pg_user" && -n "$pg_password" ]]; then
-            if [[ "$DEPLOY_ENV" == "preprod" ]]; then
-                database_url="postgresql://${pg_user}:${pg_password}@postgres:5432/userdb_preprod?schema=public"
-            else
-                database_url="postgresql://${pg_user}:${pg_password}@postgres:5432/userdb?schema=public"
-            fi
-            if is_valid_database_url "$database_url"; then
-                success "Using DATABASE_URL from postgres container credentials"
-            else
-                database_url=""
+            if [[ -n "$pg_user" && -n "$pg_password" ]]; then
+                local db_name="userdb"
+                [[ "$DEPLOY_ENV" == "preprod" ]] && db_name="userdb_preprod"
+                database_url="postgresql://${pg_user}:${pg_password}@${pg_container}:5432/${db_name}?schema=public"
+                if is_valid_database_url "$database_url"; then
+                    success "Using DATABASE_URL from ${pg_container} container credentials"
+                else
+                    database_url=""
+                fi
             fi
         fi
     fi
@@ -305,10 +300,9 @@ run_prisma_migrations() {
     success "Prisma migrations completed."
 }
 
-# Read current upstream.conf and detect active color (blue|green).
+# Read current upstream.conf and detect active color (blue|green) and host port.
 detect_active_color() {
     if [[ ! -f "$UPSTREAM_CONF" ]]; then
-        # No upstream.conf means no prior deploy. Default to blue being active.
         warn "upstream.conf not found at ${UPSTREAM_CONF}; assuming default 'blue'."
         echo "blue"
         return
@@ -326,25 +320,35 @@ detect_active_color() {
     fi
 }
 
+# Find an available host port starting from a base.
+find_available_port() {
+    local base_port="$1"
+    local port="$base_port"
+
+    # Check if port is in use
+    while ss -tlnp | grep -q ":${port} "; do
+        port=$((port + 1))
+    done
+
+    echo "$port"
+}
+
 # Start the new container with the inactive color.
 start_new_container() {
     local color="$1"
-    # Container naming: {color}-{service}-{env}
-    # e.g., blue-api-preprod, green-api-latest, blue-worker-preprod
-    local env_suffix="${CONTAINER_PREFIX%-}"  # Strip trailing dash: "preprod-" → "preprod", "latest-" → "latest"
+    local env_suffix="${CONTAINER_PREFIX%-}"  # Strip trailing dash
     local container_name="${color}-${SERVICE}-${env_suffix}"
-    local env_file_path=""
 
-    if [[ -n "$UPSTREAM_CONF" ]]; then
-        env_file_path="${UPSTREAM_CONF%/*}/../${ENV_FILE}"
+    # Determine host port: blue=base port, green=base+1
+    if [[ "$color" == "blue" ]]; then
+        NEW_HOST_PORT="$API_PORT"
     else
-        local script_root
-        script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-        env_file_path="${script_root}/${ENV_FILE}"
+        # For green, find next available port after the base
+        NEW_HOST_PORT=$(find_available_port "$((API_PORT + 1))")
     fi
 
     NEW_CONTAINER_NAME="$container_name"
-    info "Starting new container: ${container_name} (image=${IMAGE})"
+    info "Starting new container: ${container_name} (image=${IMAGE}, host_port=${NEW_HOST_PORT})"
 
     local docker_env_args=()
     if [[ -n "${DATABASE_URL:-}" ]]; then
@@ -362,7 +366,8 @@ start_new_container() {
         --hostname "${SERVICE}-${color}" \
         --network "$NETWORK" \
         --restart unless-stopped \
-        --env-file "${env_file_path}" \
+        -p "${NEW_HOST_PORT}:${API_PORT}" \
+        --env-file "$(resolve_env_file_path)" \
         "${docker_env_args[@]}" \
         -e NODE_ENV=production \
         -e DEV_MODE="false" \
@@ -401,7 +406,7 @@ start_new_container() {
         error "New container ${container_name} failed to start."
         return 1
     fi
-    success "Started ${container_name}."
+    success "Started ${container_name} on host port ${NEW_HOST_PORT}."
 }
 
 # Poll /infra-health on the new container until success or timeout.
@@ -409,7 +414,7 @@ poll_health() {
     local container="$1"
     local elapsed=0
 
-    info "Polling ${HEALTH_ENDPOINT} on ${container} every ${HEALTH_INTERVAL}s (max ${HEALTH_TIMEOUT}s)..."
+    info "Polling ${HEALTH_ENDPOINT} on ${container} (host port ${NEW_HOST_PORT}) every ${HEALTH_INTERVAL}s (max ${HEALTH_TIMEOUT}s)..."
 
     while (( elapsed < HEALTH_TIMEOUT )); do
         if ! container_running "$container"; then
@@ -433,28 +438,46 @@ poll_health() {
     return 1
 }
 
-# Write new upstream.conf pointing to new container.
+# Write new upstream.conf pointing to new container's host port.
 write_upstream_conf() {
-    local container="$1"
-    local port="$2"
-
-    info "Writing upstream.conf for ${container}:${port}..."
+    info "Writing upstream.conf for ${NEW_CONTAINER_NAME}:${NEW_HOST_PORT}..."
     cat > "$UPSTREAM_CONF" <<EOF
-server ${container}:${port} max_fails=3 fail_timeout=10s;
+# Active: ${NEW_CONTAINER_NAME} (${color:-new})
+server 127.0.0.1:${NEW_HOST_PORT} max_fails=3 fail_timeout=10s;
 EOF
     success "upstream.conf written to ${UPSTREAM_CONF}."
 }
 
-# Reload Nginx inside the nginx container.
+# Reload Nginx — supports both host nginx and Docker nginx containers.
 reload_nginx() {
-    info "Reloading Nginx in ${NGINX_CONTAINER}..."
-    if docker exec "$NGINX_CONTAINER" nginx -t 2>&1 | grep -q "syntax is ok"; then
-        docker exec "$NGINX_CONTAINER" nginx -s reload
-        success "Nginx reloaded."
-        return 0
+    info "Reloading Nginx..."
+
+    if [[ -n "${NGINX_CONTAINER}" ]] && container_running "${NGINX_CONTAINER}"; then
+        # Docker nginx: test config inside container, then reload
+        info "Docker nginx detected (${NGINX_CONTAINER}) — reloading via docker exec"
+        if docker exec "${NGINX_CONTAINER}" nginx -t 2>&1 | grep -q "syntax is ok"; then
+            docker exec "${NGINX_CONTAINER}" nginx -s reload 2>&1 || {
+                error "Docker nginx reload failed."
+                return 1
+            }
+            success "Docker nginx reloaded (container: ${NGINX_CONTAINER})."
+            return 0
+        else
+            error "Docker nginx config test failed; aborting reload."
+            return 1
+        fi
+    else
+        # Host nginx: use nginx-reload-cmd
+        info "Host nginx — using command: ${NGINX_RELOAD_CMD}"
+        if nginx -t 2>&1 | grep -q "syntax is ok"; then
+            eval "$NGINX_RELOAD_CMD"
+            success "Host nginx reloaded."
+            return 0
+        else
+            error "Host nginx config test failed; aborting reload."
+            return 1
+        fi
     fi
-    error "Nginx config test failed; aborting reload."
-    return 1
 }
 
 # Verify new upstream returns HTTP 200 on /health via Nginx.
@@ -463,8 +486,7 @@ verify_upstream_health() {
     info "Verifying upstream /health via Nginx (max ${NGINX_VERIFY_TIMEOUT}s)..."
 
     while (( elapsed < NGINX_VERIFY_TIMEOUT )); do
-        if docker exec "$NGINX_CONTAINER" \
-            wget -q -O- --tries=1 --timeout=4 "http://localhost:${API_PORT}/health" 2>/dev/null \
+        if curl -sf -o /dev/null -w '' "http://127.0.0.1:${API_PORT}/health" 2>/dev/null \
             | grep -q '"status"'; then
             success "Upstream /health returns 200 with status field."
             return 0
@@ -472,6 +494,7 @@ verify_upstream_health() {
         sleep 2
         elapsed=$((elapsed + 2))
     done
+
     error "Upstream /health did not respond within ${NGINX_VERIFY_TIMEOUT}s."
     return 1
 }
@@ -502,7 +525,7 @@ main() {
     parse_args "$@"
 
     info "Blue-green deploy: service=${SERVICE} prefix=${CONTAINER_PREFIX} image=${IMAGE}"
-    info "Network=${NETWORK}, upstream=${UPSTREAM_CONF}, nginx=${NGINX_CONTAINER}"
+    info "Network=${NETWORK}, upstream=${UPSTREAM_CONF}"
 
     # 1. Detect active color
     local env_suffix="${CONTAINER_PREFIX%-}"
@@ -520,7 +543,7 @@ main() {
         exit 1
     fi
 
-    # Save original upstream.conf for rollback when the service uses Nginx cutover.
+    # Save original upstream.conf for rollback
     if [[ "$SERVICE" == "api" ]] && [[ -f "$UPSTREAM_CONF" ]]; then
         ORIGINAL_UPSTREAM=$(cat "$UPSTREAM_CONF")
     fi
@@ -545,13 +568,13 @@ main() {
 
     if [[ "$SERVICE" == "api" ]]; then
         # 4. Switch upstream + reload Nginx
-        write_upstream_conf "$NEW_CONTAINER_NAME" "$API_PORT"
+        write_upstream_conf
 
         if ! reload_nginx; then
             error "Nginx reload failed; reverting upstream.conf and removing new container."
             if [[ -n "$ORIGINAL_UPSTREAM" ]]; then
                 echo "$ORIGINAL_UPSTREAM" > "$UPSTREAM_CONF"
-                docker exec "$NGINX_CONTAINER" nginx -s reload || true
+                eval "$NGINX_RELOAD_CMD" || true
             fi
             remove_container "$NEW_CONTAINER_NAME"
             exit 1
@@ -562,7 +585,7 @@ main() {
             error "Upstream verification failed; reverting."
             if [[ -n "$ORIGINAL_UPSTREAM" ]]; then
                 echo "$ORIGINAL_UPSTREAM" > "$UPSTREAM_CONF"
-                docker exec "$NGINX_CONTAINER" nginx -s reload || true
+                eval "$NGINX_RELOAD_CMD" || true
             fi
             remove_container "$NEW_CONTAINER_NAME"
             exit 1
@@ -574,7 +597,7 @@ main() {
     # 6. Drain old container
     drain_old_container "$OLD_CONTAINER_NAME"
 
-    success "Blue-green deploy complete. Active=${NEW_CONTAINER_NAME}"
+    success "Blue-green deploy complete. Active=${NEW_CONTAINER_NAME}:${NEW_HOST_PORT}"
 }
 
 main "$@"

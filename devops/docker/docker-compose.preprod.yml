@@ -150,6 +150,15 @@ services:
       - "env=preprod"
       - "app.component=router"
       - "app.type=nginx"
+      - "traefik.enable=true"
+      - "traefik.http.routers.preprod-api.rule=Host(\`preprod-backend.ishswami.in\`)"
+      - "traefik.http.routers.preprod-api.entrypoints=http,https"
+      - "traefik.http.routers.preprod-api.tls=true"
+      - "traefik.http.routers.preprod-api.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.preprod-api.tls.options.mintlsversion=versionTLS12"
+      - "traefik.http.routers.preprod-api.middlewares=gzip"
+      - "traefik.http.services.preprod-api.loadbalancer.server.port=${NGINX_PORT:-8088}"
+      - "traefik.docker.network=preprod-network"
 
 networks:
   preprod-network:

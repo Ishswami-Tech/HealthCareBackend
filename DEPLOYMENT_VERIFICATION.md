@@ -3,9 +3,18 @@
 Deep verification procedures, acceptance criteria, and edge-case testing for the
 healthcare-backend deployment pipeline.
 
-> **Critical principle**: Only API and Worker containers are deployed/recreated.
-> Postgres, Dragonfly, and Nginx are untouched for app-only deploys. Preprod
-> uses `userdb_preprod` in the same PostgreSQL instance.
+> **Architecture summary:**
+>
+> - **Production & Preprod**: Both use Coolify blue-green deploys via
+>   `coolify-deploy.sh`
+> - **Preprod**: Active — Coolify app with Traefik ingress + Let's Encrypt SSL
+>   for `preprod-backend.ishswami.in`
+> - **Production**: Gated off — Coolify app ready, deploys enabled via
+>   `ENABLE_PROD_DEPLOY=true`
+> - **Nginx**: Coolify's Traefik proxy handles ingress (80/443) for both
+>   environments
+> - Postgres, Dragonfly are shared Docker volumes — never redeployed for
+>   app-only deploys.
 
 ---
 
@@ -20,11 +29,9 @@ healthcare-backend deployment pipeline.
 7. [Database Verification](#7-database-verification)
 8. [Cache Verification](#8-cache-verification)
 9. [Network and Ingress Verification](#9-network-and-ingress-verification)
-10. [Rollback Verification](#10-rollback-verification)
-11. [Edge Case Scenarios](#11-edge-case-scenarios)
-12. [Load Testing](#12-load-testing)
-13. [Performance Baseline](#13-performance-baseline)
-14. [Security Verification](#14-security-verification)
+10. [Edge Case Scenarios](#10-edge-case-scenarios)
+11. [Performance Baseline](#11-performance-baseline)
+12. [Security Verification](#12-security-verification)
 
 ---
 
@@ -94,60 +101,66 @@ echo "=== PRODUCTION FULL VERIFICATION ==="
 
 # Step 1: Infrastructure
 echo "[1/8] Infrastructure health..."
-ssh $PROD_HOST 'bash /opt/healthcare-backend/devops/scripts/docker-infra/health-check.sh'
-
-# Step 2: Container status
-echo "[2/8] Container status..."
-ssh $PROD_HOST 'docker ps --filter "name=latest-" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Image}}"'
 ssh $PROD_HOST 'docker ps --filter "name=postgres" --format "table {{.Names}}\t{{.Status}}"'
 ssh $PROD_HOST 'docker ps --filter "name=dragonfly" --format "table {{.Names}}\t{{.Status}}"'
 
+# Step 2: Container status
+echo "[2/8] Container status..."
+ssh $PROD_HOST 'docker ps --filter "name=api-" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Image}}"'
+ssh $PROD_HOST 'docker ps --filter "name=worker-" --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"'
+
 # Step 3: Image verification
 echo "[3/8] Running image..."
-ssh $PROD_HOST 'docker inspect latest-api --format "Image: {{.Config.Image}}\nID: {{.Image}}\nCreated: {{.Created}}"'
+PROD_API=$(ssh $PROD_HOST "docker ps --filter 'name=api-' --format '{{.Names}}' | head -1")
+ssh $PROD_HOST "docker inspect $PROD_API --format 'Image: {{.Config.Image}}\nID: {{.Image}}\nCreated: {{.Created}}'"
 
 # Step 4: Health endpoints
 echo "[4/8] Health endpoints..."
 curl -s https://backend-service-v1.ishswami.in/health | jq .
 curl -s https://backend-service-v1.ishswami.in/infra-health | jq .
 
-# Step 5: Nginx upstream
-echo "[5/8] Nginx upstream..."
-ssh $PROD_HOST 'cat /opt/healthcare-backend/nginx/upstream.conf'
+# Step 5: Database connectivity
+echo "[5/8] Database..."
+PROD_API=$(ssh $PROD_HOST "docker ps --filter 'name=api-' --format '{{.Names}}' | head -1")
+ssh $PROD_HOST "docker exec $PROD_API sh -c 'nc -z postgres 5432 && echo DB_OK || echo DB_FAIL'"
 
-# Step 6: Logs (last 50 lines, check for errors)
-echo "[6/8] API logs..."
-ssh $PROD_HOST 'docker logs --tail 50 latest-api 2>&1 | grep -iE "error|fatal|unhandled|ECONNREFUSED|timeout" || echo "No errors found"'
-echo "[6/8] Worker logs..."
-ssh $PROD_HOST 'docker logs --tail 50 latest-worker 2>&1 | grep -iE "error|fatal|unhandled" || echo "No errors found"'
-
-# Step 7: Database connectivity
-echo "[7/8] Database..."
-ssh $PROD_HOST 'docker exec latest-api sh -c "nc -z postgres 5432 && echo DB_OK || echo DB_FAIL"'
-
-# Step 8: Disk space
-echo "[8/8] Disk space..."
+# Step 6: Disk space
+echo "[6/8] Disk space..."
 ssh $PROD_HOST 'df -h /opt/healthcare-backend'
+
+# Step 7: Logs (check for errors)
+echo "[7/8] Logs..."
+PROD_API=$(ssh $PROD_HOST "docker ps --filter 'name=api-' --format '{{.Names}}' | head -1")
+PROD_WORKER=$(ssh $PROD_HOST "docker ps --filter 'name=worker-' --format '{{.Names}}' | head -1")
+ssh $PROD_HOST "docker logs --tail 50 $PROD_API 2>&1 | grep -iE 'error|fatal|unhandled|ECONNREFUSED|timeout' || echo 'No errors found'"
+ssh $PROD_HOST "docker logs --tail 50 $PROD_WORKER 2>&1 | grep -iE 'error|fatal|unhandled' || echo 'No errors found'"
+
+# Step 8: Dragonfly connectivity
+echo "[8/8] Cache..."
+ssh $PROD_HOST "docker exec $PROD_API sh -c 'nc -z dragonfly 6379 && echo CACHE_OK || echo CACHE_FAIL'"
 ```
 
 ### 3.2 Preprod Verification
 
 ```bash
-PREPROD_HOST="<same-host>"  # Same VPS, different directory
+PREPROD_HOST="<same-host>"  # Same VPS
 
 echo "=== PREPROD FULL VERIFICATION ==="
 
 # Step 1: Infrastructure
 echo "[1/8] Infrastructure health..."
-ssh $PREPROD_HOST 'bash /opt/healthcare-preprod/devops/scripts/docker-infra/health-check.sh'
+ssh $PREPROD_HOST 'docker ps --filter "name=postgres" --format "table {{.Names}}\t{{.Status}}"'
+ssh $PREPROD_HOST 'docker ps --filter "name=dragonfly" --format "table {{.Names}}\t{{.Status}}"'
 
 # Step 2: Container status
 echo "[2/8] Container status..."
-ssh $PREPROD_HOST 'docker ps --filter "name=preprod-" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Image}}"'
+ssh $PREPROD_HOST 'docker ps --filter "name=api-" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Image}}"'
+ssh $PREPROD_HOST 'docker ps --filter "name=worker-" --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"'
 
 # Step 3: Image verification
 echo "[3/8] Running image..."
-ssh $PREPROD_HOST 'docker inspect preprod-api --format "Image: {{.Config.Image}}\nID: {{.Image}}\nCreated: {{.Created}}"'
+PREPROD_API=$(ssh $PREPROD_HOST "docker ps --filter 'name=api-ix9' --format '{{.Names}}' | head -1")
+ssh $PREPROD_HOST "docker inspect $PREPROD_API --format 'Image: {{.Config.Image}}\nID: {{.Image}}\nCreated: {{.Created}}'"
 
 # Step 4: Health endpoints
 echo "[4/8] Health endpoints..."
@@ -156,43 +169,45 @@ curl -s https://preprod-backend.ishswami.in/infra-health | jq .
 
 # Step 5: Database verification
 echo "[5/8] Database..."
-ssh $PREPROD_HOST 'docker exec -i preprod-postgres psql -U postgres -d userdb_preprod -c "SELECT 1"'
-ssh $PREPROD_HOST 'docker exec -i preprod-postgres psql -U postgres -d userdb_preprod -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '\''public'\'' AND table_type = '\''BASE TABLE'\'';"'
-ssh $PREPROD_HOST 'docker exec -i preprod-postgres psql -U postgres -d userdb_preprod -c "SELECT * FROM _prisma_migrations ORDER BY finished_at DESC LIMIT 5;"'
+ssh $PREPROD_HOST 'docker exec -i postgres psql -U postgres -d userdb_preprod -c "SELECT 1"'
+ssh $PREPROD_HOST 'docker exec -i postgres psql -U postgres -d userdb_preprod -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '\''public'\'' AND table_type = '\''BASE TABLE'\'';"'
+ssh $PREPROD_HOST 'docker exec -i postgres psql -U postgres -d userdb_preprod -c "SELECT * FROM _prisma_migrations ORDER BY finished_at DESC LIMIT 5;"'
 
 # Step 6: Environment variables
 echo "[6/8] Environment variables..."
-ssh $PREPROD_HOST 'docker exec preprod-api sh -c "echo DATABASE_URL=\${DATABASE_URL:-NOT SET}" | grep -o "userdb_preprod"'
-ssh $PREPROD_HOST 'docker exec preprod-api sh -c "echo NODE_ENV=\${NODE_ENV:-NOT SET}"'
-ssh $PREPROD_HOST 'docker exec preprod-worker sh -c "echo DRAGONFLY_KEY_PREFIX=\${DRAGONFLY_KEY_PREFIX:-NOT SET}"'
+PREPROD_API=$(ssh $PREPROD_HOST "docker ps --filter 'name=api-ix9' --format '{{.Names}}' | head -1")
+PREPROD_WORKER=$(ssh $PREPROD_HOST "docker ps --filter 'name=worker-ix9' --format '{{.Names}}' | head -1")
+ssh $PREPROD_HOST "docker exec $PREPROD_API sh -c 'echo DATABASE_URL=\${DATABASE_URL:-NOT SET}' | grep -o 'userdb_preprod'"
+ssh $PREPROD_HOST "docker exec $PREPROD_API sh -c 'echo NODE_ENV=\${NODE_ENV:-NOT SET}'"
+ssh $PREPROD_HOST "docker exec $PREPROD_WORKER sh -c 'echo DRAGONFLY_KEY_PREFIX=\${DRAGONFLY_KEY_PREFIX:-NOT SET}'"
 
 # Step 7: Logs
 echo "[7/8] Logs..."
-ssh $PREPROD_HOST 'docker logs --tail 50 preprod-api 2>&1 | grep -iE "error|fatal" || echo "No errors"'
-ssh $PREPROD_HOST 'docker logs --tail 50 preprod-worker 2>&1 | grep -iE "error|fatal" || echo "No errors"'
+ssh $PREPROD_HOST 'docker logs --tail 50 api-ix9fceaxa914diauokjleeis 2>&1 | grep -iE "error|fatal" || echo "No errors"'
+ssh $PREPROD_HOST 'docker logs --tail 50 worker-ix9fceaxa914diauokjleeis 2>&1 | grep -iE "error|fatal" || echo "No errors"'
 
 # Step 8: Nginx
 echo "[8/8] Nginx..."
-ssh $PREPROD_HOST 'docker exec preprod-nginx nginx -t'
+ssh $PREPROD_HOST 'docker exec $(docker ps --filter "name=api-ix9" --format "{{.Names}}" | head -1) nginx -t'
 ```
 
 ### Acceptance Criteria
 
-| Check                  | Expected                                               | Notes                               |
-| ---------------------- | ------------------------------------------------------ | ----------------------------------- | --------------------- |
-| `/health`              | 200, `"status":"healthy"`                              | All services green                  |
-| `/infra-health`        | 200, all services healthy                              | DB + cache reachable                |
-| API container          | `running`                                              | `preprod-api` or `latest-api`       |
-| Worker container       | `running`                                              | `preprod-worker` or `latest-worker` |
-| Image SHA              | Matches deployed SHA                                   | No old image                        |
-| DB connectivity        | `SELECT 1` → `?column?                                 | 1`                                  | FROM inside container |
-| Table count            | >0 (unless fresh DB)                                   | Tables created by Prisma            |
-| Migrations             | Latest migration marked `applied`                      | No failed migrations                |
-| `DATABASE_URL`         | Contains `userdb_preprod` (preprod) or `userdb` (prod) | NOT localhost                       |
-| `DRAGONFLY_KEY_PREFIX` | `healthcare-preprod:` (preprod) / `healthcare:` (prod) | No collision                        |
-| `NODE_ENV`             | `production`                                           | Both environments                   |
-| Nginx config           | `nginx -t` → OK                                        | Valid config                        |
-| No error logs          | 0 errors in last 50 lines                              | Check API + Worker                  |
+| Check                  | Expected                                               | Notes                                                                 |
+| ---------------------- | ------------------------------------------------------ | --------------------------------------------------------------------- | --------------------- |
+| `/health`              | 200, `"status":"healthy"`                              | All services green                                                    |
+| `/infra-health`        | 200, all services healthy                              | DB + cache reachable                                                  |
+| API container          | `running`                                              | `api-<uuid>` (prod) or `api-ix9fceaxa914diauokjleeis` (preprod)       |
+| Worker container       | `running`                                              | `worker-<uuid>` (prod) or `worker-ix9fceaxa914diauokjleeis` (preprod) |
+| Image tag              | Matches deployed tag                                   | No stale image                                                        |
+| DB connectivity        | `SELECT 1` → `?column?                                 | 1`                                                                    | FROM inside container |
+| Table count            | >0 (unless fresh DB)                                   | Tables created by Prisma                                              |
+| Migrations             | Latest migration marked `applied`                      | No failed migrations                                                  |
+| `DATABASE_URL`         | Contains `userdb_preprod` (preprod) or `userdb` (prod) | NOT localhost                                                         |
+| `DRAGONFLY_KEY_PREFIX` | `healthcare-preprod:` (preprod) / `healthcare:` (prod) | No collision                                                          |
+| `NODE_ENV`             | `production`                                           | Both environments                                                     |
+| Nginx config           | `nginx -t` → OK                                        | Valid config                                                          |
+| No error logs          | 0 errors in last 50 lines                              | Check API + Worker                                                    |
 
 ---
 
@@ -202,829 +217,262 @@ ssh $PREPROD_HOST 'docker exec preprod-nginx nginx -t'
 
 ```bash
 # Connectivity from host
-docker exec preprod-postgres pg_isready -U postgres -d userdb_preprod
-# Expected: userdb_pregres-postgres:5432 - accepting connections
+docker exec postgres pg_isready -U postgres -d userdb
+# Expected: postgres:5432 - accepting connections
 
 # Connectivity from API container
-docker exec preprod-api sh -c 'nc -z preprod-postgres 5432 && echo OK'
+docker exec $(docker ps --filter "name=api-" --format "{{.Names}}" | head -1) sh -c 'nc -z postgres 5432 && echo OK'
 # Expected: OK
 
 # Connection limits
-docker exec preprod-postgres psql -U postgres -d userdb_preprod -c "SHOW max_connections;"
-# Preprod: 80
-
-# Active connections
-docker exec preprod-postgres psql -U postgres -d userdb_preprod -c \
-  "SELECT count(*) FROM pg_stat_activity WHERE datname = 'userdb_preprod';"
-
-# Database size
-docker exec preprod-postgres psql -U postgres -d userdb_preprod -c \
-  "SELECT pg_size_pretty(pg_database_size('userdb_preprod'));"
-
-# Table count
-docker exec preprod-postgres psql -U postgres -d userdb_preprod -c \
-  "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE';"
-
-# Verify production DB untouched (if deploying preprod)
-docker exec preprod-postgres psql -U postgres -d userdb -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE';"
-# Expected: same count as before (not affected by preprod operations)
+docker exec postgres psql -U postgres -c "SELECT count(*) FROM pg_stat_activity;"
 ```
 
 ### Dragonfly
 
 ```bash
-# Ping
-docker exec preprod-dragonfly redis-cli -p 6379 ping
+# Connectivity from host
+docker exec dragonfly redis-cli ping
 # Expected: PONG
 
+# Connectivity from API container
+docker exec $(docker ps --filter "name=api-" --format "{{.Names}}" | head -1) sh -c 'nc -z dragonfly 6379 && echo OK'
+# Expected: OK
+
 # Memory usage
-docker exec preprod-dragonfly redis-cli -p 6379 INFO memory | grep used_memory_human
-
-# Connected clients
-docker exec preprod-dragonfly redis-cli -p 6379 INFO clients | grep connected_clients
-
-# Key count (preprod keys only)
-docker exec preprod-dragonfly redis-cli -p 6379 --scan --pattern "healthcare-preprod:*" | wc -l
-
-# Verify production keys not mixed in
-docker exec preprod-dragonfly redis-cli -p 6379 --scan --pattern "healthcare:*" | wc -l
-# Expected: 0 (production prefix shouldn't exist in preprod dragonfly)
-
-# Persistence
-docker exec preprod-dragonfly redis-cli -p 6379 INFO persistence | grep rdb_last_save
-```
-
-### Docker Health Checks
-
-```bash
-# Verify Docker-level health status
-docker inspect preprod-postgres --format "{{.State.Health.Status}}"
-# Expected: healthy
-
-docker inspect preprod-dragonfly --format "{{.State.Health.Status}}"
-# Expected: healthy
-
-docker inspect preprod-nginx --format "{{.State.Health.Status}}"
-# Expected: healthy
-
-docker inspect preprod-api --format "{{.State.Health.Status}}"
-# Expected: healthy (may be starting → wait)
-
-docker inspect preprod-worker --format "{{.State.Health.Status}}"
-# Expected: healthy
+docker exec dragonfly redis-cli INFO memory | grep used_memory_human
 ```
 
 ---
 
 ## 5. Application Verification
 
-### API Endpoints
+### Container Health
 
 ```bash
-BASE="https://preprod-backend.ishswami.in"
+# Production
+docker ps --filter "name=api-" --format "{{.Names}}\t{{.Status}}\t{{.Ports}}"
+docker ps --filter "name=worker-" --format "{{.Names}}\t{{.Status}}\t{{.Ports}}"
 
-# Health (full)
-curl -sf "$BASE/health" | jq .
-# Expected: {"status":"healthy","services":{"database":"up","cache":"up",...}}
-
-# Infra health (deployment gate)
-curl -sf "$BASE/infra-health" | jq .
-# Expected: {"status":"healthy",...}
-
-# Detailed health
-curl -sf "$BASE/health?detailed=true" | jq .
-# Expected: includes processInfo, memory, CPU
-
-# Queue dashboard accessible
-curl -sf "$BASE/queue-dashboard" | head -5
-# Expected: HTML response
-
-# Nginx self-check
-curl -sf "http://localhost:8089/nginx-health"
-# Expected: nginx-ok
+# Preprod
+docker ps --filter "name=api-ix9" --format "{{.Names}}\t{{.Status}}\t{{.Ports}}"
+docker ps --filter "name=worker-ix9" --format "{{.Names}}\t{{.Status}}"
 ```
 
-### Worker Health
+### Image Verification
 
 ```bash
-# Worker healthcheck (from host)
-docker exec preprod-worker node dist/worker-bootstrap.js --healthcheck
-# Expected: "Worker health check passed" (exit 0)
+# Production
+docker inspect $(docker ps --filter "name=api-" --format "{{.Names}}" | head -1) --format "Image: {{.Config.Image}}\nID: {{.Image}}"
 
-# Worker logs
-docker logs --tail 20 preprod-worker 2>&1
-# Expected: No errors, cron jobs starting
+# Preprod
+docker inspect api-ix9fceaxa914diauokjleeis --format "Image: {{.Config.Image}}\nID: {{.Image}}"
 ```
 
-### Queue Processing
+### Health Endpoints
 
 ```bash
-# Check Bull Board dashboard
-curl -s "$BASE/queue-dashboard/api/queues" | jq .
+# Production
+curl -s https://backend-service-v1.ishswami.in/health | jq .
+curl -s https://backend-service-v1.ishswami.in/infra-health | jq .
 
-# Expected: array of queues with job counts
-# - default queue should exist
-# - job counts should be reasonable
+# Preprod
+curl -s https://preprod-backend.ishswami.in/health | jq .
+curl -s https://preprod-backend.ishswami.in/infra-health | jq .
 ```
 
 ---
 
 ## 6. Environment Isolation Verification
 
-These checks prevent cross-environment data leakage.
-
-### Network Isolation
+These checks ensure production and preprod are properly isolated.
 
 ```bash
-# Verify separate Docker networks
+# 1. Networks are separate
 docker network ls | grep -E "app-network|preprod-network"
-# Expected: both networks exist
+# Should show both networks
 
-# Verify preprod-api is ONLY on preprod-network (and coolify)
-docker inspect preprod-api --format '{{range $n, $v := .NetworkSettings.Networks}}{{$n}} {{end}}'
-# Expected: "preprod-network coolify"
+# 2. Production DB has only production data
+docker exec -i postgres psql -U postgres -d userdb -c "\dt"
 
-# Verify latest-api is ONLY on app-network (and coolify)
-docker inspect latest-api --format '{{range $n, $v := .NetworkSettings.Networks}}{{$n}} {{end}}'
-# Expected: "app-network coolify"
+# 3. Preprod DB has only preprod data
+docker exec -i postgres psql -U postgres -d userdb_preprod -c "\dt"
 
-# Verify preprod-api CANNOT reach production containers
-docker exec preprod-api sh -c 'nc -z latest-postgres 5432 2>&1' || echo "BLOCKED (correct)"
-# Expected: BLOCKED or timeout (different network)
+# 4. Containers are on correct networks
+docker inspect $(docker ps --filter "name=api-" --format "{{.Names}}" | head -1) --format "{{json .NetworkSettings.Networks}}" | jq .
+docker inspect api-ix9fceaxa914diauokjleeis --format "{{json .NetworkSettings.Networks}}" | jq .
 
-# Verify preprod-api CAN reach preprod-postgres
-docker exec preprod-api sh -c 'nc -z preprod-postgres 5432 && echo OK'
-# Expected: OK
+# 5. Dragonfly key prefixes don't collide
+docker exec dragonfly redis-cli --scan --pattern "healthcare-preprod:*" | wc -l
+docker exec dragonfly redis-cli --scan --pattern "healthcare:*" | wc -l
 ```
 
-### Database Isolation
-
-```bash
-# Production DB name
-docker exec postgres psql -U postgres -c "SELECT datname FROM pg_database WHERE datname LIKE '%userdb%';"
-# Expected: userdb (and possibly template databases)
-
-# Preprod DB name (from SAME postgres container)
-docker exec postgres psql -U postgres -c "SELECT datname FROM pg_database WHERE datname LIKE '%userdb%';"
-# Expected: userdb, userdb_preprod (both visible from same server)
-
-# Verify preprod DB has separate data
-docker exec postgres psql -U postgres -d userdb_preprod -c "SELECT count(*) FROM users;" 2>/dev/null
-docker exec postgres psql -U postgres -d userdb -c "SELECT count(*) FROM users;" 2>/dev/null
-# Expected: Different counts (or preprod is 0 if fresh)
-# CRITICAL: userdb_preprod COUNT should NOT equal userdb COUNT
-```
-
-### Cache Isolation
-
-```bash
-# Production Dragonfly keys (from production dragonfly)
-docker exec dragonfly redis-cli -p 6379 --scan --pattern "healthcare:*" | head -5
-# Expected: keys with "healthcare:" prefix
-
-# Preprod Dragonfly keys (from preprod dragonfly)
-docker exec preprod-dragonfly redis-cli -p 6379 --scan --pattern "healthcare:*" | head -5
-# Expected: NO keys with "healthcare:" prefix (that's production)
-
-# Preprod keys
-docker exec preprod-dragonfly redis-cli -p 6379 --scan --pattern "healthcare-preprod:*" | head -5
-# Expected: keys with "healthcare-preprod:" prefix
-
-# Verify NO key collision
-docker exec preprod-dragonfly redis-cli -p 6379 DBSIZE
-docker exec dragonfly redis-cli -p 6379 DBSIZE
-# Expected: Different counts
-```
-
-### Environment Variable Verification
-
-```bash
-# Preprod API
-echo "=== preprod-api ==="
-docker exec preprod-api sh -c 'echo "DATABASE_URL=${DATABASE_URL}"' | grep -o "userdb_preprod\|userdb"
-# Expected: userdb_preprod
-
-docker exec preprod-api sh -c 'echo "NODE_ENV=${NODE_ENV}"'
-# Expected: production
-
-docker exec preprod-api sh -c 'echo "CACHE_PREFIX=${CACHE_PREFIX}"'
-# Expected: healthcare-preprod:
-
-docker exec preprod-api sh -c 'echo "DRAGONFLY_HOST=${DRAGONFLY_HOST}"'
-# Expected: preprod-dragonfly
-
-# Preprod Worker
-echo "=== preprod-worker ==="
-docker exec preprod-worker sh -c 'echo "DRAGONFLY_KEY_PREFIX=${DRAGONFLY_KEY_PREFIX}"'
-# Expected: healthcare-preprod:
-
-docker exec preprod-worker sh -c 'echo "PORT=${PORT}"'
-# Expected: 8080 (internal) — externally exposed on 9091
-
-# Production API (for comparison)
-echo "=== latest-api ==="
-docker exec latest-api sh -c 'echo "DATABASE_URL=${DATABASE_URL}"' | grep -o "userdb_preprod\|userdb"
-# Expected: userdb
-
-docker exec latest-api sh -c 'echo "DRAGONFLY_HOST=${DRAGONFLY_HOST}"'
-# Expected: dragonfly (not preprod-dragonfly)
-```
+- [ ] Networks are separate (`app-network` vs `preprod-network`)
+- [ ] Production DB contains only production data
+- [ ] Preprod DB contains only preprod data
+- [ ] Containers are on their correct networks
+- [ ] Cache keys don't collide between environments
 
 ---
 
 ## 7. Database Verification
 
-### Schema Verification
+### Schema
 
 ```bash
-# List all tables (preprod)
-docker exec preprod-postgres psql -U postgres -d userdb_preprod -c "\dt"
+# Production
+docker exec -i postgres psql -U postgres -d userdb -c "\dt"
 
-# Verify expected tables exist
-docker exec preprod-postgres psql -U postgres -d userdb_preprod -t -c \
-  "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE';"
-# Expected: >0 (unless intentionally fresh)
-
-# Verify Prisma migration history
-docker exec preprod-postgres psql -U postgres -d userdb_preprod -c \
-  "SELECT migration_name, finished_at, rolled_back_at FROM _prisma_migrations ORDER BY finished_at DESC LIMIT 10;"
-# Expected: All latest migrations have finished_at set, rolled_back_at is NULL
+# Preprod
+docker exec -i postgres psql -U postgres -d userdb_preprod -c "\dt"
 ```
 
-### Data Integrity
+### Migrations
 
 ```bash
-# Row counts in key tables
-docker exec preprod-postgres psql -U postgres -d userdb_preprod -c \
-  "SELECT schemaname, tablename, n_live_tup FROM pg_stat_user_tables ORDER BY n_live_tup DESC LIMIT 20;"
+# Check migration history
+docker exec -i postgres psql -U postgres -d userdb_preprod -c "SELECT * FROM _prisma_migrations ORDER BY finished_at DESC LIMIT 5;"
 
-# Check for orphaned records (example)
-docker exec preprod-postgres psql -U postgres -d userdb_preprod -c \
-  "SELECT count(*) FROM users u LEFT JOIN clinics c ON u.clinic_id = c.id WHERE c.id IS NULL AND u.clinic_id IS NOT NULL;"
-# Expected: 0 (no orphans)
-
-# Check sequences are in sync
-docker exec preprod-postgres psql -U postgres -d userdb_preprod -c \
-  "SELECT schemaname, sequencename, last_value FROM pg_sequences WHERE schemaname = 'public';"
+# Check for failed migrations
+docker exec -i postgres psql -U postgres -d userdb_preprod -c "SELECT * FROM _prisma_migrations WHERE finished_at IS NULL;"
 ```
 
-### Migration Verification
+### Row counts
 
 ```bash
-# Check all migrations applied
-docker exec preprod-postgres psql -U postgres -d userdb_preprod -c \
-  "SELECT migration_name, finished_at IS NOT NULL AS applied FROM _prisma_migrations ORDER BY migration_name;"
-# Expected: All rows show "t" (true) for applied
+# Preprod
+docker exec -i postgres psql -U postgres -d userdb_preprod -c "SELECT COUNT(*) FROM users;"
+docker exec -i postgres psql -U postgres -d userdb_preprod -c "SELECT COUNT(*) FROM clinics;"
 
-# Check no pending migrations
-docker exec preprod-postgres psql -U postgres -d userdb_preprod -c \
-  "SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NULL;"
-# Expected: 0
+# Production
+docker exec -i postgres psql -U postgres -d userdb -c "SELECT COUNT(*) FROM users;"
+docker exec -i postgres psql -U postgres -d userdb -c "SELECT COUNT(*) FROM clinics;"
 ```
 
 ---
 
 ## 8. Cache Verification
 
-### Dragonfly Connectivity
-
 ```bash
-# Ping
-docker exec preprod-api sh -c 'echo PING | nc preprod-dragonfly 6379'
-# Expected: +PONG
+# Dragonfly connectivity
+docker exec dragonfly redis-cli ping
+# Expected: PONG
 
-# Set/Get test (from API container perspective)
-docker exec preprod-api sh -c '
+# Check key prefixes (should be separate)
+docker exec dragonfly redis-cli DBSIZE
+# Should show total keys across both environments
+
+# Test cache operations from preprod container
+docker exec api-ix9fceaxa914diauokjleeis sh -c '
   node -e "
     const redis = require(\"ioredis\");
-    const client = new redis({ host: \"preprod-dragonfly\", port: 6379, keyPrefix: \"healthcare-preprod:\" });
-    client.set(\"test-key\", \"test-value\", \"EX\", 10).then(() => client.get(\"test-key\")).then(v => { console.log(\"Value:\", v); client.del(\"test-key\"); client.quit(); });
+    const client = new redis({ host: \"dragonfly\", port: 6379, keyPrefix: \"healthcare-preprod:\" });
+    client.set(\"test\", \"1\", \"EX\", 10).then(() => {
+      console.log(\"Cache write OK\");
+      return client.get(\"test\");
+    }).then(val => {
+      console.log(\"Cache read:\", val);
+      return client.del(\"test\");
+    }).then(() => {
+      console.log(\"Cache cleanup OK\");
+      process.exit(0);
+    }).catch(err => {
+      console.error(\"Cache FAIL:\", err.message);
+      process.exit(1);
+    });
   "
 '
-# Expected: Value: test-value
-```
-
-### Key Prefix Isolation
-
-```bash
-# Verify no cross-prefix pollution
-docker exec preprod-dragonfly redis-cli -p 6379 --scan --pattern "healthcare:*" 2>/dev/null
-# Expected: empty (production prefix shouldn't exist in preprod dragonfly)
-
-docker exec preprod-dragonfly redis-cli -p 6379 --scan --pattern "healthcare-preprod:*" 2>/dev/null | head -5
-# Expected: actual preprod keys
-
-# Same for production
-docker exec dragonfly redis-cli -p 6379 --scan --pattern "healthcare-preprod:*" 2>/dev/null
-# Expected: empty
-```
-
-### Cache TTL Verification
-
-```bash
-# Check that cache entries have reasonable TTL
-docker exec preprod-dragonfly redis-cli -p 6379 --scan --pattern "healthcare-preprod:*" 2>/dev/null | head -3 | while read key; do
-  docker exec preprod-dragonfly redis-cli -p 6379 TTL "$key"
-done
-# Expected: Positive TTL values (not -1 = no expiry for session keys, or -2 = expired)
 ```
 
 ---
 
 ## 9. Network and Ingress Verification
 
-### DNS Resolution
+### Port mapping
 
 ```bash
 # Production
-dig +short backend-service-v1.ishswami.in
-# Expected: VPS IP address
+docker ps --filter "name=api-" --format "{{.Names}}\t{{.Ports}}"
 
 # Preprod
-dig +short preprod-backend.ishswami.in
-# Expected: Same VPS IP address
+docker ps --filter "name=api-ix9" --format "{{.Names}}\t{{.Ports}}"
 ```
 
-### HTTPS/TLS
+### Nginx config
 
 ```bash
-# Production TLS
-echo | openssl s_client -connect backend-service-v1.ishswami.in:443 -servername backend-service-v1.ishswami.in 2>/dev/null | openssl x509 -noout -dates -subject
-# Expected: Valid certificate, not expired
+# Preprod nginx (Coolify-managed)
+PREPROD_NGINX=$(docker ps --filter "name=api-ix9" --format "{{.Names}}" | head -1)
+docker exec $PREPROD_NGINX nginx -t
 
-# Preprod TLS
-echo | openssl s_client -connect preprod-backend.ishswami.in:443 -servername preprod-backend.ishswami.in 2>/dev/null | openssl x509 -noout -dates -subject
-# Expected: Valid certificate, not expired
+# Production nginx (host-level)
+ssh <host> 'nginx -t'
 ```
 
-### Traefik Routing
+### DNS
 
 ```bash
-# Verify Traefik sees the routers
-docker ps --filter "name=traefik" --format "{{.Names}}"
-# Expected: traefik container running
-
-docker logs traefik --tail 30 2>&1 | grep -E "healthcare-api|preprod"
-# Expected: Both routers configured
-
-# Verify correct entrypoints
-docker logs traefik --tail 50 2>&1 | grep "healthcare-api-preprod"
-# Expected: Router for preprod on http,https entrypoints
-```
-
-### Nginx Configuration
-
-```bash
-# Production nginx
-ssh <host> 'docker exec latest-nginx nginx -t'
-# Expected: nginx: configuration file /etc/nginx/nginx.conf test is successful
-
-# Preprod nginx
-ssh <host> 'docker exec preprod-nginx nginx -t'
-# Expected: nginx: configuration file /etc/nginx/nginx.conf test is successful
-
-# Verify upstream.conf is correct
-ssh <host> 'cat /opt/healthcare-backend/nginx/upstream.conf'
-# Expected: server latest-api:8088 max_fails=3 fail_timeout=10s;
-
-ssh <host> 'cat /opt/healthcare-preprod/nginx/upstream.conf'
-# Expected: server preprod-api:8088 max_fails=3 fail_timeout=10s;
-```
-
-### Socket.IO (WebSocket)
-
-```bash
-# Verify WebSocket upgrade works
-curl -s -N -H "Connection: Upgrade" -H "Upgrade: websocket" \
-  -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
-  "https://preprod-backend.ishswami.in/socket.io/?EIO=4&transport=websocket" | head -5
-# Expected: WebSocket upgrade response (101 Switching Protocols)
+# Verify domains resolve
+curl -sI https://backend-service-v1.ishswami.in | head -5
+curl -sI https://preprod-backend.ishswami.in | head -5
 ```
 
 ---
 
-## 10. Rollback Verification
+## 10. Edge Case Scenarios
 
-### Production Blue-Green Rollback
+### Image pull failure
 
 ```bash
-# Before deploy: note active color
-ssh <host> 'cat /opt/healthcare-backend/nginx/upstream.conf'
-# Expected: server latest-api-blue:8088 ...  OR  server latest-api-green:8088 ...
+# Verify image exists in local registry
+curl -s http://localhost:5000/v2/healthcare-api/tags/list | jq .
 
-# Trigger rollback scenario: deploy fails
-# Expected: old container still serving, upstream.conf unchanged
-
-# Verify old container still running
-ssh <host> 'docker ps --filter "name=latest-api-blue" --format "{{.Names}}\t{{.Status}}"'
-# OR
-ssh <host> 'docker ps --filter "name=latest-api-green" --format "{{.Names}}\t{{.Status}}"'
-
-# Verify upstream.conf unchanged
-ssh <host> 'cat /opt/healthcare-backend/nginx/upstream.conf'
-# Expected: Same as before deploy attempt
+# If missing, CI failed to push — rebuild and redeploy
 ```
 
-### Preprod Rolling Rollback
+### Migration failure
 
 ```bash
-# Before deploy: note image tag
-ssh <host> 'docker inspect preprod-api --format "{{.Config.Image}}"'
-# Expected: ghcr.io/.../healthcare-api:preprod-abc1234
+# Check migration status from inside the API container
+docker exec api-ix9fceaxa914diauokjleeis sh -c 'npx prisma migrate status --schema=/app/prisma/schema.prisma 2>&1' || true
 
-# Trigger rollback scenario
-# Expected: deploy.sh uses rollback_to_backup_image()
+# For failed migrations, reset preprod DB and redeploy
+```
 
-# Verify rollback image exists
-ssh <host> 'docker images --filter "reference=ghcr.io/ishswami-tech/healthcarebackend/healthcare-api" --format "{{.Repository}}:{{.Tag}}" | grep rollback-backup'
-# Expected: rollback-backup-<timestamp> tag exists
+### Container restart loop
 
-# After rollback
-ssh <host> 'docker inspect preprod-api --format "{{.Config.Image}}"'
-# Expected: Same image as before (or rollback-backup-<timestamp>)
+```bash
+# Check logs for crash reason
+docker logs --tail 100 api-ix9fceaxa914diauokjleeis 2>&1 | tail -20
+
+# Common causes: DATABASE_URL wrong, migration failure, missing env var
 ```
 
 ---
 
-## 11. Edge Case Scenarios
-
-### 11.1 Deploy with Infra Unhealthy
-
-**Scenario**: Postgres is unhealthy during a preprod app deploy.
-
-**Expected behavior**:
+## 11. Performance Baseline
 
 ```bash
-# deploy.sh checks infrastructure health first
-bash devops/scripts/docker-infra/deploy.sh --env preprod
-# Should attempt auto-recreation via health-check.sh
-# If infra cannot be recovered → deploy FAILS (does not proceed with broken DB)
-```
-
-**Verification**:
-
-```bash
-# Manually stop postgres
-docker stop preprod-postgres
-
-# Attempt deploy — should fail safely
-bash devops/scripts/docker-infra/deploy.sh --env preprod
-# Expected: Error about infrastructure health, deploy stops
-
-# Restore postgres
-docker start preprod-postgres
-bash devops/scripts/docker-infra/health-check.sh
-# Wait for healthy, then retry deploy
-```
-
-### 11.2 Deploy with Disk Full
-
-**Scenario**: VPS has <3 GB free during deploy.
-
-**Expected behavior**: CI `validate-disk-space` step fails before deploy starts.
-
-**Manual test**:
-
-```bash
-# Fill disk
-dd if=/dev/zero of=/tmp/fill bs=1M count=5000 || true
-
-# Attempt deploy — should fail
-bash devops/scripts/docker-infra/deploy.sh --env preprod
-# Expected: "Insufficient disk space" error
-
-# Clean up
-rm -f /tmp/fill
-```
-
-### 11.3 Deploy with Missing Image
-
-**Scenario**: GHCR image not yet propagated.
-
-**Expected behavior**: `retry_docker_pull()` tries 12 times × 10s = 120s, then
-falls back to `:latest` tag, then fails.
-
-**Verification**:
-
-```bash
-# Set non-existent image
-DOCKER_IMAGE="ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:nonexistent-12345" \
-  bash devops/scripts/docker-infra/deploy.sh --env preprod
-# Expected: Error after retries, fallback to :latest also fails
-```
-
-### 11.4 Deploy During Another Deploy (Concurrency)
-
-**Scenario**: Two preprod deploys triggered simultaneously.
-
-**Expected behavior**: CI concurrency group `deploy-preprod` queues the second
-deploy. First deploy completes, then second runs.
-
-**Verification**: Check GitHub Actions — second deploy should show "Queued" then
-run after first completes.
-
-### 11.5 Worker Starts Before API (Preprod)
-
-**Scenario**: Preprod worker has
-`depends_on: preprod-api: condition: service_started`.
-
-**Edge case**: If API crashes during startup, worker still starts (Docker only
-checks if container started, not if it's healthy).
-
-**Verification**:
-
-```bash
-# Check worker started even if API is unhealthy
-docker inspect preprod-worker --format "{{.State.Status}}"
-# Expected: running (worker starts regardless of API health)
-
-# Worker should handle API unavailability gracefully
-docker logs preprod-worker 2>&1 | grep -i "connection\|error\|retry"
-# Expected: Reconnection logs, not crash
-```
-
-### 11.6 Preprod DB Already Exists with Data
-
-**Scenario**: `userdb_preprod` already has tables and data.
-
-**Expected behavior**: `deploy.sh` detects it's NOT a fresh deployment, runs
-migrations safely (P3009 auto-recovery), does NOT drop database.
-
-**Verification**:
-
-```bash
-# Deploy to preprod with existing data
-bash devops/scripts/docker-infra/deploy.sh --env preprod
-
-# Verify data preserved
-docker exec preprod-postgres psql -U postgres -d userdb_preprod -c \
-  "SELECT count(*) FROM users;"
-# Expected: Same or higher count (new seed data may be added)
-```
-
-### 11.7 Fresh Preprod Deployment (No DB)
-
-**Scenario**: `userdb_preprod` doesn't exist (first deploy).
-
-**Expected behavior**: Prisma migrations create the database schema from
-scratch.
-
-**Verification**:
-
-```bash
-# Drop preprod DB
-docker exec preprod-postgres psql -U postgres -c "DROP DATABASE IF EXISTS userdb_preprod;"
-
-# Deploy
-bash devops/scripts/docker-infra/deploy.sh --env preprod
-
-# Verify DB created and migrated
-docker exec preprod-postgres psql -U postgres -d userdb_preprod -c "\dt"
-# Expected: All tables from Prisma schema
-```
-
-### 11.8 Nginx Port Conflict
-
-**Scenario**: Port 8089 already in use on host.
-
-**Expected behavior**: Preprod nginx container fails to start. Deploy should
-detect and fail.
-
-**Verification**:
-
-```bash
-# Occupy port 8089 on host
-nc -l 8089 &
-# Deploy should fail or nginx should not bind
-
-# Clean up
-kill %1
-```
-
-### 11.9 Concurrent DB Access During Restore
-
-**Scenario**: API container tries to write to DB while restore is in progress.
-
-**Expected behavior**: `restore.sh` stops API/Worker containers first, then
-drops/recreates database. No concurrent access possible.
-
-**Verification**:
-
-```bash
-# Verify containers are stopped before restore
-bash devops/scripts/docker-infra/restore.sh latest
-# Check: docker ps shows NO preprod-api or preprod-worker during restore
-```
-
-### 11.10 Dragonfly Unavailable During Deploy
-
-**Scenario**: Dragonfly is down during API deploy.
-
-**Expected behavior**: Preprod API has
-`depends_on: preprod-dragonfly: condition: service_healthy` with
-`required: false`. API starts even if Dragonfly is unhealthy.
-
-**Verification**:
-
-```bash
-# Stop dragonfly
-docker stop preprod-dragonfly
-
-# Deploy API — should succeed (Dragonfly optional)
-bash devops/scripts/docker-infra/deploy.sh --env preprod
-
-# API should start with cache disabled
-docker logs preprod-api 2>&1 | grep -i "dragonfly\|cache\|redis"
-# Expected: Warning about cache unavailable, app continues
-
-# Restore dragonfly
-docker start preprod-dragonfly
-```
-
----
-
-## 12. Load Testing
-
-### Basic Smoke Test
-
-```bash
-# Production
-ab -n 100 -c 10 https://backend-service-v1.ishswami.in/health
-# Expected: All 200, avg response <500ms
+# Response time baseline (should be <200ms for health endpoint)
+time curl -s https://backend-service-v1.ishswami.in/health > /dev/null
 
 # Preprod
-ab -n 100 -c 10 https://preprod-backend.ishswami.in/health
-# Expected: All 200, avg response <500ms
-```
-
-### WebSocket Test
-
-```bash
-# Simple Socket.IO connection test
-node -e "
-  const { io } = require('socket.io-client');
-  const socket = io('https://preprod-backend.ishswami.in', { transports: ['websocket'] });
-  socket.on('connect', () => { console.log('Connected:', socket.id); socket.disconnect(); });
-  socket.on('connect_error', (e) => { console.error('Failed:', e.message); process.exit(1); });
-  setTimeout(() => { console.error('Timeout'); process.exit(1); }, 10000);
-"
-# Expected: "Connected: <socket-id>"
-```
-
-### Queue Processing Test
-
-```bash
-# Enqueue a test job
-curl -s -X POST https://preprod-backend.ishswami.in/api/test/queue \
-  -H "Content-Type: application/json" \
-  -d '{"test": true}'
-# Expected: 200 or 202 with job ID
-
-# Check queue dashboard
-curl -s https://preprod-backend.ishswami.in/queue-dashboard/api/queues
-# Expected: Job count >0 briefly, then 0 (processed)
+time curl -s https://preprod-backend.ishswami.in/health > /dev/null
 ```
 
 ---
 
-## 13. Performance Baseline
-
-### Response Times
-
-| Endpoint                | Target | Method                               |
-| ----------------------- | ------ | ------------------------------------ |
-| `GET /health`           | <200ms | curl -o /dev/null -w "%{time_total}" |
-| `GET /infra-health`     | <100ms | curl -o /dev/null -w "%{time_total}" |
-| `POST /auth/login`      | <500ms | curl with credentials                |
-| `GET /api/appointments` | <300ms | curl with auth header                |
-
-### Resource Usage
+## 12. Security Verification
 
 ```bash
-# Container resource usage
-docker stats preprod-api preprod-worker preprod-postgres preprod-dragonfly --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}"
-# Expected:
-#   preprod-api:       <50% CPU, <1GB RAM
-#   preprod-worker:    <20% CPU, <256MB RAM
-#   preprod-postgres:  <30% CPU, <512MB RAM
-#   preprod-dragonfly: <10% CPU, <256MB RAM
-```
+# Verify no secrets in logs
+docker logs --tail 200 api-ix9fceaxa914diauokjleeis 2>&1 | grep -iE "password|secret|token|key" | grep -v "REDACTED" || echo "No exposed secrets"
 
-### Database Performance
+# Verify production DB is not accessible from preprod
+docker exec api-ix9fceaxa914diauokjleeis sh -c 'echo ${DATABASE_URL:-NOT SET}' | grep -c "userdb_preprod"
+# Expected: 1 (must point to userdb_preprod, not userdb)
 
-```bash
-# Query performance
-time docker exec preprod-postgres psql -U postgres -d userdb_preprod -c "SELECT count(*) FROM users;"
-# Expected: <100ms for tables with <100K rows
-
-# Connection pool usage
-docker exec preprod-postgres psql -U postgres -d userdb_preprod -c \
-  "SELECT count(*) FROM pg_stat_activity WHERE datname = 'userdb_preprod';"
-# Expected: <10 active connections
-```
-
----
-
-## 14. Security Verification
-
-### Environment Variables (No Leaks)
-
-```bash
-# Verify no production secrets in preprod
-docker exec preprod-api env | grep -iE "SECRET|PASSWORD|KEY" | grep -v "DRAGONFLY_KEY_PREFIX\|QUEUE_DASHBOARD" || echo "No sensitive env vars exposed"
-
-# Verify DATABASE_URL is not localhost
-docker exec preprod-api sh -c 'echo "${DATABASE_URL}"' | grep -i "localhost\|127.0.0.1"
-# Expected: No matches (should use service hostnames)
-
-# Verify TRUST_PROXY set (behind Traefik)
-docker exec preprod-api sh -c 'echo "${TRUST_PROXY}"'
-# Expected: 1
-```
-
-### Network Access
-
-```bash
-# Verify API cannot access host network directly
-docker exec preprod-api sh -c 'nc -z host.docker.internal 22 2>&1' || echo "Host blocked (correct)"
-
-# Verify API can only reach expected services
-docker exec preprod-api sh -c 'nc -z preprod-postgres 5432 && echo "postgres OK"'
-docker exec preprod-api sh -c 'nc -z preprod-dragonfly 6379 && echo "dragonfly OK"'
-# Expected: postgres OK, dragonfly OK
-
-# Verify preprod cannot reach production containers
-docker exec preprod-api sh -c 'nc -z latest-api 8088 2>&1' || echo "prod blocked (correct)"
-# Expected: prod blocked or timeout
-```
-
-### Rate Limiting
-
-```bash
-# Send rapid requests to test rate limiting
-for i in $(seq 1 50); do
-  curl -s -o /dev/null -w "%{http_code}" https://preprod-backend.ishswami.in/health
-done
-# Expected: Mix of 200s, then 429s if rate limit hit
-# Preprod config: SECURITY_RATE_LIMIT_MAX=4000, window=1000ms
-```
-
-### TLS Configuration
-
-```bash
-# Verify TLS 1.2+
-nmap --script ssl-enum-ciphers -p 443 preprod-backend.ishswami.in
-# Expected: TLSv1.2 and TLSv1.3 supported, weak ciphers rejected
-
-# Verify HSTS header
-curl -sI https://preprod-backend.ishswami.in | grep -i strict-transport-security
-# Expected: Strict-Transport-Security header present
-```
-
----
-
-## Verification Sign-Off
-
-After completing the relevant verification level:
-
-```
-Environment: _______________  (production / preprod)
-Deploy SHA/Tag: _______________
-Verification Level: ____  (L0 / L1 / L2 / L3)
-Verified by: _______________
-Date/Time: _______________
-
-Checks passed: ____ / ____
-Issues found: _______________
-Rollback needed: ____ (yes / no)
-
-Sign-off: _______________
-```
-
----
-
-## Quick Reference: One-Shot Verification
-
-```bash
-# L1 Quick check — preprod
-ssh <host> bash -c '
-  set -e
-  echo "=== PREPROD L1 VERIFICATION ==="
-  echo "[1] Infra:"
-  bash /opt/healthcare-preprod/devops/scripts/docker-infra/health-check.sh
-  echo "[2] Containers:"
-  docker ps --filter "name=preprod-" --format "{{.Names}}: {{.Status}}" | while read line; do
-    echo "  $line"
-    if echo "$line" | grep -q "Up"; then echo "    ✅"; else echo "    ❌"; fi
-  done
-  echo "[3] Health:"
-  curl -sf https://preprod-backend.ishswami.in/health | jq -r ".status"
-  echo "[4] Image:"
-  docker inspect preprod-api --format "  {{.Config.Image}} ({{.Image}})"
-  echo "[5] DB:"
-  docker exec -i preprod-postgres psql -U postgres -d userdb_preprod -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = '\''public'\'' AND table_type = '\''BASE TABLE'\'';"
-  echo "[6] Env:"
-  docker exec preprod-api sh -c "echo DATABASE_URL=\${DATABASE_URL:-(not set)}" | grep -o "userdb_preprod" && echo "  ✅ DB: userdb_preprod" || echo "  ❌ DB wrong"
-  echo "=== DONE ==="
-'
+# Verify ports are not exposed externally (except via nginx)
+docker ps --filter "name=api-ix9" --format "{{.Names}}\t{{.Ports}}"
+# Should NOT show 0.0.0.0:8087 (if API port is only internal)
 ```

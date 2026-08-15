@@ -1,8 +1,12 @@
 # Multi-Environment CI/CD Pipeline — Healthcare Backend
 #
-# DEPLOY STRATEGY:
-#   Production:  Blue-green via SSH (via blue-green-deploy.sh)
-#   Preprod:     Standard deploy via SSH (via deploy.sh)
+# DEPLOY STRATEGY (both environments use Coolify blue-green):
+#   Preprod:     CI triggers Coolify API deploy → Coolify manages blue-green lifecycle
+#   Production:  CI triggers Coolify API deploy → Coolify manages blue-green lifecycle
+#
+# CURRENT STATE:
+#   Preprod deploys are active. Production (main branch) deploys are gated off
+#   until preprod is validated. Set ENABLE_PROD_DEPLOY=true to enable.
 #
 # SHARED INFRA:
 #   One postgres + one dragonfly serve both environments.
@@ -69,24 +73,13 @@ jobs:
         id: resolve
         run: |
           DEPLOY_ENV="${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}"
-          COMPOSE_FILE="${{ github.ref == 'refs/heads/main' && 'docker-compose.prod.yml' || 'docker-compose.preprod.yml' }}"
-          CONTAINER_PREFIX="${{ github.ref == 'refs/heads/main' && 'latest-' || 'preprod-' }}"
-          DOCKER_NETWORK="${{ github.ref == 'refs/heads/main' && 'app-network' || 'preprod-network' }}"
-          NGINX_PORT="${{ github.ref == 'refs/heads/main' && vars.NGINX_PORT || vars.NGINX_PORT }}"
-          API_PORT="${{ vars.API_PORT }}"
-          API_SUBDOMAIN="${{ github.ref == 'refs/heads/main' && vars.API_SUBDOMAIN || vars.API_SUBDOMAIN }}"
-          ENV_FILE="${{ github.ref == 'refs/heads/main' && '.env.production' || 'devops/docker/.env.preprod' }}"
+          API_SUBDOMAIN="${{ github.ref == 'refs/heads/main' && 'backend-service-v1.ishswami.in' || 'preprod-backend.ishswami.in' }}"
 
           echo "deploy_env=${DEPLOY_ENV}" >> $GITHUB_OUTPUT
-          echo "compose_file=${COMPOSE_FILE}" >> $GITHUB_OUTPUT
-          echo "container_prefix=${CONTAINER_PREFIX}" >> $GITHUB_OUTPUT
-          echo "docker_network=${DOCKER_NETWORK}" >> $GITHUB_OUTPUT
-          echo "nginx_port=${NGINX_PORT}" >> $GITHUB_OUTPUT
-          echo "api_port=${API_PORT}" >> $GITHUB_OUTPUT
           echo "api_subdomain=${API_SUBDOMAIN}" >> $GITHUB_OUTPUT
-          echo "env_file=${ENV_FILE}" >> $GITHUB_OUTPUT
 
           echo "Environment: ${DEPLOY_ENV}"
+          echo "Subdomain: ${API_SUBDOMAIN}"
 
       - name: Enforce promotion flow
         if: github.base_ref == 'main'
@@ -209,11 +202,12 @@ jobs:
           echo "Prisma schema/migration sync OK" >> $GITHUB_STEP_SUMMARY
 
       - name: Validate Prisma configuration
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           test -f src/libs/infrastructure/database/prisma/schema.prisma || (echo "Schema file not found!" && exit 1)
           test -f src/libs/infrastructure/database/prisma/prisma.config.js || (echo "Config file not found!" && exit 1)
           yarn install --frozen-lockfile --ignore-scripts --silent
-          export DATABASE_URL="${{ secrets.DATABASE_URL }}"
           yarn prisma format --schema=./src/libs/infrastructure/database/prisma/schema.prisma \
             --config=./src/libs/infrastructure/database/prisma/prisma.config.js \
             || (echo "Prisma schema validation failed!" && exit 1)
@@ -396,65 +390,57 @@ jobs:
           printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
-      - name: Deploy API and worker with blue-green
+      - name: Deploy
         id: deploy
         continue-on-error: true
+        env:
+          DEPLOY_ENV: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
+          DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
+          IMAGE: ${{ needs.docker-build.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}
+          INFRA_CHANGED: ${{ needs.detect-changes.outputs.infra-changed }}
+          APP_CHANGED: ${{ needs.detect-changes.outputs.app-changed }}
         run: |
           DEPLOY_ENV="${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}"
-          DEPLOY_PATH="${{ secrets.SERVER_DEPLOY_PATH }}"
-          CONTAINER_PREFIX="${{ github.ref == 'refs/heads/main' && 'latest-' || 'preprod-' }}"
-          NETWORK="${{ github.ref == 'refs/heads/main' && 'app-network' || 'preprod-network' }}"
-          IMAGE="${{ needs.docker-build.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}"
-          LOCAL_IMAGE="localhost:5000/healthcare-api:preprod"
-          NGINX_CONTAINER="${CONTAINER_PREFIX}nginx"
-          UPSTREAM_CONF="${DEPLOY_PATH}/nginx/upstream.conf"
+          IMAGE_TAG="${{ github.ref == 'refs/heads/main' && format('main-{0}', github.sha) || format('preprod-{0}', github.sha) }}"
+          IMAGE_FULL="${{ needs.docker-build.outputs.image_name }}:${IMAGE_TAG}"
 
-          if [ "${DEPLOY_ENV}" = "production" ]; then
-            TARGET_IMAGE="${IMAGE}"
+          echo "Deploying to: ${DEPLOY_ENV} (image: ${IMAGE_FULL})"
+
+          # ── Determine Coolify app UUID per environment ──────────────────────
+          if [ "${DEPLOY_ENV}" = "preprod" ]; then
+            COOLIFY_APP_UUID="${{ secrets.COOLIFY_PREPROD_APP_UUID }}"
           else
-            TARGET_IMAGE="${LOCAL_IMAGE}"
+            COOLIFY_APP_UUID="${{ secrets.COOLIFY_PROD_APP_UUID }}"
           fi
 
+          # ── Gate: production deploys disabled until preprod is validated ────
+          # To enable production deploys, set ENABLE_PROD_DEPLOY=true in GitHub
+          # repository secrets or environment variables.
+          if [ "${DEPLOY_ENV}" = "production" ]; then
+            if [ "${{ vars.ENABLE_PROD_DEPLOY || 'false' }}" != "true" ]; then
+              echo "::warning::Production deploys are gated off. Set ENABLE_PROD_DEPLOY=true to enable."
+              echo "Skipping production deploy — preprod not yet validated."
+              exit 0
+            fi
+            echo "Production deploys are ENABLED."
+          fi
+
+          # ── Trigger Coolify blue-green deploy via API ───────────────────────
+          echo "Triggering Coolify deploy for ${DEPLOY_ENV} (image: ${IMAGE_FULL})..."
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
             set -euo pipefail
             cd '${DEPLOY_PATH}'
-            docker pull '${TARGET_IMAGE}'
-            if [ '${DEPLOY_ENV}' = 'preprod' ]; then
-              export BASE_DIR='${DEPLOY_PATH}'
-              export DOCKER_IMAGE='${TARGET_IMAGE}'
-              export DEPLOY_ENV='preprod'
-              export CONTAINER_PREFIX='${CONTAINER_PREFIX}'
-              export INFRA_ALREADY_HANDLED='true'
-              export INFRA_HEALTHY='true'
-              export INFRA_CHANGED='false'
-              export APP_CHANGED='true'
-              bash devops/scripts/docker-infra/deploy.sh --env preprod
-            else
-              bash devops/scripts/docker-infra/blue-green-deploy.sh \
-                --env '${DEPLOY_ENV}' \
-                --container-prefix '${CONTAINER_PREFIX}' \
-                --service api \
-                --image '${TARGET_IMAGE}' \
-                --network '${NETWORK}' \
-                --upstream-conf '${UPSTREAM_CONF}' \
-                --nginx-container '${NGINX_CONTAINER}' \
-                --health-endpoint /infra-health \
-                --health-timeout 180 \
-                --drain-timeout 120 \
-                --api-port 8088
-              bash devops/scripts/docker-infra/blue-green-deploy.sh \
-                --env '${DEPLOY_ENV}' \
-                --container-prefix '${CONTAINER_PREFIX}' \
-                --service worker \
-                --image '${TARGET_IMAGE}' \
-                --network '${NETWORK}' \
-                --health-endpoint /infra-health \
-                --health-timeout 180 \
-                --drain-timeout 120 \
-                --api-port 8088
-            fi
+            COOLIFY_API_TOKEN='${{ secrets.COOLIFY_API_TOKEN }}' \
+            COOLIFY_APP_UUID='${COOLIFY_APP_UUID}' \
+            IMAGE_TAG='${IMAGE_TAG}' \
+            bash devops/scripts/docker-infra/coolify-deploy.sh \
+              --app-uuid '${COOLIFY_APP_UUID}' \
+              --image '${IMAGE_FULL}' \
+              --wait \
+              --force
           "
-          echo "Deployed ${IMAGE} to ${DEPLOY_ENV}"
+
+          echo "Coolify deploy complete for ${DEPLOY_ENV}"
 
       - name: Record deploy status
         id: status

@@ -3,10 +3,21 @@
 Step-by-step procedures for every deployment scenario, incident response, and
 recovery operation.
 
-> **Critical principle**: Only API and Worker containers are deployed/recreated.
-> Postgres, Dragonfly, and Nginx are NOT redeployed for app changes. Preprod
-> uses its own database (`userdb_preprod`) in the same PostgreSQL instance as
-> production.
+> **Architecture summary:**
+>
+> - **Production & Preprod**: Both use Coolify blue-green deploys via
+>   `coolify-deploy.sh`
+> - **Preprod**: Active — Coolify app with Traefik ingress + Let's Encrypt SSL
+>   for `preprod-backend.ishswami.in`
+> - **Production**: Gated off — Coolify app ready, deploys enabled via
+>   `ENABLE_PROD_DEPLOY=true`
+> - **Nginx**: Coolify's Traefik proxy handles ingress (80/443) for both
+>   environments
+> - Postgres, Dragonfly are shared Docker volumes — never redeployed for app
+>   changes.
+>
+> **CI workflow**: `.github/workflows/ci.yml` — single file handles both
+> environments.
 
 ---
 
@@ -14,16 +25,13 @@ recovery operation.
 
 1. [Normal Production Deploy](#1-normal-production-deploy)
 2. [Normal Preprod Deploy](#2-normal-preprod-deploy)
-3. [Preprod Fresh Database](#3-preprod-fresh-database)
-4. [Manual Preprod Deploy (from VPS)](#4-manual-preprod-deploy-from-vps)
-5. [Post-Deploy Verification](#5-post-deploy-verification)
-6. [Rollback Production](#6-rollback-production)
-7. [Rollback Preprod](#7-rollback-preprod)
-8. [Database Restore](#8-database-restore)
-9. [Preprod Database Reset](#9-preprod-database-reset)
-10. [Infrastructure Recovery](#10-infrastructure-recovery)
-11. [Disaster Recovery (Complete Server Loss)](#11-disaster-recovery-complete-server-loss)
-12. [Common Troubleshooting](#12-common-troubleshooting)
+3. [Post-Deploy Verification](#3-post-deploy-verification)
+4. [Rollback Production](#4-rollback-production)
+5. [Rollback Preprod](#5-rollback-preprod)
+6. [Database Restore](#6-database-restore)
+7. [Preprod Database Reset](#7-preprod-database-reset)
+8. [Infrastructure Recovery](#8-infrastructure-recovery)
+9. [Common Troubleshooting](#9-common-troubleshooting)
 
 ---
 
@@ -31,32 +39,37 @@ recovery operation.
 
 ### Trigger
 
-Push to `main` branch → GitHub Actions → approval gate → deploy.
+Push to `main` branch → GitHub Actions → Coolify blue-green deploy (gated by
+`ENABLE_PROD_DEPLOY`).
 
 ### Steps (automated by CI)
 
-1. **detect-changes**: Determines if infra files changed (`docker-compose`,
-   nginx configs, scripts)
+1. **detect-changes**: Determines if infra files changed
 2. **security**: Trivy scan + npm audit (continue-on-error)
 3. **docker-build**: Build multi-arch image → push to `ghcr.io` with tags
-4. **ensure-infrastructure-health**: SSH to VPS → run `health-check.sh` on
-   `postgres` + `dragonfly`
-5. **validate-secrets**: Verify all required secrets non-empty
-6. **validate-disk-space**: SSH to VPS → ensure ≥3 GB free
-7. **deploy**: `blue-green-deploy.sh` over SSH
-   - Build `.env.production` on VPS from GitHub Secrets
-   - Copy compose files + nginx configs to VPS
-   - Run Prisma migrations (`continue-on-error`, handled downstream)
-   - Blue-green deploy: API first, then Worker
-8. **post-deployment-verification**: Curl
+4. **ensure-infrastructure-health**: SSH to VPS → verify `postgres` +
+   `dragonfly` healthy
+5. **pre-deployment-backup**: `backup.sh pre-deployment` on VPS
+6. **coolify-deploy.sh**: SSH to VPS → trigger Coolify API deploy
+   - Coolify spins up new container (green)
+   - Runs health check
+   - Swaps traffic (blue → green)
+   - Drains old container (blue)
+   - Auto-rollback on failure
+7. **post-deployment-verification**: Curl
    `https://backend-service-v1.ishswami.in/health` (3 retries × 10s)
-9. **success-backup**: `backup.sh success` on VPS
-10. **portainer-sync**: Update Portainer stack metadata (optional)
+8. **success-backup**: `backup.sh success` on VPS
+
+### Enabling production deploys
+
+Set `ENABLE_PROD_DEPLOY=true` as a GitHub repository variable. Ensure
+`COOLIFY_PROD_APP_UUID` secret is configured.
 
 ### What gets redeployed
 
-- **ONLY** `latest-api` and `latest-worker` containers (with new image)
-- Postgres, Dragonfly, and Nginx are **untouched**
+- **ONLY** the Coolify-managed production API + Worker containers (with new
+  image)
+- Postgres, Dragonfly, and Traefik are **untouched**
 
 ### Post-deploy
 
@@ -64,8 +77,8 @@ Push to `main` branch → GitHub Actions → approval gate → deploy.
 # Verify from your machine
 curl -s https://backend-service-v1.ishswami.in/health | jq .
 
-# Check on VPS
-ssh <user>@<host> 'docker ps --filter "name=latest-" --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"'
+# Check on VPS (Coolify-managed container names)
+ssh <user>@<host> 'docker ps --filter "name=api-" --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"'
 ```
 
 ---
@@ -74,35 +87,27 @@ ssh <user>@<host> 'docker ps --filter "name=latest-" --format "table {{.Names}}\
 
 ### Trigger
 
-Push to `preprod` branch → GitHub Actions → auto-deploy (no approval gate).
+Push to `preprod` branch → GitHub Actions → Coolify API deploy (no approval
+gate).
 
-### CI Flow (same pipeline, different env vars)
+### CI Flow
 
-| Variable           | Value                         |
-| ------------------ | ----------------------------- |
-| `DEPLOY_ENV`       | `preprod`                     |
-| `COMPOSE_FILE`     | `docker-compose.preprod.yml`  |
-| `CONTAINER_PREFIX` | `preprod-`                    |
-| `DOCKER_NETWORK`   | `preprod-network`             |
-| `NGINX_PORT`       | `8089`                        |
-| `API_PORT`         | `8088`                        |
-| `API_SUBDOMAIN`    | `preprod-backend.ishswami.in` |
-| `ENV_FILE`         | `.env.preprod`                |
-| `BLUE_GREEN`       | `false` (rolling deploy)      |
-| `POSTGRES_DB`      | `userdb_preprod`              |
+1. Same pipeline as production (detect-changes, security, docker-build, etc.)
+2. Deploy triggered via Coolify API for the preprod app (app UUID from
+   `COOLIFY_PREPROD_APP_UUID`)
+3. Image pushed to `ghcr.io/Ishswami-Tech/HealthCareBackend:preprod-<sha>`
 
 ### What gets redeployed
 
-- **ONLY** `preprod-api` and `preprod-worker` containers (with new image)
-- Postgres (`preprod-postgres`), Dragonfly (`preprod-dragonfly`), and Nginx
-  (`preprod-nginx`) are **untouched**
+- **ONLY** the Coolify-managed preprod API + Worker containers (with new image)
+- Postgres (`postgres`), Dragonfly (`dragonfly`), and Traefik are **untouched**
 
 ### Critical: Database name
 
-Preprod connects to **`userdb_preprod`** (NOT `userdb`). This is configured via:
+Preprod connects to **`userdb_preprod`** (NOT `userdb`). Configured via:
 
-- `.env.preprod` →
-  `DATABASE_URL=postgresql://postgres:...@preprod-postgres:5432/userdb_preprod`
+- `.env.preprod` mounted by Coolify
+- `DATABASE_URL=postgresql://postgres:...@postgres:5432/userdb_preprod`
 - Prisma migrations run against `userdb_preprod`
 
 ### Post-deploy
@@ -122,15 +127,14 @@ slate:
 # SSH to VPS
 ssh <user>@<host>
 
-# Drop and recreate preprod database
-docker exec -i preprod-postgres psql -U postgres -c "DROP DATABASE IF EXISTS userdb_preprod;"
-docker exec -i preprod-postgres psql -U postgres -c "CREATE DATABASE userdb_preprod;"
+# Drop and recreate preprod database (uses shared postgres container)
+docker exec -i postgres psql -U postgres -c "DROP DATABASE IF EXISTS userdb_preprod;"
+docker exec -i postgres psql -U postgres -c "CREATE DATABASE userdb_preprod;"
 
 # Verify
-docker exec -i preprod-postgres psql -U postgres -c "\l" | grep userdb_preprod
+docker exec -i postgres psql -U postgres -c "\l" | grep userdb_preprod
 
-# Now deploy — migrations will recreate all tables
-# Push to preprod branch or run deploy manually
+# Now redeploy via Coolify — migrations will recreate all tables
 ```
 
 **Safety**: This only affects `userdb_preprod`. Production `userdb` is
@@ -138,45 +142,7 @@ completely untouched.
 
 ---
 
-## 4. Manual Preprod Deploy (from VPS)
-
-Useful when CI fails or you need an immediate deploy.
-
-```bash
-# SSH to VPS
-ssh <user>@<host>
-cd /opt/healthcare-preprod
-
-# Ensure code is up to date
-git fetch origin
-git checkout preprod
-git pull origin preprod
-
-# Run rolling deploy
-bash devops/scripts/docker-infra/deploy.sh \
-  --env preprod \
-  --blue-green false \
-  --app-changed true \
-  --infra-changed false
-```
-
-### What happens
-
-1. Validates environment = preprod
-2. Sets `CONTAINER_PREFIX=preprod-`, `COMPOSE_FILE=docker-compose.preprod.yml`
-3. Skips infrastructure deploy (not unhealthy, not changed)
-4. Tags current image as `rollback-backup-<timestamp>`
-5. Stops & removes `preprod-api` + `preprod-worker`
-6. Runs Prisma migrations against `userdb_preprod` (with P3009 auto-recovery)
-7. Pulls new image from GHCR
-8. Starts new containers
-9. Verifies image IDs match
-10. Health check (`/infra-health`, up to 360s)
-11. Post-deploy verification (4 steps)
-
----
-
-## 5. Post-Deploy Verification
+## 4. Post-Deploy Verification
 
 ### Automated (CI)
 
@@ -193,120 +159,80 @@ Fail: All retries fail → CI job fails
 ### Manual (VPS)
 
 ```bash
-# Full deployment verification
-bash devops/scripts/docker-infra/verify.sh
+# Production (when enabled)
+ssh <host> 'docker ps --filter "name=api-" --format "{{.Names}}\t{{.Status}}\t{{.Image}}"'
+ssh <host> 'docker ps --filter "name=worker-" --format "{{.Names}}\t{{.Status}}\t{{.Image}}"'
 
-# Specific checks
-bash devops/scripts/docker-infra/verify.sh backup <id>   # Verify backup integrity
-bash devops/scripts/docker-infra/verify.sh image          # Verify running image
-bash devops/scripts/docker-infra/verify.sh fix-image      # Force fresh pull + recreate
-bash devops/scripts/docker-infra/verify.sh status         # Status dashboard
+# Preprod
+ssh <host> 'docker ps --filter "name=api-" --format "{{.Names}}\t{{.Status}}\t{{.Image}}"'
+ssh <host> 'docker ps --filter "name=worker-" --format "{{.Names}}\t{{.Status}}\t{{.Image}}"'
 ```
-
-### Verification steps (what verify.sh checks)
-
-1. **Infrastructure**: Postgres + Dragonfly healthy (3 retries with
-   auto-recovery)
-2. **Data integrity**: `SELECT 1` on postgres, row counts in `users` and
-   `clinics`
-3. **Application**: Polls `/infra-health` for up to 240s, verifies worker,
-   verifies public ingress
-4. **Environment**: Checks `DATABASE_URL` and `NODE_ENV` are set correctly
-
-**Exit codes**: 0 = success, 1 = partial (infra OK but API not ready), 2 =
-failure
 
 ---
 
-## 6. Rollback Production
+## 5. Rollback Production
 
-### Automatic (Blue-Green)
+### Automatic (Coolify)
 
-Production uses **implicit rollback** — no separate rollback function needed:
+Production Coolify deploy auto-rolls back if health check fails:
 
-- If health check fails → new container removed → old container keeps serving
-- If nginx reload fails → upstream.conf restored → old container keeps serving
-- CI sees non-zero exit → deploy marked as **failed**
+1. New container fails health check → Coolify reverts to previous deployment
+2. Old container remains active
+3. CI job fails → manual intervention needed
 
 ### Manual Rollback
 
 ```bash
-# SSH to VPS
-ssh <user>@<host>
-cd /opt/healthcare-backend
+# Via Coolify dashboard
+# 1. Open http://<vps-ip>:8000
+# 2. Navigate to production application
+# 3. Select "Rollback" and choose the previous deployment
 
-# List available rollback images
-docker images --filter "reference=ghcr.io/ishswami-tech/healthcarebackend/healthcare-api" \
-  --format "{{.Repository}}:{{.Tag}} {{.CreatedAt}}" | head -5
+# Via Coolify API
+curl -X POST "http://localhost:8000/api/v1/applications/${{ secrets.COOLIFY_PROD_APP_UUID }}/deploy" \
+  -H "Authorization: Bearer ${COOLIFY_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"force": true}'
+```
 
-# Re-deploy with previous image
-bash devops/scripts/docker-infra/blue-green-deploy.sh \
-  --container-prefix "latest-" \
-  --service "api" \
-  --image "ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:<previous-sha-or-rollback-backup-tag>" \
-  --network "app-network" \
-  --upstream-conf ./nginx/upstream.conf \
-  --nginx-container "latest-nginx" \
-  --health-endpoint "/infra-health" \
-  --health-timeout 180 \
-  --health-interval 5 \
-  --drain-timeout 120 \
-  --drain-interval 5 \
-  --api-port 8088
+### Rollback via CI (redeploy previous tag)
 
-# Then deploy worker with same image
-bash devops/scripts/docker-infra/blue-green-deploy.sh \
-  --container-prefix "latest-" \
-  --service "worker" \
-  --image "ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:<same-image>" \
-  --network "app-network" \
-  --upstream-conf ./nginx/upstream.conf \
-  --nginx-container "latest-nginx" \
-  --health-endpoint "/infra-health" \
-  --health-timeout 180 \
-  --health-interval 5 \
-  --drain-timeout 120 \
-  --drain-interval 5 \
-  --api-port 8088
+```bash
+# Find the previous image tag in GitHub Actions history
+# Then trigger a new deploy with that tag by creating a commit
+# Or disable ENABLE_PROD_DEPLOY if you need to pause production deploys
 ```
 
 ---
 
-## 7. Rollback Preprod
+## 5. Rollback Preprod
 
-### Automatic (Rolling Deploy)
+### Automatic (Coolify)
 
-Preprod uses explicit rollback in `deploy.sh`:
-
-```bash
-# After 3 failed post-deploy verification attempts:
-# 1. Finds the rollback-backup-<timestamp> tagged image
-# 2. Stops current containers
-# 3. Retags backup as the expected image
-# 4. Recreates containers
-# 5. Verifies health
-```
+Preprod uses Coolify's built-in rollback — if health check fails, Coolify
+reverts to the previous deployment automatically.
 
 ### Manual Rollback
 
 ```bash
-ssh <user>@<host>
-cd /opt/healthcare-preprod
+# Via Coolify dashboard
+# 1. Open http://<vps-ip>:8000
+# 2. Navigate to preprod application
+# 3. Select "Rollback" and choose the previous deployment
 
-# List rollback images
-docker images --filter "reference=ghcr.io/ishswami-tech/healthcarebackend/healthcare-api" \
-  --format "{{.Repository}}:{{.Tag}} {{.CreatedAt}}" | grep rollback-backup
-
-# Re-deploy with backup image
-bash devops/scripts/docker-infra/deploy.sh \
-  --env preprod \
-  --blue-green false
-# (deploy.sh automatically uses the rollback-backup tag if current deploy fails)
+# Via Coolify API
+curl -X POST "http://localhost:8000/api/v1/applications/${{ secrets.COOLIFY_PREPROD_APP_UUID }}/deploy" \
+  -H "Authorization: Bearer ${COOLIFY_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"force": true}'
 ```
+
+**Note**: Use the Coolify dashboard to select which previous deployment to roll
+back to. Coolify keeps deployment history.
 
 ---
 
-## 8. Database Restore
+## 6. Database Restore
 
 ### Preprod Database Restore
 
@@ -314,89 +240,49 @@ bash devops/scripts/docker-infra/deploy.sh \
 # SSH to VPS
 ssh <user>@<host>
 
-# Navigate to preprod directory
-cd /opt/healthcare-preprod
-
-# Restore latest backup
+# Run restore script
+cd /opt/healthcare-backend
 bash devops/scripts/docker-infra/restore.sh latest
 
-# OR restore specific backup
-bash devops/scripts/docker-infra/restore.sh success-2026-08-09-143022
+# Verify
+docker exec -i postgres psql -U postgres -d userdb_preprod -c "SELECT 1"
 ```
 
 **What restore.sh does**:
 
 1. Finds backup metadata (local first, S3 fallback)
-2. Stops `preprod-api` + `preprod-worker` containers
-3. Creates safety backup before touching data
-4. **Drops and recreates `userdb_preprod`** (NOT `userdb`)
-5. Restores PostgreSQL from `.sql.gz`
-6. Restores Dragonfly from `.rdb.gz`
-7. Starts API + Worker containers
+2. Creates safety backup before touching data
+3. **Drops and recreates `userdb_preprod`** (NOT `userdb`)
+4. Restores PostgreSQL from `.sql.gz`
+5. Restores Dragonfly from `.rdb.gz`
 
-> **⚠️ CRITICAL**: `restore.sh` restores to the database configured in the
-> current environment. For preprod, this is `userdb_preprod`. Production
-> `userdb` is NEVER touched by a preprod restore.
+> **⚠️ CRITICAL**: `restore.sh` restores to `userdb_preprod`. Production
+> `userdb` is NEVER touched.
 
 ### Production Database Restore
 
 ```bash
 ssh <user>@<host>
 cd /opt/healthcare-backend
-
 bash devops/scripts/docker-infra/restore.sh latest
 # This restores to `userdb` (production database)
 ```
 
-### Disaster Recovery (complete server loss)
-
-**Prerequisites on new VPS**:
-
-1. Re-provision Contabo VPS (OS + Docker + Nginx)
-2. Confirm host-level Nginx (port 80/443) is running
-3. Transfer GitHub Actions secrets back to VPS
-4. Push code to trigger CI pipeline (or run deploy manually)
-
-**On VPS**:
-
-```bash
-# Clone repo
-git clone <repo-url> /opt/healthcare-backend
-cd /opt/healthcare-backend
-
-# Copy .env.production from secure backup
-# Set up cron for backups
-bash devops/scripts/docker-infra/backup.sh setup-cron
-
-# Restore from S3
-bash devops/scripts/docker-infra/restore.sh disaster success-2026-08-09-143022
-
-# Deploy
-bash devops/scripts/docker-infra/blue-green-deploy.sh \
-  --container-prefix "latest-" --service "api" \
-  --network "app-network" \
-  --upstream-conf ./nginx/upstream.conf \
-  --nginx-container "latest-nginx" \
-  --health-endpoint "/infra-health" --health-timeout 180 \
-  --health-interval 5 --drain-timeout 120 --drain-interval 5 \
-  --api-port 8088
-```
-
 ---
 
-## 9. Preprod Database Reset
+## 7. Preprod Database Reset
 
 ### Scenario: Migrations broken, schema corrupted
 
 ```bash
 # Option A: Drop and recreate (loses all preprod data)
 ssh <user>@<host>
-docker exec -i preprod-postgres psql -U postgres -c "DROP DATABASE IF EXISTS userdb_preprod;"
-docker exec -i preprod-postgres psql -U postgres -c "CREATE DATABASE userdb_preprod;"
+docker exec -i postgres psql -U postgres -c "DROP DATABASE IF EXISTS userdb_preprod;"
+docker exec -i postgres psql -U postgres -c "CREATE DATABASE userdb_preprod;"
 
 # Option B: Reset only schema (keeps data, re-runs migrations)
 ssh <user>@<host>
-docker exec -i preprod-postgres psql -U postgres -d userdb_preprod -c "
+docker exec -i postgres psql -U postgres -d userdb_preprod -c "
   DO \$\$ DECLARE
     r RECORD;
   BEGIN
@@ -411,8 +297,8 @@ docker exec -i preprod-postgres psql -U postgres -d userdb_preprod -c "
 ### Verify preprod DB state
 
 ```bash
-# Connect to preprod postgres
-docker exec -it preprod-postgres psql -U postgres -d userdb_preprod
+# Connect to postgres (shared container)
+docker exec -it postgres psql -U postgres -d userdb_preprod
 
 # Check tables
 \dt
@@ -426,241 +312,98 @@ SELECT * FROM _prisma_migrations ORDER BY finished_at DESC;
 
 ---
 
-## 10. Infrastructure Recovery
+## 8. Infrastructure Recovery
 
 ### Scenario: Postgres or Dragonfly is unhealthy
 
 ```bash
 # Check infrastructure health
-bash devops/scripts/docker-infra/health-check.sh
-
-# If unhealthy, auto-recreation (if enabled)
-# In CI: ensure-infrastructure-health step runs this
-# Manual:
-AUTO_RECREATE_SERVICES=true bash devops/scripts/docker-infra/health-check.sh
-
-# Or manually recreate postgres (preserves data volume)
-cd /opt/healthcare-backend
-docker compose -f devops/docker/docker-compose.prod.yml --profile infrastructure up -d --force-recreate postgres
-
-# Same for preprod
-cd /opt/healthcare-preprod
-docker compose -f devops/docker/docker-compose.preprod.yml up -d --force-recreate preprod-postgres
+ssh <host> 'docker ps --filter "name=postgres" --format "{{.Names}}\t{{.Status}}"'
+ssh <host> 'docker ps --filter "name=dragonfly" --format "{{.Names}}\t{{.Status}}"'
 ```
 
 ### Data volume preservation
 
-Both environments use **bind-mounted** volumes:
+Both environments use **named Docker volumes** (NOT bind mounts):
 
-- Production: `/opt/healthcare-backend/data/postgres` → `docker_postgres_data`
-- Preprod: `/opt/healthcare-preprod/data/postgres` → `preprod_postgres_data`
-- Production: `/opt/healthcare-backend/data/dragonfly` → `docker_dragonfly_data`
-- Preprod: `/opt/healthcare-preprod/data/dragonfly` → `preprod_dragonfly_data`
+- Production: `docker_postgres_data`, `docker_dragonfly_data`
+- Preprod: same volumes shared via the postgres/dragonfly containers
 
-**Recreating the postgres container NEVER loses data** — the volume is a bind
-mount outside the container.
+**Recreating the postgres container NEVER loses data** — data is in Docker
+volumes.
 
 ### Full infrastructure restart (last resort)
 
 ```bash
 # Production
-cd /opt/healthcare-backend
-docker compose -f devops/docker/docker-compose.prod.yml --profile infrastructure down
-docker compose -f devops/docker/docker-compose.prod.yml --profile infrastructure up -d
-
-# Wait for health
-bash devops/scripts/docker-infra/health-check.sh
+ssh <host> 'cd /opt/healthcare-backend && docker compose -f devops/docker/docker-compose.prod.yml --profile infrastructure down && docker compose -f devops/docker/docker-compose.prod.yml --profile infrastructure up -d'
 
 # Preprod
-cd /opt/healthcare-preprod
-docker compose -f devops/docker/docker-compose.preprod.yml down
-docker compose -f devops/docker/docker-compose.preprod.yml up -d
+ssh <host> 'cd /opt/healthcare-preprod && docker compose -f devops/docker/docker-compose.preprod.yml down && docker compose -f devops/docker/docker-compose.preprod.yml up -d'
 ```
 
 ---
 
-## 11. Disaster Recovery (Complete Server Loss)
+## 9. Common Troubleshooting
 
-### Prerequisites on New VPS
-
-1. **Provision**: Install OS, Docker Engine + Compose plugin
-2. **Network**: Ensure `coolify` Docker network exists (managed by Coolify)
-3. **Host Nginx**: Port 80/443 reverse proxy to Docker Nginx
-4. **Secrets**: Re-enter GitHub Actions secrets (VPS_SSH_KEY, etc.)
-5. **DNS**: Verify domains point to new VPS IP
-
-### Recovery Steps
+### Container not starting
 
 ```bash
-# 1. Clone repo
-git clone <repo-url> /opt/healthcare-backend
-cd /opt/healthcare-backend
-git checkout main
+# Production (Coolify-managed — names vary by UUID)
+ssh <host> 'docker ps --filter "name=api-" --filter "label=coolify.role=app" --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"'
+ssh <host> 'docker ps --filter "name=worker-" --filter "label=coolify.role=worker" --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"'
 
-# 2. Set up .env.production (from password manager / secure backup)
-cp .env.production.example .env.production
-# Edit with actual values — DATABASE_URL, JWT secrets, etc.
-
-# 3. Set up backup cron
-bash devops/scripts/docker-infra/backup.sh setup-cron
-
-# 4. Start infrastructure
-docker compose -f devops/docker/docker-compose.prod.yml --profile infrastructure up -d
-
-# 5. Wait for health
-bash devops/scripts/docker-infra/health-check.sh
-
-# 6. Restore latest backup from S3
-bash devops/scripts/docker-infra/restore.sh disaster latest
-# OR specify backup ID:
-bash devops/scripts/docker-infra/restore.sh disaster success-2026-08-09-143022
-
-# 7. Deploy application
-bash devops/scripts/docker-infra/blue-green-deploy.sh \
-  --container-prefix "latest-" --service "api" \
-  --network "app-network" \
-  --upstream-conf ./nginx/upstream.conf \
-  --nginx-container "latest-nginx" \
-  --health-endpoint "/infra-health" --health-timeout 180 \
-  --health-interval 5 --drain-timeout 120 --drain-interval 5 \
-  --api-port 8088
-
-# 8. Run verification
-bash devops/scripts/docker-infra/verify.sh
-
-# 9. Trigger post-deploy backup
-bash devops/scripts/docker-infra/backup.sh success
+# Preprod (Coolify-managed — name varies by UUID)
+ssh <host> 'docker ps --filter "name=api-" --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"'
+ssh <host> 'docker ps --filter "name=worker-" --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"'
 ```
 
-### Preprod Recovery (if separate server or fresh setup)
+### Port already in use
 
-Same as above but:
+```bash
+# Check all API containers across environments
+ssh <host> 'docker ps --filter "name=api-" --format "table {{.Names}}\t{{.Ports}}\t{{.Image}}"'
 
-- Use `.env.preprod` instead
-- Use `docker-compose.preprod.yml`
-- Database: `userdb_preprod`
+# Preprod nginx (internal)
+ssh <host> 'docker ps --filter "publish=8090" --format "table {{.Names}}\t{{.Ports}}\t{{.Image}}"'
+```
+
+### Database connection refused
+
+```bash
+# Verify postgres is running and accepting connections
+ssh <host> 'docker exec postgres pg_isready -U postgres'
+
+# Check DATABASE_URL in production container (use dynamic name)
+PROD_API=$(ssh <host> "docker ps --filter 'name=api-' --filter 'label=coolify.role=app' --format '{{.Names}}' | grep -v preprod | head -1")
+ssh <host> "docker exec $PROD_API sh -c 'echo \${DATABASE_URL:-NOT SET}'"
+
+# Check DATABASE_URL in preprod container
+PREPROD_API=$(ssh <host> "docker ps --filter 'name=api-' --filter 'label=coolify.role=app' --format '{{.Names}}' | head -1")
+ssh <host> "docker exec $PREPROD_API sh -c 'echo \${DATABASE_URL:-NOT SET}'"
+```
+
+### Dragonfly/cache issues
+
+```bash
+# Check dragonfly is running
+ssh <host> 'docker ps --filter "name=dragonfly" --format "{{.Names}}\t{{.Status}}"'
+
+# Test connectivity from a Coolify-managed API container
+PROD_API=$(ssh <host> "docker ps --filter 'name=api-' --format '{{.Names}}' | head -1")
+ssh <host> "docker exec $PROD_API sh -c 'nc -z dragonfly 6379 && echo OK || echo FAIL'"
+```
 
 ---
 
-## 12. Common Troubleshooting
+## Escalation
 
-### Deploy fails: "Image pull failed"
+If any check fails and you cannot resolve within 15 minutes:
 
-```bash
-# Check GHCR auth
-ssh <host> 'docker login ghcr.io -u <username>'
-
-# Check image exists
-docker manifest inspect ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest
-
-# Wait for propagation (GHCR can take 1-2 min after push)
-sleep 120
-# Retry deploy
-```
-
-### Deploy fails: "Container failed to start"
-
-```bash
-# Check logs
-docker logs --tail 100 preprod-api 2>&1
-
-# Common causes:
-# - DATABASE_URL wrong → fix in .env.preprod
-# - Postgres not healthy → check health-check.sh
-# - Port conflict → check if port 8088/8089 already in use
-# - Out of memory → check docker stats
-```
-
-### Health check stuck / timeout
-
-```bash
-# Check what's happening
-docker exec preprod-api wget -q --spider http://localhost:8088/infra-health
-docker exec preprod-api ps aux
-
-# Check DB connectivity from inside container
-docker exec preprod-api sh -c 'nc -z preprod-postgres 5432 && echo OK || echo FAIL'
-
-# Check if app is listening
-docker exec preprod-api netstat -tlnp 2>/dev/null || ss -tlnp
-```
-
-### Nginx 502 Bad Gateway
-
-```bash
-# Check upstream.conf
-cat /opt/healthcare-preprod/nginx/upstream.conf
-
-# Check nginx config
-docker exec preprod-nginx nginx -t
-
-# Check if API is healthy
-curl -s http://localhost:8089/infra-health
-
-# Check Traefik routing
-docker logs traefik --tail 50 2>&1
-```
-
-### Migration failure (P3009)
-
-```bash
-# Check which migrations failed
-ssh <host>
-docker exec -i preprod-postgres psql -U postgres -d userdb_preprod -c "SELECT * FROM _prisma_migrations ORDER BY finished_at DESC LIMIT 10;"
-
-# If safe, mark as applied
-docker exec -i preprod-postgres psql -U postgres -d userdb_preprod -c \
-  "SELECT prisma_migrate_resolve_applied('20250809000000_add_some_field');"
-
-# Or re-run migrations after fixing schema
-bash devops/scripts/docker-infra/deploy.sh --env preprod --blue-green false
-```
-
-### Out of disk space
-
-```bash
-# Check space
-df -h /opt/healthcare-preprod
-
-# Clean old images
-docker image prune -a --filter "until=720h"  # Remove unused images older than 30 days
-
-# Clean old backups
-bash devops/scripts/docker-infra/backup.sh cleanup
-# Or manually:
-find /opt/healthcare-preprod/backups -type f -mtime +7 -delete
-
-# Clean Docker build cache
-docker builder prune -f
-```
-
-### Wrong image deployed
-
-```bash
-# Fix with verify.sh
-ssh <host> 'bash /opt/healthcare-preprod/devops/scripts/docker-infra/verify.sh fix-image'
-
-# Or manually
-cd /opt/healthcare-preprod
-bash devops/scripts/docker-infra/deploy.sh --env preprod --blue-green false
-```
-
-### Worker not processing jobs
-
-```bash
-# Check worker health
-docker exec preprod-worker node dist/worker-bootstrap.js --healthcheck
-
-# Check worker logs
-docker logs --tail 100 preprod-worker 2>&1
-
-# Check Bull Board dashboard
-curl -s https://preprod-backend.ishswami.in/queue-dashboard | jq .
-
-# Check queue connection
-docker exec preprod-worker node -e "
-  const { Queue } = require('bullmq');
-  const q = new Queue('default', { connection: { host: 'preprod-dragonfly', port: 6379 } });
-  q.getJobCounts().then(c => console.log(c));
-"
-```
+| Severity            | Action                                                         |
+| ------------------- | -------------------------------------------------------------- |
+| Production down     | Trigger rollback via Coolify dashboard                         |
+| Preprod down        | Redeploy via Coolify dashboard                                 |
+| Data corruption     | Restore from backup (`restore.sh latest`)                      |
+| Infrastructure down | `docker compose up -d --force-recreate` with volumes preserved |
+| Coolify down        | Check Coolify container logs, restart if needed                |

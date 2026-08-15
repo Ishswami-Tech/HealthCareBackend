@@ -3,8 +3,11 @@
 # deploy.sh — Multi-environment Docker deployment orchestrator
 # ----------------------------------------------------------------------------
 # Handles deployments for both production and preprod environments.
-# Production uses blue-green (zero-downtime) deployment when BLUE_GREEN=true.
-# Preprod uses standard rolling deploy.
+# Production uses blue-green (zero-downtime) when BLUE_GREEN=true.
+# Preprod uses standard rolling deploy (BLUE_GREEN=false).
+#
+# Both environments pull images directly from GHCR (authenticated via
+# GITHUB_TOKEN + GITHUB_USERNAME). No local registry or Coolify required.
 #
 # Usage:
 #   ./deploy.sh --env production|preprod [--blue-green] [--dry-run]
@@ -13,9 +16,11 @@
 #   DEPLOY_ENV         - Target environment (production|preprod)
 #   CONTAINER_PREFIX    - "latest-" for production, "preprod-" for preprod
 #   COMPOSE_FILE       - docker-compose.prod.yml or docker-compose.preprod.yml
-#   BLUE_GREEN         - "true" to enable blue-green for production
+#   BLUE_GREEN         - "true" for zero-downtime production deploy
 #   INFRA_CHANGED      - "true" if infra files changed (triggers infra deploy)
 #   APP_CHANGED        - "true" if app code changed (triggers app deploy)
+#   GITHUB_TOKEN       - GHCR auth token (passed from CI)
+#   GITHUB_USERNAME    - GHCR auth username (passed from CI)
 #
 # Requirements: 1.x, 4.x, 6.x, 7.x, 8.x, 10.x
 # ============================================================================
