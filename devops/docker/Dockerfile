@@ -147,6 +147,14 @@ LABEL app.component=backend
 LABEL app.stage=production
 LABEL com.docker.compose.service=api
 
+# Build metadata — injected by CI
+ARG GIT_SHA=unknown
+ARG GIT_REF=unknown
+ARG BUILD_TIMESTAMP=unknown
+LABEL org.opencontainers.image.revision=$GIT_SHA
+LABEL org.opencontainers.image.source=$GIT_REF
+LABEL org.opencontainers.image.created=$BUILD_TIMESTAMP
+
 RUN npm install -g yarn@1.22.22 --force
 
 RUN apt-get update && apt-get install -y \

@@ -249,6 +249,10 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            GIT_REF=${{ github.ref }}
+            BUILD_TIMESTAMP=${{ github.event.head_commit.timestamp }}
           cache-from: type=gha
           cache-to: type=gha,mode=max,ignore-error=true
           platforms: linux/amd64
@@ -264,38 +268,6 @@ jobs:
           echo "|-----|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| ${EXPECTED_TAG} | \`${EXPECTED_IMAGE}\` |" >> $GITHUB_STEP_SUMMARY
 
-      - name: Set up SSH key for local registry push
-        if: github.ref == 'refs/heads/preprod'
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-
-      - name: Push image to local registry (preprod)
-        if: github.ref == 'refs/heads/preprod'
-        env:
-          IMAGE_SHA: ${{ steps.image.outputs.image }}:preprod-${{ github.sha }}
-          LOCAL_IMAGE: localhost:5000/healthcare-api:preprod
-        run: |
-          echo "Pulling ${IMAGE_SHA} from GHCR to local..."
-          docker pull "${IMAGE_SHA}"
-
-          echo "Saving ${IMAGE_SHA} and transferring to VPS local registry..."
-          docker save "${IMAGE_SHA}" -o /tmp/healthcare-api-preprod.tar
-
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "mkdir -p /tmp/registry-import"
-          scp ${{ env.SSH_OPTS }} \
-            /tmp/healthcare-api-preprod.tar \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/registry-import/image.tar
-
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "docker load -i /tmp/registry-import/image.tar && \
-             docker tag '${IMAGE_SHA}' '${LOCAL_IMAGE}' && \
-             docker push '${LOCAL_IMAGE}' && \
-             echo 'Local registry updated: ${LOCAL_IMAGE}'"
-
-  # ============================================================================
   # JOB: ensure-infrastructure-health — Check shared infra (postgres + dragonfly)
   # ============================================================================
   ensure-infrastructure-health:
@@ -412,24 +384,18 @@ jobs:
             "$GITHUB_WORKSPACE/devops/config/coolify-apps.env" \
             "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${DEPLOY_PATH}/devops/config/"
 
-      - name: Deploy
+      - name: Deploy via Coolify (GHCR image)
         id: deploy
         env:
           DEPLOY_ENV: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
           DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
-          IMAGE: ${{ needs.docker-build.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}
+          IMAGE_FULL: ${{ needs.docker-build.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}
           INFRA_CHANGED: ${{ needs.detect-changes.outputs.infra-changed }}
           APP_CHANGED: ${{ needs.detect-changes.outputs.app-changed }}
         run: |
-          DEPLOY_ENV="${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}"
-          IMAGE_TAG="${{ github.ref == 'refs/heads/main' && format('main-{0}', github.sha) || format('preprod-{0}', github.sha) }}"
-          IMAGE_FULL="${{ needs.docker-build.outputs.image_name }}:${IMAGE_TAG}"
-
           echo "Deploying to: ${DEPLOY_ENV} (image: ${IMAGE_FULL})"
 
           # ── Gate: production deploys disabled until preprod is validated ────
-          # To enable production deploys, set ENABLE_PROD_DEPLOY=true in GitHub
-          # repository secrets or environment variables.
           if [ "${DEPLOY_ENV}" = "production" ]; then
             if [ "${{ vars.ENABLE_PROD_DEPLOY || 'false' }}" != "true" ]; then
               echo "::warning::Production deploys are gated off. Set ENABLE_PROD_DEPLOY=true to enable."
@@ -439,13 +405,13 @@ jobs:
             echo "Production deploys are ENABLED."
           fi
 
-          # ── Trigger Coolify blue-green deploy via API ───────────────────────
-          echo "Triggering Coolify deploy for ${DEPLOY_ENV} (image: ${IMAGE_FULL})..."
+          # ── Deploy via Coolify ─────────────────────────────────────────────
+          echo "Triggering Coolify deploy..."
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
             set -euo pipefail
             cd '${DEPLOY_PATH}'
             DEPLOY_ENV='${DEPLOY_ENV}' \
-            COOLIFY_API_TOKEN='${{ secrets.COOLIFY_API_TOKEN }}' \
+            IMAGE_FULL='${IMAGE_FULL}' \
             bash devops/scripts/docker-infra/coolify-deploy.sh \
               --app api \
               --image '${IMAGE_FULL}' \
@@ -492,17 +458,23 @@ jobs:
 
       - name: Verify deployment on VPS
         id: verify
-        continue-on-error: true
         env:
           DEPLOY_PATH: ${{ steps.resolve.outputs.deploy_path }}
+          CONTAINER_PREFIX: ${{ github.ref == 'refs/heads/main' && 'latest-' || 'preprod-' }}
+          VPS_API_PORT: ${{ github.ref == 'refs/heads/main' && '8088' || '8087' }}
+          DEPLOY_ENV: ${{ steps.resolve.outputs.deploy_env }}
         run: |
-          if ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "cd '${DEPLOY_PATH}' && BASE_DIR='${DEPLOY_PATH}' bash devops/scripts/docker-infra/verify.sh deployment"; then
-            echo "verified=true" >> $GITHUB_OUTPUT
-          else
-            echo "verified=false" >> $GITHUB_OUTPUT
-            exit 1
-          fi
+          echo "Running post-deploy verification (env: ${DEPLOY_ENV})..."
+          echo "CONTAINER_PREFIX=${CONTAINER_PREFIX}"
+
+          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
+            cd '${DEPLOY_PATH}' && \
+            BASE_DIR='${DEPLOY_PATH}' \
+            CONTAINER_PREFIX='${CONTAINER_PREFIX}' \
+            DEPLOY_ENV='${DEPLOY_ENV}' \
+            VPS_API_PORT='${VPS_API_PORT}' \
+            bash devops/scripts/docker-infra/verify.sh deployment
+          " && echo "verified=true" >> $GITHUB_OUTPUT || echo "verified=false" >> $GITHUB_OUTPUT
 
   # ============================================================================
   # JOB: post-deployment-backup — Trigger success backup on VPS

@@ -1,6 +1,6 @@
 services:
   api:
-    image: ${DOCKER_IMAGE:-localhost:5000/healthcare-api:preprod}
+    image: ${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:preprod}
     container_name: preprod-api
     hostname: api
     env_file:
@@ -71,7 +71,7 @@ services:
       - "app.type=api"
 
   worker:
-    image: ${DOCKER_IMAGE:-localhost:5000/healthcare-api:preprod}
+    image: ${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:preprod}
     container_name: preprod-worker
     hostname: worker
     env_file:
@@ -151,7 +151,7 @@ services:
       - "app.component=router"
       - "app.type=nginx"
       - "traefik.enable=true"
-      - "traefik.http.routers.preprod-api.rule=Host(\`preprod-backend.ishswami.in\`)"
+      - "traefik.http.routers.preprod-api.rule=Host(`preprod-backend.ishswami.in`)"
       - "traefik.http.routers.preprod-api.entrypoints=http,https"
       - "traefik.http.routers.preprod-api.tls=true"
       - "traefik.http.routers.preprod-api.tls.certresolver=letsencrypt"

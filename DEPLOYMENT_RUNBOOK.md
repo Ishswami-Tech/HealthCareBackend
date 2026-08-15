@@ -78,14 +78,14 @@ CI triggers production deploy via `blue-green-deploy.sh`.
 docker build -t healthcare-api:manual -f devops/docker/Dockerfile .
 
 # Tag and push to local registry on VPS
-docker tag healthcare-api:manual localhost:5000/healthcare-api:preprod
-docker push localhost:5000/healthcare-api:preprod
+docker tag healthcare-api:manual localhost:5000/healthcarebackend/healthcare-api:preprod
+docker push localhost:5000/healthcarebackend/healthcare-api:preprod
 
 # Trigger Coolify deploy
 cd /opt/healthcare-backend
 bash devops/scripts/docker-infra/coolify-deploy.sh \
   --app api \
-  --image localhost:5000/healthcare-api:preprod \
+  --image localhost:5000/healthcarebackend/healthcare-api:preprod \
   --wait --force
 ```
 

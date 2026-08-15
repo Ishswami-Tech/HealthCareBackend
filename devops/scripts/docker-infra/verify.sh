@@ -32,8 +32,34 @@ fi
 # Container prefix (only for app containers, infrastructure uses fixed names)
 CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
 
-# Fixed container names for infrastructure (never change)
-POSTGRES_CONTAINER="postgres"
+# When Coolify manages containers, names use UUID suffixes (e.g. api-ix9fceaxa914diauokjleeis)
+# with no prefix. We discover the real names from labels, falling back to prefix-based names.
+discover_coolify_container() {
+    local service_name="$1"   # e.g. "api" or "worker"
+
+    # Try Coolify-managed containers first (service subName matches)
+    local coolify_name
+    coolify_name=$(docker ps --filter "label=coolify.managed=true" \
+                         --filter "label=coolify.serviceName=${service_name}" \
+                         --filter "label=coolify.resourceName=${DEPLOY_ENV:-}" \
+                         --format '{{.Names}}' 2>/dev/null | head -n1 || true)
+    if [[ -n "$coolify_name" ]]; then
+        echo "$coolify_name"
+        return 0
+    fi
+
+    # Fallback: any running container whose name ends with -<service_name> or <service_name>-*
+    local fallback
+    fallback=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E "(^|-)${service_name}(-|$)" | head -n1 || true)
+    if [[ -n "$fallback" ]]; then
+        echo "$fallback"
+        return 0
+    fi
+
+    # Last resort: try prefix-based name
+    echo "${CONTAINER_PREFIX}${service_name}"
+    return 0
+}
 
 # Ensure BACKUP_DIR is set (from utils.sh, but provide fallback)
 BACKUP_DIR="${BACKUP_DIR:-/opt/healthcare-backend/backups}"
@@ -277,23 +303,46 @@ show_container_status() {
 # Verify application readiness
 ensure_public_ingress() {
     local api_container="$1"
-    local host_health_url="http://127.0.0.1:8088/health"
+    local deploy_env="${DEPLOY_ENV:-production}"
+    local host_health_url="http://127.0.0.1:${VPS_API_PORT:-8088}/health"
     local deploy_root="${BASE_DIR:-/opt/healthcare-backend}"
     local nginx_root="${deploy_root}/nginx"
     local upstream_file="${nginx_root}/upstream.conf"
-    local compose_file="${deploy_root}/devops/docker/docker-compose.prod.yml"
+
+    # Compose file depends on environment
+    if [[ "$deploy_env" == "preprod" ]]; then
+        local compose_file="${deploy_root}/devops/docker/docker-compose.preprod.yml"
+    else
+        local compose_file="${deploy_root}/devops/docker/docker-compose.prod.yml"
+    fi
+
+    # Determine the correct Host header based on which port we're hitting
+    local host_header="backend-service-v1.ishswami.in"
+    if [[ "${VPS_API_PORT:-8088}" == "8087" ]]; then
+        host_header="preprod-backend.ishswami.in"
+    fi
 
     # Use the public Host header so the app's request routing works correctly
     local curl_opts=(
         --max-time 5
-        -H "Host: backend-service-v1.ishswami.in"
+        -H "Host: ${host_header}"
         -H "X-Forwarded-Proto: https"
     )
-    local wget_opts=(--timeout=5 --header="Host: backend-service-v1.ishswami.in")
+    local wget_opts=(--timeout=5 --header="Host: ${host_header}")
 
     # Find any other healthy API container for warm standby failover
     local failover_container=""
-    for candidate in "${CONTAINER_PREFIX}api-green" "${CONTAINER_PREFIX}api-blue"; do
+    # Discover all API-named containers and pick a healthy one that isn't the primary
+    local all_api_containers
+    all_api_containers=$(docker ps --filter "label=coolify.serviceName=api" --format '{{.Names}}' \
+        2>/dev/null | grep -v "^${api_container}$" || true)
+    # Also try prefix-based suffix matches for legacy compose stacks
+    if [[ -z "$all_api_containers" ]]; then
+        all_api_containers=$(docker ps --format '{{.Names}}' 2>/dev/null \
+            | grep -E "(^|-)api(-|$)" \
+            | grep -v "^${api_container}$" || true)
+    fi
+    for candidate in $all_api_containers; do
         if [[ "$candidate" != "$api_container" ]] && container_running "$candidate"; then
             local cand_health=$(docker inspect --format='{{.State.Health.Status}}' "$candidate" 2>/dev/null || echo "unknown")
             if [[ "$cand_health" == "healthy" ]]; then
@@ -305,17 +354,58 @@ ensure_public_ingress() {
 
     # Write dual upstream: primary + warm standby
     if [[ -n "$failover_container" ]]; then
-        printf 'server %s:8088 max_fails=3 fail_timeout=10s;\nserver %s:8088 max_fails=3 fail_timeout=10s backup;\n' \
-            "$api_container" "$failover_container" > "$upstream_file"
+        printf 'server %s:%s max_fails=3 fail_timeout=10s;\nserver %s:%s max_fails=3 fail_timeout=10s backup;\n' \
+            "$api_container" "${VPS_API_PORT:-8088}" "$failover_container" "${VPS_API_PORT:-8088}" > "$upstream_file"
         log_info "Wrote dual upstream: ${api_container} (primary) + ${failover_container} (backup)"
     else
-        printf 'server %s:8088 max_fails=3 fail_timeout=10s;\n' "$api_container" > "$upstream_file"
+        printf 'server %s:%s max_fails=3 fail_timeout=10s;\n' "$api_container" "${VPS_API_PORT:-8088}" > "$upstream_file"
     fi
 
-    if container_running "latest-nginx"; then
-        docker exec latest-nginx nginx -t >/dev/null 2>&1 && \
-            docker exec latest-nginx nginx -s reload >/dev/null 2>&1 || true
-        sleep 2
+    # Find nginx container — try Coolify discovery first, then known fixed names
+    local nginx_container=""
+    nginx_container=$(docker ps --filter "label=coolify.managed=true" \
+                         --filter "label=coolify.serviceName=nginx" \
+                         --filter "label=coolify.resourceName=${deploy_env}" \
+                         --format '{{.Names}}' 2>/dev/null | head -n1 || true)
+    # Fallback to fixed names per environment
+    if [[ -z "$nginx_container" ]]; then
+        if [[ "$deploy_env" == "preprod" ]]; then
+            nginx_container="preprod-nginx"
+        else
+            nginx_container="latest-nginx"
+        fi
+    fi
+
+    if container_running "$nginx_container"; then
+        if docker exec "$nginx_container" nginx -t >/dev/null 2>&1; then
+            docker exec "$nginx_container" nginx -s reload >/dev/null 2>&1 || true
+            sleep 2
+        else
+            log_error "nginx config test failed during auto-heal"
+            return 1
+        fi
+    elif [[ -f "$compose_file" ]]; then
+        log_info "Starting nginx router before retry..."
+        docker compose -f "$compose_file" up -d --no-deps nginx >/dev/null 2>&1 || true
+        sleep 3
+    fi
+
+    if [[ ! -d "$nginx_root" ]]; then
+        log_error "Nginx upstream directory not found: $nginx_root"
+        return 1
+    fi
+
+    printf 'server %s:%s max_fails=3 fail_timeout=10s;\n' "$api_container" "${VPS_API_PORT:-8088}" > "$upstream_file"
+    log_info "Rewrote nginx upstream to ${api_container}"
+
+    if container_running "$nginx_container"; then
+        if docker exec "$nginx_container" nginx -t >/dev/null 2>&1; then
+            docker exec "$nginx_container" nginx -s reload >/dev/null 2>&1 || true
+            sleep 2
+        else
+            log_error "nginx config test failed during auto-heal"
+            return 1
+        fi
     fi
 
     if command -v curl >/dev/null 2>&1; then
@@ -335,46 +425,6 @@ ensure_public_ingress() {
 
     log_warning "Public ingress health check failed - attempting nginx upstream auto-heal"
 
-    if ! container_running "latest-nginx" && [[ -f "$compose_file" ]]; then
-        log_info "Starting nginx router before retry..."
-        docker compose -f "$compose_file" up -d --no-deps nginx >/dev/null 2>&1 || true
-        sleep 3
-    fi
-
-    if [[ ! -d "$nginx_root" ]]; then
-        log_error "Nginx upstream directory not found: $nginx_root"
-        return 1
-    fi
-
-    printf 'server %s:8088 max_fails=3 fail_timeout=10s;\n' "$api_container" > "$upstream_file"
-    log_info "Rewrote nginx upstream to ${api_container}"
-
-    if container_running "latest-nginx"; then
-        if docker exec latest-nginx nginx -t >/dev/null 2>&1; then
-            docker exec latest-nginx nginx -s reload >/dev/null 2>&1 || true
-            sleep 2
-        else
-            log_error "nginx config test failed during auto-heal"
-            return 1
-        fi
-    fi
-
-    if command -v curl >/dev/null 2>&1; then
-        if curl -fsS "${curl_opts[@]}" "$host_health_url" >/dev/null 2>&1; then
-            log_success "Public ingress auto-heal succeeded"
-            return 0
-        fi
-    elif command -v wget >/dev/null 2>&1; then
-        if wget -q "${wget_opts[@]}" -O - "$host_health_url" >/dev/null 2>&1; then
-            log_success "Public ingress auto-heal succeeded"
-            return 0
-        fi
-    fi
-
-    log_error "Public ingress remains unhealthy after nginx auto-heal"
-    return 1
-}
-
 verify_application() {
     log_info "Verifying application readiness..."
 
@@ -383,35 +433,16 @@ verify_application() {
     # Bash `local` is function-scoped; set -u would throw "unbound variable".
     api_container=""
     worker_container=""
-    local api_candidates=(
-        "${CONTAINER_PREFIX}api-green"
-        "${CONTAINER_PREFIX}api-blue"
-        "${CONTAINER_PREFIX}api-next"
-        "${CONTAINER_PREFIX}api"
-    )
-    local worker_candidates=(
-        "${CONTAINER_PREFIX}worker-green"
-        "${CONTAINER_PREFIX}worker-blue"
-        "${CONTAINER_PREFIX}worker-next"
-        "${CONTAINER_PREFIX}worker"
-    )
 
-    # Exclude backup containers (old renamed containers from blue-green deploy)
-    local api_non_backup=()
-    for c in "${api_candidates[@]}"; do
-        [[ "$c" == *"backup-"* ]] || api_non_backup+=("$c")
-    done
-    local worker_non_backup=()
-    for c in "${worker_candidates[@]}"; do
-        [[ "$c" == *"backup-"* ]] || worker_non_backup+=("$c")
-    done
+    # Discover actual Coolify container names (works for both legacy prefix and UUID names)
+    api_container=$(discover_coolify_container "api" 2>/dev/null || true)
+    worker_container=$(discover_coolify_container "worker" 2>/dev/null || true)
 
-    if api_container=$(find_running_container "API" "${api_non_backup[@]}"); then
-        log_info "Using API container: ${api_container}"
+    if [[ -n "$api_container" ]]; then
+        log_info "Discovered API container: ${api_container}"
     fi
-
-    if worker_container=$(find_running_container "worker" "${worker_non_backup[@]}"); then
-        log_info "Using worker container: ${worker_container}"
+    if [[ -n "$worker_container" ]]; then
+        log_info "Discovered worker container: ${worker_container}"
     fi
 
     local api_ready=false
@@ -746,18 +777,29 @@ verify_container_image() {
 verify_app_images() {
     log_info "Verifying application container images..."
 
-    local api_container="${CONTAINER_PREFIX}api"
-    local worker_container="${CONTAINER_PREFIX}worker"
+    # Try Coolify discovery first, fall back to prefix-based names
+    local api_container
+    api_container=$(discover_coolify_container "api" 2>/dev/null || true)
+    [[ -z "$api_container" ]] && api_container="${CONTAINER_PREFIX}api"
+
+    local worker_container
+    worker_container=$(discover_coolify_container "worker" 2>/dev/null || true)
+    [[ -z "$worker_container" ]] && worker_container="${CONTAINER_PREFIX}worker"
+
     local expected_image="${DOCKER_IMAGE:-}"
 
-    local all_ok=true
-
-    # Get expected image from environment or default
+    # Default image respects DEPLOY_ENV (preprod gets :preprod, production gets :latest)
+    local default_tag="latest"
+    if [[ "${DEPLOY_ENV:-production}" == "preprod" ]]; then
+        default_tag="preprod"
+    fi
     if [[ -z "$expected_image" ]]; then
-        expected_image="ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest"
+        expected_image="ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:${default_tag}"
     fi
 
     log_info "Expected image: $expected_image"
+
+    local all_ok=true
 
     # Verify API container
     if container_running "$api_container"; then
@@ -796,9 +838,24 @@ verify_and_fix_images() {
     log_info "=== IMAGE VERIFICATION AND AUTO-FIX ==="
     log_info "=========================================="
 
-    local api_container="${CONTAINER_PREFIX}api"
-    local worker_container="${CONTAINER_PREFIX}worker"
-    local expected_image="${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest}"
+    # Try Coolify discovery first, fall back to prefix-based names
+    local api_container
+    api_container=$(discover_coolify_container "api" 2>/dev/null || true)
+    [[ -z "$api_container" ]] && api_container="${CONTAINER_PREFIX}api"
+
+    local worker_container
+    worker_container=$(discover_coolify_container "worker" 2>/dev/null || true)
+    [[ -z "$worker_container" ]] && worker_container="${CONTAINER_PREFIX}worker"
+
+    local expected_image="${DOCKER_IMAGE:-}"
+
+    if [[ -z "$expected_image" ]]; then
+        local default_tag="latest"
+        if [[ "${DEPLOY_ENV:-production}" == "preprod" ]]; then
+            default_tag="preprod"
+        fi
+        expected_image="ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:${default_tag}"
+    fi
 
     # Get current running images
     local api_image=$(docker inspect --format='{{.Config.Image}}' "$api_container" 2>/dev/null || echo "")
@@ -844,7 +901,7 @@ verify_and_fix_images() {
 
         if [[ -f "$compose_file" ]]; then
             cd "$(dirname "$compose_file")" || return 1
-            if docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
+            if docker compose -f "$(basename "$compose_file")" --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
                 log_info "Containers recreated, waiting for startup..."
                 sleep 10
 
@@ -879,8 +936,14 @@ show_deployment_status() {
     log_info "=== DEPLOYMENT STATUS ==="
     log_info "=========================================="
 
-    local api_container="${CONTAINER_PREFIX}api"
-    local worker_container="${CONTAINER_PREFIX}worker"
+    # Try Coolify discovery first, fall back to prefix-based names
+    local api_container
+    api_container=$(discover_coolify_container "api" 2>/dev/null || true)
+    [[ -z "$api_container" ]] && api_container="${CONTAINER_PREFIX}api"
+
+    local worker_container
+    worker_container=$(discover_coolify_container "worker" 2>/dev/null || true)
+    [[ -z "$worker_container" ]] && worker_container="${CONTAINER_PREFIX}worker"
 
     # Infrastructure containers
     log_info ""
