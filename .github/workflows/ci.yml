@@ -394,22 +394,18 @@ jobs:
         env:
           DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
         run: |
-          # Sync the devops/scripts tree (and any newly added deploy scripts) to
-          # the VPS so SSH'd commands can find them. Using rsync if available,
-          # otherwise tar over scp.
-          if command -v rsync >/dev/null 2>&1; then
-            rsync -az --delete \
-              -e "ssh ${{ env.SSH_OPTS }}" \
-              --include='devops/***' --include='*/' --exclude='*' \
-              "$GITHUB_WORKSPACE/" \
-              "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${DEPLOY_PATH}/"
-          else
-            tar -czf /tmp/devops-sync.tar.gz -C "$GITHUB_WORKSPACE" devops
-            scp ${{ env.SSH_OPTS }} /tmp/devops-sync.tar.gz \
-              "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/devops-sync.tar.gz"
-            ssh ${{ env.SSH_OPTS }} "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
-              "tar -xzf /tmp/devops-sync.tar.gz -C '${DEPLOY_PATH}' && rm /tmp/devops-sync.tar.gz"
-          fi
+          # Copy only the deploy scripts we need to the VPS. Avoids permission
+          # conflicts with Docker-owned directories (data/, backups/, nginx/)
+          # that would break a broad rsync.
+          scp ${{ env.SSH_OPTS }} \
+            "$GITHUB_WORKSPACE/devops/scripts/docker-infra/coolify-deploy.sh" \
+            "$GITHUB_WORKSPACE/devops/scripts/docker-infra/health-check.sh" \
+            "$GITHUB_WORKSPACE/devops/scripts/docker-infra/verify.sh" \
+            "$GITHUB_WORKSPACE/devops/scripts/docker-infra/backup.sh" \
+            "$GITHUB_WORKSPACE/devops/scripts/docker-infra/incident-response.sh" \
+            "$GITHUB_WORKSPACE/devops/scripts/docker-infra/blue-green-deploy.sh" \
+            "$GITHUB_WORKSPACE/devops/scripts/docker-infra/deploy.sh" \
+            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${DEPLOY_PATH}/devops/scripts/docker-infra/"
 
       - name: Deploy
         id: deploy
