@@ -187,11 +187,11 @@ if [[ "$WAIT" == "true" ]]; then
     echo -e "${BLUE}[coolify]${NC} Status: $STATUS (${ELAPSED}s elapsed)"
 
     case "$STATUS" in
-      healthy|running|ready)
+      *healthy*|*running*|*ready*)
         log_info "Application is healthy!"
         exit 0
         ;;
-      failed|error|stopped)
+      *failed*|*error*|*stopped*)
         log_error "Deploy failed - status: $STATUS"
         exit 1
         ;;
