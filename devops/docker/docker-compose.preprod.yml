@@ -133,9 +133,9 @@ services:
     ports:
       - "8090:8090"
     volumes:
-      - /opt/healthcare-preprod/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - /opt/healthcare-preprod/nginx/upstream.conf:/etc/nginx/conf.d/upstream.conf:ro
-      - /opt/healthcare-preprod/logs/nginx:/var/log/nginx
+      - ../../devops/docker/nginx/nginx.preprod.conf:/etc/nginx/nginx.conf:ro
+      - ../../devops/docker/nginx/upstream.conf:/etc/nginx/conf.d/upstream.conf:ro
+      - ../../logs/nginx:/var/log/nginx
     networks:
       - preprod-network
     restart: always
