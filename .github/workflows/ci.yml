@@ -390,6 +390,27 @@ jobs:
           printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
+      - name: Sync deploy scripts to VPS
+        env:
+          DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
+        run: |
+          # Sync the devops/scripts tree (and any newly added deploy scripts) to
+          # the VPS so SSH'd commands can find them. Using rsync if available,
+          # otherwise tar over scp.
+          if command -v rsync >/dev/null 2>&1; then
+            rsync -az --delete \
+              -e "ssh ${{ env.SSH_OPTS }}" \
+              --include='devops/***' --include='*/' --exclude='*' \
+              "$GITHUB_WORKSPACE/" \
+              "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${DEPLOY_PATH}/"
+          else
+            tar -czf /tmp/devops-sync.tar.gz -C "$GITHUB_WORKSPACE" devops
+            scp ${{ env.SSH_OPTS }} /tmp/devops-sync.tar.gz \
+              "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/devops-sync.tar.gz"
+            ssh ${{ env.SSH_OPTS }} "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
+              "tar -xzf /tmp/devops-sync.tar.gz -C '${DEPLOY_PATH}' && rm /tmp/devops-sync.tar.gz"
+          fi
+
       - name: Deploy
         id: deploy
         continue-on-error: true
