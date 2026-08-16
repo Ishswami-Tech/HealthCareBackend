@@ -42,7 +42,12 @@ export default function createProductionConfig(): ProductionConfig {
   validateProductionConfig();
 
   const host = getEnv(ENV_VARS.HOST) || 'localhost';
-  const resolvedBaseUrl = removeTrailingSlash(getEnv(ENV_VARS.BASE_URL) || `https://${host}`);
+  // BASE_URL is the primary public URL. Fall back to COOLIFY_URL (set by Coolify
+  // to the public FQDN) before using the bind address, so the dashboard and
+  // swagger show the correct public URL instead of 0.0.0.0.
+  const resolvedBaseUrl = removeTrailingSlash(
+    getEnv(ENV_VARS.BASE_URL) || getEnv('COOLIFY_URL') || `https://${host}`
+  );
   const resolvedApiUrl = resolvedBaseUrl;
 
   return {
