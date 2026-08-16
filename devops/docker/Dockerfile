@@ -147,10 +147,13 @@ LABEL app.component=backend
 LABEL app.stage=production
 LABEL com.docker.compose.service=api
 
-# Build metadata — injected by CI
+# Build metadata — injected by CI, also exported as ENV for runtime access
 ARG GIT_SHA=unknown
 ARG GIT_REF=unknown
 ARG BUILD_TIMESTAMP=unknown
+ENV GIT_SHA=${GIT_SHA}
+ENV GIT_REF=${GIT_REF}
+ENV BUILD_TIMESTAMP=${BUILD_TIMESTAMP}
 LABEL org.opencontainers.image.revision=$GIT_SHA
 LABEL org.opencontainers.image.source=$GIT_REF
 LABEL org.opencontainers.image.created=$BUILD_TIMESTAMP

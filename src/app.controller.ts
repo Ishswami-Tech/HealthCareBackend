@@ -472,6 +472,11 @@ export class AppController {
         recentLogs = [];
       }
 
+      const gitSha = process.env['GIT_SHA'] || 'unknown';
+      const gitRef = process.env['GIT_REF'] || 'unknown';
+      const buildTimestamp = process.env['BUILD_TIMESTAMP'] || 'unknown';
+      const refDisplay = gitRef.replace('refs/heads/', '').replace('refs/tags/', '');
+
       // Generate HTML content with both service cards and health data
       const html = this.generateDashboardHtml(
         'Healthcare API Dashboard',
@@ -479,7 +484,11 @@ export class AppController {
         recentLogs,
         isProduction,
         dashboardData,
-        baseUrl
+        baseUrl,
+        gitSha,
+        refDisplay,
+        buildTimestamp,
+        appConfig.environment
       );
 
       res.header('Content-Type', 'text/html');
@@ -816,7 +825,11 @@ export class AppController {
     recentLogs: DashboardLogEntry[],
     isProduction: boolean,
     healthData: DashboardData,
-    baseUrl: string
+    baseUrl: string,
+    gitSha: string,
+    branch: string,
+    buildTimestamp: string,
+    environment: string
   ): string {
     // Add this helper function at the beginning of generateDashboardHtml
     const formatDateTime = (dateValue: string | Date | number | null | undefined) =>
@@ -1223,6 +1236,12 @@ export class AppController {
         <header>
             <h1>${title}</h1>
             <p>System Status and Service Management${isProduction ? ' (Production Mode)' : ' (Development Mode)'}</p>
+            <div style="margin-top: 0.75rem; font-size: 0.8rem; color: #64748b; font-family: monospace; background: #f1f5f9; display: inline-block; padding: 6px 16px; border-radius: 6px;">
+              <strong>Image:</strong> ${gitSha.substring(0, 12)} &nbsp;|&nbsp;
+              <strong>Branch:</strong> ${branch} &nbsp;|&nbsp;
+              <strong>Built:</strong> ${buildTimestamp !== 'unknown' ? buildTimestamp : 'N/A'} &nbsp;|&nbsp;
+              <strong>Env:</strong> ${environment}
+            </div>
         </header>
 
         <!-- Service Cards Section -->

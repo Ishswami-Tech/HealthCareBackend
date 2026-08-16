@@ -184,4 +184,58 @@ export class HealthController {
       message: 'Infrastructure is ready to receive traffic',
     });
   }
+
+  /**
+   * Build / version endpoint.
+   *
+   * Returns the GIT_SHA, GIT_REF, BUILD_TIMESTAMP, and NODE_ENV that the
+   * currently running container was built with. Used to verify which image
+   * is actually deployed (compare the returned gitSha to the latest commit
+   * on the preprod/main branch).
+   */
+  @Get('version')
+  @Public()
+  @RateLimitGenerous()
+  @ApiOperation({
+    summary: 'Build / version info',
+    description:
+      'Returns the GIT_SHA, GIT_REF, BUILD_TIMESTAMP, environment, and service metadata of the running image. Compare gitSha to the latest commit on the deployed branch to verify which build is actually live.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Running image build metadata',
+    schema: {
+      type: 'object',
+      properties: {
+        service: { type: 'string', example: 'healthcare-api' },
+        environment: { type: 'string', example: 'production' },
+        version: { type: 'string', example: '1.0.0' },
+        gitSha: { type: 'string', example: 'abc1234567890abcdef' },
+        gitRef: { type: 'string', example: 'refs/heads/preprod' },
+        buildTimestamp: { type: 'string', example: '2026-08-16T03:54:28.000Z' },
+        nodeVersion: { type: 'string', example: '22.23.2' },
+        uptime: { type: 'number', example: 3600 },
+        timestamp: { type: 'string', example: '2026-08-16T04:00:00.000Z' },
+      },
+    },
+  })
+  getVersion(@Res() res: FastifyReply): void {
+    const gitSha = process.env['GIT_SHA'] || 'unknown';
+    const gitRef = process.env['GIT_REF'] || 'unknown';
+    const buildTimestamp = process.env['BUILD_TIMESTAMP'] || 'unknown';
+    const environment = process.env['NODE_ENV'] || 'development';
+    const version = process.env['npm_package_version'] || '0.0.0';
+
+    res.status(200).send({
+      service: 'healthcare-api',
+      environment,
+      version,
+      gitSha,
+      gitRef,
+      buildTimestamp,
+      nodeVersion: process.version,
+      uptime: Math.floor(process.uptime()),
+      timestamp: nowIso(),
+    });
+  }
 }
