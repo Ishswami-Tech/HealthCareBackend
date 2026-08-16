@@ -217,15 +217,21 @@ if [[ -n "$DEPLOY_MSG" ]]; then
   log_info "Coolify says: $DEPLOY_MSG"
 fi
 
-# ─── Wait for Completion ──────────────────────────────────────────────────────
+# ─── Wait for Container Health Stability ────────────────────────────────────
+# Coolify recreates the container; once it reports healthy, we require
+# SUSTAINED_HEALTH_SECONDS of continuous healthy status before declaring the
+# deploy complete. This ensures the new container is stable before Coolify
+# removes the old one.
 if [[ "$WAIT" == "true" ]]; then
-  log_info "Waiting for deploy to complete (timeout: ${MAX_WAIT}s)..."
+  SUSTAINED_HEALTH_SECONDS="${SUSTAINED_HEALTH_SECONDS:-30}"
+  log_info "Waiting for deploy to complete (sustained health: ${SUSTAINED_HEALTH_SECONDS}s)..."
 
   ELAPSED=0
-  POLL_INTERVAL=15
+  HEALTH_STABLE=0
+  HEALTH_STARTED=false
+  POLL_INTERVAL=5
 
   while [[ $ELAPSED -lt $MAX_WAIT ]]; do
-    # Try services endpoint first (this is a Coolify service), fall back to applications
     APP_STATUS=$(curl -s \
       "${API_URL}/services/${APP_UUID}" \
       -H "Authorization: Bearer ${API_TOKEN}" \
@@ -233,16 +239,31 @@ if [[ "$WAIT" == "true" ]]; then
 
     STATUS=$(echo "$APP_STATUS" | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
 
-    echo -e "${BLUE}[coolify]${NC} Status: $STATUS (${ELAPSED}s elapsed)"
+    echo -e "${BLUE}[coolify]${NC} Status: $STATUS (${ELAPSED}s elapsed, stable: ${HEALTH_STABLE}s)"
 
     case "$STATUS" in
       *healthy*|*running*|*ready*)
-        log_info "Application is healthy!"
-        exit 0
+        if [[ "$HEALTH_STARTED" == "false" ]]; then
+          log_info "Container is healthy — waiting ${SUSTAINED_HEALTH_SECONDS}s to confirm stability..."
+          HEALTH_STARTED=true
+        fi
+        HEALTH_STABLE=$((HEALTH_STABLE + POLL_INTERVAL))
+        if [[ "$HEALTH_STABLE" -ge "$SUSTAINED_HEALTH_SECONDS" ]]; then
+          success "Container healthy for ${HEALTH_STABLE}s — deploy stable"
+          exit 0
+        fi
         ;;
       *failed*|*error*|*stopped*)
         log_error "Deploy failed - status: $STATUS"
         exit 1
+        ;;
+      *)
+        # Status degraded — reset stability counter
+        if [[ "$HEALTH_STARTED" == "true" ]]; then
+          warn "Health degraded (status: $STATUS) — resetting stability counter"
+          HEALTH_STARTED=false
+          HEALTH_STABLE=0
+        fi
         ;;
     esac
 
@@ -250,7 +271,7 @@ if [[ "$WAIT" == "true" ]]; then
     ELAPSED=$((ELAPSED + POLL_INTERVAL))
   done
 
-  log_warn "Timeout waiting for deploy (${MAX_WAIT}s elapsed)"
+  log_error "Timeout waiting for sustained health (${MAX_WAIT}s elapsed, stable: ${HEALTH_STABLE}/${SUSTAINED_HEALTH_SECONDS}s)"
   exit 1
 fi
 
