@@ -42,6 +42,7 @@ NC='\033[0m'
 log_info()  { echo -e "${GREEN}[coolify]${NC} $*"; }
 log_warn()  { echo -e "${YELLOW}[coolify]${NC} $*"; }
 log_error() { echo -e "${RED}[coolify]${NC} $*"; }
+log_success() { echo -e "${GREEN}[coolify]${NC} $*"; }
 
 usage() {
   cat <<EOF
@@ -249,7 +250,7 @@ if [[ "$WAIT" == "true" ]]; then
         fi
         HEALTH_STABLE=$((HEALTH_STABLE + POLL_INTERVAL))
         if [[ "$HEALTH_STABLE" -ge "$SUSTAINED_HEALTH_SECONDS" ]]; then
-          success "Container healthy for ${HEALTH_STABLE}s — deploy stable"
+          log_success "Container healthy for ${HEALTH_STABLE}s — deploy stable"
           exit 0
         fi
         ;;
