@@ -1,26 +1,23 @@
 # Multi-Environment CI/CD Pipeline — Healthcare Backend
 #
-# DEPLOY STRATEGY (both environments use Coolify rolling deploy):
-#   Preprod:     CI writes new image to .env, pulls, triggers Coolify deploy,
-#                waits for sustained health before declaring success.
-#   Production:  Same rolling deploy path with branch-scoped UUID secrets.
+# TRIGGER FLOW:
+#   push to preprod    → detect → security → docker-build → deploy PREPROD
+#   PR  to main        → lint/type-check + promotion rule check (no deploy)
+#   push to main       → detect → security → docker-build → deploy PRODUCTION
 #
-# CURRENT STATE:
-#   Preprod deploys are active. Production (main branch) uses the same Coolify
-#   deploy path with branch-scoped UUID secrets.
+# PR-to-main checks:
+#   - Lint + type-check
+#   - Promotion rule (only preprod branch can merge into main)
+#   - NO secrets, NO infra, NO deploy
 #
-# SHARED INFRA:
-#   One postgres + one dragonfly serve both environments.
-#   Separation via DB name (userdb vs userdb_preprod) + cache key prefix.
-#
-# Requirements: 1.x, 2.x, 3.x, 4.x, 5.x, 6.x, 7.x, 8.x, 9.x, 10.x, 11.x, 12.x
+# DEPLOY STRATEGY: Coolify rolling deploy for both environments.
 # ============================================================================
 
 name: CI/CD
 
 on:
   pull_request:
-    branches: [preprod, main]
+    branches: [main]
     types: [opened, synchronize, reopened]
   push:
     branches: [preprod, main]
@@ -31,7 +28,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
   checks: write
   packages: write
   security-events: write
@@ -50,63 +46,12 @@ env:
   DRAIN_TIMEOUT: 120
 
 # ============================================================================
-# JOB: validate-pr — Enforce promotion flow + CI checks for PRs
+# JOB: detect-changes — Identify infra vs app changes
 # ============================================================================
 jobs:
-  validate-pr:
-    name: "Validate PR"
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    outputs:
-      deploy_env: ${{ steps.resolve.outputs.deploy_env }}
-      container_prefix: ${{ steps.resolve.outputs.container_prefix }}
-      docker_network: ${{ steps.resolve.outputs.docker_network }}
-      api_port: ${{ steps.resolve.outputs.api_port }}
-      api_subdomain: ${{ steps.resolve.outputs.api_subdomain }}
-      env_file: ${{ steps.resolve.outputs.env_file }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Resolve environment
-        id: resolve
-        run: |
-          DEPLOY_ENV="${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}"
-          API_SUBDOMAIN="${{ github.ref == 'refs/heads/main' && 'backend-service-v1.ishswami.in' || 'preprod-backend.ishswami.in' }}"
-
-          echo "deploy_env=${DEPLOY_ENV}" >> $GITHUB_OUTPUT
-          echo "api_subdomain=${API_SUBDOMAIN}" >> $GITHUB_OUTPUT
-
-          echo "Environment: ${DEPLOY_ENV}"
-          echo "Subdomain: ${API_SUBDOMAIN}"
-
-      - name: Enforce promotion flow
-        if: github.base_ref == 'main'
-        run: |
-          if [[ "${{ github.head_ref }}" != "preprod" ]]; then
-            echo "::error::Only the 'preprod' branch can merge into 'main'. Current head: ${{ github.head_ref }}"
-            exit 1
-          fi
-          echo "PR targets main with preprod as source — promotion flow is valid."
-
-      - name: Lint & type-check
-        run: |
-          npm install -g yarn@${{ env.YARN_VERSION }} --force
-          yarn install --frozen-lockfile --silent
-          yarn type-check
-          yarn lint:check
-
-      - name: Security audit
-        run: npx audit-ci@7.1.0 --moderate --config audit-ci.json
-
-  # ============================================================================
-  # JOB: detect-changes — Identify infra vs app changes
-  # ============================================================================
   detect-changes:
     name: "Detect Changes"
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
     outputs:
       infra-changed: ${{ steps.filter.outputs.infra }}
       app-changed: ${{ steps.filter.outputs.app }}
@@ -143,12 +88,63 @@ jobs:
           echo "| Application | ${{ steps.filter.outputs.app }} |" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
-  # JOB: security — Vulnerability scan + dependency audit
+  # JOB: pr-check — Fast validation for PRs targeting main (no deploy)
+  # ============================================================================
+  pr-check:
+    name: "PR Validation"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Yarn
+        run: npm install -g yarn@${{ env.YARN_VERSION }} --force
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --silent
+
+      - name: Lint
+        run: yarn lint:check
+
+      - name: Type-check
+        run: yarn type-check
+
+      - name: Unit tests
+        run: yarn test
+
+      - name: Enforce promotion flow
+        run: |
+          echo "PR: ${{ github.head_ref }} → ${{ github.base_ref }}"
+          if [[ "${{ github.base_ref }}" != "main" ]]; then
+            echo "::warning::PR targets ${{ github.base_ref }} — promotion rule only applies to main."
+            exit 0
+          fi
+          if [[ "${{ github.head_ref }}" != "preprod" ]]; then
+            echo "::error::Only the 'preprod' branch can merge into 'main'. Current head: ${{ github.head_ref }}"
+            exit 1
+          fi
+          echo "Promotion flow valid: preprod → main."
+
+      - name: PR check summary
+        run: |
+          echo "## PR Validation Passed" >> $GITHUB_STEP_SUMMARY
+          echo "Branch: \`${{ github.head_ref }}\` → \`${{ github.base_ref }}\`" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================================================
+  # JOB: security — Vulnerability scan + dependency audit (push only)
   # ============================================================================
   security:
     name: "Security Scan"
     runs-on: ubuntu-latest
     needs: [detect-changes]
+    if: github.event_name == 'push'
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -237,7 +233,6 @@ jobs:
           images: ${{ steps.image.outputs.image }}
           tags: |
             type=ref,event=branch
-            type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }},enable=${{ github.event_name == 'push' }}
@@ -282,12 +277,14 @@ jobs:
             "${IMAGE_BASE}:${SHA_TAG}"
           echo "✅ :${BRANCH_TAG} now points to ${IMAGE_BASE}:${SHA_TAG}" >> $GITHUB_STEP_SUMMARY
 
-  # JOB: ensure-infrastructure-health — Check shared infra (postgres + dragonfly)
+  # ============================================================================
+  # JOB: ensure-infrastructure-health — Check shared infra (push only)
   # ============================================================================
   ensure-infrastructure-health:
     name: "Ensure Infrastructure Health"
     runs-on: ubuntu-latest
     needs: [docker-build]
+    if: github.event_name == 'push'
     timeout-minutes: 10
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
     outputs:
@@ -330,12 +327,13 @@ jobs:
           echo "Infrastructure health: ${{ steps.health.outputs.status }}" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
-  # JOB: deploy — Rolling deploy with sustained health verification
+  # JOB: pre-deployment-backup — Backup before deploy (push only)
   # ============================================================================
   pre-deployment-backup:
     name: "Pre-Deploy Backup"
     runs-on: ubuntu-latest
     needs: [ensure-infrastructure-health]
+    if: github.event_name == 'push'
     timeout-minutes: 20
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
     steps:
@@ -354,10 +352,14 @@ jobs:
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
             "cd '${DEPLOY_PATH}' && BASE_DIR='${DEPLOY_PATH}' bash devops/scripts/docker-infra/backup.sh pre-deployment" | tee /tmp/pre-deploy-backup.log
 
+  # ============================================================================
+  # JOB: deploy — Rolling deploy with sustained health verification (push only)
+  # ============================================================================
   deploy:
     name: "Deploy"
     runs-on: ubuntu-latest
     needs: [docker-build, ensure-infrastructure-health, pre-deployment-backup]
+    if: github.event_name == 'push'
     timeout-minutes: 60
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
     concurrency:
@@ -378,9 +380,6 @@ jobs:
         env:
           DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
         run: |
-          # Copy only the deploy scripts we need to the VPS. Avoids permission
-          # conflicts with Docker-owned directories (data/, backups/, nginx/)
-          # that would break a broad rsync.
           scp ${{ env.SSH_OPTS }} \
             "$GITHUB_WORKSPACE/devops/scripts/docker-infra/coolify-deploy.sh" \
             "$GITHUB_WORKSPACE/devops/scripts/docker-infra/health-check.sh" \
@@ -389,9 +388,6 @@ jobs:
             "$GITHUB_WORKSPACE/devops/scripts/docker-infra/incident-response.sh" \
             "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${DEPLOY_PATH}/devops/scripts/docker-infra/"
 
-          # Copy the coolify-apps.env config so coolify-deploy.sh can resolve
-          # app UUIDs per environment. Path on VPS mirrors the repo layout:
-          #   devops/config/coolify-apps.env
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
             "mkdir -p ${DEPLOY_PATH}/devops/config"
           scp ${{ env.SSH_OPTS }} \
@@ -455,9 +451,9 @@ jobs:
     name: "Post-Deploy (Verify + Backup)"
     runs-on: ubuntu-latest
     needs: [deploy]
+    if: always() && needs.deploy.result == 'success'
     timeout-minutes: 15
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
-    if: ${{ always() && needs.deploy.result == 'success' }}
     outputs:
       verified: ${{ steps.verify.outputs.verified }}
     steps:
@@ -517,7 +513,7 @@ jobs:
     name: "Failure Recovery"
     runs-on: ubuntu-latest
     needs: [deploy, post-deploy]
-    if: ${{ always() && (needs.deploy.result == 'failure' || needs.post-deploy.result == 'failure') }}
+    if: always() && (needs.deploy.result == 'failure' || needs.post-deploy.result == 'failure')
     timeout-minutes: 20
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
     steps:
