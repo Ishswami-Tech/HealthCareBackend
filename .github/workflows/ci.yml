@@ -269,6 +269,18 @@ jobs:
           echo "|-----|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| ${EXPECTED_TAG} | \`${EXPECTED_IMAGE}\` |" >> $GITHUB_STEP_SUMMARY
 
+      - name: Ensure branch tag points to latest image
+        if: github.event_name == 'push'
+        run: |
+          IMAGE_BASE="${{ steps.image.outputs.image }}"
+          SHA_TAG="${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}"
+          BRANCH_TAG="${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}"
+          echo "Ensuring :${BRANCH_TAG} → :${SHA_TAG}"
+          docker buildx imagetools create \
+            --tag "${IMAGE_BASE}:${BRANCH_TAG}" \
+            "${IMAGE_BASE}:${SHA_TAG}"
+          echo "✅ :${BRANCH_TAG} now points to ${IMAGE_BASE}:${SHA_TAG}" >> $GITHUB_STEP_SUMMARY
+
   # JOB: ensure-infrastructure-health — Check shared infra (postgres + dragonfly)
   # ============================================================================
   ensure-infrastructure-health:
