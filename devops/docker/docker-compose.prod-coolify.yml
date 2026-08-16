@@ -74,6 +74,7 @@ services:
     labels:
       - com.docker.compose.service=api
       - env=production
+      - traefik.docker.network=5sdkic5wk4l6zpflypayt9mb
       - app.component=backend
       - app.type=api
       - coolify.managed=true
