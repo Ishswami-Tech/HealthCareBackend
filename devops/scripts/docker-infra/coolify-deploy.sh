@@ -164,18 +164,18 @@ if [[ -n "$IMAGE" ]]; then
 
   log_info "Updating DOCKER_IMAGE in ${ENV_FILE} → ${IMAGE}"
 
-  # Add or replace DOCKER_IMAGE in the service .env file
+  # .env is owned by root — use sudo for writes
   if grep -q '^DOCKER_IMAGE=' "$ENV_FILE" 2>/dev/null; then
-    sed -i "s|^DOCKER_IMAGE=.*|DOCKER_IMAGE=${IMAGE}|" "$ENV_FILE"
+    sudo sed -i "s|^DOCKER_IMAGE=.*|DOCKER_IMAGE=${IMAGE}|" "$ENV_FILE"
   else
-    echo "DOCKER_IMAGE=${IMAGE}" >> "$ENV_FILE"
+    echo "DOCKER_IMAGE=${IMAGE}" | sudo tee -a "$ENV_FILE" > /dev/null
   fi
 
   log_info "DOCKER_IMAGE set to ${IMAGE}"
 
   # Pull the image via docker compose so the VPS cache is fresh
   log_info "Pulling image via docker compose..."
-  PULL_CODE=$(docker compose -f "$COMPOSE_FILE" pull 2>&1 > /dev/null; echo $?)
+  PULL_CODE=$(sudo docker compose -f "$COMPOSE_FILE" pull 2>&1 > /dev/null; echo $?)
   if [[ "$PULL_CODE" -eq 0 ]]; then
     log_info "Image pulled successfully"
   else
