@@ -175,7 +175,7 @@ if [[ -n "$IMAGE" ]]; then
 
   # Pull the image via docker compose so the VPS cache is fresh
   log_info "Pulling image via docker compose..."
-  PULL_CODE=$(sudo docker compose -f "$COMPOSE_FILE" pull 2>&1 > /dev/null; echo $?)
+  PULL_CODE=$(sudo docker compose -f "$COMPOSE_FILE" pull > /dev/null 2>&1; echo $?)
   if [[ "$PULL_CODE" -eq 0 ]]; then
     log_info "Image pulled successfully"
   else
