@@ -261,7 +261,7 @@ if [[ "$WAIT" == "true" ]]; then
       *)
         # Status degraded — reset stability counter
         if [[ "$HEALTH_STARTED" == "true" ]]; then
-          warn "Health degraded (status: $STATUS) — resetting stability counter"
+          log_warn "Health degraded (status: $STATUS) — resetting stability counter"
           HEALTH_STARTED=false
           HEALTH_STABLE=0
         fi
