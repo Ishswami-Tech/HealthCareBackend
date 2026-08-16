@@ -81,6 +81,8 @@ create_metadata() {
 {
   "backup_id": "${BACKUP_ID}",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "deployed_image": "${DEPLOYED_IMAGE:-}",
+  "deploy_env": "${DEPLOY_ENV:-}",
   "postgres": ${postgres_json},
   "dragonfly": ${dragonfly_json},
   "env": {
@@ -234,7 +236,63 @@ EOF
 main_backup() {
     # Parse backup type from argument (hourly, daily, weekly, pre-deployment, success)
     local backup_type="${1:-pre-deployment}"
-    
+
+    # Capture currently deployed image for rollback metadata.
+    # Multiple discovery paths so this works whether the deploy is Coolify-managed
+    # (DOCKER_IMAGE in .env), compose-managed (image: in docker-compose.yml), or
+    # running as a container (image label).
+    capture_deployed_image() {
+        # 1. Explicit override from CI
+        if [[ -n "${DEPLOYED_IMAGE:-}" ]]; then
+            echo "${DEPLOYED_IMAGE}"
+            return 0
+        fi
+
+        # 2. Coolify-managed: /data/coolify/services/<uuid>/.env
+        local coolify_env
+        coolify_env=$(ls -t /data/coolify/services/*/.env 2>/dev/null | head -1)
+        if [[ -n "$coolify_env" && -f "$coolify_env" ]]; then
+            local img
+            img=$(grep -E '^DOCKER_IMAGE=' "$coolify_env" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+            if [[ -n "$img" ]]; then
+                echo "$img"
+                return 0
+            fi
+        fi
+
+        # 3. docker compose: image: ghcr.io/... line
+        local compose_file="${COMPOSE_FILE:-}"
+        if [[ -n "$compose_file" && -f "$compose_file" ]]; then
+            local img
+            img=$(grep -E '^\s*image:\s*' "$compose_file" 2>/dev/null | head -1 | sed -E 's/^\s*image:\s*//' | tr -d '"' | tr -d "'")
+            if [[ -n "$img" && "$img" != *'$'* ]]; then
+                echo "$img"
+                return 0
+            fi
+        fi
+
+        # 4. Running container's image
+        local api_container
+        api_container=$(docker ps --filter "label=app.component=backend" --format '{{.Names}}' 2>/dev/null | head -1)
+        if [[ -z "$api_container" ]]; then
+            api_container=$(docker ps --filter "name=api" --format '{{.Names}}' 2>/dev/null | head -1)
+        fi
+        if [[ -n "$api_container" ]]; then
+            docker inspect --format '{{.Config.Image}}' "$api_container" 2>/dev/null
+            return 0
+        fi
+
+        return 1
+    }
+
+    DEPLOYED_IMAGE="${DEPLOYED_IMAGE:-$(capture_deployed_image || echo '')}"
+    DEPLOY_ENV="${DEPLOY_ENV:-${DEPLOY_ENV_OVERRIDE:-}}"
+    if [[ -n "$DEPLOYED_IMAGE" ]]; then
+        log_info "Captured deployed image for rollback metadata: ${DEPLOYED_IMAGE}"
+    else
+        log_warning "Could not capture deployed image — rollback will require manual image selection"
+    fi
+
     # Validate backup type
     case "$backup_type" in
         12h|hourly|daily|weekly|pre-deployment|success)

@@ -48,7 +48,7 @@ usage() {
   cat <<EOF
 Usage: $0 --app NAME --image IMAGE:TAG [OPTIONS]
 
-Trigger a Coolify zero-downtime deploy.
+Trigger a Coolify rolling deploy with sustained health verification.
 
 Required:
   --app NAME          Coolify app name (nginx, api, worker)

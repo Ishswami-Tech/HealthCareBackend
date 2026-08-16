@@ -1,8 +1,9 @@
 # Multi-Environment CI/CD Pipeline — Healthcare Backend
 #
-# DEPLOY STRATEGY (both environments use Coolify blue-green):
-#   Preprod:     CI triggers Coolify API deploy → Coolify manages blue-green lifecycle
-#   Production:  CI triggers Coolify API deploy → Coolify manages blue-green lifecycle
+# DEPLOY STRATEGY (both environments use Coolify rolling deploy):
+#   Preprod:     CI writes new image to .env, pulls, triggers Coolify deploy,
+#                waits for sustained health before declaring success.
+#   Production:  Same rolling deploy path with branch-scoped UUID secrets.
 #
 # CURRENT STATE:
 #   Preprod deploys are active. Production (main branch) uses the same Coolify
@@ -329,7 +330,7 @@ jobs:
           echo "Infrastructure health: ${{ steps.health.outputs.status }}" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
-  # JOB: deploy — Blue-green deployment orchestration
+  # JOB: deploy — Rolling deploy with sustained health verification
   # ============================================================================
   pre-deployment-backup:
     name: "Pre-Deploy Backup"
@@ -533,4 +534,4 @@ jobs:
           DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
         run: |
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "cd '${DEPLOY_PATH}' && BASE_DIR='${DEPLOY_PATH}' bash devops/scripts/docker-infra/incident-response.sh deployment-failed" || true
+            "cd '${DEPLOY_PATH}' && BASE_DIR='${DEPLOY_PATH}' bash devops/scripts/docker-infra/incident-response.sh deployment-failed"
