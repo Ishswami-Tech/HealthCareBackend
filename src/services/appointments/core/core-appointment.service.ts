@@ -1091,7 +1091,8 @@ export class CoreAppointmentService {
       const doctorUserRecord =
         (doctorRecord?.['user'] as Record<string, unknown> | undefined) || undefined;
       const clinicRecord = (existingAppointment as unknown as Record<string, unknown>)['clinic'] as
-        Record<string, unknown> | undefined;
+        | Record<string, unknown>
+        | undefined;
       const clinicName =
         (typeof clinicRecord?.['name'] === 'string' && clinicRecord['name'].trim()) ||
         (typeof clinicRecord?.['displayName'] === 'string' && clinicRecord['displayName'].trim()) ||
@@ -1921,8 +1922,7 @@ export class CoreAppointmentService {
               appointmentSettings['operatingWindowsByDay'],
               dayName
             );
-            const hasExplicitSchedule =
-              Boolean(association.startTime || association.endTime) ||
+            const hasJsonSchedule =
               !!association.location?.workingHours ||
               !!association.doctor?.workingHours ||
               isRecord(appointmentSettings['operatingWindowsByDay']);
@@ -1953,7 +1953,7 @@ export class CoreAppointmentService {
                   ? doctorSessions
                   : clinicSessions.length > 0
                     ? clinicSessions
-                    : hasExplicitSchedule
+                    : hasJsonSchedule
                       ? []
                       : legacySession;
 
@@ -1974,7 +1974,7 @@ export class CoreAppointmentService {
               }
             }
 
-            if (sessionWindows.length === 0 && hasExplicitSchedule) {
+            if (sessionWindows.length === 0 && hasJsonSchedule) {
               return {
                 doctorId,
                 date,

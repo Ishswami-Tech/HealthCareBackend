@@ -73,6 +73,7 @@ services:
       
       # Base URLs
       BASE_URL: http://localhost:8088
+      BASE_URL: http://localhost:8088
       FRONTEND_URL: http://localhost:3000
       
       # CORS Configuration
@@ -172,11 +173,12 @@ services:
         echo 'Note: In production, migrations run automatically via entrypoint.sh' &&
         (node scripts/run-prisma.js push || echo 'Database push completed or skipped') &&
         echo 'Starting application...' &&
-        yarn start
+        yarn start:dev
       "
 
   postgres:
-    image: postgres:18
+    # Volume healthcare_postgres_data is PG16; postgres:18 refuses that layout and crash-loops.
+    image: postgres:16
     platform: linux/amd64
     container_name: healthcare-postgres
     # NOTE: Port 5432 exposed for local development convenience
@@ -376,9 +378,7 @@ services:
       # BullMQ Worker Configuration
       BULL_WORKER_CONCURRENCY: "5"
       BULL_MAX_JOBS_PER_WORKER: "100"
-      ENABLE_BULL_BOARD: "true"
-      BULL_BOARD_URL: "/queue-dashboard"
-
+      
       # Logging Configuration
       LOG_LEVEL: debug
       ENABLE_AUDIT_LOGS: "true"
@@ -418,7 +418,7 @@ services:
         echo 'Fixing Prisma issues (sourcemaps, types, yarn)...' &&
         (node scripts/fix-prisma.js || echo '[WARN] Prisma fixes completed with warnings') &&
         echo 'Starting worker process...' &&
-        yarn exec tsx -r tsconfig-paths/register src/worker-bootstrap.ts
+        yarn exec ts-node -r tsconfig-paths/register src/worker-bootstrap.ts
       "
 
   #   environment:

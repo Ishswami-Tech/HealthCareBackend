@@ -77,8 +77,8 @@ export class CompleteProfileRequestDto {
     example: '+1234567890',
   })
   @IsString()
-  @IsNotEmpty()
-  phone!: string;
+  @IsOptional()
+  phone?: string;
 
   @ApiPropertyOptional({
     description: 'Whether the phone number has been verified',
@@ -96,14 +96,13 @@ export class CompleteProfileRequestDto {
   @IsOptional()
   emailVerified?: boolean;
 
-  @ApiProperty({
-    description: 'Date of birth',
+  @ApiPropertyOptional({
+    description: 'Date of birth (ISO date string YYYY-MM-DD)',
     example: '1990-01-01',
   })
-  @Type(() => Date)
-  @IsDateString()
+  @IsDateString({}, { message: 'dateOfBirth must be a valid ISO date string (YYYY-MM-DD)' })
   @IsOptional()
-  dateOfBirth?: Date;
+  dateOfBirth?: string;
 
   @ApiPropertyOptional({
     description: 'Gender',
@@ -121,6 +120,31 @@ export class CompleteProfileRequestDto {
   @IsString()
   @IsOptional()
   address?: string;
+
+  @ApiPropertyOptional({ description: 'City' })
+  @IsString()
+  @IsOptional()
+  city?: string;
+
+  @ApiPropertyOptional({ description: 'State' })
+  @IsString()
+  @IsOptional()
+  state?: string;
+
+  @ApiPropertyOptional({ description: 'Country' })
+  @IsString()
+  @IsOptional()
+  country?: string;
+
+  @ApiPropertyOptional({ description: 'Zip Code' })
+  @IsString()
+  @IsOptional()
+  zipCode?: string;
+
+  @ApiPropertyOptional({ description: 'Doctor availability working hours' })
+  @IsObject()
+  @IsOptional()
+  availability?: Record<string, unknown>;
 
   @ApiPropertyOptional({
     description: 'Emergency contact information',

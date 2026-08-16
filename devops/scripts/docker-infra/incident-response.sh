@@ -110,29 +110,82 @@ handle_worker_backlog() {
 # Handle deployment failure
 handle_deployment_failed() {
     log_info "Responding to deployment failure..."
-    
-    # Find last success backup
-    local last_success_backup=$(find_last_backup "success")
-    
-    if [[ -n "$last_success_backup" ]]; then
-        log_info "Rolling back to last success backup: ${last_success_backup}"
-        
-        if restore_backup "$last_success_backup"; then
-            log_success "Rollback to success backup completed"
-            
-            # Verify health
-            log_info "Verifying infrastructure health..."
-            "${SCRIPT_DIR}/health-check.sh" || log_warning "Health check failed after rollback"
+
+    # ── Step 1: Find the pre-deployment backup (taken before this deploy) ──
+    local last_pre_deploy_backup
+    last_pre_deploy_backup=$(find_last_backup "pre-deployment")
+
+    if [[ -z "$last_pre_deploy_backup" ]]; then
+        log_error "No pre-deployment backup found — cannot rollback automatically"
+        log_info "Looking for success backup as fallback..."
+        last_pre_deploy_backup=$(find_last_backup "success")
+    fi
+
+    if [[ -z "$last_pre_deploy_backup" ]]; then
+        log_error "No backup found at all — manual intervention required"
+        return 1
+    fi
+
+    log_info "Rollback target: ${last_pre_deploy_backup}"
+
+    # ── Step 2: Read the deployed image from backup metadata ──
+    local meta_file="${BACKUP_DIR}/metadata/${last_pre_deploy_backup}.json"
+    local rollback_image=""
+
+    if [[ -f "$meta_file" ]]; then
+        rollback_image=$(grep -o '"deployed_image": "[^"]*"' "$meta_file" 2>/dev/null | head -1 | cut -d'"' -f4)
+    fi
+
+    if [[ -n "$rollback_image" ]]; then
+        log_info "Rolling back image to: ${rollback_image}"
+    else
+        log_warning "No deployed_image in backup metadata — will only rollback database"
+    fi
+
+    # ── Step 3: Restore database (PostgreSQL + Dragonfly) ──
+    log_info "Restoring database from pre-deployment backup..."
+    if ! restore_backup "$last_pre_deploy_backup"; then
+        log_error "Database restore failed — manual intervention required"
+        return 1
+    fi
+    log_success "Database restored successfully"
+
+    # ── Step 4: Roll back image if we have it ──
+    if [[ -n "$rollback_image" ]]; then
+        log_info "Redeploying with previous image: ${rollback_image}"
+
+        # Try coolify-deploy.sh first (Coolify-managed env)
+        local deploy_script="${SCRIPT_DIR}/coolify-deploy.sh"
+        if [[ ! -f "$deploy_script" ]]; then
+            deploy_script="${BASE_DIR}/devops/scripts/docker-infra/coolify-deploy.sh"
+        fi
+
+        if [[ -f "$deploy_script" ]]; then
+            if bash "$deploy_script" --app api --image "$rollback_image" --wait --force; then
+                log_success "Image rollback deploy triggered successfully"
+            else
+                log_error "Image rollback deploy failed — check Coolify logs"
+                return 1
+            fi
         else
-            log_error "Rollback to success backup failed"
+            log_error "coolify-deploy.sh not found — cannot rollback image automatically"
+            log_info "Manually set DOCKER_IMAGE to ${rollback_image} in Coolify and redeploy"
             return 1
         fi
     else
-        log_warning "No success backup found"
-        log_info "Check for pre-deployment backups manually"
+        log_warning "No image to rollback — database restored but containers still run new code"
     fi
-    
-    log_success "Deployment failure incident response completed"
+
+    # ── Step 5: Verify health after rollback ──
+    log_info "Verifying infrastructure health after rollback..."
+    if "${SCRIPT_DIR}/health-check.sh"; then
+        log_success "Infrastructure healthy after rollback"
+        log_success "Deployment failure rollback completed"
+        return 0
+    else
+        log_error "Health check failed after rollback — manual investigation needed"
+        return 1
+    fi
 }
 
 # Handle disk space exhaustion

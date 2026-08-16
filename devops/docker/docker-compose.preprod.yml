@@ -1,0 +1,263 @@
+services:
+  api:
+    image: ${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:preprod}
+    container_name: api-ix9fceaxa914diauokjleeis
+    hostname: api
+    env_file:
+      - /opt/healthcare-preprod/.env.preprod
+    environment:
+      DATABASE_URL: 'postgresql://postgres:postgres@postgres:5432/userdb_preprod?schema=public'
+      DRAGONFLY_KEY_PREFIX: 'preprod:'
+      CACHE_PREFIX: 'preprod:'
+      NODE_ENV: production
+      APP_MODE: api
+      SERVICE_NAME: api
+      DEV_MODE: 'false'
+      DOCKER_ENV: 'true'
+      CRON_TIMEZONE: Asia/Kolkata
+      TZ: Asia/Kolkata
+      PORT: 8088
+      HOST: 0.0.0.0
+      PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
+      CACHE_PROVIDER: dragonfly
+      CACHE_ENABLED: 'true'
+      DRAGONFLY_ENABLED: 'true'
+      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_PORT: 6379
+      ENABLE_HTTP2: 'false'
+      TRUST_PROXY: 1
+      LOG_LEVEL: info
+      ENABLE_AUDIT_LOGS: 'true'
+      SECURITY_RATE_LIMIT: 'true'
+      SECURITY_RATE_LIMIT_MAX: 4000
+      SECURITY_RATE_LIMIT_WINDOW_MS: 1000
+      CACHE_TTL: 3600
+      RATE_LIMIT_TTL: 60
+      RATE_LIMIT_MAX: 600
+      API_RATE_LIMIT: 1000
+      AUTH_RATE_LIMIT: 30
+      HEAVY_RATE_LIMIT: 50
+      USER_RATE_LIMIT: 500
+      HEALTH_RATE_LIMIT: 2000
+      NPM_CONFIG_LOGLEVEL: error
+      COOLIFY_RESOURCE_UUID: ix9fceaxa914diauokjleeis
+      COOLIFY_CONTAINER_NAME: api-ix9fceaxa914diauokjleeis
+      COOLIFY_FQDN: preprod-backend.ishswami.in
+      COOLIFY_URL: 'https://preprod-backend.ishswami.in'
+      SERVICE_NAME_API: api
+      SERVICE_NAME_WORKER: worker
+      SERVICE_NAME_PREPROD_NGINX: preprod-nginx
+    expose:
+      - '8088'
+    ports:
+      - '8091:8088'
+    volumes:
+      - /data/coolify/services/logs:/app/logs
+    networks:
+      preprod-network: null
+      ix9fceaxa914diauokjleeis: null
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - '-q'
+        - '--spider'
+        - 'http://localhost:8088/infra-health'
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+    labels:
+      - com.docker.compose.service=api
+      - env=preprod
+      - app.component=backend
+      - app.type=api
+      - coolify.managed=true
+      - coolify.version=4.3.2
+      - coolify.serviceId=3
+      - coolify.type=service
+      - coolify.name=api-ix9fceaxa914diauokjleeis
+      - coolify.resourceName=docker-api-worker-nginx
+      - coolify.projectName=healthcarebackend
+      - coolify.serviceName=api
+      - coolify.environmentName=pre-production
+      - coolify.pullRequestId=0
+      - coolify.service.subId=9
+      - coolify.service.subType=application
+      - coolify.service.subName=api
+      - traefik.enable=true
+      - traefik.http.middlewares.gzip.compress=true
+      - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
+      - traefik.http.routers.http-0-ix9fceaxa914diauokjleeis-api-8a5d.entryPoints=http
+      - traefik.http.routers.http-0-ix9fceaxa914diauokjleeis-api-8a5d.middlewares=redirect-to-https
+      - 'traefik.http.routers.http-0-ix9fceaxa914diauokjleeis-api-8a5d.rule=Host(`preprod-backend.ishswami.in`) && PathPrefix(`/`)'
+      - traefik.http.routers.https-0-ix9fceaxa914diauokjleeis-api-8a5d.entryPoints=https
+      - traefik.http.routers.https-0-ix9fceaxa914diauokjleeis-api-8a5d.middlewares=gzip
+      - 'traefik.http.routers.https-0-ix9fceaxa914diauokjleeis-api-8a5d.rule=Host(`preprod-backend.ishswami.in`) && PathPrefix(`/`)'
+      - traefik.http.routers.https-0-ix9fceaxa914diauokjleeis-api-8a5d.tls.certresolver=letsencrypt
+      - traefik.http.routers.https-0-ix9fceaxa914diauokjleeis-api-8a5d.tls=true
+      - 'caddy_0.encode=zstd gzip'
+      - 'caddy_0.handle_path.0_reverse_proxy={{upstreams}}'
+      - 'caddy_0.handle_path=/*'
+      - caddy_0.header=-Server
+      - 'caddy_0.try_files={path} /index.html /index.php'
+      - 'caddy_0=https://preprod-backend.ishswami.in'
+      - caddy_ingress_network=ix9fceaxa914diauokjleeis
+
+  worker:
+    image: '${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:preprod}'
+    container_name: worker-ix9fceaxa914diauokjleeis
+    hostname: worker
+    env_file:
+      - /opt/healthcare-preprod/.env.preprod
+    environment:
+      DATABASE_URL: 'postgresql://postgres:postgres@postgres:5432/userdb_preprod?schema=public'
+      DRAGONFLY_KEY_PREFIX: 'preprod:'
+      CACHE_PREFIX: 'preprod:'
+      NODE_ENV: production
+      APP_MODE: worker
+      SERVICE_NAME: worker
+      DEV_MODE: 'false'
+      DOCKER_ENV: 'true'
+      CRON_TIMEZONE: Asia/Kolkata
+      TZ: Asia/Kolkata
+      CACHE_PROVIDER: dragonfly
+      CACHE_ENABLED: 'true'
+      DRAGONFLY_ENABLED: 'true'
+      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_PORT: 6379
+      BULL_WORKER_CONCURRENCY: '10'
+      BULL_MAX_JOBS_PER_WORKER: '100'
+      LOG_LEVEL: info
+      ENABLE_AUDIT_LOGS: 'true'
+      ENABLE_BULL_BOARD: 'true'
+      BULL_BOARD_URL: /queue-dashboard
+      COOLIFY_RESOURCE_UUID: ix9fceaxa914diauokjleeis
+      COOLIFY_CONTAINER_NAME: worker-ix9fceaxa914diauokjleeis
+      SERVICE_NAME_API: api
+      SERVICE_NAME_WORKER: worker
+      SERVICE_NAME_PREPROD_NGINX: preprod-nginx
+    volumes:
+      - /data/coolify/services/logs:/app/logs
+    ports:
+      - '8092:8088'
+    networks:
+      preprod-network: null
+      ix9fceaxa914diauokjleeis: null
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - '-e'
+        - process.exit(0)
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    command:
+      - node
+      - dist/worker-bootstrap.js
+    labels:
+      - com.docker.compose.service=worker
+      - env=preprod
+      - app.component=worker
+      - app.type=worker
+      - coolify.managed=true
+      - coolify.version=4.3.2
+      - coolify.serviceId=3
+      - coolify.type=service
+      - coolify.name=worker-ix9fceaxa914diauokjleeis
+      - coolify.resourceName=docker-api-worker-nginx
+      - coolify.projectName=healthcarebackend
+      - coolify.serviceName=worker
+      - coolify.environmentName=pre-production
+      - coolify.pullRequestId=0
+      - coolify.service.subId=10
+      - coolify.service.subType=application
+      - coolify.service.subName=worker
+
+  preprod-nginx:
+    image: 'nginx:alpine'
+    container_name: preprod-nginx-ix9fceaxa914diauokjleeis
+    hostname: preprod-nginx
+    ports:
+      - '8090:8090'
+    volumes:
+      - /opt/healthcare-preprod/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /opt/healthcare-preprod/nginx/upstream.conf:/etc/nginx/conf.d/upstream.conf:ro
+      - /opt/healthcare-preprod/logs/nginx:/var/log/nginx
+    networks:
+      preprod-network: null
+      ix9fceaxa914diauokjleeis: null
+    restart: always
+    healthcheck:
+      test:
+        - CMD
+        - sh
+        - '-c'
+        - 'curl -sf http://127.0.0.1:80/nginx-health || curl -sf http://127.0.0.1:8090/nginx-health'
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    labels:
+      - com.docker.compose.service=nginx
+      - env=preprod
+      - app.component=router
+      - app.type=nginx
+      - traefik.enable=true
+      - traefik.http.routers.preprod-api.rule=Host(`preprod-backend.ishswami.in`)
+      - 'traefik.http.routers.preprod-api.entrypoints=http,https'
+      - traefik.http.routers.preprod-api.tls=true
+      - traefik.http.routers.preprod-api.tls.certresolver=letsencrypt
+      - traefik.http.routers.preprod-api.tls.options.mintlsversion=versionTLS12
+      - traefik.http.routers.preprod-api.middlewares=gzip
+      - 'traefik.http.services.preprod-api.loadbalancer.server.port=$${NGINX_PORT:-8088}'
+      - traefik.docker.network=preprod-network
+      - coolify.managed=true
+      - coolify.version=4.3.2
+      - coolify.serviceId=3
+      - coolify.type=service
+      - coolify.name=preprod-nginx-ix9fceaxa914diauokjleeis
+      - coolify.resourceName=docker-api-worker-nginx
+      - coolify.projectName=healthcarebackend
+      - coolify.serviceName=preprod-nginx
+      - coolify.environmentName=pre-production
+      - coolify.pullRequestId=0
+      - coolify.service.subId=12
+      - coolify.service.subType=application
+      - coolify.service.subName=preprod-nginx
+    environment:
+      COOLIFY_RESOURCE_UUID: ix9fceaxa914diauokjleeis
+      COOLIFY_CONTAINER_NAME: preprod-nginx-ix9fceaxa914diauokjleeis
+      SERVICE_NAME_API: api
+      SERVICE_NAME_WORKER: worker
+      SERVICE_NAME_PREPROD_NGINX: preprod-nginx
+    env_file:
+      - .env
+
+networks:
+  preprod-network:
+    name: preprod-network
+    external: true
+  ix9fceaxa914diauokjleeis:
+    name: ix9fceaxa914diauokjleeis
+    external: true

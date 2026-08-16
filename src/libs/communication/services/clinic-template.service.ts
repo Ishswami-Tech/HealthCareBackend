@@ -123,7 +123,8 @@ export class ClinicTemplateService {
       const commConfig = await this.communicationConfigService.getClinicConfig(clinicId);
       // Access templates via type assertion since the ProviderConfig type may not include templates
       const whatsappPrimary = commConfig?.whatsapp?.primary as
-        (Record<string, unknown> & { templates?: Record<string, string> }) | undefined;
+        | (Record<string, unknown> & { templates?: Record<string, string> })
+        | undefined;
       const whatsappTemplates = whatsappPrimary?.templates;
 
       const templateData: ClinicTemplateData = {

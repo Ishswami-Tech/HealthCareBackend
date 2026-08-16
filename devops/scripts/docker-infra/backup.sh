@@ -44,6 +44,8 @@ BACKUP_RESULTS[postgres_local]="failed"
 BACKUP_RESULTS[postgres_s3]="failed"
 BACKUP_RESULTS[dragonfly_local]="failed"
 BACKUP_RESULTS[dragonfly_s3]="failed"
+BACKUP_RESULTS[env_local]="failed"
+BACKUP_RESULTS[env_s3]="failed"
 
 # Result metrics and statuses for modern backup sequence
 # BACKUP_RESULTS is declared as an associative array at the top
@@ -72,12 +74,21 @@ create_metadata() {
     fi
 
     local postgres_local_status="${BACKUP_RESULTS[postgres_local]}"
+    local env_local_status="${BACKUP_RESULTS[env_local]:-skipped}"
+    local env_s3_status="${BACKUP_RESULTS[env_s3]:-skipped}"
+
     cat > "$METADATA_FILE" <<EOF
 {
   "backup_id": "${BACKUP_ID}",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "deployed_image": "${DEPLOYED_IMAGE:-}",
+  "deploy_env": "${DEPLOY_ENV:-}",
   "postgres": ${postgres_json},
   "dragonfly": ${dragonfly_json},
+  "env": {
+    "local": "${env_local_status}",
+    "s3": "${env_s3_status}"
+  },
   "storage": {
     "local": "${postgres_local_status}",
     "s3": "${postgres_s3_status}"
@@ -172,20 +183,12 @@ setup_cron_backups() {
     # Remove existing healthcare backup cron jobs
     crontab -l 2>/dev/null | grep -v "healthcare-backend/devops/scripts/docker-infra/backup.sh" | crontab - 2>/dev/null || true
     
-    # Define cron jobs
-    CRON_HOURLY="0 * * * * $BACKUP_SCRIPT hourly >> $LOG_DIR/hourly.log 2>&1"
-    CRON_DAILY="0 2 * * * $BACKUP_SCRIPT daily >> $LOG_DIR/daily.log 2>&1"
-    CRON_WEEKLY="0 3 * * 0 $BACKUP_SCRIPT weekly >> $LOG_DIR/weekly.log 2>&1"
+    # Define cron job
+    CRON_12H="0 */12 * * * $BACKUP_SCRIPT 12h >> $LOG_DIR/12h.log 2>&1"
     
-    # Add cron jobs
-    log_info "Adding hourly backup cron job (every hour)"
-    (crontab -l 2>/dev/null; echo "$CRON_HOURLY") | crontab -
-    
-    log_info "Adding daily backup cron job (2 AM daily)"
-    (crontab -l 2>/dev/null; echo "$CRON_DAILY") | crontab -
-    
-    log_info "Adding weekly backup cron job (Sunday 3 AM)"
-    (crontab -l 2>/dev/null; echo "$CRON_WEEKLY") | crontab -
+    # Add cron job
+    log_info "Adding backup cron job (every 12 hours)"
+    (crontab -l 2>/dev/null; echo "$CRON_12H") | crontab -
     
     # Setup log rotation
     LOG_ROTATE_CONF="/etc/logrotate.d/healthcare-backups"
@@ -222,9 +225,7 @@ EOF
     
     log_success "Automated backup setup completed!"
     log_info "Backups will run:"
-    log_info "  - Hourly: Every hour (keeps last 24 hours)"
-    log_info "  - Daily: 2 AM daily (keeps last 7 days)"
-    log_info "  - Weekly: Sunday 3 AM (keeps last 4 weeks)"
+    log_info "  - 12-hour: Every 12 hours (keeps last 2 weeks)"
     log_info "Logs are stored in: $LOG_DIR"
 }
 
@@ -235,15 +236,71 @@ EOF
 main_backup() {
     # Parse backup type from argument (hourly, daily, weekly, pre-deployment, success)
     local backup_type="${1:-pre-deployment}"
-    
+
+    # Capture currently deployed image for rollback metadata.
+    # Multiple discovery paths so this works whether the deploy is Coolify-managed
+    # (DOCKER_IMAGE in .env), compose-managed (image: in docker-compose.yml), or
+    # running as a container (image label).
+    capture_deployed_image() {
+        # 1. Explicit override from CI
+        if [[ -n "${DEPLOYED_IMAGE:-}" ]]; then
+            echo "${DEPLOYED_IMAGE}"
+            return 0
+        fi
+
+        # 2. Coolify-managed: /data/coolify/services/<uuid>/.env
+        local coolify_env
+        coolify_env=$(ls -t /data/coolify/services/*/.env 2>/dev/null | head -1)
+        if [[ -n "$coolify_env" && -f "$coolify_env" ]]; then
+            local img
+            img=$(grep -E '^DOCKER_IMAGE=' "$coolify_env" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+            if [[ -n "$img" ]]; then
+                echo "$img"
+                return 0
+            fi
+        fi
+
+        # 3. docker compose: image: ghcr.io/... line
+        local compose_file="${COMPOSE_FILE:-}"
+        if [[ -n "$compose_file" && -f "$compose_file" ]]; then
+            local img
+            img=$(grep -E '^\s*image:\s*' "$compose_file" 2>/dev/null | head -1 | sed -E 's/^\s*image:\s*//' | tr -d '"' | tr -d "'")
+            if [[ -n "$img" && "$img" != *'$'* ]]; then
+                echo "$img"
+                return 0
+            fi
+        fi
+
+        # 4. Running container's image
+        local api_container
+        api_container=$(docker ps --filter "label=app.component=backend" --format '{{.Names}}' 2>/dev/null | head -1)
+        if [[ -z "$api_container" ]]; then
+            api_container=$(docker ps --filter "name=api" --format '{{.Names}}' 2>/dev/null | head -1)
+        fi
+        if [[ -n "$api_container" ]]; then
+            docker inspect --format '{{.Config.Image}}' "$api_container" 2>/dev/null
+            return 0
+        fi
+
+        return 1
+    }
+
+    DEPLOYED_IMAGE="${DEPLOYED_IMAGE:-$(capture_deployed_image || echo '')}"
+    DEPLOY_ENV="${DEPLOY_ENV:-${DEPLOY_ENV_OVERRIDE:-}}"
+    if [[ -n "$DEPLOYED_IMAGE" ]]; then
+        log_info "Captured deployed image for rollback metadata: ${DEPLOYED_IMAGE}"
+    else
+        log_warning "Could not capture deployed image — rollback will require manual image selection"
+    fi
+
     # Validate backup type
     case "$backup_type" in
-        hourly|daily|weekly|pre-deployment|success)
+        12h|hourly|daily|weekly|pre-deployment|success)
             log_info "Backup type: $backup_type"
             ;;
         *)
             log_error "Invalid backup type: $backup_type"
-            log_error "Valid types: hourly, daily, weekly, pre-deployment, success"
+            log_error "Valid types: 12h, hourly, daily, weekly, pre-deployment, success"
             exit 1
             ;;
     esac
@@ -265,10 +322,12 @@ main_backup() {
     # Create backup type subdirectories
     mkdir -p "${BACKUP_DIR}/postgres/${backup_type}"
     mkdir -p "${BACKUP_DIR}/dragonfly/${backup_type}"
-    
+    mkdir -p "${BACKUP_DIR}/env/${backup_type}"
+
     # Update backup file paths to include type
     local postgres_backup_file="${BACKUP_DIR}/postgres/${backup_type}/postgres-${TIMESTAMP}.sql.gz"
     local dragonfly_backup_file="${BACKUP_DIR}/dragonfly/${backup_type}/dragonfly-${TIMESTAMP}.rdb.gz"
+    local env_backup_file="${BACKUP_DIR}/env/${backup_type}/env-${TIMESTAMP}.tar.gz"
     
     # Backup PostgreSQL
     if backup_postgres_to_path "$postgres_backup_file"; then
@@ -284,6 +343,13 @@ main_backup() {
     else
         log_warning "Dragonfly backup failed (non-critical)"
     fi
+
+    # Backup .env.production and critical config files
+    if backup_env_files "$env_backup_file"; then
+        log_success "Environment/config backup completed"
+    else
+        log_warning "Environment/config backup failed (non-critical)"
+    fi
     
     # Create metadata only for successful backups (Postgres local + S3, metadata uploaded)
     if ! create_metadata; then
@@ -291,6 +357,7 @@ main_backup() {
         # Remove partial/failed backup artifacts so we don't retain failed backups
         rm -f "${postgres_backup_file}" "${BACKUP_DIR}/metadata/postgres-${TIMESTAMP}.json"
         rm -f "${dragonfly_backup_file}" "${BACKUP_DIR}/metadata/dragonfly-${TIMESTAMP}.json"
+        rm -f "${env_backup_file}" "${BACKUP_DIR}/metadata/env-${TIMESTAMP}.json"
         rm -f "$METADATA_FILE"
         log_info "Removed partial backup files for failed run"
         exit 1
@@ -545,9 +612,13 @@ backup_dragonfly_to_path() {
         
         # Also try with just the filename in common directories (in case dir is empty)
         if [ -n "$db_filename" ] && [ "$db_filename" != "dump.rdb" ]; then
-            rdb_paths+=("/data/${db_filename}" "/var/lib/dragonfly/${db_filename}")
+            rdb_paths+=(/data/${db_filename} /var/lib/dragonfly/${db_filename})
         fi
-        
+
+        # Dragonfly sometimes stores as backup-dump.rdb
+        rdb_paths+=(/data/backup-dump.rdb)
+
+
         local rdb_found=false
         local checked_paths=()
         for rdb_path in "${rdb_paths[@]}"; do
@@ -570,25 +641,31 @@ backup_dragonfly_to_path() {
         done
         
         if [ "$rdb_found" = false ]; then
-            log_error "RDB file not found after SAVE. Checked paths: ${checked_paths[*]}"
-            # Try to get more diagnostic info
-            if [ "$cli_available" = true ] && [ -n "$redis_cli_cmd" ]; then
-                # Suppressing verbose diagnostic message
-                local persistence_info=$(eval "$redis_cli_cmd INFO persistence" 2>/dev/null | grep -E "(rdb_last_save_time|rdb_last_bgsave_status)" || echo "")
-                if [ -n "$persistence_info" ]; then
-                    log_info "Dragonfly persistence info: ${persistence_info}"
-                fi
-                # Try to find RDB file using find command in container
-                # Suppressing verbose search message
-                local found_files=$(docker exec "$container" find / -name "${db_filename:-dump.rdb}" -type f 2>/dev/null | head -5 || echo "")
-                if [ -n "$found_files" ]; then
-                    log_info "Found ${db_filename:-dump.rdb} files in container: ${found_files}"
-                else
-                    log_warning "No ${db_filename:-dump.rdb} files found in container"
+            # Try the most recent .dfs snapshot file (Dragonfly uses timestamped .dfs)
+            local found_dfs_files
+            found_dfs_files=$(docker exec "$container" find /data -maxdepth 1 -name "dump-*summary.dfs" -type f 2>/dev/null | sort -r | head -3 || echo "")
+            if [ -n "$found_dfs_files" ]; then
+                local dfs_path
+                dfs_path=$(echo "$found_dfs_files" | head -1)
+                checked_paths+=("$dfs_path")
+                log_info "Trying Dragonfly .dfs snapshot: $dfs_path"
+                if docker cp "${container}:${dfs_path}" "$temp_rdb" 2>/dev/null; then
+                    if [ -f "$temp_rdb" ] && [ -s "$temp_rdb" ]; then
+                        rdb_found=true
+                        source_file="$dfs_path"
+                        log_info "Found .dfs snapshot at: $dfs_path"
+                    fi
                 fi
             fi
         fi
-        
+
+        if [ "$rdb_found" = false ]; then
+            log_error "No snapshot file found after SAVE. Checked paths: ${checked_paths[*]}"
+            if [ -n "$found_dfs_files" ]; then
+                log_error "Available .dfs files: $(echo "$found_dfs_files" | tr '\n' ' ')"
+            fi
+        fi
+
         if [ "$rdb_found" = true ]; then
             # Compress
             if gzip -c "$temp_rdb" > "$backup_file"; then
@@ -646,11 +723,92 @@ EOF
     return 1
 }
 
+# ============================================================================
+# ENV / CONFIG BACKUP
+# ============================================================================
+
+backup_env_files() {
+    local backup_file="$1"
+    local temp_dir
+    temp_dir=$(mktemp -d)
+
+    log_info "Starting environment/config backup..."
+
+    # Files to back up (relative to BASE_DIR)
+    local files_to_backup=()
+    local source_dir="${BASE_DIR}"
+
+    if [[ -f "${source_dir}/.env.production" ]]; then
+        files_to_backup+=("${source_dir}/.env.production")
+    else
+        log_warning "No .env.production found at ${source_dir}/.env.production"
+    fi
+
+    # Docker compose and devops config
+    if [[ -d "${source_dir}/devops" ]]; then
+        # Tar entire devops directory (docker-compose, scripts, configs)
+        files_to_backup+=("${source_dir}/devops")
+    fi
+
+    # .env files in project root
+    for f in "${source_dir}"/.env "${source_dir}"/.env.local "${source_dir}"/.env.production.local; do
+        if [[ -f "$f" ]]; then
+            files_to_backup+=("$f")
+        fi
+    done
+
+    if [[ ${#files_to_backup[@]} -eq 0 ]]; then
+        log_warning "No env/config files found to backup"
+        return 0
+    fi
+
+    # Create tar.gz of all files
+    local tar_cmd="tar -czf '${backup_file}'"
+    for f in "${files_to_backup[@]}"; do
+        tar_cmd+=" '${f}'"
+    done
+    tar_cmd+=" 2>/dev/null"
+
+    if eval "$tar_cmd" && [[ -f "$backup_file" ]] && [[ -s "$backup_file" ]]; then
+        local size=$(du -h "$backup_file" | cut -f1)
+        local checksum=$(sha256sum "$backup_file" | cut -d' ' -f1)
+
+        log_success "Env/config backup created: $(basename "$backup_file") (${size})"
+
+        # Upload to S3
+        local s3_path="backups/env/${backup_type}/env-${TIMESTAMP}.tar.gz"
+        log_info "Uploading env backup to S3: ${s3_path}"
+
+        if s3_upload_with_retry "$backup_file" "$s3_path" 3 5; then
+            log_success "Env backup uploaded to S3"
+            BACKUP_RESULTS[env_local]="success"
+            BACKUP_RESULTS[env_s3]="success"
+        else
+            log_error "Env backup S3 upload failed"
+            BACKUP_RESULTS[env_local]="success"
+            BACKUP_RESULTS[env_s3]="failed"
+        fi
+
+        # Cleanup temp dir
+        rm -rf "$temp_dir"
+        return 0
+    else
+        log_error "Failed to create env backup archive"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+}
+
+
 # Cleanup old backups based on retention policy
 cleanup_old_backups_by_type() {
     local backup_type="$1"
     
     case "$backup_type" in
+        12h)
+            # Keep last 28 twelve-hour backups
+            cleanup_backup_type "12h" 28
+            ;;
         hourly)
             # Keep last 24 hourly backups
             cleanup_backup_type "hourly" 24
@@ -682,15 +840,15 @@ usage() {
     echo "Usage: $0 <command> [options]"
     echo ""
     echo "Commands:"
-    echo "  hourly|daily|weekly|pre-deployment|success  Create backup of specified type"
+    echo "  12h|hourly|daily|weekly|pre-deployment|success  Create backup of specified type"
     echo "  retry                                         Retry failed S3 uploads"
     echo "  setup-cron                                    Setup automated backup cron jobs"
     echo ""
     echo "Examples:"
-    echo "  $0 hourly              # Create hourly backup"
+    echo "  $0 12h                 # Create 12-hour backup"
     echo "  $0 pre-deployment      # Create pre-deployment backup"
     echo "  $0 retry               # Retry failed S3 uploads"
-    echo "  $0 setup-cron          # Setup automated backups"
+    echo "  $0 setup-cron          # Setup automated backups (12-hour schedule)"
     exit 1
 }
 
@@ -698,7 +856,7 @@ main() {
     local command="${1:-}"
     
     case "$command" in
-        hourly|daily|weekly|pre-deployment|success)
+        12h|hourly|daily|weekly|pre-deployment|success)
             main_backup "$@"
             ;;
         retry)

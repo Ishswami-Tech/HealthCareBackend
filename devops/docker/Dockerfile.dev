@@ -1,6 +1,6 @@
 # Optimized Development Dockerfile
 # Uses Alpine for smaller image size + Yarn Classic (no symlink issues)
-FROM node:24-alpine AS development
+FROM node:20-alpine AS development
 
 LABEL app.component=backend
 LABEL app.stage=development

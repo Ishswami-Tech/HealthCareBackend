@@ -1,4 +1,4 @@
-﻿# Dependencies
+# Dependencies
 node_modules/
 npm-debug.log
 yarn-debug.log
@@ -16,15 +16,14 @@ package-lock.json
 .env.test
 .env.production
 .env.local-prod
+backups/
+devops/backups/
 .env*.local
 # Build output
 dist/
-dist-sync/
 build/
 out/
 .next/
-# TypeScript build info
-*.tsbuildinfo
 # IDE and editor files
 .idea/
 .vscode/

@@ -23,6 +23,7 @@ import type { UserUpdateInput, UserWhereInput } from '@core/types/input.types';
 import type { Doctor, Patient, Receptionist, ClinicAdmin, SuperAdmin, AuditLog } from '@core/types';
 import { AuditInfo } from '@core/types/database.types';
 import { formatISODateInIST, nowIso } from '../../libs/utils/date-time.util';
+import { normalizeAuthPhoneNumber } from '../auth/core/phone-normalizer.util';
 
 export interface ProfileCompletionValidationResult {
   isComplete: boolean;
@@ -228,7 +229,7 @@ export class UsersService {
   }
 
   async findOne(id: string, clinicId?: string): Promise<UserResponseDto> {
-    const cacheKey = `users:one:v4:${id}:${clinicId || 'global'}`;
+    const cacheKey = `users:one:v5:${id}:${clinicId || 'global'}`;
 
     return this.cacheService.cache(
       cacheKey,
@@ -242,6 +243,19 @@ export class UsersService {
         }
 
         const { password: _password, ...result } = user;
+        const userRecord = result as typeof result & {
+          gender?: string | null;
+          address?: string | null;
+          city?: string | null;
+          state?: string | null;
+          country?: string | null;
+          zipCode?: string | null;
+          doctor?: {
+            specialization?: string | null;
+            experience?: number | null;
+            workingHours?: Record<string, unknown> | null;
+          } | null;
+        };
         const userResponse: UserResponseDto = {
           id: result.id,
           email: result.email,
@@ -259,6 +273,12 @@ export class UsersService {
             ? { phoneVerified: result.phoneVerified }
             : {}),
           ...(result.phoneVerifiedAt ? { phoneVerifiedAt: result.phoneVerifiedAt } : {}),
+          ...(userRecord.gender ? { gender: userRecord.gender as never } : {}),
+          ...(userRecord.address ? { address: userRecord.address } : {}),
+          ...(userRecord.city ? { city: userRecord.city } : {}),
+          ...(userRecord.state ? { state: userRecord.state } : {}),
+          ...(userRecord.country ? { country: userRecord.country } : {}),
+          ...(userRecord.zipCode ? { zipCode: userRecord.zipCode } : {}),
         };
         let patientRecord = result.patient as { id?: string } | null | undefined;
         if (String(result.role).toUpperCase() === 'PATIENT') {
@@ -285,6 +305,20 @@ export class UsersService {
 
         if (result.dateOfBirth) {
           userResponse.dateOfBirth = this.formatDateToString(result.dateOfBirth);
+        }
+
+        if (userRecord.doctor) {
+          if (userRecord.doctor.specialization) {
+            userResponse.specialization = userRecord.doctor.specialization;
+          }
+          if (typeof userRecord.doctor.experience === 'number') {
+            userResponse.experience = userRecord.doctor.experience;
+          }
+          if (userRecord.doctor.workingHours) {
+            (
+              userResponse as UserResponseDto & { availability?: Record<string, unknown> }
+            ).availability = userRecord.doctor.workingHours as Record<string, unknown>;
+          }
         }
 
         return userResponse;
@@ -792,15 +826,20 @@ export class UsersService {
       }
 
       // Handle role-specific data updates
-      // Handle role-specific data updates
       const userRole = (existingUser as { role?: string })['role'];
-      if (
-        (userRole === Role.DOCTOR || userRole === Role.ASSISTANT_DOCTOR) &&
-        cleanedData.specialization
-      ) {
-        await this.updateDoctorProfile(id, existingUser, cleanedData);
-        delete cleanedData.specialization;
-        delete cleanedData.experience;
+      let savedDoctorAvailability: Record<string, unknown> | undefined;
+      if (userRole === Role.DOCTOR || userRole === Role.ASSISTANT_DOCTOR) {
+        const hasDoctorProfileUpdate =
+          Boolean(cleanedData.specialization) ||
+          cleanedData.experience !== undefined ||
+          (cleanedData as Record<string, unknown>)['availability'] !== undefined;
+
+        if (hasDoctorProfileUpdate) {
+          savedDoctorAvailability = await this.updateDoctorProfile(id, existingUser, cleanedData);
+          delete cleanedData.specialization;
+          delete cleanedData.experience;
+          delete (cleanedData as Record<string, unknown>)['availability'];
+        }
       }
 
       // Handle Emergency Contact (Relation)
@@ -834,7 +873,7 @@ export class UsersService {
       delete (cleanedData as Record<string, unknown>)['emailVerified'];
 
       if (typeof cleanedData.phone === 'string' && cleanedData.phone.trim()) {
-        const normalizedPhone = cleanedData.phone.trim();
+        const normalizedPhone = normalizeAuthPhoneNumber(cleanedData.phone);
         const existingUserRecord = existingUser as unknown as Record<string, unknown>;
         const existingPhoneUser = await this.databaseService.findUserByPhoneSafe(normalizedPhone);
         const isPhoneOwnedByAnotherUser = existingPhoneUser && existingPhoneUser.id !== id;
@@ -855,7 +894,8 @@ export class UsersService {
 
         // If the phone belongs to another incomplete account, transfer it.
         if (isPhoneOwnedByAnotherUser && !existingPhoneUserProfileComplete) {
-          const currentPhone = existingUserRecord['phone'] as string | null;
+          const currentPhoneRaw = existingUserRecord['phone'] as string | null;
+          const currentPhone = currentPhoneRaw ? normalizeAuthPhoneNumber(currentPhoneRaw) : null;
           const currentClinicId =
             typeof existingUserRecord['primaryClinicId'] === 'string'
               ? (existingUserRecord['primaryClinicId'] as string)
@@ -908,7 +948,9 @@ export class UsersService {
           );
         } else {
           // Only reset phone verification if the phone number actually changed
-          const currentPhone = existingUserRecord['phone'] as string | null;
+          // (compare normalized forms so "+91 7888..." vs "+917888..." don't wipe OTP verification)
+          const currentPhoneRaw = existingUserRecord['phone'] as string | null;
+          const currentPhone = currentPhoneRaw ? normalizeAuthPhoneNumber(currentPhoneRaw) : null;
           if (currentPhone !== normalizedPhone) {
             (cleanedData as Record<string, unknown>)['phoneVerified'] = false;
             (cleanedData as Record<string, unknown>)['phoneVerifiedAt'] = null;
@@ -944,6 +986,7 @@ export class UsersService {
         city: cleanedData.city,
         state: cleanedData.state,
         country: cleanedData.country,
+        zipCode: (cleanedData as Record<string, unknown>)['zipCode'],
         profilePicture: cleanedData.profilePicture,
       };
       // Auto-populate name from firstName + lastName if either was provided
@@ -972,47 +1015,25 @@ export class UsersService {
       ) as UserUpdateInput;
 
       await this.databaseService.updateUserSafe(id, userUpdateData);
-      // Fetch updated user with relations
-      const user = existingUserRaw
-        ? await this.databaseService.executeHealthcareRead<{
-            id: string;
-            email: string;
-            [key: string]: unknown;
-          } | null>(async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-            const result = await typedClient.user.findUnique({
-              where: { id } as PrismaDelegateArgs,
-              include: {
-                doctor: true,
-                patient: true,
-                receptionists: true,
-                clinicAdmins: true,
-                superAdmin: true,
-              } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-            return result as {
-              id: string;
-              email: string;
-              [key: string]: unknown;
-            } | null;
-          })
-        : null;
-      // ... (rest of the code)
-      // I will truncate here to avoid replacing too much, just need to insert after the `update` method.
 
-      // Invalidate cache
-      await Promise.all([
-        this.cacheService.invalidateCache(`users:one:${id}`),
-        this.cacheService.invalidateCacheByTag('users'),
-        this.cacheService.invalidateCacheByTag(`user:${id}`),
-      ]);
+      // Bust all user/doctor/availability caches BEFORE re-reading so response is fresh.
+      const clinicIdForCache = String(
+        (existingUser as { primaryClinicId?: string | null })['primaryClinicId'] || clinicId || ''
+      );
+      await this.invalidateUserProfileCaches(id, clinicIdForCache || undefined);
+
+      // Always re-read without cache after writes
+      const user = await this.databaseService.findUserByIdSafeFresh(id);
+      if (!user) {
+        throw this.errors.userNotFound(id, 'UsersService.update');
+      }
 
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'User updated successfully',
         'UsersService',
-        { userId: id }
+        { userId: id, availabilityUpdated: Boolean(savedDoctorAvailability) }
       );
       await this.eventService.emit('user.updated', {
         userId: id,
@@ -1035,8 +1056,23 @@ export class UsersService {
         phoneVerifiedAt?: Date | null;
         password?: string;
         isProfileComplete?: boolean | null;
+        gender?: string | null;
+        address?: string | null;
+        city?: string | null;
+        state?: string | null;
+        country?: string | null;
+        zipCode?: string | null;
+        doctor?: {
+          specialization?: string | null;
+          experience?: number | null;
+          workingHours?: Record<string, unknown> | null;
+        } | null;
       };
       const { password: _password, ...result } = userRecord;
+      const doctorAvailability =
+        savedDoctorAvailability ||
+        (result.doctor?.workingHours as Record<string, unknown> | null | undefined) ||
+        undefined;
       const userResponse: UserResponseDto = {
         id: result.id,
         email: result.email,
@@ -1044,7 +1080,7 @@ export class UsersService {
         lastName: result.lastName ?? '',
         role: result.role as Role,
         isVerified: result.isVerified,
-        isActive: true, // User accounts are active by default
+        isActive: true,
         createdAt: result.createdAt,
         updatedAt: result.updatedAt,
         ...(result.dateOfBirth && {
@@ -1057,6 +1093,21 @@ export class UsersService {
         ...(result.phoneVerifiedAt ? { phoneVerifiedAt: result.phoneVerifiedAt } : {}),
         isProfileComplete: result.isProfileComplete ?? false,
         profileComplete: result.isProfileComplete ?? false,
+        ...(result.gender ? { gender: result.gender as never } : {}),
+        ...(result.address ? { address: result.address } : {}),
+        ...(result.city ? { city: result.city } : {}),
+        ...(result.state ? { state: result.state } : {}),
+        ...(result.country ? { country: result.country } : {}),
+        ...(result.zipCode ? { zipCode: result.zipCode } : {}),
+        ...(result.doctor?.specialization ? { specialization: result.doctor.specialization } : {}),
+        ...(typeof result.doctor?.experience === 'number'
+          ? { experience: result.doctor.experience }
+          : {}),
+        ...(doctorAvailability
+          ? {
+              availability: doctorAvailability,
+            }
+          : {}),
       };
       return userResponse;
     } catch (error: unknown) {
@@ -1830,12 +1881,46 @@ export class UsersService {
     });
   }
 
+  private async invalidateUserProfileCaches(userId: string, clinicId?: string): Promise<void> {
+    await Promise.all([
+      this.cacheService.invalidateCache(`users:one:v5:${userId}:global`),
+      this.cacheService.invalidateCache(`users:one:${userId}`),
+      this.cacheService.invalidateCacheByPattern(`users:one:*${userId}*`),
+      this.cacheService.invalidateCacheByPattern(`*${userId}*`),
+      this.cacheService.invalidateDoctorCache(userId, clinicId),
+      this.cacheService.invalidateCacheByTag('users'),
+      this.cacheService.invalidateCacheByTag(`user:${userId}`),
+      this.cacheService.invalidateCacheByTag('user_details'),
+      this.cacheService.invalidateCacheByTag('doctors'),
+      this.cacheService.invalidateCacheByPattern(`*availability*${userId}*`),
+      this.cacheService.invalidateCacheByPattern(`*doctor*${userId}*availability*`),
+    ]);
+  }
+
   private async updateDoctorProfile(
     userId: string,
     existingUser: unknown,
-    cleanedData: Partial<UpdateUserDto> & { specialization?: string; experience?: number | string }
-  ): Promise<void> {
+    cleanedData: Partial<UpdateUserDto> & {
+      specialization?: string;
+      experience?: number | string;
+      availability?: Record<string, unknown>;
+    }
+  ): Promise<Record<string, unknown> | undefined> {
     const existingUserWithDoctor = existingUser as UserWithRelations;
+    const availability =
+      cleanedData.availability && typeof cleanedData.availability === 'object'
+        ? cleanedData.availability
+        : undefined;
+    const experienceValue =
+      typeof cleanedData.experience === 'string'
+        ? parseInt(cleanedData.experience, 10) || 0
+        : typeof cleanedData.experience === 'number'
+          ? cleanedData.experience
+          : undefined;
+    const clinicId = String(
+      (existingUser as { primaryClinicId?: string | null })['primaryClinicId'] || ''
+    );
+
     // Ensure doctor record exists using executeHealthcareWrite
     if (!existingUserWithDoctor.doctor) {
       await this.databaseService.executeHealthcareWrite<{
@@ -1856,26 +1941,25 @@ export class UsersService {
             data: {
               userId: userId,
               specialization: cleanedData.specialization ?? '',
-              experience:
-                typeof cleanedData.experience === 'string'
-                  ? parseInt(cleanedData.experience) || 0
-                  : 0,
+              experience: experienceValue ?? 0,
+              ...(availability ? { workingHours: availability } : {}),
             },
           });
         },
         {
           userId: userId,
-          clinicId: String(
-            (existingUser as { primaryClinicId?: string | null })['primaryClinicId'] || ''
-          ),
+          clinicId,
           resourceType: 'DOCTOR',
           operation: 'CREATE',
           resourceId: userId,
           userRole: 'system',
-          details: { specialization: cleanedData.specialization },
+          details: {
+            specialization: cleanedData.specialization,
+            availabilityUpdated: Boolean(availability),
+          },
         }
       );
-    } else if (existingUserWithDoctor.doctor) {
+    } else {
       const doctorData = existingUserWithDoctor.doctor;
       await this.databaseService.executeHealthcareWrite<Doctor>(
         async client => {
@@ -1883,27 +1967,44 @@ export class UsersService {
           return await typedClient.doctor.update({
             where: { userId: userId } as PrismaDelegateArgs,
             data: {
-              specialization: cleanedData.specialization ?? doctorData.specialization,
-              experience:
-                typeof cleanedData.experience === 'string'
-                  ? parseInt(cleanedData.experience) || doctorData.experience
-                  : doctorData.experience,
+              ...(cleanedData.specialization !== undefined
+                ? { specialization: cleanedData.specialization }
+                : {}),
+              ...(experienceValue !== undefined ? { experience: experienceValue } : {}),
+              ...(availability ? { workingHours: availability } : {}),
+              ...(cleanedData.specialization === undefined &&
+              experienceValue === undefined &&
+              !availability
+                ? {
+                    specialization: doctorData.specialization,
+                    experience: doctorData.experience,
+                  }
+                : {}),
             } as PrismaDelegateArgs,
           } as PrismaDelegateArgs);
         },
         {
           userId: userId,
-          clinicId: String(
-            (existingUser as { primaryClinicId?: string | null })['primaryClinicId'] || ''
-          ),
+          clinicId,
           resourceType: 'DOCTOR',
           operation: 'UPDATE',
           resourceId: userId,
           userRole: 'system',
-          details: { specialization: cleanedData.specialization },
+          details: {
+            specialization: cleanedData.specialization,
+            availabilityUpdated: Boolean(availability),
+          },
         }
       );
     }
+
+    // Clear doctor + slot caches immediately so booking/availability APIs see new hours
+    await this.invalidateUserProfileCaches(userId, clinicId || undefined);
+
+    delete cleanedData.specialization;
+    delete cleanedData.experience;
+    delete cleanedData.availability;
+    return availability;
   }
 
   private async updateEmergencyContact(
@@ -2081,18 +2182,24 @@ export class UsersService {
 
       const userRole = user.role as Role;
 
-      // Validate profile completion using local method
-      // Merge DB user data with provided profile data so that fields like phoneVerified
-      // (set by backend during OTP login) are included in validation
+      // Validate profile completion using local method against persisted DB state.
       // SECURITY: Always use DB values for phoneVerified/emailVerified, not frontend input.
-      // The profile-completion form MUST verify any new phone via OTP first
-      // (see /auth/verify-phone endpoint); only then will the DB hold a verified phone.
+      const persistedUser = await this.databaseService.findUserByIdSafeFresh(userId);
+      if (!persistedUser) {
+        throw new BadRequestException('User not found');
+      }
+
+      // Apply only safe scalar overlays from the request that completeUserProfile will persist,
+      // but keep verification flags from DB.
       const validationData = {
-        ...(user as unknown as Record<string, unknown>),
+        ...(persistedUser as unknown as Record<string, unknown>),
         ...profileData,
-        // Override with DB truth for verification status
-        phoneVerified: (user as unknown as Record<string, unknown>)['phoneVerified'],
-        emailVerified: (user as unknown as Record<string, unknown>)['emailVerified'],
+        phone:
+          typeof profileData['phone'] === 'string' && profileData['phone'].trim()
+            ? normalizeAuthPhoneNumber(profileData['phone'] as string)
+            : (persistedUser as unknown as Record<string, unknown>)['phone'],
+        phoneVerified: (persistedUser as unknown as Record<string, unknown>)['phoneVerified'],
+        emailVerified: (persistedUser as unknown as Record<string, unknown>)['emailVerified'],
       };
       const validation = this.validateProfileCompletion(validationData, userRole);
 
@@ -2222,6 +2329,52 @@ export class UsersService {
         }
 
         await this.patientsService.createOrUpdatePatient(patientData);
+      }
+
+      if (
+        (userRole === Role.DOCTOR || userRole === Role.ASSISTANT_DOCTOR) &&
+        profileData['availability']
+      ) {
+        await this.databaseService.executeHealthcareWrite<{
+          id: string;
+          userId: string;
+          [key: string]: unknown;
+        }>(
+          async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+            const existingDoctor = await typedClient.doctor.findUnique({
+              where: { userId } as PrismaDelegateArgs,
+            });
+
+            if (existingDoctor) {
+              await typedClient.doctor.update({
+                where: { userId } as PrismaDelegateArgs,
+                data: {
+                  workingHours: profileData['availability'] as Record<string, unknown>,
+                } as PrismaDelegateArgs,
+              });
+            } else {
+              await typedClient.doctor.create({
+                data: {
+                  userId,
+                  workingHours: profileData['availability'] as Record<string, unknown>,
+                  specialization: '', // Requires default
+                  experience: 0,
+                } as PrismaDelegateArgs,
+              });
+            }
+            return { id: '', userId }; // Dummy return to satisfy generic
+          },
+          {
+            userId,
+            clinicId: String(user.primaryClinicId || ''),
+            resourceType: 'DOCTOR',
+            operation: 'UPDATE',
+            resourceId: userId,
+            userRole: userRole,
+            details: { action: 'availability_updated' },
+          }
+        );
       }
 
       // Emit profile completion event
@@ -2544,23 +2697,14 @@ export class UsersService {
       );
 
       // Re-read user with fresh DB state (cache-bypassing) for the completion decision.
-      // The cached `user` loaded at line 2519 may be stale, especially for users
-      // completing their profile for the first time or submitting multiple PATCHes.
+      // Do NOT re-merge raw request payload for validation — client phone formatting
+      // (spaces, missing +, etc.) can overwrite good DB values and falsely fail completion.
       const freshUser = await this.databaseService.findUserByIdSafeFresh(userId);
       if (!freshUser) {
         throw new BadRequestException('User not found after update');
       }
 
-      // Validate profile data using FRESH post-update state.
-      // SECURITY: Use DB values for phoneVerified/emailVerified, not frontend input.
-      // Frontend can send these fields (to pass DTO whitelist), but we don't trust them.
-      const validationData = {
-        ...(freshUser as unknown as Record<string, unknown>),
-        ...profileData,
-        // Override with DB truth for verification status
-        phoneVerified: (freshUser as unknown as Record<string, unknown>)['phoneVerified'],
-        emailVerified: (freshUser as unknown as Record<string, unknown>)['emailVerified'],
-      };
+      const validationData = freshUser as unknown as Record<string, unknown>;
       const validation = this.validateProfileCompletion(validationData, userRole);
 
       // If profile is now complete, mark it as such.
@@ -2569,14 +2713,26 @@ export class UsersService {
         validation.isComplete &&
         !(freshUser as unknown as Record<string, unknown>)['isProfileComplete']
       ) {
-        const completeResult = await this.completeUserProfile(userId, {
-          ...(freshUser as unknown as Record<string, unknown>),
-          ...profileData,
-        });
+        const completeResult = await this.completeUserProfile(userId, validationData);
 
         if (completeResult.success && completeResult.user) {
           return completeResult.user;
         }
+      }
+
+      if (!validation.isComplete) {
+        void this.loggingService.log(
+          LogType.AUDIT,
+          LogLevel.WARN,
+          `Profile update saved but completion not confirmed for ${userId}`,
+          'UsersService.updateUserProfileWithValidation',
+          {
+            missingFields: validation.missingFields,
+            errors: validation.errors,
+            phoneVerified: validationData['phoneVerified'],
+            hasPhone: Boolean(validationData['phone']),
+          }
+        );
       }
 
       return updatedUser;
@@ -2656,12 +2812,13 @@ export class UsersService {
     const isComplete = missingFields.length === 0 && errors.length === 0;
 
     if (!isComplete) {
+      const errorFields = errors.map(error => error.field);
       void this.loggingService.log(
         LogType.AUDIT,
         LogLevel.INFO,
-        `Profile incomplete for ${role}: missing ${missingFields.join(', ')}`,
+        `Profile incomplete for ${role}: missing ${missingFields.join(', ') || '(none)'}; errors=${errorFields.join(', ') || '(none)'}`,
         'UsersService.validateProfileCompletion',
-        { role, missingFields, errorCount: errors.length }
+        { role, missingFields, errors, errorCount: errors.length }
       );
     }
 

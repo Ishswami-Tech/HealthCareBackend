@@ -1,5 +1,5 @@
 # Build stage — Ubuntu server–optimized: Bookworm (Debian 12) matches glibc/kernel of Ubuntu 24.04
-FROM node:24-bookworm-slim AS builder
+FROM node:22-bookworm-slim AS builder
 
 LABEL stage=builder
 LABEL app.component=backend
@@ -141,11 +141,22 @@ RUN mkdir -p /app/dist/libs/infrastructure/database/prisma && \
   cp -r /app/src/libs/infrastructure/database/prisma/generated /app/dist/libs/infrastructure/database/prisma/
 
 # Production stage — Ubuntu server–optimized: same base as builder for consistency
-FROM node:24-bookworm-slim AS production
+FROM node:22-bookworm-slim AS production
 
 LABEL app.component=backend
 LABEL app.stage=production
 LABEL com.docker.compose.service=api
+
+# Build metadata — injected by CI, also exported as ENV for runtime access
+ARG GIT_SHA=unknown
+ARG GIT_REF=unknown
+ARG BUILD_TIMESTAMP=unknown
+ENV GIT_SHA=${GIT_SHA}
+ENV GIT_REF=${GIT_REF}
+ENV BUILD_TIMESTAMP=${BUILD_TIMESTAMP}
+LABEL org.opencontainers.image.revision=$GIT_SHA
+LABEL org.opencontainers.image.source=$GIT_REF
+LABEL org.opencontainers.image.created=$BUILD_TIMESTAMP
 
 RUN npm install -g yarn@1.22.22 --force
 
@@ -167,7 +178,7 @@ RUN yarn install --production --frozen-lockfile --ignore-scripts --ignore-engine
 # We'll copy only the necessary @prisma packages from builder stage
 RUN rm -rf /app/node_modules/prisma /app/node_modules/@prisma
 
-# Copy prisma CLI for migrations (needed for prisma migrate deploy at startup)
+# Copy prisma CLI for deploy-time migrations
 COPY --from=builder /app/node_modules_real/prisma ./node_modules/prisma
 # Copy all @prisma packages EXCEPT client (we'll create symlink to generated client)
 # First, copy @prisma directory structure
@@ -200,7 +211,7 @@ COPY --from=builder /app/scripts ./scripts
 # Copy Prisma schema, config, migrations, and generated client to expected paths
 COPY --from=builder /app/src/libs/infrastructure/database/prisma/schema.prisma ./src/libs/infrastructure/database/prisma/schema.prisma
 COPY --from=builder /app/src/libs/infrastructure/database/prisma/prisma.config.js ./src/libs/infrastructure/database/prisma/prisma.config.js
-# Copy migrations folder for prisma migrate deploy (CRITICAL for production deployments)
+# Copy migrations folder for deploy-time prisma migrate deploy (CRITICAL for production deployments)
 # Without this, P3005 error occurs: "database schema is not empty" with no migrations
 COPY --from=builder /app/src/libs/infrastructure/database/prisma/migrations ./src/libs/infrastructure/database/prisma/migrations
 # Copy Prisma generated client from builder stage (generated during build to src/libs/infrastructure/database/prisma/generated)
@@ -289,15 +300,14 @@ ENV GC_INTERVAL=10800
 EXPOSE 8088
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
-  CMD wget -q --spider http://localhost:8088/health || exit 1
+  CMD sh -c 'if [ "${APP_MODE:-api}" = "worker" ]; then node dist/worker-bootstrap.js --healthcheck; else wget -q --spider http://localhost:${PORT:-8088}/infra-health || exit 1; fi'
 
 # Set entrypoint (runs before CMD)
 # Entrypoint will verify Prisma Client exists (generated during build)
 # Only regenerates if missing (should not happen in normal operation)
 ENTRYPOINT ["/app/entrypoint.sh"]
 
-# Run migrations automatically before starting the app
-# Docker Compose depends_on ensures PostgreSQL is ready
-# Check if migrations exist, otherwise use db push for fresh database
-CMD ["sh", "-c", "if [ -d 'src/libs/infrastructure/database/prisma/migrations' ] && [ \"$(ls -A src/libs/infrastructure/database/prisma/migrations 2>/dev/null)\" ]; then echo 'Migrations found, running migrate deploy...'; node scripts/run-prisma.js migrate; else echo 'No migrations found, using db push for initial setup...'; node scripts/run-prisma.js push; fi && node dist/main.js"]
+# Container startup should never run migrations.
+# Deploy-time orchestration handles Prisma migrations exactly once per release.
+CMD ["node", "dist/main.js"]
 
