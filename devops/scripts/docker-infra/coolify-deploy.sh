@@ -140,24 +140,68 @@ log_info "  Image:  $IMAGE"
 log_info "  Tag:   $IMAGE_TAG"
 log_info "  Force:  $FORCE"
 
-# If an explicit image was provided, update the Coolify service to use it
-# before triggering the deploy. This ensures Coolify pulls the freshly built
-# image rather than reusing a cached digest.
+# If an explicit image was provided, update the underlying Coolify resource
+# before triggering the deploy. Services use a DOCKER_IMAGE env var in the
+# compose file; Docker-image applications use registry image fields.
 if [[ -n "$IMAGE" ]]; then
-  log_info "Updating Coolify service image to: $IMAGE"
-  UPDATE_BODY="{\"docker_image\":\"${IMAGE}\"}"
-  UPDATE_CODE=$(curl -s -o /tmp/coolify-update.json -w "%{http_code}" \
-    -X PUT \
-    "${API_URL}/services/${APP_UUID}" \
-    -H "Authorization: Bearer ${API_TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d "$UPDATE_BODY" \
-    --max-time 30) || UPDATE_CODE="000"
+  IMAGE_NAME="${IMAGE%:*}"
+  IMAGE_TAG="${IMAGE##*:}"
+  if [[ "$IMAGE_NAME" == "$IMAGE" ]]; then
+    log_error "Image must include a tag: ${IMAGE}"
+    exit 1
+  fi
 
-  if [[ "$UPDATE_CODE" =~ ^2[0-9]{2}$ ]]; then
-    log_info "Service image updated successfully (HTTP ${UPDATE_CODE})"
+  log_info "Updating Coolify resource image to: $IMAGE"
+
+  SERVICE_CHECK_CODE=$(curl -s -o /tmp/coolify-resource.json -w "%{http_code}" \
+    -H "Authorization: Bearer ${API_TOKEN}" \
+    "${API_URL}/services/${APP_UUID}" \
+    --max-time 30) || SERVICE_CHECK_CODE="000"
+
+  if [[ "$SERVICE_CHECK_CODE" =~ ^2[0-9]{2}$ ]]; then
+    UPDATE_BODY="{\"key\":\"DOCKER_IMAGE\",\"value\":\"${IMAGE}\"}"
+    UPDATE_CODE=$(curl -s -o /tmp/coolify-update.json -w "%{http_code}" \
+      -X PATCH \
+      "${API_URL}/services/${APP_UUID}/envs" \
+      -H "Authorization: Bearer ${API_TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d "$UPDATE_BODY" \
+      --max-time 30) || UPDATE_CODE="000"
+
+    if [[ "$UPDATE_CODE" =~ ^2[0-9]{2}$ ]]; then
+      log_info "Service DOCKER_IMAGE updated successfully (HTTP ${UPDATE_CODE})"
+    else
+      log_warn "Could not update service DOCKER_IMAGE (HTTP ${UPDATE_CODE})"
+    fi
   else
-    log_warn "Could not update service image (HTTP ${UPDATE_CODE}) - deploy may use cached image"
+    UPDATE_BODY="{\"docker_registry_image_name\":\"${IMAGE_NAME}\",\"docker_registry_image_tag\":\"${IMAGE_TAG}\"}"
+    UPDATE_CODE=$(curl -s -o /tmp/coolify-update.json -w "%{http_code}" \
+      -X PATCH \
+      "${API_URL}/applications/${APP_UUID}" \
+      -H "Authorization: Bearer ${API_TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d "$UPDATE_BODY" \
+      --max-time 30) || UPDATE_CODE="000"
+
+    if [[ "$UPDATE_CODE" =~ ^2[0-9]{2}$ ]]; then
+      log_info "Application image updated successfully (HTTP ${UPDATE_CODE})"
+    else
+      log_warn "Could not update application image (HTTP ${UPDATE_CODE})"
+    fi
+  fi
+fi
+
+# ─── Pull fresh image on the VPS so Coolify never uses a stale cache ────────
+# Coolify compose services reference DOCKER_IMAGE in their compose file.
+# If the image is already cached locally (even with an old digest), Docker Compose
+# may reuse it. Pull the image explicitly so the deploy always uses the newest tag.
+if [[ -n "$IMAGE" ]]; then
+  log_info "Pulling image ${IMAGE} on VPS to avoid stale cache..."
+  PULL_CODE=$(docker pull "$IMAGE" 2>&1 | tail -1; echo "${PIPESTATUS[0]}")
+  if [[ "$PULL_CODE" =~ ^2[0-9]{2}$ ]]; then
+    log_info "Image pulled successfully"
+  else
+    log_warn "docker pull exited with code ${PULL_CODE} — Coolify may use cached image"
   fi
 fi
 
