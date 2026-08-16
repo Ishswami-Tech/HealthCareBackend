@@ -145,6 +145,12 @@ log_info "  Force:  $FORCE"
 # and pull the image via docker compose. The compose file uses
 # image: '${DOCKER_IMAGE:-ghcr.io/...:preprod}', so updating the .env is the
 # canonical way to point the service at a new image.
+#
+# NOTE: For production (and other environments where Coolify stores its service
+# config differently), the service directory may be empty. In that case we
+# skip the compose-based image update and rely on the Coolify API deploy call
+# to pick up the new image. Coolify pulls the image directly from the registry
+# during deployment.
 if [[ -n "$IMAGE" ]]; then
   IMAGE_NAME="${IMAGE%:*}"
   IMAGE_TAG="${IMAGE##*:}"
@@ -158,29 +164,43 @@ if [[ -n "$IMAGE" ]]; then
   COMPOSE_FILE="${SERVICE_DIR}/docker-compose.yml"
   ENV_FILE="${SERVICE_DIR}/.env"
 
-  if [[ ! -f "$COMPOSE_FILE" ]]; then
-    log_error "Compose file not found: ${COMPOSE_FILE}"
-    exit 1
-  fi
+  if [[ -f "$COMPOSE_FILE" ]]; then
+    log_info "Updating DOCKER_IMAGE in ${ENV_FILE} → ${IMAGE}"
 
-  log_info "Updating DOCKER_IMAGE in ${ENV_FILE} → ${IMAGE}"
+    # .env is owned by root — use sudo for writes
+    if grep -q '^DOCKER_IMAGE=' "$ENV_FILE" 2>/dev/null; then
+      sudo sed -i "s|^DOCKER_IMAGE=.*|DOCKER_IMAGE=${IMAGE}|" "$ENV_FILE"
+    else
+      echo "DOCKER_IMAGE=${IMAGE}" | sudo tee -a "$ENV_FILE" > /dev/null
+    fi
 
-  # .env is owned by root — use sudo for writes
-  if grep -q '^DOCKER_IMAGE=' "$ENV_FILE" 2>/dev/null; then
-    sudo sed -i "s|^DOCKER_IMAGE=.*|DOCKER_IMAGE=${IMAGE}|" "$ENV_FILE"
+    log_info "DOCKER_IMAGE set to ${IMAGE}"
+
+    # Pull the image via docker compose so the VPS cache is fresh
+    log_info "Pulling image via docker compose..."
+    PULL_CODE=$(sudo docker compose -f "$COMPOSE_FILE" pull > /dev/null 2>&1; echo $?)
+    if [[ "$PULL_CODE" -eq 0 ]]; then
+      log_info "Image pulled successfully"
+    else
+      log_warn "docker compose pull exited with code ${PULL_CODE} — Coolify may use cached image"
+    fi
   else
-    echo "DOCKER_IMAGE=${IMAGE}" | sudo tee -a "$ENV_FILE" > /dev/null
-  fi
-
-  log_info "DOCKER_IMAGE set to ${IMAGE}"
-
-  # Pull the image via docker compose so the VPS cache is fresh
-  log_info "Pulling image via docker compose..."
-  PULL_CODE=$(sudo docker compose -f "$COMPOSE_FILE" pull > /dev/null 2>&1; echo $?)
-  if [[ "$PULL_CODE" -eq 0 ]]; then
-    log_info "Image pulled successfully"
-  else
-    log_warn "docker compose pull exited with code ${PULL_CODE} — Coolify may use cached image"
+    log_warn "No compose file at ${COMPOSE_FILE} — prod Coolify stores config in its DB"
+    log_warn "Updating image via Coolify API instead..."
+    log_info "Setting image to ${IMAGE} via Coolify API..."
+    UPDATE_BODY="{\"uuid\":\"${APP_UUID}\",\"docker_image\":\"${IMAGE}\"}"
+    UPDATE_CODE=$(curl -s -o /tmp/coolify-update.json -w "%{http_code}" \
+      -X PUT \
+      "${API_URL}/services/${APP_UUID}" \
+      -H "Authorization: Bearer ${API_TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d "$UPDATE_BODY" \
+      --max-time 30) || UPDATE_CODE="000"
+    if [[ "$UPDATE_CODE" =~ ^2[0-9]{2}$ ]]; then
+      log_info "Image updated via Coolify API (HTTP ${UPDATE_CODE})"
+    else
+      log_warn "Coolify API image update returned HTTP ${UPDATE_CODE} — deploy may use cached image"
+    fi
   fi
 fi
 
