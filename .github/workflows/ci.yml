@@ -20,6 +20,7 @@ name: CI/CD
 on:
   pull_request:
     branches: [preprod, main]
+    types: [opened, synchronize, reopened]
   push:
     branches: [preprod, main]
     paths-ignore:
@@ -104,7 +105,7 @@ jobs:
   detect-changes:
     name: "Detect Changes"
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     outputs:
       infra-changed: ${{ steps.filter.outputs.infra }}
       app-changed: ${{ steps.filter.outputs.app }}
