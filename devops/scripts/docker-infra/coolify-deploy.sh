@@ -140,9 +140,10 @@ log_info "  Image:  $IMAGE"
 log_info "  Tag:   $IMAGE_TAG"
 log_info "  Force:  $FORCE"
 
-# If an explicit image was provided, update the underlying Coolify resource
-# before triggering the deploy. Services use a DOCKER_IMAGE env var in the
-# compose file; Docker-image applications use registry image fields.
+# If an explicit image was provided, write DOCKER_IMAGE to the service .env
+# and pull the image via docker compose. The compose file uses
+# image: '${DOCKER_IMAGE:-ghcr.io/...:preprod}', so updating the .env is the
+# canonical way to point the service at a new image.
 if [[ -n "$IMAGE" ]]; then
   IMAGE_NAME="${IMAGE%:*}"
   IMAGE_TAG="${IMAGE##*:}"
@@ -151,59 +152,34 @@ if [[ -n "$IMAGE" ]]; then
     exit 1
   fi
 
-  log_info "Updating Coolify resource image to: $IMAGE"
+  # Resolve the service directory from Coolify's data
+  SERVICE_DIR="/data/coolify/services/${APP_UUID}"
+  COMPOSE_FILE="${SERVICE_DIR}/docker-compose.yml"
+  ENV_FILE="${SERVICE_DIR}/.env"
 
-  SERVICE_CHECK_CODE=$(curl -s -o /tmp/coolify-resource.json -w "%{http_code}" \
-    -H "Authorization: Bearer ${API_TOKEN}" \
-    "${API_URL}/services/${APP_UUID}" \
-    --max-time 30) || SERVICE_CHECK_CODE="000"
-
-  if [[ "$SERVICE_CHECK_CODE" =~ ^2[0-9]{2}$ ]]; then
-    UPDATE_BODY="{\"key\":\"DOCKER_IMAGE\",\"value\":\"${IMAGE}\"}"
-    UPDATE_CODE=$(curl -s -o /tmp/coolify-update.json -w "%{http_code}" \
-      -X PATCH \
-      "${API_URL}/services/${APP_UUID}/envs" \
-      -H "Authorization: Bearer ${API_TOKEN}" \
-      -H "Content-Type: application/json" \
-      -d "$UPDATE_BODY" \
-      --max-time 30) || UPDATE_CODE="000"
-
-    if [[ "$UPDATE_CODE" =~ ^2[0-9]{2}$ ]]; then
-      log_info "Service DOCKER_IMAGE updated successfully (HTTP ${UPDATE_CODE})"
-    else
-      log_error "Failed to update service DOCKER_IMAGE (HTTP ${UPDATE_CODE})"
-      cat /tmp/coolify-update.json 2>/dev/null
-      exit 1
-    fi
-  else
-    UPDATE_BODY="{\"docker_registry_image_name\":\"${IMAGE_NAME}\",\"docker_registry_image_tag\":\"${IMAGE_TAG}\"}"
-    UPDATE_CODE=$(curl -s -o /tmp/coolify-update.json -w "%{http_code}" \
-      -X PATCH \
-      "${API_URL}/applications/${APP_UUID}" \
-      -H "Authorization: Bearer ${API_TOKEN}" \
-      -H "Content-Type: application/json" \
-      -d "$UPDATE_BODY" \
-      --max-time 30) || UPDATE_CODE="000"
-
-    if [[ "$UPDATE_CODE" =~ ^2[0-9]{2}$ ]]; then
-      log_info "Application image updated successfully (HTTP ${UPDATE_CODE})"
-    else
-      log_warn "Could not update application image (HTTP ${UPDATE_CODE})"
-    fi
+  if [[ ! -f "$COMPOSE_FILE" ]]; then
+    log_error "Compose file not found: ${COMPOSE_FILE}"
+    exit 1
   fi
-fi
 
-# ─── Pull fresh image on the VPS so Coolify never uses a stale cache ────────
-# Coolify compose services reference DOCKER_IMAGE in their compose file.
-# If the image is already cached locally (even with an old digest), Docker Compose
-# may reuse it. Pull the image explicitly so the deploy always uses the newest tag.
-if [[ -n "$IMAGE" ]]; then
-  log_info "Pulling image ${IMAGE} on VPS to avoid stale cache..."
-  PULL_CODE=$(docker pull "$IMAGE" > /dev/null 2>&1; echo $?)
+  log_info "Updating DOCKER_IMAGE in ${ENV_FILE} → ${IMAGE}"
+
+  # Add or replace DOCKER_IMAGE in the service .env file
+  if grep -q '^DOCKER_IMAGE=' "$ENV_FILE" 2>/dev/null; then
+    sed -i "s|^DOCKER_IMAGE=.*|DOCKER_IMAGE=${IMAGE}|" "$ENV_FILE"
+  else
+    echo "DOCKER_IMAGE=${IMAGE}" >> "$ENV_FILE"
+  fi
+
+  log_info "DOCKER_IMAGE set to ${IMAGE}"
+
+  # Pull the image via docker compose so the VPS cache is fresh
+  log_info "Pulling image via docker compose..."
+  PULL_CODE=$(docker compose -f "$COMPOSE_FILE" pull 2>&1 > /dev/null; echo $?)
   if [[ "$PULL_CODE" -eq 0 ]]; then
     log_info "Image pulled successfully"
   else
-    log_warn "docker pull exited with code ${PULL_CODE} — Coolify may use cached image"
+    log_warn "docker compose pull exited with code ${PULL_CODE} — Coolify may use cached image"
   fi
 fi
 
