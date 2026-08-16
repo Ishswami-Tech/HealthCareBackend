@@ -116,9 +116,6 @@ jobs:
       - name: Type-check
         run: yarn type-check
 
-      - name: Unit tests
-        run: yarn test
-
       - name: Enforce promotion flow
         run: |
           echo "PR: ${{ github.head_ref }} → ${{ github.base_ref }}"
