@@ -171,7 +171,9 @@ if [[ -n "$IMAGE" ]]; then
     if [[ "$UPDATE_CODE" =~ ^2[0-9]{2}$ ]]; then
       log_info "Service DOCKER_IMAGE updated successfully (HTTP ${UPDATE_CODE})"
     else
-      log_warn "Could not update service DOCKER_IMAGE (HTTP ${UPDATE_CODE})"
+      log_error "Failed to update service DOCKER_IMAGE (HTTP ${UPDATE_CODE})"
+      cat /tmp/coolify-update.json 2>/dev/null
+      exit 1
     fi
   else
     UPDATE_BODY="{\"docker_registry_image_name\":\"${IMAGE_NAME}\",\"docker_registry_image_tag\":\"${IMAGE_TAG}\"}"
@@ -197,8 +199,8 @@ fi
 # may reuse it. Pull the image explicitly so the deploy always uses the newest tag.
 if [[ -n "$IMAGE" ]]; then
   log_info "Pulling image ${IMAGE} on VPS to avoid stale cache..."
-  PULL_CODE=$(docker pull "$IMAGE" 2>&1 | tail -1; echo "${PIPESTATUS[0]}")
-  if [[ "$PULL_CODE" =~ ^2[0-9]{2}$ ]]; then
+  PULL_CODE=$(docker pull "$IMAGE" > /dev/null 2>&1; echo $?)
+  if [[ "$PULL_CODE" -eq 0 ]]; then
     log_info "Image pulled successfully"
   else
     log_warn "docker pull exited with code ${PULL_CODE} — Coolify may use cached image"
