@@ -186,20 +186,98 @@ if [[ -n "$IMAGE" ]]; then
     fi
   else
     log_warn "No compose file at ${COMPOSE_FILE} — prod Coolify stores config in its DB"
-    log_warn "Updating image via Coolify API instead..."
-    log_info "Setting image to ${IMAGE} via Coolify API..."
-    UPDATE_BODY="{\"uuid\":\"${APP_UUID}\",\"docker_image\":\"${IMAGE}\"}"
-    UPDATE_CODE=$(curl -s -o /tmp/coolify-update.json -w "%{http_code}" \
-      -X PUT \
-      "${API_URL}/services/${APP_UUID}" \
-      -H "Authorization: Bearer ${API_TOKEN}" \
-      -H "Content-Type: application/json" \
-      -d "$UPDATE_BODY" \
-      --max-time 30) || UPDATE_CODE="000"
-    if [[ "$UPDATE_CODE" =~ ^2[0-9]{2}$ ]]; then
-      log_info "Image updated via Coolify API (HTTP ${UPDATE_CODE})"
+    log_warn "Creating compose file so deploy script can control the image..."
+    log_info "Setting image to ${IMAGE} via composed docker-compose.yml..."
+
+    # Coolify prod service stores config in DB only (no compose on disk).
+    # Create one so the deploy script's .env update path works.
+    # Coolify does the same thing for preprod — we're just doing it manually.
+    sudo mkdir -p "$SERVICE_DIR"
+
+    # We need the DB credentials from the service's env to build the compose
+    DB_URL=$(ssh ${{ env.SSH_OPTS || '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+      "grep '^DATABASE_URL=' /opt/healthcare-production/.env.production 2>/dev/null | cut -d= -f2- | head -1" || echo "postgresql://postgres:postgres@postgres:5432/userdb?schema=public")
+
+    CACHE_PREFIX="production:"
+    JWT_SECRET=$(ssh ${{ env.SSH_OPTS || '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+      "grep '^JWT_SECRET=' /opt/healthcare-production/.env.production 2>/dev/null | cut -d= -f2- | head -1" || echo "")
+
+    sudo tee "$COMPOSE_FILE" > /dev/null << COMPOSE_EOF
+services:
+  api:
+    image: '\${DOCKER_IMAGE:-${IMAGE}}'
+    container_name: api-${APP_UUID}
+    hostname: api
+    env_file:
+      - /opt/healthcare-production/.env.production
+      - .env
+    environment:
+      DATABASE_URL: '${DB_URL}'
+      DRAGONFLY_KEY_PREFIX: '${CACHE_PREFIX}'
+      CACHE_PREFIX: '${CACHE_PREFIX}'
+      NODE_ENV: production
+      APP_MODE: api
+      SERVICE_NAME: api
+      DEV_MODE: 'false'
+      DOCKER_ENV: 'true'
+      CRON_TIMEZONE: Asia/Kolkata
+      TZ: Asia/Kolkata
+      PORT: 8088
+      HOST: 0.0.0.0
+      PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
+      CACHE_PROVIDER: dragonfly
+      CACHE_ENABLED: 'true'
+      DRAGONFLY_ENABLED: 'true'
+      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_PORT: 6379
+      JWT_SECRET: '${JWT_SECRET}'
+      ENABLE_HTTP2: 'false'
+      TRUST_PROXY: 1
+    networks:
+      - coolify
+    restart: unless-stopped
+
+  worker:
+    image: '\${DOCKER_IMAGE:-${IMAGE}}'
+    container_name: worker-${APP_UUID}
+    hostname: worker
+    env_file:
+      - /opt/healthcare-production/.env.production
+      - .env
+    environment:
+      DATABASE_URL: '${DB_URL}'
+      DRAGONFLY_KEY_PREFIX: '${CACHE_PREFIX}'
+      CACHE_PREFIX: '${CACHE_PREFIX}'
+      NODE_ENV: production
+      APP_MODE: worker
+      SERVICE_NAME: worker
+      DEV_MODE: 'false'
+      DOCKER_ENV: 'true'
+      CRON_TIMEZONE: Asia/Kolkata
+      TZ: Asia/Kolkata
+      JWT_SECRET: '${JWT_SECRET}'
+    networks:
+      - coolify
+    restart: unless-stopped
+
+networks:
+  coolify:
+    external: true
+COMPOSE_EOF
+
+    log_info "Created ${COMPOSE_FILE}"
+
+    # Write DOCKER_IMAGE to .env so compose interpolation picks it up
+    echo "DOCKER_IMAGE=${IMAGE}" | sudo tee "${SERVICE_DIR}/.env" > /dev/null
+    log_info "DOCKER_IMAGE set to ${IMAGE} in ${SERVICE_DIR}/.env"
+
+    # Pull the image
+    log_info "Pulling image via docker compose..."
+    PULL_CODE=$(sudo docker compose -f "$COMPOSE_FILE" pull > /dev/null 2>&1; echo $?)
+    if [[ "$PULL_CODE" -eq 0 ]]; then
+      log_info "Image pulled successfully"
     else
-      log_warn "Coolify API image update returned HTTP ${UPDATE_CODE} — deploy may use cached image"
+      log_warn "docker compose pull exited with code ${PULL_CODE}"
     fi
   fi
 fi
