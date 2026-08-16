@@ -44,7 +44,7 @@ services:
     expose:
       - "8088"
     ports:
-      - "8088:8088"
+      - "8091:8088"
     volumes:
       - ../../logs:/app/logs
     networks:
@@ -101,7 +101,7 @@ services:
     volumes:
       - ../../logs:/app/logs
     ports:
-      - "8089:8088"
+      - "8092:8088"
     networks:
       - preprod-network
     restart: unless-stopped
