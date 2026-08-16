@@ -5,8 +5,8 @@
 #   Production:  CI triggers Coolify API deploy → Coolify manages blue-green lifecycle
 #
 # CURRENT STATE:
-#   Preprod deploys are active. Production (main branch) deploys are gated off
-#   until preprod is validated. Set ENABLE_PROD_DEPLOY=true to enable.
+#   Preprod deploys are active. Production (main branch) uses the same Coolify
+#   deploy path with branch-scoped UUID secrets.
 #
 # SHARED INFRA:
 #   One postgres + one dragonfly serve both environments.
@@ -402,6 +402,7 @@ jobs:
         env:
           DEPLOY_ENV: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
           DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
+          COOLIFY_APP_UUID: ${{ github.ref == 'refs/heads/main' && secrets.COOLIFY_PROD_APP_UUID || secrets.COOLIFY_PREPROD_APP_UUID }}
           IMAGE_FULL: ${{ needs.docker-build.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}
           INFRA_CHANGED: ${{ needs.detect-changes.outputs.infra-changed }}
           APP_CHANGED: ${{ needs.detect-changes.outputs.app-changed }}
@@ -410,7 +411,7 @@ jobs:
 
           # ── Gate: production deploys disabled until preprod is validated ────
           if [ "${DEPLOY_ENV}" = "production" ]; then
-            if [ "${{ vars.ENABLE_PROD_DEPLOY || 'false' }}" != "true" ]; then
+            if [ "${{ vars.ENABLE_PROD_DEPLOY || 'true' }}" != "true" ]; then
               echo "::warning::Production deploys are gated off. Set ENABLE_PROD_DEPLOY=true to enable."
               echo "Skipping production deploy — preprod not yet validated."
               exit 0
@@ -425,6 +426,7 @@ jobs:
             cd '${DEPLOY_PATH}'
             DEPLOY_ENV='${DEPLOY_ENV}' \
             IMAGE_FULL='${IMAGE_FULL}' \
+            COOLIFY_APP_UUID='${COOLIFY_APP_UUID}' \
             COOLIFY_API_TOKEN='${{ secrets.COOLIFY_API_TOKEN }}' \
             bash devops/scripts/docker-infra/coolify-deploy.sh \
               --app api \

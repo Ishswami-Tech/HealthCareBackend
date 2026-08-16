@@ -66,6 +66,7 @@ Environment variables:
   COOLIFY_API_TOKEN    Coolify API token
   COOLIFY_API_URL      Coolify API base URL
   COOLIFY_CONFIG_FILE  Path to coolify-apps.env (default: devops/config/coolify-apps.env)
+  COOLIFY_APP_UUID     Explicit Coolify app UUID override
   DEPLOY_ENV           Environment name (preprod|production)
 
 Example:
@@ -99,28 +100,33 @@ done
 [[ -z "$DEPLOY_ENV" ]] && { log_error "DEPLOY_ENV is required (or pass --env)"; usage; }
 [[ -z "$API_TOKEN" ]] && { log_error "COOLIFY_API_TOKEN is required"; exit 1; }
 
-# ─── Resolve app UUID from config file ────────────────────────────────────────
-if [[ ! -f "$CONFIG_FILE" ]]; then
-  log_error "Config file not found: $CONFIG_FILE"
-  log_error "Create it from devops/config/coolify-apps.env.example"
-  exit 1
+# Allow CI to pass the app UUID directly. This keeps production and preprod on
+# the same deploy path while preserving config-file fallback behavior.
+if [[ -z "${COOLIFY_APP_UUID:-}" ]]; then
+  # ─── Resolve app UUID from config file ──────────────────────────────────────
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    log_error "Config file not found: $CONFIG_FILE"
+    log_error "Create it from devops/config/coolify-apps.env.example"
+    exit 1
+  fi
+
+  # shellcheck disable=SC1090
+  source "$CONFIG_FILE"
+
+  ENV_KEY="$(echo "$DEPLOY_ENV" | tr '[:lower:]-' '[:upper:]_')"
+  APP_KEY="$(echo "$APP_NAME" | tr '[:lower:]-' '[:upper:]_')"
+  UUID_VAR="${ENV_KEY}_${APP_KEY}_UUID"
+
+  COOLIFY_APP_UUID="${!UUID_VAR:-}"
+
+  if [[ -z "$COOLIFY_APP_UUID" ]]; then
+    log_error "No UUID configured for environment '$DEPLOY_ENV' and app '$APP_NAME'"
+    log_error "Expected variable: $UUID_VAR in $CONFIG_FILE"
+    exit 1
+  fi
 fi
 
-# shellcheck disable=SC1090
-source "$CONFIG_FILE"
-
-ENV_KEY="$(echo "$DEPLOY_ENV" | tr '[:lower:]-' '[:upper:]_')"
-APP_KEY="$(echo "$APP_NAME" | tr '[:lower:]-' '[:upper:]_')"
-UUID_VAR="${ENV_KEY}_${APP_KEY}_UUID"
-
-APP_UUID="${!UUID_VAR:-}"
-
-if [[ -z "$APP_UUID" ]]; then
-  log_error "No UUID configured for environment '$DEPLOY_ENV' and app '$APP_NAME'"
-  log_error "Expected variable: $UUID_VAR in $CONFIG_FILE"
-  exit 1
-fi
-
+APP_UUID="${COOLIFY_APP_UUID}"
 log_info "Resolved: $DEPLOY_ENV/$APP_NAME -> $APP_UUID"
 
 # ─── Extract tag from image (for logging/verification) ────────────────────────
@@ -133,6 +139,27 @@ log_info "  App:    $APP_NAME ($APP_UUID)"
 log_info "  Image:  $IMAGE"
 log_info "  Tag:   $IMAGE_TAG"
 log_info "  Force:  $FORCE"
+
+# If an explicit image was provided, update the Coolify service to use it
+# before triggering the deploy. This ensures Coolify pulls the freshly built
+# image rather than reusing a cached digest.
+if [[ -n "$IMAGE" ]]; then
+  log_info "Updating Coolify service image to: $IMAGE"
+  UPDATE_BODY="{\"docker_image\":\"${IMAGE}\"}"
+  UPDATE_CODE=$(curl -s -o /tmp/coolify-update.json -w "%{http_code}" \
+    -X PUT \
+    "${API_URL}/services/${APP_UUID}" \
+    -H "Authorization: Bearer ${API_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "$UPDATE_BODY" \
+    --max-time 30) || UPDATE_CODE="000"
+
+  if [[ "$UPDATE_CODE" =~ ^2[0-9]{2}$ ]]; then
+    log_info "Service image updated successfully (HTTP ${UPDATE_CODE})"
+  else
+    log_warn "Could not update service image (HTTP ${UPDATE_CODE}) - deploy may use cached image"
+  fi
+fi
 
 # Coolify v4 deploy endpoint: POST /api/v1/deploy
 # Use uuid-only (not tag) — Coolify deploys whatever image the service is configured with
