@@ -623,7 +623,7 @@ export class LoggingService {
         // Development: Show all levels except DEBUG
         shouldShowInTerminal = level !== LogLevel.DEBUG;
       } else if (isProduction) {
-        // Production: Only show ERROR, WARN, and important SYSTEM/EMERGENCY logs
+        // Production: Show ERROR, WARN, HTTP REQUEST/RESPONSE, and important SYSTEM/EMERGENCY logs
         // Filter out noisy logs even for ERROR/WARN (but allow critical system logs)
         const isImportantSystemLog =
           (type === LogType.SYSTEM || type === LogType.EMERGENCY) &&
@@ -633,16 +633,19 @@ export class LoggingService {
         const isCriticalError = level === LogLevel.ERROR;
         // Show AUDIT logs with INFO level (important business events like successful registrations)
         const isImportantAuditLog = type === LogType.AUDIT && level === LogLevel.INFO;
+        // Show HTTP request/response logs in production (interceptor handles noise filtering via SKIP_LOG_PATHS)
+        const isHttpLog = type === LogType.REQUEST || type === LogType.RESPONSE;
 
         shouldShowInTerminal =
           isCriticalError ||
           level === LogLevel.WARN ||
           isImportantSystemLog ||
           isImportantSecurityLog ||
-          isImportantAuditLog;
+          isImportantAuditLog ||
+          isHttpLog;
 
         // In production, filter out noisy logs (but allow critical errors and important system logs)
-        if (shouldShowInTerminal && !isCriticalError && !isImportantSystemLog) {
+        if (shouldShowInTerminal && !isCriticalError && !isImportantSystemLog && !isHttpLog) {
           const isNoisy = this.isNoisyLog(message, context, level);
           shouldShowInTerminal = !isNoisy;
         }

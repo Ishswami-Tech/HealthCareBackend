@@ -49,7 +49,10 @@ export class LoggingInterceptor implements NestInterceptor {
     const requestSummary = this.summarizeRequest(url, body);
 
     // Skip logging for health checks and other frequent endpoints
-    if (this.SKIP_LOG_PATHS.some(path => url.includes(path))) {
+    const pathname = new URL(url, 'http://localhost').pathname;
+    if (
+      this.SKIP_LOG_PATHS.some(skipPath => pathname === skipPath || pathname.startsWith(skipPath))
+    ) {
       return next.handle();
     }
 
