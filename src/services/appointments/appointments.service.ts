@@ -98,6 +98,7 @@ type AssistantDoctorCoverageAssignmentRecord = {
 };
 
 const TEST_APPOINTMENT_DURATION_MINUTES = 3;
+const VIDEO_APPOINTMENT_RESCHEDULE_WINDOW_HOURS = 5;
 
 const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
   {
@@ -1237,6 +1238,20 @@ export class AppointmentsService {
     }
 
     return parseIstDateTime(appointment.date, appointment.time);
+  }
+
+  private resolveVideoAppointmentRescheduleDeadline(appointment: {
+    date: Date;
+    time: string;
+  }): Date | null {
+    const scheduledStart = parseIstDateTime(appointment.date, appointment.time);
+    if (!scheduledStart) {
+      return null;
+    }
+
+    return new Date(
+      scheduledStart.getTime() + VIDEO_APPOINTMENT_RESCHEDULE_WINDOW_HOURS * 60 * 60 * 1000
+    );
   }
 
   private normalizeVideoSlotDate(slotDate: string): Date | null {
@@ -2746,6 +2761,50 @@ export class AppointmentsService {
       );
     }
 
+    if (
+      [
+        AppointmentStatus.CANCELLED,
+        AppointmentStatus.EXPIRED,
+        AppointmentStatus.COMPLETED,
+      ].includes(appointment.status as AppointmentStatus)
+    ) {
+      throw this.errors.validationError(
+        'status',
+        `This appointment cannot be rescheduled because it is already ${String(appointment.status).toLowerCase()}.`,
+        'AppointmentsService.rescheduleAppointment'
+      );
+    }
+
+    if (String(appointment.type) === 'VIDEO_CALL') {
+      const rescheduleDeadline = this.resolveVideoAppointmentRescheduleDeadline({
+        date: appointment.date,
+        time: appointment.time,
+      });
+      const now = new Date();
+
+      if (!rescheduleDeadline) {
+        throw this.errors.validationError(
+          'date',
+          'Unable to determine the appointment reschedule deadline.',
+          'AppointmentsService.rescheduleAppointment'
+        );
+      }
+
+      if (now.getTime() >= rescheduleDeadline.getTime()) {
+        throw this.errors.validationError(
+          'date',
+          'Rescheduling is only allowed until the 5-hour appointment window expires.',
+          'AppointmentsService.rescheduleAppointment'
+        );
+      }
+    }
+
+    // Patient-self-confirmed video flow: when a VIDEO_CALL appointment is in
+    // SCHEDULED status with proposedSlots populated, the patient has already
+    // chosen their slots. We still want to verify the proposal hasn't been
+    // totally orphaned (e.g. all proposed slots passed) before allowing a
+    // reschedule — but the reschedule itself is allowed.
+    //
     // Production policy: Allow rescheduling up to 24h before.
     // Temporarily disabled for testing so short-notice appointment changes can be exercised.
     // const appointmentDateTime = new Date(
@@ -2789,17 +2848,30 @@ export class AppointmentsService {
       );
     }
 
-    // Update appointment
-    const updated = await this.databaseService.updateAppointmentSafe(appointmentId, {
+    // Update appointment — clear video-specific metadata so stale proposal
+    // data does not survive a reschedule.  proposedSlots and
+    // confirmedSlotIndex are reset to their defaults so a fresh cycle
+    // begins after the new date/time is set.
+    //
+    // For VIDEO_CALL appointments the old paymentExpiresAt must also be
+    // cleared: the scheduler treats it as the authoritative expiry moment.
+    // Leaving it set would cause the row to be auto-expired by the OLD
+    // deadline even though the patient now has a new future date.
+    const isVideo = String(appointment.type) === 'VIDEO_CALL';
+    const updateData: Parameters<typeof this.databaseService.updateAppointmentSafe>[1] = {
       date: new Date(newDate),
       time: newTime,
       status: AppointmentStatus.SCHEDULED, // Reset to scheduled
+      ...(isVideo ? { paymentExpiresAt: null } : {}),
+      proposedSlots: [],
+      confirmedSlotIndex: null,
       metadata: {
         ...metadata,
         rescheduleCount: rescheduleCount + 1,
         lastRescheduledAt: new Date(),
       },
-    });
+    };
+    const updated = await this.databaseService.updateAppointmentSafe(appointmentId, updateData);
 
     await this.syncPaidAppointmentBillingAfterReschedule(appointment, newDate, newTime, userId);
 

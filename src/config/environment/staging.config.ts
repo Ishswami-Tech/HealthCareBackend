@@ -143,11 +143,7 @@ export default function createStagingConfig(): Config {
       // Use helper functions (which use dotenv) for environment variable access
       level:
         (getEnvWithDefault(ENV_VARS.LOG_LEVEL, 'debug') as
-          | 'error'
-          | 'warn'
-          | 'info'
-          | 'debug'
-          | 'verbose') || 'debug', // Debug logging for staging (for testing)
+          'error' | 'warn' | 'info' | 'debug' | 'verbose') || 'debug', // Debug logging for staging (for testing)
       enableAuditLogs: getEnvBoolean('ENABLE_AUDIT_LOGS', true),
     },
     email: {

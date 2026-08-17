@@ -502,11 +502,7 @@ export interface CacheConfigUpdate {
   readonly rateLimits?: Record<string, CacheRateLimitConfig>;
   /** Policy for memory management */
   readonly maxMemoryPolicy?:
-    | 'noeviction'
-    | 'allkeys-lru'
-    | 'volatile-lru'
-    | 'allkeys-random'
-    | 'volatile-random';
+    'noeviction' | 'allkeys-lru' | 'volatile-lru' | 'allkeys-random' | 'volatile-random';
 }
 
 // ============================================================================

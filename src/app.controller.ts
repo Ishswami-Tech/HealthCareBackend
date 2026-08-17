@@ -784,15 +784,13 @@ export class AppController {
       );
       const logs = result.logs;
 
-      return logs.slice(0, limit).map(
-        (log): DashboardLogEntry => ({
-          timestamp: log.timestamp || nowIso(),
-          level: (log.level as string) || 'info',
-          message: log.message || 'No message',
-          source: (log.type as string) || 'Unknown',
-          data: log.metadata ? JSON.stringify(log.metadata) : '{}',
-        })
-      );
+      return logs.slice(0, limit).map((log): DashboardLogEntry => ({
+        timestamp: log.timestamp || nowIso(),
+        level: (log.level as string) || 'info',
+        message: log.message || 'No message',
+        source: (log.type as string) || 'Unknown',
+        data: log.metadata ? JSON.stringify(log.metadata) : '{}',
+      }));
     } catch (_error) {
       void this.loggingService.log(
         LogType.ERROR,
@@ -807,15 +805,13 @@ export class AppController {
       // Return placeholder data if there's an error
       return Array(limit)
         .fill(null)
-        .map(
-          (_, i): DashboardLogEntry => ({
-            timestamp: nowIso(),
-            level: 'info',
-            message: `This is a placeholder log entry ${i + 1}`,
-            source: 'System',
-            data: '{}',
-          })
-        );
+        .map((_, i): DashboardLogEntry => ({
+          timestamp: nowIso(),
+          level: 'info',
+          message: `This is a placeholder log entry ${i + 1}`,
+          source: 'System',
+          data: '{}',
+        }));
     }
   }
 

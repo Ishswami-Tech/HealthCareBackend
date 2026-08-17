@@ -106,7 +106,7 @@ export type AppointmentCreateInput = {
   userId: string;
   notes?: string;
   proposedSlots?: unknown;
-  confirmedSlotIndex?: number;
+  confirmedSlotIndex?: number | null;
   reason?: string;
   symptoms?: string;
   diagnosis?: string;
@@ -133,7 +133,7 @@ export type AppointmentUpdateInput = {
   time?: string;
   duration?: number;
   status?: string;
-  confirmedSlotIndex?: number;
+  confirmedSlotIndex?: number | null;
   proposedSlots?: unknown;
   priority?: string;
   notes?: string;

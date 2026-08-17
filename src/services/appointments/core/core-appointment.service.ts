@@ -1091,8 +1091,7 @@ export class CoreAppointmentService {
       const doctorUserRecord =
         (doctorRecord?.['user'] as Record<string, unknown> | undefined) || undefined;
       const clinicRecord = (existingAppointment as unknown as Record<string, unknown>)['clinic'] as
-        | Record<string, unknown>
-        | undefined;
+        Record<string, unknown> | undefined;
       const clinicName =
         (typeof clinicRecord?.['name'] === 'string' && clinicRecord['name'].trim()) ||
         (typeof clinicRecord?.['displayName'] === 'string' && clinicRecord['displayName'].trim()) ||
