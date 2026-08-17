@@ -143,12 +143,7 @@ export interface UserProfile {
   readonly phoneVerifiedAt?: string;
   /** Login method used for the session */
   readonly loginMethod?:
-    | 'password'
-    | 'phone_otp'
-    | 'email_otp'
-    | 'google_oauth'
-    | 'facebook_oauth'
-    | 'apple_oauth';
+    'password' | 'phone_otp' | 'email_otp' | 'google_oauth' | 'facebook_oauth' | 'apple_oauth';
   /** Whether the email has been verified (set during email_otp login since OTP is sent to and verified at that email) */
   readonly emailVerified?: boolean;
   /** Whether the profile is complete */

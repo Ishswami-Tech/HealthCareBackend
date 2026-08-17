@@ -557,14 +557,7 @@ export type RuleConditionType =
   | 'custom';
 
 export type RuleActionType =
-  | 'block'
-  | 'allow'
-  | 'warn'
-  | 'log'
-  | 'notify'
-  | 'auto_correct'
-  | 'require_approval'
-  | 'custom';
+  'block' | 'allow' | 'warn' | 'log' | 'notify' | 'auto_correct' | 'require_approval' | 'custom';
 
 export type RuleSeverity = 'low' | 'medium' | 'high' | 'critical';
 

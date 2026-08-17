@@ -58,10 +58,7 @@ export const FastifyFile = createParamDecorator(
     const body = (req.body || {}) as Record<string, unknown>;
     const field = body[fieldName];
     const item = (Array.isArray(field) ? field[0] : field) as
-      | MultipartItem
-      | Buffer
-      | string
-      | undefined;
+      MultipartItem | Buffer | string | undefined;
 
     if (!item) return null;
     if (typeof item === 'string') {

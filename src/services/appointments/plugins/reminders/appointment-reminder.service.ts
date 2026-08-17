@@ -61,10 +61,7 @@ export class AppointmentReminderService {
         doctorId,
         clinicId,
         reminderType: reminderType as
-          | 'appointment_reminder'
-          | 'follow_up'
-          | 'prescription'
-          | 'payment',
+          'appointment_reminder' | 'follow_up' | 'prescription' | 'payment',
         scheduledFor: resolvedScheduledFor,
         status: 'scheduled',
         channels: channels as ('push' | 'email' | 'socket' | 'sms' | 'whatsapp')[],

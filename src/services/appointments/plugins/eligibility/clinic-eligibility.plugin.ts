@@ -145,8 +145,7 @@ export class ClinicEligibilityPlugin extends BaseAppointmentPlugin {
 
       case 'createEligibilityCriteria': {
         const criteriaData = params['criteriaData'] as
-          | { name?: unknown; clinicId?: unknown }
-          | undefined;
+          { name?: unknown; clinicId?: unknown } | undefined;
         return Promise.resolve(!!(criteriaData && criteriaData.name && criteriaData.clinicId));
       }
 

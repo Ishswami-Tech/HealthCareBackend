@@ -2625,11 +2625,7 @@ export class BillingService implements OnModuleInit {
       isSubscription: true,
       subscriptionId: subscription.id,
       subscriptionInterval: subscription.plan.interval.toLowerCase() as
-        | 'daily'
-        | 'weekly'
-        | 'monthly'
-        | 'quarterly'
-        | 'yearly',
+        'daily' | 'weekly' | 'monthly' | 'quarterly' | 'yearly',
       clinicId: subscription.clinicId,
       metadata: {
         invoiceId: invoice.id,

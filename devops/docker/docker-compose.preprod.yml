@@ -154,6 +154,7 @@ services:
     networks:
       preprod-network: null
       ix9fceaxa914diauokjleeis: null
+      coolify: null
     restart: unless-stopped
     healthcheck:
       test:
@@ -194,6 +195,20 @@ services:
       - coolify.service.subId=10
       - coolify.service.subType=application
       - coolify.service.subName=worker
+      # Traefik routing: /queue-dashboard/* → worker (Bull Board only on worker)
+      - traefik.enable=true
+      - traefik.docker.network=ix9fceaxa914diauokjleeis
+      - traefik.http.middlewares.gzip.compress=true
+      - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
+      - 'traefik.http.routers.http-queue-dashboard.entryPoints=http'
+      - traefik.http.routers.http-queue-dashboard.middlewares=redirect-to-https
+      - 'traefik.http.routers.http-queue-dashboard.rule=Host(`preprod-backend.ishswami.in`) && PathPrefix(`/queue-dashboard`)'
+      - traefik.http.routers.https-queue-dashboard.entryPoints=https
+      - traefik.http.routers.https-queue-dashboard.middlewares=gzip
+      - 'traefik.http.routers.https-queue-dashboard.rule=Host(`preprod-backend.ishswami.in`) && PathPrefix(`/queue-dashboard`)'
+      - traefik.http.routers.https-queue-dashboard.tls.certresolver=letsencrypt
+      - traefik.http.routers.https-queue-dashboard.tls=true
+      - traefik.http.services.queue-dashboard.loadbalancer.server.port=8088
 
 networks:
   preprod-network:
@@ -201,4 +216,7 @@ networks:
     external: true
   ix9fceaxa914diauokjleeis:
     name: ix9fceaxa914diauokjleeis
+    external: true
+  coolify:
+    name: coolify
     external: true

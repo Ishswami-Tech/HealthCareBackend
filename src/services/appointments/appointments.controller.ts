@@ -1981,7 +1981,7 @@ export class AppointmentsController {
   @ApiOperation({
     summary: 'Reschedule a video appointment',
     description:
-      'Reschedule a video appointment to a new date/time. Must be done at least 24 hours before the original slot. Maximum 2 reschedules per appointment.',
+      'Reschedule a video appointment to a new date/time. Must be done before the 5-hour appointment window expires. Maximum 2 reschedules per appointment.',
   })
   @ApiParam({ name: 'id', description: 'Appointment ID (UUID)', type: 'string', format: 'uuid' })
   @ApiBody({
@@ -4195,11 +4195,7 @@ export class AppointmentsController {
           doctorId: appointment.doctor?.id || '',
           clinicId,
           followUpType: createDto.followUpType as
-            | 'routine'
-            | 'urgent'
-            | 'specialist'
-            | 'therapy'
-            | 'surgery',
+            'routine' | 'urgent' | 'specialist' | 'therapy' | 'surgery',
           scheduledFor: result.scheduledFor,
           status: 'scheduled',
           priority: (createDto.priority || 'normal') as 'low' | 'normal' | 'high' | 'urgent',
