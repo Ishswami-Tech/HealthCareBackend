@@ -2443,11 +2443,11 @@ export class BillingService implements OnModuleInit {
 
   private getDefaultAppointmentPrice(appointmentType: string): number {
     const prices: Record<string, number> = {
-      IN_PERSON: 1179,
-      VIDEO_CALL: 1179,
+      IN_PERSON: 1215,
+      VIDEO_CALL: 1215,
       HOME_VISIT: 1500,
     };
-    return prices[appointmentType] || 1179;
+    return prices[appointmentType] || 1215;
   }
 
   async checkAppointmentCoverage(subscriptionId: string, appointmentType: string) {
