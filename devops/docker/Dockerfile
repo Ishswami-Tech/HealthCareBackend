@@ -1,5 +1,5 @@
 # Build stage — Ubuntu server–optimized: Bookworm (Debian 12) matches glibc/kernel of Ubuntu 24.04
-FROM node:22-bookworm-slim AS builder
+FROM node:24-bookworm-slim AS builder
 
 LABEL stage=builder
 LABEL app.component=backend
@@ -141,7 +141,7 @@ RUN mkdir -p /app/dist/libs/infrastructure/database/prisma && \
   cp -r /app/src/libs/infrastructure/database/prisma/generated /app/dist/libs/infrastructure/database/prisma/
 
 # Production stage — Ubuntu server–optimized: same base as builder for consistency
-FROM node:22-bookworm-slim AS production
+FROM node:24-bookworm-slim AS production
 
 LABEL app.component=backend
 LABEL app.stage=production
