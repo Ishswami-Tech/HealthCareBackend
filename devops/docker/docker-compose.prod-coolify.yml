@@ -7,7 +7,7 @@ services:
       - /opt/healthcare-backend/.env.production
       - .env
     environment:
-      DATABASE_URL: 'postgresql://postgres:postgres@postgres:5432/userdb?schema=public'
+      DATABASE_URL: 'postgresql://postgres:postgres@maxa5uf95pbau93eslhisek0:5432/userdb?schema=public'
       DRAGONFLY_KEY_PREFIX: 'healthcare:'
       CACHE_PREFIX: 'healthcare:'
       NODE_ENV: production
@@ -99,7 +99,7 @@ services:
       - /opt/healthcare-backend/.env.production
       - .env
     environment:
-      DATABASE_URL: 'postgresql://postgres:postgres@postgres:5432/userdb?schema=public'
+      DATABASE_URL: 'postgresql://postgres:postgres@maxa5uf95pbau93eslhisek0:5432/userdb?schema=public'
       DRAGONFLY_KEY_PREFIX: 'healthcare:'
       CACHE_PREFIX: 'healthcare:'
       NODE_ENV: production
@@ -120,6 +120,13 @@ services:
       ENABLE_AUDIT_LOGS: 'true'
       ENABLE_BULL_BOARD: 'true'
       BULL_BOARD_URL: /queue-dashboard
+      COOLIFY_RESOURCE_UUID: 5sdkic5wk4l6zpflypayt9mb
+      COOLIFY_CONTAINER_NAME: worker-5sdkic5wk4l6zpflypayt9mb
+      COOLIFY_FQDN: backend-service-v1.ishswami.in
+      COOLIFY_URL: 'https://backend-service-v1.ishswami.in'
+      BASE_URL: 'https://backend-service-v1.ishswami.in'
+      SERVICE_NAME_API: api
+      SERVICE_NAME_WORKER: worker
     volumes:
       - '/data/coolify/services/5sdkic5wk4l6zpflypayt9mb/../logs:/app/logs'
     ports:
@@ -170,10 +177,10 @@ services:
       # Traefik routing: /queue-dashboard/* goes to worker container
       - traefik.enable=true
       - traefik.docker.network=5sdkic5wk4l6zpflypayt9mb
-      - traefik.http.routers.queue-dashboard.rule=PathPrefix(`/queue-dashboard`)
-      - traefik.http.routers.queue-dashboard.entrypoints=websecure
+      - traefik.http.routers.queue-dashboard.rule=Host(`backend-service-v1.ishswami.in`) && PathPrefix(`/queue-dashboard`)
+      - traefik.http.routers.queue-dashboard.entrypoints=https
       - traefik.http.routers.queue-dashboard.tls=true
-      - traefik.http.services.queue-dashboard.loadbalancer.server.port=8091
+      - traefik.http.services.queue-dashboard.loadbalancer.server.port=8088
 
 networks:
   5sdkic5wk4l6zpflypayt9mb:

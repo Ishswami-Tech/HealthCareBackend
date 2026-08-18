@@ -6,7 +6,7 @@ services:
     env_file:
       - /opt/healthcare-preprod/.env.preprod
     environment:
-      DATABASE_URL: 'postgresql://postgres:postgres@postgres:5432/userdb_preprod?schema=public'
+      DATABASE_URL: 'postgresql://postgres:postgres@maxa5uf95pbau93eslhisek0:5432/userdb_preprod?schema=public'
       DRAGONFLY_KEY_PREFIX: 'preprod:'
       CACHE_PREFIX: 'preprod:'
       NODE_ENV: production
@@ -121,7 +121,7 @@ services:
     env_file:
       - /opt/healthcare-preprod/.env.preprod
     environment:
-      DATABASE_URL: 'postgresql://postgres:postgres@postgres:5432/userdb_preprod?schema=public'
+      DATABASE_URL: 'postgresql://postgres:postgres@maxa5uf95pbau93eslhisek0:5432/userdb_preprod?schema=public'
       DRAGONFLY_KEY_PREFIX: 'preprod:'
       CACHE_PREFIX: 'preprod:'
       NODE_ENV: production
