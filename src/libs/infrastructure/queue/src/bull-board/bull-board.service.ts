@@ -104,6 +104,28 @@ export class BullBoardService implements OnApplicationBootstrap {
 
       // Await registration to ensure the static plugin inside FastifyAdapter loads correctly
       await appInstance.register(serverAdapter.registerPlugin(), { prefix: routePrefix });
+      // Prevent CDN/proxy caching of the dashboard HTML — asset hashes change
+      // between deployments and a cached page references non-existent files.
+      // Prevent CDN/proxy caching of the dashboard HTML — asset hashes change
+      // between deployments and a cached page references non-existent files.
+      try {
+        const fastifyApp = appInstance as {
+          addHook?: (...args: unknown[]) => void;
+        };
+        if (typeof fastifyApp.addHook === 'function') {
+          fastifyApp.addHook('onSend', (_req: unknown, reply: unknown) => {
+            try {
+              const replyObj = reply as { setHeader?: (key: string, value: string) => void };
+              replyObj.setHeader?.('Cache-Control', 'no-store');
+            } catch {
+              // Ignore header-setting failures on non-HTTP replies.
+            }
+          });
+        }
+      } catch {
+        // Hook registration is best-effort; non-Fastify adapters skip gracefully.
+      }
+
       this.bullBoardRegistered = true;
       this.logger.log('Bull Board registered at /queue-dashboard');
     } catch (error) {
