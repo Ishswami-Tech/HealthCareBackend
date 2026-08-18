@@ -6,7 +6,7 @@ services:
     env_file:
       - /opt/healthcare-preprod/.env.preprod
     environment:
-      DATABASE_URL: 'postgresql://postgres:postgres@10.0.1.13:5432/userdb_preprod?schema=public'
+      DATABASE_URL: 'postgresql://postgres:postgres@maxa5uf95pbau93eslhisek0:5432/userdb_preprod?schema=public'
       DRAGONFLY_KEY_PREFIX: 'preprod:'
       CACHE_PREFIX: 'preprod:'
       NODE_ENV: production
@@ -22,7 +22,7 @@ services:
       CACHE_PROVIDER: dragonfly
       CACHE_ENABLED: 'true'
       DRAGONFLY_ENABLED: 'true'
-      DRAGONFLY_HOST: 10.0.1.12
+      DRAGONFLY_HOST: dragonfly
       DRAGONFLY_PORT: 6379
       ENABLE_HTTP2: 'false'
       TRUST_PROXY: 1
@@ -121,7 +121,7 @@ services:
     env_file:
       - /opt/healthcare-preprod/.env.preprod
     environment:
-      DATABASE_URL: 'postgresql://postgres:postgres@10.0.1.13:5432/userdb_preprod?schema=public'
+      DATABASE_URL: 'postgresql://postgres:postgres@maxa5uf95pbau93eslhisek0:5432/userdb_preprod?schema=public'
       DRAGONFLY_KEY_PREFIX: 'preprod:'
       CACHE_PREFIX: 'preprod:'
       NODE_ENV: production
@@ -134,7 +134,7 @@ services:
       CACHE_PROVIDER: dragonfly
       CACHE_ENABLED: 'true'
       DRAGONFLY_ENABLED: 'true'
-      DRAGONFLY_HOST: 10.0.1.12
+      DRAGONFLY_HOST: dragonfly
       DRAGONFLY_PORT: 6379
       BULL_WORKER_CONCURRENCY: '10'
       BULL_MAX_JOBS_PER_WORKER: '100'
