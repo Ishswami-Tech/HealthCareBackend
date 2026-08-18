@@ -17,13 +17,13 @@ services:
       DOCKER_ENV: 'true'
       CRON_TIMEZONE: Asia/Kolkata
       TZ: Asia/Kolkata
-      PORT: 8088
+      PUORT: 8088
       HOST: 0.0.0.0
       PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
       CACHE_PROVIDER: dragonfly
       CACHE_ENABLED: 'true'
       DRAGONFLY_ENABLED: 'true'
-      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_HOST: 10.0.1.12
       DRAGONFLY_PORT: 6379
       JWT_SECRET: '${JWT_SECRET}'
       ENABLE_HTTP2: 'false'
@@ -112,7 +112,7 @@ services:
       CACHE_PROVIDER: dragonfly
       CACHE_ENABLED: 'true'
       DRAGONFLY_ENABLED: 'true'
-      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_HOST: 10.0.1.12
       DRAGONFLY_PORT: 6379
       BULL_WORKER_CONCURRENCY: '10'
       BULL_MAX_JOBS_PER_WORKER: '100'
