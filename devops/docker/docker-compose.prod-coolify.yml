@@ -178,7 +178,7 @@ services:
       - traefik.enable=true
       - traefik.docker.network=5sdkic5wk4l6zpflypayt9mb
       - traefik.http.routers.queue-dashboard.rule=Host(`backend-service-v1.ishswami.in`) && PathPrefix(`/queue-dashboard`)
-      - traefik.http.routers.queue-dashboard.entrypoints=websecure
+      - traefik.http.routers.queue-dashboard.entrypoints=https
       - traefik.http.routers.queue-dashboard.tls=true
       - traefik.http.services.queue-dashboard.loadbalancer.server.port=8088
 
