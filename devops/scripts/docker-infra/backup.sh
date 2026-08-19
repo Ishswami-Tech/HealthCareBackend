@@ -30,8 +30,8 @@ fi
 CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
 
 # Fixed container names for infrastructure (never change)
-POSTGRES_CONTAINER="postgres"
-DRAGONFLY_CONTAINER="dragonfly"
+POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-$(docker ps --filter 'ancestor=postgres' --format '{{.Names}}' | head -1)}"
+DRAGONFLY_CONTAINER="${DRAGONFLY_CONTAINER:-$(docker ps --filter 'ancestor=dragonflydb/dragonfly' --format '{{.Names}}' | head -1)}"
 REDIS_CONTAINER="redis"  # Optional: for redis-cli tool access
 
 BACKUP_ID=$(create_backup_id)
