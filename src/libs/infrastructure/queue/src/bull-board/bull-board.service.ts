@@ -114,8 +114,15 @@ export class BullBoardService implements OnApplicationBootstrap {
         },
       });
 
-      // Await registration to ensure the static plugin inside FastifyAdapter loads correctly
-      await appInstance.register(serverAdapter.registerPlugin(), { prefix: routePrefix });
+      console.error('[BULLBOARD] About to register route...');
+      const registerWithTimeout = Promise.race([
+        appInstance.register(serverAdapter.registerPlugin(), { prefix: routePrefix }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('BullBoard register timeout after 10s')), 10000)
+        ),
+      ]);
+      await registerWithTimeout;
+      console.error('[BULLBOARD] Route registered successfully');
       // Prevent CDN/proxy caching of the dashboard HTML — asset hashes change
       // between deployments and a cached page references non-existent files.
       // Prevent CDN/proxy caching of the dashboard HTML — asset hashes change
