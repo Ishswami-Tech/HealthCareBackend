@@ -2,7 +2,7 @@ import {
   Inject,
   Injectable,
   Logger,
-  OnApplicationBootstrap,
+  OnModuleInit,
   Optional,
   forwardRef,
 } from '@nestjs/common';
@@ -41,7 +41,7 @@ function isFastifyLikeInstance(value: unknown): value is FastifyLikeInstance {
  * for real-time queue visualization and management.
  */
 @Injectable()
-export class BullBoardService implements OnApplicationBootstrap {
+export class BullBoardService implements OnModuleInit {
   private readonly logger = new Logger(BullBoardService.name);
   private bullBoardRegistered = false;
 
@@ -54,8 +54,8 @@ export class BullBoardService implements OnApplicationBootstrap {
     private readonly loggingService?: LoggingService
   ) {}
 
-  async onApplicationBootstrap(): Promise<void> {
-    console.error('[BULLBOARD] onApplicationBootstrap called');
+  async onModuleInit(): Promise<void> {
+    console.error('[BULLBOARD] onModuleInit called');
     if (this.bullBoardRegistered) {
       console.error('[BULLBOARD] Already registered, skipping');
       return;
