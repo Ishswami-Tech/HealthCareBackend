@@ -196,6 +196,7 @@ services:
       - coolify.service.subType=application
       - coolify.service.subName=worker
       # Traefik routing: /queue-dashboard/* → worker (Bull Board only on worker)
+      # Priority 100 ensures this router wins over the API catch-all (PathPrefix `/`)
       - traefik.enable=true
       - traefik.docker.network=ix9fceaxa914diauokjleeis
       - traefik.http.middlewares.gzip.compress=true
@@ -203,9 +204,11 @@ services:
       - 'traefik.http.routers.http-queue-dashboard.entryPoints=http'
       - traefik.http.routers.http-queue-dashboard.middlewares=redirect-to-https
       - 'traefik.http.routers.http-queue-dashboard.rule=Host(`preprod-backend.ishswami.in`) && PathPrefix(`/queue-dashboard`)'
+      - traefik.http.routers.http-queue-dashboard.priority=100
       - traefik.http.routers.https-queue-dashboard.entryPoints=https
       - traefik.http.routers.https-queue-dashboard.middlewares=gzip
       - 'traefik.http.routers.https-queue-dashboard.rule=Host(`preprod-backend.ishswami.in`) && PathPrefix(`/queue-dashboard`)'
+      - traefik.http.routers.https-queue-dashboard.priority=100
       - traefik.http.routers.https-queue-dashboard.tls.certresolver=letsencrypt
       - traefik.http.routers.https-queue-dashboard.tls=true
       - traefik.http.services.queue-dashboard.loadbalancer.server.port=8088
