@@ -55,20 +55,25 @@ export class BullBoardService implements OnApplicationBootstrap {
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    console.error('[BULLBOARD] onApplicationBootstrap called');
     if (this.bullBoardRegistered) {
+      console.error('[BULLBOARD] Already registered, skipping');
       return;
     }
 
+    console.error('[BULLBOARD] isCacheEnabled:', isCacheEnabled());
     if (!isCacheEnabled()) {
       this.logger.warn('Bull Board skipped: cache is disabled.');
       return;
     }
 
     const enableBullBoardEnv = process.env['ENABLE_BULL_BOARD']?.trim().toLowerCase();
+    console.error('[BULLBOARD] ENABLE_BULL_BOARD env:', enableBullBoardEnv);
     const bullBoardEnabled =
       enableBullBoardEnv === undefined
         ? true
         : ['true', '1', 'yes', 'on'].includes(enableBullBoardEnv);
+    console.error('[BULLBOARD] bullBoardEnabled:', bullBoardEnabled);
 
     if (!bullBoardEnabled) {
       this.logger.warn('Bull Board skipped: dashboard is disabled for this environment.');
@@ -76,12 +81,19 @@ export class BullBoardService implements OnApplicationBootstrap {
     }
 
     const httpAdapter = this.httpAdapterHost.httpAdapter;
+    console.error('[BULLBOARD] httpAdapter:', !!httpAdapter);
     if (!httpAdapter) {
       this.logger.warn('Bull Board skipped: no HTTP adapter is available.');
       return;
     }
 
     const appInstance: unknown = httpAdapter.getInstance();
+    console.error(
+      '[BULLBOARD] appInstance type:',
+      typeof appInstance,
+      'hasRegister:',
+      typeof (appInstance as { register?: unknown } | null | undefined)?.register === 'function'
+    );
     if (!isFastifyLikeInstance(appInstance)) {
       this.logger.warn('Bull Board skipped: Fastify instance is not available.');
       return;
