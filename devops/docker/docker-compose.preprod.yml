@@ -98,10 +98,10 @@ services:
       - traefik.docker.network=ix9fceaxa914diauokjleeis
       - traefik.http.middlewares.gzip.compress=true
       - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
-      - traefik.http.routers.http-0-ix9fceaxa914diauokjleeis-api-8a5d.entryPoints=http
+      - traefik.http.routers.http-0-ix9fceaxa914diauokjleeis-api-8a5d.entrypoints=http
       - traefik.http.routers.http-0-ix9fceaxa914diauokjleeis-api-8a5d.middlewares=redirect-to-https
       - 'traefik.http.routers.http-0-ix9fceaxa914diauokjleeis-api-8a5d.rule=Host(`preprod-backend.ishswami.in`) && PathPrefix(`/`)'
-      - traefik.http.routers.https-0-ix9fceaxa914diauokjleeis-api-8a5d.entryPoints=https
+      - traefik.http.routers.https-0-ix9fceaxa914diauokjleeis-api-8a5d.entrypoints=https
       - traefik.http.routers.https-0-ix9fceaxa914diauokjleeis-api-8a5d.middlewares=gzip
       - 'traefik.http.routers.https-0-ix9fceaxa914diauokjleeis-api-8a5d.rule=Host(`preprod-backend.ishswami.in`) && PathPrefix(`/`)'
       - traefik.http.routers.https-0-ix9fceaxa914diauokjleeis-api-8a5d.tls.certresolver=letsencrypt
@@ -201,11 +201,11 @@ services:
       - traefik.docker.network=ix9fceaxa914diauokjleeis
       - traefik.http.middlewares.gzip.compress=true
       - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
-      - 'traefik.http.routers.http-queue-dashboard.entryPoints=http'
+      - 'traefik.http.routers.http-queue-dashboard.entrypoints=http'
       - traefik.http.routers.http-queue-dashboard.middlewares=redirect-to-https
       - 'traefik.http.routers.http-queue-dashboard.rule=Host(`preprod-backend.ishswami.in`) && PathPrefix(`/queue-dashboard`)'
       - traefik.http.routers.http-queue-dashboard.priority=100
-      - traefik.http.routers.https-queue-dashboard.entryPoints=https
+      - traefik.http.routers.https-queue-dashboard.entrypoints=https
       - traefik.http.routers.https-queue-dashboard.middlewares=gzip
       - 'traefik.http.routers.https-queue-dashboard.rule=Host(`preprod-backend.ishswami.in`) && PathPrefix(`/queue-dashboard`)'
       - traefik.http.routers.https-queue-dashboard.priority=100
