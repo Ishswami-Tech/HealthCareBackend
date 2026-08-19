@@ -1,11 +1,4 @@
-import {
-  Inject,
-  Injectable,
-  Logger,
-  OnModuleInit,
-  Optional,
-  forwardRef,
-} from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit, Optional, forwardRef } from '@nestjs/common';
 import { HttpAdapterHost } from '@nestjs/core';
 import { InjectQueue } from '@nestjs/bullmq';
 import { createBullBoard } from '@bull-board/api';
@@ -123,28 +116,6 @@ export class BullBoardService implements OnModuleInit {
       ]);
       await registerWithTimeout;
       console.error('[BULLBOARD] Route registered successfully');
-      // Prevent CDN/proxy caching of the dashboard HTML — asset hashes change
-      // between deployments and a cached page references non-existent files.
-      // Prevent CDN/proxy caching of the dashboard HTML — asset hashes change
-      // between deployments and a cached page references non-existent files.
-      try {
-        const fastifyApp = appInstance as {
-          addHook?: (...args: unknown[]) => void;
-        };
-        if (typeof fastifyApp.addHook === 'function') {
-          fastifyApp.addHook('onSend', (_req: unknown, reply: unknown) => {
-            try {
-              const replyObj = reply as { setHeader?: (key: string, value: string) => void };
-              replyObj.setHeader?.('Cache-Control', 'no-store');
-            } catch {
-              // Ignore header-setting failures on non-HTTP replies.
-            }
-          });
-        }
-      } catch {
-        // Hook registration is best-effort; non-Fastify adapters skip gracefully.
-      }
-
       this.bullBoardRegistered = true;
       this.logger.log('Bull Board registered at /queue-dashboard');
     } catch (error) {
