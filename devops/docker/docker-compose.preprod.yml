@@ -22,7 +22,7 @@ services:
       CACHE_PROVIDER: dragonfly
       CACHE_ENABLED: 'true'
       DRAGONFLY_ENABLED: 'true'
-      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_HOST: dhpn8hj78kg3ivu0ohdbypmn
       DRAGONFLY_PORT: 6379
       ENABLE_HTTP2: 'false'
       TRUST_PROXY: 1
@@ -134,7 +134,7 @@ services:
       CACHE_PROVIDER: dragonfly
       CACHE_ENABLED: 'true'
       DRAGONFLY_ENABLED: 'true'
-      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_HOST: dhpn8hj78kg3ivu0ohdbypmn
       DRAGONFLY_PORT: 6379
       BULL_WORKER_CONCURRENCY: '10'
       BULL_MAX_JOBS_PER_WORKER: '100'
@@ -142,6 +142,8 @@ services:
       ENABLE_AUDIT_LOGS: 'true'
       ENABLE_BULL_BOARD: 'true'
       BULL_BOARD_URL: /queue-dashboard
+      ENABLE_HTTP2: 'false'
+      DRAGONFLY_HOST: dhpn8hj78kg3ivu0ohdbypmn
       COOLIFY_RESOURCE_UUID: ix9fceaxa914diauokjleeis
       COOLIFY_CONTAINER_NAME: worker-ix9fceaxa914diauokjleeis
       SERVICE_NAME_API: api
