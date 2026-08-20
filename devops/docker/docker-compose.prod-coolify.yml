@@ -74,7 +74,7 @@ services:
     labels:
       - com.docker.compose.service=api
       - env=production
-      - traefik.docker.network=5sdkic5wk4l6zpflypayt9mb
+      - traefik.docker.network=coolify
       - app.component=backend
       - app.type=api
       - coolify.managed=true
@@ -177,7 +177,7 @@ services:
       # Traefik routing: /queue-dashboard/* goes to worker container
       # Priority 100 ensures this router wins over the API catch-all (PathPrefix `/`)
       - traefik.enable=true
-      - traefik.docker.network=5sdkic5wk4l6zpflypayt9mb
+      - traefik.docker.network=coolify
       - traefik.http.routers.queue-dashboard.rule=Host(`backend-service-v1.ishswami.in`) && PathPrefix(`/queue-dashboard`)
       - traefik.http.routers.queue-dashboard.priority=100
       - traefik.http.routers.queue-dashboard.entrypoints=https
