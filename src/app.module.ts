@@ -11,7 +11,6 @@ import { LoggingControllersModule } from '@infrastructure/logging/logging-contro
 import { AppService } from './app.service';
 import { AppointmentsModule } from './services/appointments/appointments.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { ScheduleModule } from '@nestjs/schedule';
 import { QueueModule } from '@infrastructure/queue';
 import { BullBoardModule } from '@infrastructure/queue/src/bull-board/bull-board.module';
 import { CommunicationModule } from '@communication/communication.module';
@@ -46,12 +45,8 @@ import { BusinessRulesModule } from '@core/business-rules';
       maxListeners: 20,
       verboseMemoryLeak: true,
     }),
-    ScheduleModule.forRoot({
-      // Timezone is controlled at the container level (TZ: Asia/Kolkata in docker-compose).
-      // All @Cron expressions fire in both API and worker containers.
-      // The worker is the primary cron executor; API crons are harmless duplicates.
-      // Future: gate crons behind SERVICE_NAME env to only fire on worker.
-    }),
+    // ScheduleModule is registered only in worker-bootstrap.ts (worker container).
+    // API container must NOT register ScheduleModule — @Cron jobs fire only on worker.
     QueueModule.forRoot(),
     BullBoardModule.forRoot(),
     // Cache must initialize before logging so the log dashboard can persist and read entries.
