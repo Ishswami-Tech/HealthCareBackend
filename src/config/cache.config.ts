@@ -96,7 +96,15 @@ export const cacheConfig = (): CacheConfig => {
         enabled: provider === 'redis',
       },
       dragonfly: {
-        host: getEnv('DRAGONFLY_HOST'),
+        host: (() => {
+          const host = getEnv('DRAGONFLY_HOST');
+          if (!host) {
+            throw new Error(
+              'DRAGONFLY_HOST is not set. Please configure it in your environment variables.'
+            );
+          }
+          return host;
+        })(),
         port: getEnvNumber('DRAGONFLY_PORT', 6379),
         ...(dragonflyPassword && { password: dragonflyPassword }),
         enabled: provider === 'dragonfly',
