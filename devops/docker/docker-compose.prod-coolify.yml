@@ -112,7 +112,7 @@ services:
       CACHE_PROVIDER: dragonfly
       CACHE_ENABLED: 'true'
       DRAGONFLY_ENABLED: 'true'
-      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_HOST: dhpn8hj78kg3ivu0ohdbypmn
       DRAGONFLY_PORT: 6379
       BULL_WORKER_CONCURRENCY: '10'
       BULL_MAX_JOBS_PER_WORKER: '100'
