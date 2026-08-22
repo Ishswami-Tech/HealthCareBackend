@@ -97,6 +97,22 @@ export class DoctorAppointmentEventListener {
       return;
     }
 
+    // Only send event-driven summary during daytime window (12:00–18:00 IST).
+    // Night bookings are included in the 7 AM cron summary instead.
+    const istHour = new Date(
+      new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })
+    ).getHours();
+    if (istHour < 12 || istHour >= 18) {
+      void this.loggingService.log(
+        LogType.APPOINTMENT,
+        LogLevel.DEBUG,
+        `DoctorAppointmentEventListener: skipping event-driven summary — outside 12–18 IST window (current IST hour: ${istHour})`,
+        'DoctorAppointmentEventListener',
+        { doctorId, clinicId, istHour }
+      );
+      return;
+    }
+
     try {
       // 1. Resolve doctorUserId (cheap pre-check — no prefs/phone query yet)
       const doctorUserId = await this.resolveDoctorUserId(doctorId);
