@@ -1,11 +1,4 @@
-import {
-  Inject,
-  Injectable,
-  Logger,
-  OnApplicationBootstrap,
-  Optional,
-  forwardRef,
-} from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit, Optional, forwardRef } from '@nestjs/common';
 import { HttpAdapterHost } from '@nestjs/core';
 import { InjectQueue } from '@nestjs/bullmq';
 import { createBullBoard } from '@bull-board/api';
@@ -41,7 +34,7 @@ function isFastifyLikeInstance(value: unknown): value is FastifyLikeInstance {
  * for real-time queue visualization and management.
  */
 @Injectable()
-export class BullBoardService implements OnApplicationBootstrap {
+export class BullBoardService implements OnModuleInit {
   private readonly logger = new Logger(BullBoardService.name);
   private bullBoardRegistered = false;
 
@@ -54,21 +47,26 @@ export class BullBoardService implements OnApplicationBootstrap {
     private readonly loggingService?: LoggingService
   ) {}
 
-  async onApplicationBootstrap(): Promise<void> {
+  async onModuleInit(): Promise<void> {
+    console.error('[BULLBOARD] onModuleInit called');
     if (this.bullBoardRegistered) {
+      console.error('[BULLBOARD] Already registered, skipping');
       return;
     }
 
+    console.error('[BULLBOARD] isCacheEnabled:', isCacheEnabled());
     if (!isCacheEnabled()) {
       this.logger.warn('Bull Board skipped: cache is disabled.');
       return;
     }
 
     const enableBullBoardEnv = process.env['ENABLE_BULL_BOARD']?.trim().toLowerCase();
+    console.error('[BULLBOARD] ENABLE_BULL_BOARD env:', enableBullBoardEnv);
     const bullBoardEnabled =
       enableBullBoardEnv === undefined
         ? true
         : ['true', '1', 'yes', 'on'].includes(enableBullBoardEnv);
+    console.error('[BULLBOARD] bullBoardEnabled:', bullBoardEnabled);
 
     if (!bullBoardEnabled) {
       this.logger.warn('Bull Board skipped: dashboard is disabled for this environment.');
@@ -76,12 +74,19 @@ export class BullBoardService implements OnApplicationBootstrap {
     }
 
     const httpAdapter = this.httpAdapterHost.httpAdapter;
+    console.error('[BULLBOARD] httpAdapter:', !!httpAdapter);
     if (!httpAdapter) {
       this.logger.warn('Bull Board skipped: no HTTP adapter is available.');
       return;
     }
 
     const appInstance: unknown = httpAdapter.getInstance();
+    console.error(
+      '[BULLBOARD] appInstance type:',
+      typeof appInstance,
+      'hasRegister:',
+      typeof (appInstance as { register?: unknown } | null | undefined)?.register === 'function'
+    );
     if (!isFastifyLikeInstance(appInstance)) {
       this.logger.warn('Bull Board skipped: Fastify instance is not available.');
       return;
@@ -102,30 +107,15 @@ export class BullBoardService implements OnApplicationBootstrap {
         },
       });
 
-      // Await registration to ensure the static plugin inside FastifyAdapter loads correctly
-      await appInstance.register(serverAdapter.registerPlugin(), { prefix: routePrefix });
-      // Prevent CDN/proxy caching of the dashboard HTML — asset hashes change
-      // between deployments and a cached page references non-existent files.
-      // Prevent CDN/proxy caching of the dashboard HTML — asset hashes change
-      // between deployments and a cached page references non-existent files.
-      try {
-        const fastifyApp = appInstance as {
-          addHook?: (...args: unknown[]) => void;
-        };
-        if (typeof fastifyApp.addHook === 'function') {
-          fastifyApp.addHook('onSend', (_req: unknown, reply: unknown) => {
-            try {
-              const replyObj = reply as { setHeader?: (key: string, value: string) => void };
-              replyObj.setHeader?.('Cache-Control', 'no-store');
-            } catch {
-              // Ignore header-setting failures on non-HTTP replies.
-            }
-          });
-        }
-      } catch {
-        // Hook registration is best-effort; non-Fastify adapters skip gracefully.
-      }
-
+      console.error('[BULLBOARD] About to register route...');
+      const registerWithTimeout = Promise.race([
+        appInstance.register(serverAdapter.registerPlugin(), { prefix: routePrefix }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('BullBoard register timeout after 10s')), 10000)
+        ),
+      ]);
+      await registerWithTimeout;
+      console.error('[BULLBOARD] Route registered successfully');
       this.bullBoardRegistered = true;
       this.logger.log('Bull Board registered at /queue-dashboard');
     } catch (error) {

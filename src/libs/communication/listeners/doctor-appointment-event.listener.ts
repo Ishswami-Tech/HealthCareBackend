@@ -37,7 +37,9 @@ type AppointmentConfirmedEventPayload = {
  */
 @Injectable()
 export class DoctorAppointmentEventListener {
-  private readonly SUMMARY_DELAY_MS = 15 * 60 * 1000;
+  private readonly SUMMARY_DELAY_MS = 5 * 60 * 1000; // 5 minutes after appointment confirmation
+  private readonly doctorSummaryDedup = new Map<string, number>();
+  private readonly doctorSummaryDedupTtlMs = 30_000;
 
   constructor(
     private readonly eventService: EventService,
@@ -59,6 +61,30 @@ export class DoctorAppointmentEventListener {
 
     const doctorId = payload.doctorId;
     const clinicId = payload.clinicId;
+
+    // Fast in-memory dedup: appointment.confirmed can fire twice from billing +
+    // appointment services for the same appointment. Skip duplicates within 30s.
+    const dedupKey = `appointment.confirmed|${payload.appointmentId ?? ''}`;
+    const now = Date.now();
+    const lastSeen = this.doctorSummaryDedup.get(dedupKey);
+    if (lastSeen && now - lastSeen < this.doctorSummaryDedupTtlMs) {
+      void this.loggingService.log(
+        LogType.APPOINTMENT,
+        LogLevel.DEBUG,
+        `DoctorAppointmentEventListener: skipping duplicate appointment.confirmed for appointment ${payload.appointmentId}`,
+        'DoctorAppointmentEventListener',
+        { appointmentId: payload.appointmentId, doctorId, clinicId }
+      );
+      return;
+    }
+    this.doctorSummaryDedup.set(dedupKey, now);
+    if (this.doctorSummaryDedup.size > 500) {
+      for (const [key, timestamp] of this.doctorSummaryDedup.entries()) {
+        if (now - timestamp >= this.doctorSummaryDedupTtlMs) {
+          this.doctorSummaryDedup.delete(key);
+        }
+      }
+    }
 
     if (!doctorId || !clinicId) {
       void this.loggingService.log(

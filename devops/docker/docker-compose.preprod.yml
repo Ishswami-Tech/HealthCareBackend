@@ -22,7 +22,7 @@ services:
       CACHE_PROVIDER: dragonfly
       CACHE_ENABLED: 'true'
       DRAGONFLY_ENABLED: 'true'
-      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_HOST: dhpn8hj78kg3ivu0ohdbypmn
       DRAGONFLY_PORT: 6379
       ENABLE_HTTP2: 'false'
       TRUST_PROXY: 1
@@ -56,6 +56,7 @@ services:
     networks:
       preprod-network: null
       ix9fceaxa914diauokjleeis: null
+      coolify: null
     restart: unless-stopped
     healthcheck:
       test:
@@ -95,24 +96,16 @@ services:
       - coolify.service.subType=application
       - coolify.service.subName=api
       - traefik.enable=true
-      - traefik.docker.network=ix9fceaxa914diauokjleeis
-      - traefik.http.middlewares.gzip.compress=true
+      - traefik.docker.network=coolify
       - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
-      - traefik.http.routers.http-0-ix9fceaxa914diauokjleeis-api-8a5d.entryPoints=http
+      - traefik.http.routers.http-0-ix9fceaxa914diauokjleeis-api-8a5d.entrypoints=http
       - traefik.http.routers.http-0-ix9fceaxa914diauokjleeis-api-8a5d.middlewares=redirect-to-https
       - 'traefik.http.routers.http-0-ix9fceaxa914diauokjleeis-api-8a5d.rule=Host(`preprod-backend.ishswami.in`) && PathPrefix(`/`)'
-      - traefik.http.routers.https-0-ix9fceaxa914diauokjleeis-api-8a5d.entryPoints=https
-      - traefik.http.routers.https-0-ix9fceaxa914diauokjleeis-api-8a5d.middlewares=gzip
+      - traefik.http.routers.https-0-ix9fceaxa914diauokjleeis-api-8a5d.entrypoints=https
+      - traefik.http.routers.https-0-ix9fceaxa914diauokjleeis-api-8a5d.middlewares=redirect-to-https
       - 'traefik.http.routers.https-0-ix9fceaxa914diauokjleeis-api-8a5d.rule=Host(`preprod-backend.ishswami.in`) && PathPrefix(`/`)'
       - traefik.http.routers.https-0-ix9fceaxa914diauokjleeis-api-8a5d.tls.certresolver=letsencrypt
       - traefik.http.routers.https-0-ix9fceaxa914diauokjleeis-api-8a5d.tls=true
-      - 'caddy_0.encode=zstd gzip'
-      - 'caddy_0.handle_path.0_reverse_proxy={{upstreams}}'
-      - 'caddy_0.handle_path=/*'
-      - caddy_0.header=-Server
-      - 'caddy_0.try_files={path} /index.html /index.php'
-      - 'caddy_0=https://preprod-backend.ishswami.in'
-      - caddy_ingress_network=ix9fceaxa914diauokjleeis
 
   worker:
     image: '${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:preprod}'
@@ -134,7 +127,7 @@ services:
       CACHE_PROVIDER: dragonfly
       CACHE_ENABLED: 'true'
       DRAGONFLY_ENABLED: 'true'
-      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_HOST: dhpn8hj78kg3ivu0ohdbypmn
       DRAGONFLY_PORT: 6379
       BULL_WORKER_CONCURRENCY: '10'
       BULL_MAX_JOBS_PER_WORKER: '100'
@@ -142,6 +135,7 @@ services:
       ENABLE_AUDIT_LOGS: 'true'
       ENABLE_BULL_BOARD: 'true'
       BULL_BOARD_URL: /queue-dashboard
+      ENABLE_HTTP2: 'false'
       COOLIFY_RESOURCE_UUID: ix9fceaxa914diauokjleeis
       COOLIFY_CONTAINER_NAME: worker-ix9fceaxa914diauokjleeis
       SERVICE_NAME_API: api
@@ -196,16 +190,18 @@ services:
       - coolify.service.subType=application
       - coolify.service.subName=worker
       # Traefik routing: /queue-dashboard/* → worker (Bull Board only on worker)
+      # Priority 100 ensures this router wins over the API catch-all (PathPrefix `/`)
       - traefik.enable=true
-      - traefik.docker.network=ix9fceaxa914diauokjleeis
-      - traefik.http.middlewares.gzip.compress=true
+      - traefik.docker.network=coolify
       - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
-      - 'traefik.http.routers.http-queue-dashboard.entryPoints=http'
+      - 'traefik.http.routers.http-queue-dashboard.entrypoints=http'
       - traefik.http.routers.http-queue-dashboard.middlewares=redirect-to-https
       - 'traefik.http.routers.http-queue-dashboard.rule=Host(`preprod-backend.ishswami.in`) && PathPrefix(`/queue-dashboard`)'
-      - traefik.http.routers.https-queue-dashboard.entryPoints=https
-      - traefik.http.routers.https-queue-dashboard.middlewares=gzip
+      - traefik.http.routers.http-queue-dashboard.priority=100
+      - traefik.http.routers.https-queue-dashboard.entrypoints=https
+      - traefik.http.routers.https-queue-dashboard.middlewares=redirect-to-https
       - 'traefik.http.routers.https-queue-dashboard.rule=Host(`preprod-backend.ishswami.in`) && PathPrefix(`/queue-dashboard`)'
+      - traefik.http.routers.https-queue-dashboard.priority=100
       - traefik.http.routers.https-queue-dashboard.tls.certresolver=letsencrypt
       - traefik.http.routers.https-queue-dashboard.tls=true
       - traefik.http.services.queue-dashboard.loadbalancer.server.port=8088

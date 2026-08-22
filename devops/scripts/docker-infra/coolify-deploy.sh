@@ -183,6 +183,16 @@ if [[ -n "$IMAGE" ]]; then
       log_info "Image pulled successfully"
     else
       log_warn "docker compose pull exited with code ${PULL_CODE} — Coolify may use cached image"
+      # Tag the SHA image as the floating branch tag so Coolify's fallback picks it up
+      SHA_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
+      FLOAT_TAG="${IMAGE_NAME}:${IMAGE_TAG%%-*}"
+      if sudo docker inspect "$SHA_IMAGE" > /dev/null 2>&1; then
+        log_info "Tagging ${SHA_IMAGE} → ${FLOAT_TAG} locally..."
+        sudo docker tag "$SHA_IMAGE" "$FLOAT_TAG"
+        log_info "Tagged: ${FLOAT_TAG} now points to the new image"
+      else
+        log_warn "SHA image ${SHA_IMAGE} not found locally — cannot tag fallback"
+      fi
     fi
   else
     log_warn "No compose file at ${COMPOSE_FILE} — prod Coolify stores config in its DB"

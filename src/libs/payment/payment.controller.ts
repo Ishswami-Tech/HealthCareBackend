@@ -498,7 +498,6 @@ export class PaymentController {
         merchantTransactionId = this.getFirstStringAtPath(parsedPayload, [
           ['merchantOrderId'],
           ['merchantTransactionId'],
-          ['originalMerchantOrderId'],
         ]);
         transactionId = this.getFirstStringAtPath(parsedPayload, [['transactionId']]);
         refundId = this.getFirstStringAtPath(parsedPayload, [['refundId'], ['merchantRefundId']]);
@@ -511,7 +510,6 @@ export class PaymentController {
         merchantTransactionId = this.getFirstStringAtPath(body, [
           ['payload', 'merchantOrderId'],
           ['payload', 'orderId'],
-          ['payload', 'originalMerchantOrderId'],
         ]);
         transactionId =
           this.getFirstStringAtPath(paymentDetail, [['transactionId']]) ||
