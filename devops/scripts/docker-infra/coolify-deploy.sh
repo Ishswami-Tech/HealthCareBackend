@@ -238,7 +238,7 @@ services:
       CACHE_PROVIDER: dragonfly
       CACHE_ENABLED: 'true'
       DRAGONFLY_ENABLED: 'true'
-      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_HOST: dhpn8hj78kg3ivu0ohdbypmn
       DRAGONFLY_PORT: 6379
       JWT_SECRET: '${JWT_SECRET}'
       ENABLE_HTTP2: 'false'
