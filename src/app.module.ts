@@ -30,6 +30,7 @@ import { StaffModule } from './services/staff/staff.module';
 import { AnalyticsModule } from './services/analytics/analytics.module';
 import { ProfileCompletionModule } from './services/profile-completion/profile-completion.module';
 import { BusinessRulesModule } from '@core/business-rules';
+import { ScheduleModule } from '@nestjs/schedule';
 // import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.middleware';
 
 @Module({
@@ -45,8 +46,12 @@ import { BusinessRulesModule } from '@core/business-rules';
       maxListeners: 20,
       verboseMemoryLeak: true,
     }),
-    // ScheduleModule is registered only in worker-bootstrap.ts (worker container).
-    // API container must NOT register ScheduleModule — @Cron jobs fire only on worker.
+    // ScheduleModule is required for @Cron() decorators in AppointmentsModule,
+    // BillingModule, VideoModule etc. NestJS DI needs SchedulerRegistry from
+    // ScheduleModule during module scanning — without it the app won't start.
+    // Cron jobs only fire in the worker container (separate NestJS process with
+    // its own ScheduleModule.forRoot() in worker-bootstrap.ts).
+    ScheduleModule.forRoot({ cronJobs: false }),
     QueueModule.forRoot(),
     BullBoardModule.forRoot(),
     // Cache must initialize before logging so the log dashboard can persist and read entries.
