@@ -520,6 +520,21 @@ export class AppointmentsService {
     try {
       const todayKey = formatDateKeyInIST(new Date());
 
+      // Skip weekends — clinics don't operate on Sat/Sun
+      const istDay = new Date(
+        new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })
+      ).getDay();
+      if (istDay === 0 || istDay === 6) {
+        void this.loggingService.log(
+          LogType.NOTIFICATION,
+          LogLevel.DEBUG,
+          'Doctor daily appointment summary cron skipped — weekend',
+          'AppointmentsService',
+          { todayKey, istDay }
+        );
+        return;
+      }
+
       await this.loggingService.log(
         LogType.NOTIFICATION,
         LogLevel.INFO,
