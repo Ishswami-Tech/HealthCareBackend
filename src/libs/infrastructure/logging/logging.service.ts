@@ -626,12 +626,10 @@ export class LoggingService {
         // Production: Only ERROR and WARN in terminal
         // HTTP request/response logs still stored in cache + DB for the dashboard
         // but NOT printed to console (too noisy for production logs)
-        const isImportantSystemLog =
-          type === LogType.SYSTEM || type === LogType.EMERGENCY;
+        const isImportantSystemLog = type === LogType.SYSTEM || type === LogType.EMERGENCY;
         const isImportantSecurityLog = type === LogType.SECURITY;
         const isCriticalError = level === LogLevel.ERROR;
-        const isImportantAuditLog =
-          type === LogType.AUDIT && level === LogLevel.INFO;
+        const isImportantAuditLog = type === LogType.AUDIT && level === LogLevel.INFO;
 
         shouldShowInTerminal =
           isCriticalError ||
@@ -641,7 +639,7 @@ export class LoggingService {
           isImportantAuditLog;
 
         // In production, filter out noisy logs (but allow critical errors and important system logs)
-        if (shouldShowInTerminal && !isCriticalError && !isImportantSystemLog && !isHttpLog) {
+        if (shouldShowInTerminal && !isCriticalError && !isImportantSystemLog) {
           const isNoisy = this.isNoisyLog(message, context, level);
           shouldShowInTerminal = !isNoisy;
         }

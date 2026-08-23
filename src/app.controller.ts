@@ -205,7 +205,15 @@ export class AppController {
           }
         } catch (logError) {
           // Ignore logging errors - we still want to show the dashboard
-          console.error('Failed to log health check error:', logError);
+          if (this.loggingService) {
+            void this.loggingService.log(
+              LogType.SYSTEM,
+              LogLevel.ERROR,
+              'Failed to log health check error',
+              'AppController',
+              { error: logError instanceof Error ? logError.message : String(logError) }
+            );
+          }
         }
         // Create a default health data structure
         healthData = createFallbackHealthData();
@@ -468,7 +476,15 @@ export class AppController {
         }
       } catch (logError) {
         // Ignore log fetching errors - we still want to show the dashboard
-        console.error('Failed to fetch recent logs:', logError);
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.ERROR,
+            'Failed to fetch recent logs',
+            'AppController',
+            { error: logError instanceof Error ? logError.message : String(logError) }
+          );
+        }
         recentLogs = [];
       }
 
@@ -509,7 +525,15 @@ export class AppController {
         }
       } catch (logError) {
         // Ignore logging errors
-        console.error('Failed to log dashboard error:', logError);
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.ERROR,
+            'Failed to log dashboard error',
+            'AppController',
+            { error: logError instanceof Error ? logError.message : String(logError) }
+          );
+        }
       }
       // Return a simple error page instead of crashing
       return res.status(500).send(`
