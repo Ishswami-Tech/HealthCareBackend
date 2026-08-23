@@ -32,6 +32,7 @@ export class LoggingInterceptor implements NestInterceptor {
   private readonly SKIP_LOG_PATHS = [
     '/api-health',
     '/socket.io/socket.io.js',
+    '/logger/health',
     '/logger/logs',
     '/logger/events',
     '/metrics',

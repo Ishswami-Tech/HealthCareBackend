@@ -128,7 +128,13 @@ export class ConfigService {
 
   getDragonflyHost(): string {
     const cacheConfig = this.getCacheConfig();
-    return cacheConfig.dragonfly?.host || 'dragonfly';
+    const host = cacheConfig.dragonfly?.host;
+    if (!host) {
+      throw new Error(
+        'DRAGONFLY_HOST is not set. Please configure it in your environment variables.'
+      );
+    }
+    return host;
   }
 
   getDragonflyPort(): number {

@@ -136,7 +136,19 @@ export class DoctorSummaryService {
       );
     });
 
-    // 5. Format single-line list
+    // 5. Skip if no appointments — no need to send an empty summary message
+    if (appointments.length === 0) {
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.DEBUG,
+        `DoctorSummaryService: 0 appointments for doctor ${doctorUserId} at ${clinicId} on ${todayKey} — skipping summary`,
+        'DoctorSummaryService',
+        { doctorId, doctorUserId, clinicId, todayKey }
+      );
+      return null;
+    }
+
+    // 6. Format single-line list
     const appointmentsList = this.formatAppointmentsList(appointments);
     const totalCount = String(appointments.length);
     const dateLabel = formatDateInIST(summaryStart, {
