@@ -73,7 +73,13 @@ export class EnterprisePluginRegistry
       );
     } catch (error) {
       // Logging failure should not prevent initialization
-      console.error('Failed to log registry initialization:', error);
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        'Failed to log registry initialization',
+        'EnterprisePluginRegistry',
+        { error: error instanceof Error ? error.message : String(error) }
+      );
     }
   }
 
@@ -112,7 +118,13 @@ export class EnterprisePluginRegistry
       this.domainIndex.clear();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('Failed to destroy plugin registry:', errorMessage);
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        'Failed to destroy plugin registry',
+        'EnterprisePluginRegistry',
+        { error: errorMessage }
+      );
     }
   }
 

@@ -48,25 +48,25 @@ export class BullBoardService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    console.error('[BULLBOARD] onModuleInit called');
+    this.logger.log('BullBoard onModuleInit called');
     if (this.bullBoardRegistered) {
-      console.error('[BULLBOARD] Already registered, skipping');
+      this.logger.log('BullBoard already registered, skipping');
       return;
     }
 
-    console.error('[BULLBOARD] isCacheEnabled:', isCacheEnabled());
+    this.logger.debug('isCacheEnabled:', isCacheEnabled());
     if (!isCacheEnabled()) {
       this.logger.warn('Bull Board skipped: cache is disabled.');
       return;
     }
 
     const enableBullBoardEnv = process.env['ENABLE_BULL_BOARD']?.trim().toLowerCase();
-    console.error('[BULLBOARD] ENABLE_BULL_BOARD env:', enableBullBoardEnv);
+    this.logger.debug('ENABLE_BULL_BOARD env:', enableBullBoardEnv);
     const bullBoardEnabled =
       enableBullBoardEnv === undefined
         ? true
         : ['true', '1', 'yes', 'on'].includes(enableBullBoardEnv);
-    console.error('[BULLBOARD] bullBoardEnabled:', bullBoardEnabled);
+    this.logger.debug('bullBoardEnabled:', bullBoardEnabled);
 
     if (!bullBoardEnabled) {
       this.logger.warn('Bull Board skipped: dashboard is disabled for this environment.');
@@ -74,15 +74,15 @@ export class BullBoardService implements OnModuleInit {
     }
 
     const httpAdapter = this.httpAdapterHost.httpAdapter;
-    console.error('[BULLBOARD] httpAdapter:', !!httpAdapter);
+    this.logger.debug('httpAdapter:', !!httpAdapter);
     if (!httpAdapter) {
       this.logger.warn('Bull Board skipped: no HTTP adapter is available.');
       return;
     }
 
     const appInstance: unknown = httpAdapter.getInstance();
-    console.error(
-      '[BULLBOARD] appInstance type:',
+    this.logger.debug(
+      'appInstance type:',
       typeof appInstance,
       'hasRegister:',
       typeof (appInstance as { register?: unknown } | null | undefined)?.register === 'function'
@@ -107,7 +107,7 @@ export class BullBoardService implements OnModuleInit {
         },
       });
 
-      console.error('[BULLBOARD] About to register route...');
+      this.logger.log('BullBoard about to register route...');
       const registerWithTimeout = Promise.race([
         appInstance.register(serverAdapter.registerPlugin(), { prefix: routePrefix }),
         new Promise((_, reject) =>
@@ -115,7 +115,7 @@ export class BullBoardService implements OnModuleInit {
         ),
       ]);
       await registerWithTimeout;
-      console.error('[BULLBOARD] Route registered successfully');
+      this.logger.log('BullBoard route registered successfully');
       this.bullBoardRegistered = true;
       this.logger.log('Bull Board registered at /queue-dashboard');
     } catch (error) {

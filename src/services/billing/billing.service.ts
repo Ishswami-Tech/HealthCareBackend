@@ -1438,19 +1438,31 @@ export class BillingService implements OnModuleInit {
             .then(results => {
               const rejected = results.filter(result => result.status === 'rejected');
               if (rejected.length > 0) {
-                console.error('[BillingService] Invoice post-processing completed with failures', {
-                  invoiceId: invoice.id,
-                  invoiceNumber,
-                  failedTasks: rejected.length,
-                });
+                void this.loggingService.log(
+                  LogType.BUSINESS,
+                  LogLevel.WARN,
+                  'Invoice post-processing completed with failures',
+                  'BillingService',
+                  {
+                    invoiceId: invoice.id,
+                    invoiceNumber,
+                    failedTasks: rejected.length,
+                  }
+                );
               }
             })
             .catch(() => {
               // This should never fire (Promise.allSettled never rejects),
               // but we guard it to prevent any unhandled rejection
-              console.error('[BillingService] Invoice post-processing promise chain failed', {
-                invoiceId: invoice.id,
-              });
+              void this.loggingService.log(
+                LogType.BUSINESS,
+                LogLevel.ERROR,
+                'Invoice post-processing promise chain failed',
+                'BillingService',
+                {
+                  invoiceId: invoice.id,
+                }
+              );
             });
         });
 
