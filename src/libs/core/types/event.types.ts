@@ -75,6 +75,7 @@ export interface BaseEventPayload {
   eventType: string;
   category: EventCategory;
   priority: EventPriority;
+  status?: EventStatus;
   timestamp: string;
   source: string;
   version: string;
@@ -142,7 +143,7 @@ export interface AppointmentEvent extends EnterpriseEventPayload {
   doctorId: string;
   appointmentDate: string;
   appointmentTime: string;
-  status:
+  appointmentStatus:
     'SCHEDULED' | 'CONFIRMED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW' | 'EXPIRED';
   appointmentType: string;
   duration: number;

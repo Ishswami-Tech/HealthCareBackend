@@ -509,6 +509,220 @@ export class AppointmentsService {
     return new Date(Date.now() + hoursBefore * 60 * 60 * 1000);
   }
 
+  async processExpiredVideoSessionClosures(settings?: {
+    scheduledThresholdMinutes?: number;
+    inProgressThresholdMinutes?: number;
+  }): Promise<{
+    totalChecked: number;
+    closed: number;
+    failed: number;
+    details: Array<{
+      appointmentId: string;
+      clinicId: string;
+      closedAt: Date;
+      reason: string;
+    }>;
+  }> {
+    const mergedSettings = {
+      scheduledThresholdMinutes: 15,
+      inProgressThresholdMinutes: 45,
+      ...settings,
+    };
+
+    const now = new Date();
+    const istOffset = 5.5 * 60 * 60 * 1000;
+    const nowIST = new Date(now.getTime() + istOffset);
+
+    const candidates = await this.databaseService.executeHealthcareRead(async client => {
+      const prismaClient = client as unknown as Prisma.TransactionClient;
+      return await prismaClient.$queryRaw<
+        Array<{
+          id: string;
+          appointmentId: string;
+          patientId: string;
+          doctorId: string;
+          clinicId: string;
+          status: string;
+          startTime: Date | null;
+          createdAt: Date;
+        }>
+      >`
+        SELECT id, "appointmentId", "patientId", "doctorId", "clinicId",
+               status, "startTime", "createdAt"
+        FROM video_consultations
+        WHERE status IN ('SCHEDULED', 'IN_PROGRESS')
+          AND (
+            (status = 'SCHEDULED' AND "createdAt" < ${new Date(
+              nowIST.getTime() - mergedSettings.scheduledThresholdMinutes * 60 * 1000
+            )}::timestamp)
+            OR
+            (status = 'IN_PROGRESS' AND "startTime" IS NOT NULL
+             AND "startTime" < ${new Date(
+               nowIST.getTime() - mergedSettings.inProgressThresholdMinutes * 60 * 1000
+             )}::timestamp)
+          )
+      `;
+    });
+
+    const details: Array<{
+      appointmentId: string;
+      patientId: string;
+      doctorId: string;
+      clinicId: string;
+      closedAt: Date;
+      reason: string;
+    }> = [];
+    let closedCount = 0;
+    let failedCount = 0;
+
+    for (const consultation of candidates) {
+      const threshold =
+        consultation.status === 'SCHEDULED'
+          ? mergedSettings.scheduledThresholdMinutes
+          : mergedSettings.inProgressThresholdMinutes;
+
+      const formattedStart = consultation.startTime
+        ? formatDateTimeInIST(consultation.startTime, {
+            year: 'numeric',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+          })
+        : formatDateTimeInIST(consultation.createdAt, {
+            year: 'numeric',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+          });
+
+      let reason: string;
+      if (consultation.status === 'SCHEDULED') {
+        reason =
+          `Auto-expired: video consultation was not joined within ${threshold} minutes of creation (${formattedStart} IST). ` +
+          `The session has been closed.`;
+      } else {
+        reason =
+          `Auto-closed: video session exceeded the ${threshold}-minute hard cap (started at ${formattedStart} IST). ` +
+          `The session has been closed.`;
+      }
+
+      try {
+        await this.databaseService.executeHealthcareWrite(
+          async client => {
+            const prismaClient = client as unknown as Prisma.TransactionClient;
+            const delegate = getVideoConsultationDelegate(prismaClient);
+
+            const endTime = nowIST;
+            const startTime = consultation.startTime
+              ? new Date(consultation.startTime)
+              : new Date(consultation.createdAt);
+            const durationSeconds = Math.max(
+              0,
+              Math.floor((endTime.getTime() - startTime.getTime()) / 1000)
+            );
+
+            await delegate.update({
+              where: { id: consultation.id },
+              data: {
+                status: 'COMPLETED',
+                endTime,
+                duration: durationSeconds,
+              },
+            });
+
+            const existing = await prismaClient.appointment.findUnique({
+              where: { id: consultation.appointmentId },
+              select: { id: true, status: true },
+            });
+
+            if (existing) {
+              const existingStatus = existing.status as unknown as AppointmentStatus;
+              if (
+                existingStatus !== AppointmentStatus.COMPLETED &&
+                existingStatus !== AppointmentStatus.EXPIRED &&
+                existingStatus !== AppointmentStatus.CANCELLED
+              ) {
+                await prismaClient.appointment.update({
+                  where: { id: consultation.appointmentId },
+                  data: { status: AppointmentStatus.COMPLETED },
+                });
+              }
+            }
+          },
+          {
+            userId: 'system',
+            userRole: 'SYSTEM',
+            clinicId: consultation.clinicId,
+            operation: 'UPDATE_VIDEO_CONSULTATION',
+            resourceType: 'VIDEO_CONSULTATION',
+            resourceId: consultation.id,
+            timestamp: nowIST,
+            details: {
+              appointmentId: consultation.appointmentId,
+              doctorId: consultation.doctorId,
+              status: 'COMPLETED',
+              reason,
+            },
+          }
+        );
+
+        await this.emitAppointmentEnterpriseEvent('appointment.completed', {
+          eventId: `video-session-closed-${consultation.appointmentId}-${Date.now()}`,
+          clinicId: consultation.clinicId,
+          priority: EventPriority.HIGH,
+          userId: consultation.patientId,
+          payload: {
+            appointmentId: consultation.appointmentId,
+            doctorId: consultation.doctorId,
+            clinicId: consultation.clinicId,
+            patientId: consultation.patientId,
+            videoConsultationId: consultation.id,
+            reason,
+            appointment: {
+              id: consultation.appointmentId,
+              status: AppointmentStatus.COMPLETED,
+            },
+          },
+        });
+
+        closedCount++;
+        details.push({
+          appointmentId: consultation.appointmentId,
+          patientId: consultation.patientId,
+          doctorId: consultation.doctorId,
+          clinicId: consultation.clinicId,
+          closedAt: nowIST,
+          reason,
+        });
+      } catch (error) {
+        failedCount++;
+        void this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.WARN,
+          `Failed to auto-close video session: ${
+            error instanceof Error ? error.message : 'Unknown error'
+          }`,
+          'AppointmentsService.processExpiredVideoSessionClosures',
+          {
+            videoConsultationId: consultation.id,
+            appointmentId: consultation.appointmentId,
+            clinicId: consultation.clinicId,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
+      }
+    }
+
+    return {
+      totalChecked: candidates.length,
+      closed: closedCount,
+      failed: failedCount,
+      details,
+    };
+  }
+
   @Cron(CronExpression.EVERY_DAY_AT_3AM)
   async handleNoShowCancellationCron() {
     await this.processNoShowCancellations();

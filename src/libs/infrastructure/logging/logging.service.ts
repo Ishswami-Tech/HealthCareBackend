@@ -623,26 +623,9 @@ export class LoggingService {
         // Development: Show all levels except DEBUG
         shouldShowInTerminal = level !== LogLevel.DEBUG;
       } else if (isProduction) {
-        // Production: Only ERROR and WARN in terminal
-        // HTTP request/response logs still stored in cache + DB for the dashboard
-        // but NOT printed to console (too noisy for production logs)
-        const isImportantSystemLog = type === LogType.SYSTEM || type === LogType.EMERGENCY;
-        const isImportantSecurityLog = type === LogType.SECURITY;
-        const isCriticalError = level === LogLevel.ERROR;
-        const isImportantAuditLog = type === LogType.AUDIT && level === LogLevel.INFO;
-
-        shouldShowInTerminal =
-          isCriticalError ||
-          level === LogLevel.WARN ||
-          isImportantSystemLog ||
-          isImportantSecurityLog ||
-          isImportantAuditLog;
-
-        // In production, filter out noisy logs (but allow critical errors and important system logs)
-        if (shouldShowInTerminal && !isCriticalError && !isImportantSystemLog) {
-          const isNoisy = this.isNoisyLog(message, context, level);
-          shouldShowInTerminal = !isNoisy;
-        }
+        // Production: Only WARN and ERROR in terminal
+        // All logs are still stored in cache + DB for the dashboard
+        shouldShowInTerminal = level === LogLevel.WARN || level === LogLevel.ERROR;
       } else {
         // Staging/other environments: Show ERROR and WARN
         shouldShowInTerminal = level === LogLevel.ERROR || level === LogLevel.WARN;
@@ -1299,35 +1282,41 @@ export class LoggingService {
    * @param limit - Items per page (default: 100, max: 1000)
    * @returns Paginated events result
    */
-  async getEvents(type?: string, page?: number, limit?: number): Promise<PaginatedEventsResult> {
+  async getEvents(
+    type?: string,
+    page?: number,
+    limit?: number,
+    category?: string,
+    priority?: string,
+    status?: string,
+    level?: string,
+    startTime?: string,
+    endTime?: string,
+    search?: string
+  ): Promise<PaginatedEventsResult> {
     try {
-      // Calculate pagination for events
-      // Override calculatePagination's max limit of 100 to allow up to 10000 for showing all events
       const requestedLimit = limit !== undefined ? limit : 100;
-      const effectiveLimit = Math.min(10000, Math.max(1, requestedLimit)); // Max 10000 for events (matches cache size), min 1
+      const effectiveLimit = Math.min(10000, Math.max(1, requestedLimit));
       const effectivePage = Math.max(1, page || 1);
       const skip = (effectivePage - 1) * effectiveLimit;
       const take = effectiveLimit;
-      const currentPage = effectivePage;
 
-      // Enhanced event retrieval for 1M users
       const cachedEvents: unknown[] = (await this.cacheService?.lRange('events', 0, -1)) || [];
 
-      // Local type alias matching EventEntry structure to avoid import type resolution issues
       type LocalEventEntry = {
         id: string;
         type: string;
+        category?: string;
+        priority?: string;
+        status?: string;
         data: Record<string, unknown>;
         timestamp: string | Date;
         clinicId?: string;
         userId?: string;
       };
 
-      // Type guard function
       const isEventEntry = (obj: unknown): obj is LocalEventEntry => {
-        if (!obj || typeof obj !== 'object') {
-          return false;
-        }
+        if (!obj || typeof obj !== 'object') return false;
         const entry = obj as Record<string, unknown>;
         return (
           typeof entry['id'] === 'string' &&
@@ -1338,14 +1327,12 @@ export class LoggingService {
         );
       };
 
-      const events: LocalEventEntry[] = cachedEvents
+      let events: LocalEventEntry[] = cachedEvents
         .map((event: unknown): LocalEventEntry | null => {
           try {
             if (typeof event === 'string') {
               const parsed: unknown = JSON.parse(event);
-              if (isEventEntry(parsed)) {
-                return parsed;
-              }
+              if (isEventEntry(parsed)) return parsed;
             }
             return null;
           } catch {
@@ -1354,28 +1341,76 @@ export class LoggingService {
         })
         .filter((event): event is LocalEventEntry => event !== null);
 
-      // Apply filters
-      const filteredEvents: LocalEventEntry[] = type
-        ? events.filter((event: LocalEventEntry) => {
-            return event['type'] === type;
-          })
-        : events;
+      // Apply category filter
+      if (category) {
+        events = events.filter(e => e['category'] === category);
+      }
 
-      // Enhanced sorting
-      filteredEvents.sort((a: LocalEventEntry, b: LocalEventEntry) => {
+      // Apply priority filter
+      if (priority) {
+        events = events.filter(e => e['priority'] === priority);
+      }
+
+      // Apply status filter
+      if (status) {
+        events = events.filter(e => e['status'] === status);
+      }
+
+      // Apply level filter (maps level from event data)
+      if (level) {
+        events = events.filter(e => {
+          if (e['data'] && typeof e['data'] === 'object') {
+            const eventData = e['data'] as Record<string, unknown>;
+            const eventLevel = eventData['level'];
+            if (typeof eventLevel === 'string') return eventLevel === level;
+          }
+          return false;
+        });
+      }
+
+      // Apply type filter
+      if (type) {
+        events = events.filter(e => e['type'] === type);
+      }
+
+      // Apply time range filter
+      const startTs = startTime ? new Date(startTime).getTime() : null;
+      const endTs = endTime ? new Date(endTime).getTime() : null;
+      if (startTs !== null || endTs !== null) {
+        events = events.filter(e => {
+          const eventTs = new Date(e['timestamp']).getTime();
+          if (startTs !== null && eventTs < startTs) return false;
+          if (endTs !== null && eventTs > endTs) return false;
+          return true;
+        });
+      }
+
+      // Apply search filter (matches against type, data values, userId, clinicId)
+      if (search && search.trim().length > 0) {
+        const term = search.trim().toLowerCase();
+        events = events.filter(e => {
+          if (e['type']?.toLowerCase().includes(term)) return true;
+          if (e['userId']?.toLowerCase().includes(term)) return true;
+          if (e['clinicId']?.toLowerCase().includes(term)) return true;
+          // Search within data object values
+          if (e['data'] && typeof e['data'] === 'object') {
+            const dataStr = JSON.stringify(e['data']).toLowerCase();
+            if (dataStr.includes(term)) return true;
+          }
+          return false;
+        });
+      }
+
+      // Sort by timestamp descending
+      events.sort((a: LocalEventEntry, b: LocalEventEntry) => {
         const aTime = new Date(a['timestamp']).getTime();
         const bTime = new Date(b['timestamp']).getTime();
         return bTime - aTime;
       });
 
-      // Calculate total before pagination
-      const total: number = filteredEvents.length;
-
-      // Apply pagination
-      const paginatedEvents: LocalEventEntry[] = filteredEvents.slice(skip, skip + take);
-
-      // Create pagination metadata
-      const meta = new PaginationMetaDto(currentPage, take, total);
+      const total: number = events.length;
+      const paginatedEvents: LocalEventEntry[] = events.slice(skip, skip + take);
+      const meta = new PaginationMetaDto(effectivePage, take, total);
 
       // Convert to EventEntry[] for return type (matching interface structure)
       const resultEvents: EventEntry[] = paginatedEvents.map(
@@ -1406,6 +1441,12 @@ export class LoggingService {
             type: eventType,
             data: eventData,
             timestamp: eventTimestamp,
+            ...(event['category'] &&
+              typeof event['category'] === 'string' && { category: event['category'] }),
+            ...(event['priority'] &&
+              typeof event['priority'] === 'string' && { priority: event['priority'] }),
+            ...(event['status'] &&
+              typeof event['status'] === 'string' && { status: event['status'] }),
             ...(clinicIdValue !== undefined && { clinicId: clinicIdValue }),
             ...(userIdValue !== undefined && { userId: userIdValue }),
           };
