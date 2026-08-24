@@ -539,14 +539,13 @@ export class LoggingService {
   /**
    * Log a message with type, level, context, and metadata
    *
-   * CRITICAL: This method ALWAYS stores ALL logs in cache, regardless of:
-   * - Log type (AUDIT, ERROR, SYSTEM, SECURITY, etc.)
-   * - Log level (DEBUG, INFO, WARN, ERROR)
-   * - Whether log is "noisy" or not
-   * - Any other condition
+   * CRITICAL: ALL logs are ALWAYS stored in cache for UI dashboard visibility,
+   * regardless of level or type. The Logger UI shows everything.
    *
-   * Every single log call results in cache storage for UI dashboard visibility.
-   * No exceptions, no filtering, no conditions - ALL logs are stored.
+   * Level filtering only applies to:
+   * - Terminal console output (reduce noise in production)
+   * - Metrics buffer (avoid metric pollution from DEBUG/VERBOSE)
+   * - External notification triggers (email/SMS alerts)
    */
   async log(
     type: LogType,
@@ -556,6 +555,12 @@ export class LoggingService {
     metadata: Record<string, unknown> = {}
   ): Promise<void> {
     const timestamp = new Date();
+
+    // Check if this log passes the configured level filter.
+    // Cache lookups are per-call so a runtime LOG_LEVEL reload takes effect immediately.
+    const configuredLevel = this.getConfiguredLogLevel();
+    const passesLevelFilter = this.shouldLog(level, configuredLevel);
+
     // Enterprise-grade unique ID generation for 1M+ users
     const id = `${timestamp.getTime()}-${this.serviceName}-${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`;
 
@@ -580,9 +585,8 @@ export class LoggingService {
       timestamp: timestamp.toISOString(),
     };
 
-    // CRITICAL: Store in cache FIRST (before any other processing) to ensure ALL logs are stored
-    // This happens unconditionally - no type checking, no level filtering, no conditions
-    // Every single log is stored in cache for UI dashboard visibility
+    // CRITICAL: Store ALL logs in cache FIRST — this is what feeds the Logger UI.
+    // No filtering here — every log call is persisted for dashboard visibility.
     try {
       if (this.cacheService) {
         const logJson = JSON.stringify(logEntry);
@@ -592,19 +596,17 @@ export class LoggingService {
         void this.cleanupExpiredLogCache();
       }
     } catch (_cacheError) {
-      // Handle cache errors gracefully - don't break logging operations
       const errorMessage = _cacheError instanceof Error ? _cacheError.message : String(_cacheError);
-
-      // Suppress initialization errors during bootstrap grace period
-      // These are expected when CacheService hasn't finished initializing yet
       const isInitializationError = this.isBootstrapDependencyError(errorMessage);
-
-      // Only log errors if they're not initialization errors during grace period
       if (!isInitializationError || !this.isInStartupGracePeriod()) {
-        // Log cache errors but don't break - continue with other logging operations
         console.error(`[LoggingService] Failed to store log in cache: ${errorMessage}`);
       }
-      // Silently ignore initialization errors during bootstrap - cache will be available after onModuleInit
+    }
+
+    // Level-gated operations below: terminal output, metrics, notifications.
+    // These respect LOG_LEVEL so production doesn't spam with DEBUG/VERBOSE.
+    if (!passesLevelFilter) {
+      return;
     }
 
     try {
@@ -783,6 +785,63 @@ export class LoggingService {
 
     // ERROR and WARN are never considered noisy
     return false;
+  }
+
+  /**
+   * Return the effective minimum log level from config.
+   *
+   * Cache lookups are per-call so a production LOG_LEVEL reload takes effect
+   * immediately without a service restart — cheap enough that it avoids stale
+   * reads that would otherwise keep DEBUG/VERBOSE leaking forever.
+   */
+  private getConfiguredLogLevel(): LogLevel {
+    if (!this.configService) {
+      return LogLevel.INFO;
+    }
+
+    try {
+      const raw = this.configService.get('logging.level');
+      if (typeof raw === 'string') {
+        const normalized = raw.trim().toLowerCase();
+        const map: Record<string, LogLevel> = {
+          error: LogLevel.ERROR,
+          warn: LogLevel.WARN,
+          warning: LogLevel.WARN,
+          info: LogLevel.INFO,
+          debug: LogLevel.DEBUG,
+          verbose: LogLevel.VERBOSE,
+          trace: LogLevel.VERBOSE,
+        };
+        if (map[normalized]) {
+          return map[normalized];
+        }
+      }
+    } catch (_e) {
+      // Config read failed — fall through to sensible default
+    }
+
+    return LogLevel.INFO;
+  }
+
+  /**
+   * Numeric severity: lower = more severe.
+   * ERROR(0) < WARN(1) < INFO(2) < DEBUG(3) < VERBOSE(4) < TRACE(5)
+   *
+   * A call passes the filter when its severity is at least as severe
+   * (numerically <= the configured threshold).
+   * e.g. INFO threshold allows ERROR, WARN, INFO but drops DEBUG, VERBOSE, TRACE.
+   */
+  private readonly levelSeverity: Record<LogLevel, number> = {
+    [LogLevel.ERROR]: 0,
+    [LogLevel.WARN]: 1,
+    [LogLevel.INFO]: 2,
+    [LogLevel.DEBUG]: 3,
+    [LogLevel.VERBOSE]: 4,
+    [LogLevel.TRACE]: 5,
+  };
+
+  private shouldLog(callLevel: LogLevel, configuredLevel: LogLevel): boolean {
+    return this.levelSeverity[callLevel] <= this.levelSeverity[configuredLevel];
   }
 
   private addToMetricsBuffer(logEntry: unknown) {
