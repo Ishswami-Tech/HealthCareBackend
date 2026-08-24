@@ -99,7 +99,7 @@ export class GetLogsQueryDto {
 /**
  * Query DTO for retrieving events
  * @class GetEventsQueryDto
- * @description Validates query parameters for event retrieval with pagination
+ * @description Validates query parameters for event retrieval with pagination and filtering
  */
 export class GetEventsQueryDto {
   @ApiPropertyOptional({
@@ -109,6 +109,56 @@ export class GetEventsQueryDto {
   @IsOptional()
   @IsString({ message: 'type must be a string' })
   type?: string;
+
+  @ApiPropertyOptional({
+    description: 'Filter events by category',
+    example: 'USER_ACTIVITY',
+  })
+  @IsOptional()
+  @IsString({ message: 'category must be a string' })
+  category?: string;
+
+  @ApiPropertyOptional({
+    description: 'Filter events by priority',
+    example: 'HIGH',
+  })
+  @IsOptional()
+  @IsString({ message: 'priority must be a string' })
+  priority?: string;
+
+  @ApiPropertyOptional({
+    description: 'Filter events by status',
+    example: 'COMPLETED',
+  })
+  @IsOptional()
+  @IsString({ message: 'status must be a string' })
+  status?: string;
+
+  @ApiPropertyOptional({
+    description: 'Filter events by log level',
+    enum: LogLevel,
+    enumName: 'LogLevel',
+    example: LogLevel.INFO,
+  })
+  @IsOptional()
+  @IsEnum(LogLevel, { message: 'level must be a valid LogLevel enum value' })
+  level?: LogLevel;
+
+  @ApiPropertyOptional({
+    description: 'Start time for event filtering (ISO 8601 format)',
+    example: '2024-01-01T00:00:00Z',
+  })
+  @IsOptional()
+  @IsDateString({}, { message: 'startTime must be a valid ISO 8601 date string' })
+  startTime?: string;
+
+  @ApiPropertyOptional({
+    description: 'End time for event filtering (ISO 8601 format)',
+    example: '2024-01-31T23:59:59Z',
+  })
+  @IsOptional()
+  @IsDateString({}, { message: 'endTime must be a valid ISO 8601 date string' })
+  endTime?: string;
 
   @ApiPropertyOptional({
     description: 'Page number (1-based)',
@@ -123,18 +173,26 @@ export class GetEventsQueryDto {
   page?: number = 1;
 
   @ApiPropertyOptional({
-    description: 'Number of events per page',
+    description: 'Number of events per page (up to 10000 to show all events from cache)',
     example: 50,
     minimum: 1,
-    maximum: 1000,
+    maximum: 10000,
     default: 100,
   })
   @IsOptional()
   @Type(() => Number)
   @IsInt({ message: 'limit must be an integer' })
   @Min(1, { message: 'limit must be at least 1' })
-  @Max(1000, { message: 'limit must not exceed 1000' })
+  @Max(10000, { message: 'limit must not exceed 10000' })
   limit?: number = 100;
+
+  @ApiPropertyOptional({
+    description: 'Search term to filter events by type, data keys/values, userId, or clinicId',
+    example: 'user.loggedIn',
+  })
+  @IsOptional()
+  @IsString({ message: 'search must be a string' })
+  search?: string;
 }
 
 /**

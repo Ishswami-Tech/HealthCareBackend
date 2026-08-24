@@ -30,9 +30,13 @@ type AppointmentConfirmedEventPayload = {
  *
  * Behavior:
  * - Only confirmed appointments trigger this (the summary only counts CONFIRMED).
- * - Job IDs use 15-minute IST buckets to coalesce rapid back-to-back bookings
- *   without colliding with the per-day dedup table (BullMQ keeps completed jobs).
- * - A pre-check via `getJob` short-circuits if a job for this bucket exists.
+ * - Job IDs are per-doctor-per-day (`doctor-summary-{userId}-{clinicId}-{dateKey}-event`),
+ *   so only ONE event-driven summary is enqueued per doctor per day regardless of
+ *   how many appointments are confirmed.
+ * - A pre-check via `getJob()` short-circuits if a job for this doctor+clinic+date
+ *   already exists in the queue (BullMQ retains completed jobs for monitoring).
+ * - A 30-second in-memory dedup prevents the same appointment confirmation from
+ *   billing + appointment services firing twice from creating extra jobs.
  * - Summary content (appointmentsList, totalCount) is computed at process time.
  */
 @Injectable()
@@ -127,21 +131,16 @@ export class DoctorAppointmentEventListener {
         return;
       }
 
-      // 2. Build 15-minute bucketed jobId (IST date) — fixes the dedup collision
+      // 2. Build per-day jobId — ensures only ONE event-driven summary per doctor per day.
+      //    The cron job uses a "-cron" suffix, so this never collides with it.
       const todayKey = formatDateKeyInIST(new Date());
-      const minutesOfDay =
-        new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getHours() * 60 +
-        new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getMinutes();
-      const bucket = Math.floor(minutesOfDay / 15);
-      const bucketedJobId = `doctor-summary-${doctorUserId}-${clinicId}-${todayKey}-${bucket}`;
-
-      // 3. Short-circuit if a job for this bucket already exists
-      const existingJob = await this.queueService.getJob('healthcare-queue', bucketedJobId);
-      if (existingJob) {
+      const dedupJobId = `doctor-summary-${doctorUserId}-${clinicId}-${todayKey}-event`;
+      const existingEventJob = await this.queueService.getJob('healthcare-queue', dedupJobId);
+      if (existingEventJob) {
         void this.loggingService.log(
           LogType.QUEUE,
           LogLevel.DEBUG,
-          `Coalescing doctor summary for doctor ${doctorUserId} — existing job ${bucketedJobId} covers new booking`,
+          `Coalescing doctor summary for doctor ${doctorUserId} — existing job ${dedupJobId} covers new booking`,
           'DoctorAppointmentEventListener',
           { doctorUserId, clinicId, appointmentId: payload.appointmentId }
         );
@@ -160,7 +159,7 @@ export class DoctorAppointmentEventListener {
         },
         {
           priority: JobPriorityLevel.NORMAL,
-          correlationId: bucketedJobId,
+          correlationId: dedupJobId,
           delay: this.SUMMARY_DELAY_MS,
           attempts: 3,
         }
@@ -176,8 +175,7 @@ export class DoctorAppointmentEventListener {
           doctorId,
           clinicId,
           appointmentId: payload.appointmentId,
-          jobId: bucketedJobId,
-          bucket,
+          jobId: dedupJobId,
         }
       );
     } catch (error) {

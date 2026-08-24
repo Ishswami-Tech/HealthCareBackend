@@ -206,15 +206,97 @@ export class LoggingController {
         </div>
         
         <div id="eventsPanel" style="display: ${activeTab === 'events' ? 'block' : 'none'}">
-          <div class="controls">
+          <div class="filters">
             <select id="eventType">
               <option value="">All Types</option>
               <option value="user.loggedIn">User Logged In</option>
               <option value="user.registered">User Registered</option>
+              <option value="user.loggedOut">User Logged Out</option>
+              <option value="user.profileUpdated">User Profile Updated</option>
               <option value="clinic.created">Clinic Created</option>
               <option value="clinic.updated">Clinic Updated</option>
               <option value="clinic.deleted">Clinic Deleted</option>
+              <option value="appointment.booked">Appointment Booked</option>
+              <option value="appointment.confirmed">Appointment Confirmed</option>
+              <option value="appointment.cancelled">Appointment Cancelled</option>
+              <option value="appointment.completed">Appointment Completed</option>
+              <option value="appointment.noShow">Appointment No-Show</option>
+              <option value="payment.processed">Payment Processed</option>
+              <option value="payment.refunded">Payment Refunded</option>
+              <option value="payment.failed">Payment Failed</option>
+              <option value="doctor.summarySent">Doctor Summary Sent</option>
+              <option value="notification.sent">Notification Sent</option>
+              <option value="security.loginFailed">Login Failed</option>
+              <option value="security.unauthorizedAccess">Unauthorized Access</option>
+              <option value="system.error">System Error</option>
+              <option value="system.warning">System Warning</option>
+              <option value="system.maintenance">System Maintenance</option>
             </select>
+            <select id="eventCategory">
+              <option value="">All Categories</option>
+              <option value="USER_ACTIVITY">User Activity</option>
+              <option value="APPOINTMENT">Appointment</option>
+              <option value="PAYMENT">Payment</option>
+              <option value="NOTIFICATION">Notification</option>
+              <option value="AUTHENTICATION">Authentication</option>
+              <option value="AUTHORIZATION">Authorization</option>
+              <option value="SECURITY">Security</option>
+              <option value="BUSINESS">Business</option>
+              <option value="SYSTEM">System</option>
+              <option value="DATABASE">Database</option>
+              <option value="INTEGRATION">Integration</option>
+              <option value="CLINIC_OPERATIONS">Clinic Operations</option>
+              <option value="HIPAA">HIPAA Compliance</option>
+              <option value="GDPR">GDPR Compliance</option>
+              <option value="AUDIT_TRAIL">Audit Trail</option>
+              <option value="PERFORMANCE">Performance</option>
+              <option value="HEALTH_CHECK">Health Check</option>
+              <option value="EMERGENCY">Emergency</option>
+            </select>
+            <select id="eventPriority">
+              <option value="">All Priorities</option>
+              <option value="LOW">Low</option>
+              <option value="NORMAL">Normal</option>
+              <option value="HIGH">High</option>
+              <option value="CRITICAL">Critical</option>
+              <option value="EMERGENCY">Emergency</option>
+            </select>
+            <select id="eventStatus">
+              <option value="">All Statuses</option>
+              <option value="PENDING">Pending</option>
+              <option value="PROCESSING">Processing</option>
+              <option value="COMPLETED">Completed</option>
+              <option value="FAILED">Failed</option>
+              <option value="CANCELLED">Cancelled</option>
+              <option value="EXPIRED">Expired</option>
+              <option value="RETRYING">Retrying</option>
+            </select>
+            <select id="eventLevel">
+              <option value="">All Levels</option>
+              <option value="ERROR">Error</option>
+              <option value="WARN">Warning</option>
+              <option value="INFO">Info</option>
+              <option value="DEBUG">Debug</option>
+              <option value="VERBOSE">Verbose</option>
+              <option value="TRACE">Trace</option>
+            </select>
+            <div class="time-range">
+              <select id="eventTimeRange" onchange="handleEventTimeRangeChange()">
+                <option value="1">Last 1 hour</option>
+                <option value="6">Last 6 hours</option>
+                <option value="12">Last 12 hours</option>
+                <option value="24">Last 24 hours</option>
+                <option value="168">Last 7 days</option>
+                <option value="720">Last 30 days</option>
+                <option value="all" selected>All Time (from cache)</option>
+                <option value="custom">Custom Range</option>
+              </select>
+              <div id="customEventRange" style="display: none;">
+                <input type="datetime-local" id="eventStartTime" />
+                <input type="datetime-local" id="eventEndTime" />
+              </div>
+            </div>
+            <input type="text" id="eventSearchInput" placeholder="Search events..." style="padding: 8px; border: 1px solid #ddd; border-radius: 4px; min-width: 200px;" />
             <div class="button-group">
               <button id="eventRefreshButton" onclick="manualRefresh()">Refresh</button>
             </div>
@@ -284,7 +366,17 @@ export class LoggingController {
           const range = document.getElementById('timeRange').value;
           const customRange = document.getElementById('customRange');
           customRange.style.display = range === 'custom' ? 'block' : 'none';
-          
+
+          if (range !== 'custom') {
+            refreshContent();
+          }
+        }
+
+        function handleEventTimeRangeChange() {
+          const range = document.getElementById('eventTimeRange').value;
+          const customRange = document.getElementById('customEventRange');
+          customRange.style.display = range === 'custom' ? 'block' : 'none';
+
           if (range !== 'custom') {
             refreshContent();
           }
@@ -339,7 +431,35 @@ export class LoggingController {
               }
             } else {
               const type = document.getElementById('eventType')?.value || '';
+              const category = document.getElementById('eventCategory')?.value || '';
+              const priority = document.getElementById('eventPriority')?.value || '';
+              const status = document.getElementById('eventStatus')?.value || '';
+              const level = document.getElementById('eventLevel')?.value || '';
+              const searchInput = document.getElementById('eventSearchInput');
+              const search = searchInput instanceof HTMLInputElement ? searchInput.value.trim() : '';
+              const timeRange = document.getElementById('eventTimeRange')?.value || '';
+
               if (type) params.append('type', type);
+              if (category) params.append('category', category);
+              if (priority) params.append('priority', priority);
+              if (status) params.append('status', status);
+              if (level) params.append('level', level);
+              if (search) params.append('search', search);
+
+              if (timeRange === 'custom') {
+                const startTime = document.getElementById('eventStartTime');
+                const endTime = document.getElementById('eventEndTime');
+                if (startTime instanceof HTMLInputElement && startTime.value) {
+                  params.append('startTime', new Date(startTime.value).toISOString());
+                }
+                if (endTime instanceof HTMLInputElement && endTime.value) {
+                  params.append('endTime', new Date(endTime.value).toISOString());
+                }
+              } else if (timeRange !== 'all') {
+                const hours = parseInt(timeRange);
+                const startTime = new Date(Date.now() - hours * 60 * 60 * 1000);
+                params.append('startTime', startTime.toISOString());
+              }
             }
             
             // Always append params (limit and page are always set)
@@ -414,11 +534,20 @@ export class LoggingController {
               container.innerHTML = totalInfo + paginationHtml + items.map(event => {
                 const eventData =
                   typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+                const metaBadges = [
+                  event.category ? '<span class="badge badge-category">' + event.category + '</span>' : '',
+                  event.priority ? '<span class="badge badge-priority">' + event.priority + '</span>' : '',
+                  event.status ? '<span class="badge badge-status">' + event.status + '</span>' : '',
+                  eventData && typeof eventData === 'object' && eventData.level
+                    ? '<span class="badge badge-level">' + eventData.level + '</span>'
+                    : '',
+                ].filter(Boolean).join(' ');
                 return '<div class="entry">' +
                   '<span class="timestamp">' + (event.formattedTimestamp || formatTimestamp(event.timestamp)) + '</span>' +
                   '<span class="type">' + event.type + '</span>' +
+                  '<div class="metadata">' + metaBadges + '</div>' +
                   '<div class="message">Event: ' + event.type + '</div>' +
-                  '<div class="metadata">' + JSON.stringify(eventData, null, 2) + '</div>' +
+                  '<details><summary>Raw Data</summary><pre>' + JSON.stringify(eventData, null, 2) + '</pre></details>' +
                   '</div>';
               }).join('');
             }
@@ -577,7 +706,12 @@ export class LoggingController {
         document.getElementById('logType').addEventListener('change', manualRefresh);
         document.getElementById('logLevel').addEventListener('change', manualRefresh);
         document.getElementById('eventType').addEventListener('change', manualRefresh);
-        
+        document.getElementById('eventCategory').addEventListener('change', manualRefresh);
+        document.getElementById('eventPriority').addEventListener('change', manualRefresh);
+        document.getElementById('eventStatus').addEventListener('change', manualRefresh);
+        document.getElementById('eventLevel').addEventListener('change', manualRefresh);
+        document.getElementById('eventTimeRange').addEventListener('change', manualRefresh);
+
         // Add search input handler with debounce
         let searchTimeout = null;
         const searchInput = document.getElementById('searchInput');
@@ -593,6 +727,23 @@ export class LoggingController {
           // Also allow Enter key to search immediately
           searchInput.addEventListener('keypress', function(e) {
             if (e.key === 'Enter' && currentTab === 'logs') {
+              if (searchTimeout) clearTimeout(searchTimeout);
+              manualRefresh();
+            }
+          });
+        }
+
+        // Event search input handler with debounce
+        const eventSearchInput = document.getElementById('eventSearchInput');
+        if (eventSearchInput) {
+          eventSearchInput.addEventListener('input', function() {
+            if (searchTimeout) clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(function() {
+              manualRefresh();
+            }, 500);
+          });
+          eventSearchInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
               if (searchTimeout) clearTimeout(searchTimeout);
               manualRefresh();
             }
@@ -882,7 +1033,18 @@ export class LoggingController {
     message: string;
   }> {
     try {
-      const result = await this.loggingService.getEvents(query.type, query.page, query.limit);
+      const result = await this.loggingService.getEvents(
+        query.type,
+        query.page,
+        query.limit,
+        query.category,
+        query.priority,
+        query.status,
+        query.level,
+        query.startTime,
+        query.endTime,
+        query.search
+      );
 
       return {
         success: true,
@@ -893,6 +1055,9 @@ export class LoggingController {
               type: string;
               data: Record<string, unknown>;
               timestamp: string | Date;
+              category?: string;
+              priority?: string;
+              status?: string;
               clinicId?: string;
               userId?: string;
             };

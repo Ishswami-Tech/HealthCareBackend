@@ -155,7 +155,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       emitterWithOnAny.onAny((event: string, ...args: unknown[]) => {
         void this.loggingService.log(
           LogType.SYSTEM,
-          LogLevel.INFO,
+          LogLevel.DEBUG,
           `Event emitted: ${event}`,
           'EventService',
           { args }
@@ -971,6 +971,9 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       const eventEntry = {
         id: event.eventId,
         type: event.eventType,
+        category: event.category,
+        priority: event.priority,
+        status: event.status,
         data: payloadData,
         timestamp: event.timestamp,
         ...(event.clinicId && { clinicId: event.clinicId }),

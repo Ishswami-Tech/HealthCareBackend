@@ -334,13 +334,11 @@ export class DailyVideoProvider implements IVideoProvider {
     if (!config?.enabled || !config.apiKey || !config.domain) {
       return false;
     }
-
     try {
       const signal = await this.dailyHealthSignalService.isHealthy();
       if (signal !== null) {
         return signal;
       }
-
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
@@ -351,10 +349,80 @@ export class DailyVideoProvider implements IVideoProvider {
           statusUrl: config.statusUrl,
         }
       );
-
       return true;
     } catch {
       return config.enabled;
     }
+  }
+
+  async listActiveSessions(): Promise<VideoConsultationSession[]> {
+    const config = this.getDailyConfig();
+    if (!config?.enabled || !config.apiKey || !config.domain) {
+      return [];
+    }
+
+    const apiKey = config.apiKey;
+    const domain = config.domain;
+    const apiUrl = domain.replace(/\/$/, '') + '/rooms';
+
+    const response = await fetch(apiUrl, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Daily API returned ${response.status} during listActiveSessions`,
+        'DailyVideoProvider.listActiveSessions',
+        { status: response.status }
+      );
+      return [];
+    }
+
+    const data = (await response.json()) as Record<string, unknown>;
+    const rooms: Array<{
+      name?: string;
+      url?: string;
+      config?: { max_participants?: number };
+      started_at?: number;
+      nbr_connected?: number;
+      nbr_idle?: number;
+      nbr_present?: number;
+      recording?: boolean;
+    }> = Array.isArray(data['rooms']) ? (data['rooms'] as Array<Record<string, unknown>>) : [];
+
+    return rooms.map(room => {
+      const roomId = room.name || '';
+      const extractedAppointmentId = /-([0-9a-f]{12})$/.exec(roomId)?.[1] || '';
+
+      return {
+        id: roomId,
+        appointmentId: extractedAppointmentId,
+        roomId,
+        provider: this.providerName,
+        roomName: roomId,
+        meetingUrl: room.url || '',
+        status: 'ACTIVE',
+        startTime: room.started_at ? new Date(room.started_at * 1000) : null,
+        endTime: null,
+        participants: [],
+        recordingEnabled: room.recording === true,
+        screenSharingEnabled: true,
+        chatEnabled: true,
+        waitingRoomEnabled: true,
+        participantCount: room.nbr_present ?? room.nbr_connected ?? 0,
+        duration: room.started_at
+          ? Math.floor((Date.now() - room.started_at * 1000) / 1000)
+          : undefined,
+        isRecording: room.recording === true,
+        maxParticipants: room.config?.max_participants ?? 2,
+        startedAt: room.started_at ? new Date(room.started_at * 1000).toISOString() : undefined,
+      } as VideoConsultationSession;
+    });
   }
 }
