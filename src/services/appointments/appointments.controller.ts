@@ -5534,4 +5534,47 @@ export class AppointmentsController {
       data: { appointmentId, verified: true },
     };
   }
+
+  /**
+   * Manually trigger the doctor daily appointment summary
+   * Useful when the 7 AM cron misses execution (e.g., worker was down).
+   * The jobs are enqueued for the worker to process via WhatsApp.
+   */
+  @Post('summary/trigger')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('appointments', 'update')
+  @RateLimitAPI({ points: 5, duration: 60 })
+  @ApiOperation({
+    summary: 'Trigger doctor daily summary manually',
+    description:
+      'Manually enqueues doctor daily appointment summary jobs. Use this when the 7 AM cron was missed (e.g., worker downtime). The worker must be running to process the queued jobs.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Doctor summary jobs enqueued',
+  })
+  async triggerDoctorDailySummary(@Request() _req: ClinicAuthenticatedRequest): Promise<{
+    success: true;
+    data: {
+      skipped: boolean;
+      reason?: string;
+      todayKey: string;
+      enqueuedCount: number;
+      skipCount: number;
+      totalDoctors: number;
+    };
+    message: string;
+  }> {
+    const result = await this.appointmentService.triggerDoctorDailySummary({
+      triggeredBy: 'manual',
+    });
+    return {
+      success: true,
+      data: result,
+      message: result.skipped
+        ? `Doctor summary skipped (${result.reason})`
+        : `Enqueued ${result.enqueuedCount} doctor summary job(s), skipped ${result.skipCount} existing`,
+    };
+  }
 }

@@ -730,127 +730,122 @@ export class AppointmentsService {
 
   @Cron(CronExpression.EVERY_DAY_AT_7AM, { timeZone: 'Asia/Kolkata' })
   async handleDoctorDailyAppointmentSummaryCron() {
-    const runStart = Date.now();
-    try {
-      const todayKey = formatDateKeyInIST(new Date());
+    await this.triggerDoctorDailySummary({ triggeredBy: 'cron' });
+  }
 
-      // Skip weekends — clinics don't operate on Sat/Sun
-      const istDay = new Date(
-        new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })
-      ).getDay();
-      if (istDay === 0 || istDay === 6) {
+  /**
+   * Shared implementation for the 7 AM cron and the manual-trigger endpoint.
+   * Enqueues one DOCTOR_SUMMARY job per doctor-clinic pair.
+   */
+  async triggerDoctorDailySummary(opts: { triggeredBy?: string; dateKey?: string } = {}) {
+    const runStart = Date.now();
+    const todayKey = opts.dateKey || formatDateKeyInIST(new Date());
+    const triggeredBy = opts.triggeredBy || 'manual';
+
+    const istDay = new Date(
+      new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })
+    ).getDay();
+    if (istDay === 0 || istDay === 6) {
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.DEBUG,
+        'Doctor daily appointment summary skipped — weekend',
+        'AppointmentsService',
+        { todayKey, istDay, triggeredBy }
+      );
+      return {
+        skipped: true,
+        reason: 'weekend',
+        todayKey,
+        enqueuedCount: 0,
+        skipCount: 0,
+        totalDoctors: 0,
+      };
+    }
+
+    await this.loggingService.log(
+      LogType.NOTIFICATION,
+      LogLevel.INFO,
+      'Doctor daily appointment summary started',
+      'AppointmentsService',
+      { todayKey, triggeredBy }
+    );
+
+    const doctorClinics = await this.databaseService.executeHealthcareRead<
+      Array<{ doctor: { id: string; userId: string }; clinicId: string }>
+    >(async client => {
+      const prismaClient = client as unknown as Prisma.TransactionClient;
+      return await prismaClient.doctorClinic.findMany({
+        select: {
+          doctorId: true,
+          clinicId: true,
+          doctor: { select: { id: true, userId: true } },
+        },
+      });
+    });
+
+    let enqueuedCount = 0;
+    let skipCount = 0;
+
+    for (const dc of doctorClinics) {
+      try {
+        const deterministicJobId = `doctor-summary-${dc.doctor.userId}-${dc.clinicId}-${todayKey}-${triggeredBy}`;
+
+        const existingJob = await this.queueService.getJob('healthcare-queue', deterministicJobId);
+        if (existingJob) {
+          skipCount++;
+          continue;
+        }
+
+        await this.queueService.addJob(
+          JobType.DOCTOR_SUMMARY,
+          'send-doctor-daily-summary',
+          {
+            doctorId: dc.doctor.id,
+            doctorUserId: dc.doctor.userId,
+            clinicId: dc.clinicId,
+            triggeredBy,
+          },
+          {
+            priority: JobPriorityLevel.NORMAL,
+            correlationId: deterministicJobId,
+            attempts: 3,
+          }
+        );
+        enqueuedCount++;
+      } catch (error) {
         void this.loggingService.log(
           LogType.NOTIFICATION,
-          LogLevel.DEBUG,
-          'Doctor daily appointment summary cron skipped — weekend',
+          LogLevel.ERROR,
+          `Failed to enqueue doctor summary for doctor ${dc.doctor.userId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
           'AppointmentsService',
-          { todayKey, istDay }
+          { doctorId: dc.doctor.id, error }
         );
-        return;
       }
-
-      await this.loggingService.log(
-        LogType.NOTIFICATION,
-        LogLevel.INFO,
-        'Doctor daily appointment summary cron started',
-        'AppointmentsService',
-        { todayKey }
-      );
-
-      const doctorClinics = await this.databaseService.executeHealthcareRead<
-        Array<{ doctor: { id: string; userId: string }; clinicId: string }>
-      >(async client => {
-        const prismaClient = client as unknown as Prisma.TransactionClient;
-        return await prismaClient.doctorClinic.findMany({
-          select: {
-            doctorId: true,
-            clinicId: true,
-            doctor: {
-              select: { id: true, userId: true },
-            },
-          },
-        });
-      });
-
-      let enqueuedCount = 0;
-      let skipCount = 0;
-
-      for (const dc of doctorClinics) {
-        try {
-          // Thin enqueue — summary is computed at process time by DoctorSummaryService.
-          // Use a distinct jobId suffix that stays compatible with BullMQ custom IDs.
-          const deterministicJobId = `doctor-summary-${dc.doctor.userId}-${dc.clinicId}-${todayKey}-cron`;
-
-          const existingJob = await this.queueService.getJob(
-            'healthcare-queue',
-            deterministicJobId
-          );
-          if (existingJob) {
-            skipCount++;
-            continue;
-          }
-
-          await this.queueService.addJob(
-            JobType.DOCTOR_SUMMARY,
-            'send-doctor-daily-summary',
-            {
-              doctorId: dc.doctor.id,
-              doctorUserId: dc.doctor.userId,
-              clinicId: dc.clinicId,
-              triggeredBy: 'cron',
-            },
-            {
-              priority: JobPriorityLevel.NORMAL,
-              correlationId: deterministicJobId,
-              attempts: 3,
-            }
-          );
-          enqueuedCount++;
-        } catch (error) {
-          void this.loggingService.log(
-            LogType.NOTIFICATION,
-            LogLevel.ERROR,
-            `Failed to enqueue doctor summary for doctor ${dc.doctor.userId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
-            'AppointmentsService',
-            { doctorId: dc.doctor.id, error }
-          );
-        }
-      }
-
-      await this.loggingService.log(
-        LogType.NOTIFICATION,
-        LogLevel.INFO,
-        'Doctor daily appointment summary cron resolved doctor clinics',
-        'AppointmentsService',
-        {
-          todayKey,
-          totalDoctors: doctorClinics.length,
-          enqueuedCount,
-          skipCount,
-        }
-      );
-
-      await this.loggingService.log(
-        LogType.NOTIFICATION,
-        LogLevel.INFO,
-        'Doctor daily appointment summary cron completed — jobs enqueued',
-        'AppointmentsService',
-        {
-          enqueuedCount,
-          skipCount,
-          totalDoctors: doctorClinics.length,
-          durationMs: Date.now() - runStart,
-        }
-      );
-    } catch (error) {
-      void this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Doctor daily appointment summary cron failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'AppointmentsService',
-        { error }
-      );
     }
+
+    await this.loggingService.log(
+      LogType.NOTIFICATION,
+      LogLevel.INFO,
+      'Doctor daily appointment summary completed — jobs enqueued',
+      'AppointmentsService',
+      {
+        todayKey,
+        totalDoctors: doctorClinics.length,
+        enqueuedCount,
+        skipCount,
+        durationMs: Date.now() - runStart,
+        triggeredBy,
+      }
+    );
+
+    return {
+      skipped: false,
+      todayKey,
+      enqueuedCount,
+      skipCount,
+      totalDoctors: doctorClinics.length,
+    };
   }
 
   @Cron(CronExpression.EVERY_HOUR)
