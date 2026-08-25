@@ -823,25 +823,17 @@ export class LoggingService {
     return LogLevel.INFO;
   }
 
-  /**
-   * Numeric severity: lower = more severe.
-   * ERROR(0) < WARN(1) < INFO(2) < DEBUG(3) < VERBOSE(4) < TRACE(5)
-   *
-   * A call passes the filter when its severity is at least as severe
-   * (numerically <= the configured threshold).
-   * e.g. INFO threshold allows ERROR, WARN, INFO but drops DEBUG, VERBOSE, TRACE.
-   */
-  private readonly levelSeverity: Record<LogLevel, number> = {
-    [LogLevel.ERROR]: 0,
-    [LogLevel.WARN]: 1,
-    [LogLevel.INFO]: 2,
-    [LogLevel.DEBUG]: 3,
-    [LogLevel.VERBOSE]: 4,
-    [LogLevel.TRACE]: 5,
-  };
-
   private shouldLog(callLevel: LogLevel, configuredLevel: LogLevel): boolean {
-    return this.levelSeverity[callLevel] <= this.levelSeverity[configuredLevel];
+    // Local map avoids class-field initialization timing issues under NestJS DI.
+    const levelSeverity = {
+      [LogLevel.ERROR]: 0,
+      [LogLevel.WARN]: 1,
+      [LogLevel.INFO]: 2,
+      [LogLevel.DEBUG]: 3,
+      [LogLevel.VERBOSE]: 4,
+      [LogLevel.TRACE]: 5,
+    } as const;
+    return levelSeverity[callLevel] <= levelSeverity[configuredLevel];
   }
 
   private addToMetricsBuffer(logEntry: unknown) {
