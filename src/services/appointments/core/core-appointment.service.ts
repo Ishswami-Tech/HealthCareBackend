@@ -2469,7 +2469,41 @@ export class CoreAppointmentService {
     expectedFromStatuses: AppointmentStatus[] = [AppointmentStatus.SCHEDULED],
     auditContext: Record<string, unknown> = {}
   ): Promise<Appointment | null> {
-    const expiryTimestamp = new Date(Date.now() + getVideoActiveWindowMinutes() * 60_000);
+    // Look up the appointment's scheduled date/time so we can compute
+    // the join-window expiry relative to the appointment time, not
+    // confirmation time. The previous `Date.now() + 5h` approach made
+    // appointments confirmed early expire BEFORE the visit ever
+    // started (e.g. 9 AM confirmation for a 5 PM slot would auto-expire
+    // at 2 PM).
+    const existing = await this.databaseService.findAppointmentsSafe({ id: appointmentId });
+    const existingRow = existing[0] as
+      | {
+          date?: Date | string | null;
+          time?: string | null;
+          type?: string | null;
+        }
+      | undefined;
+
+    let expiryTimestamp: Date;
+    const windowMinutes = getVideoActiveWindowMinutes();
+
+    if (existingRow?.date && existingRow?.time) {
+      // date is a Date in DB; convert to YYYY-MM-DD, time is "HH:mm"
+      const d = existingRow.date;
+      const dateStr = (d instanceof Date ? d.toISOString() : String(d)).slice(0, 10);
+      const timeStr = String(existingRow.time).padStart(5, '0').slice(0, 5);
+      const scheduledStart = new Date(`${dateStr}T${timeStr}:00+05:30`);
+      if (!Number.isNaN(scheduledStart.getTime())) {
+        // The join window is centred on the appointment: it opens 15 min
+        // before scheduled start and closes 5 hours after. The expiry
+        // stamp marks the closing edge of that window.
+        expiryTimestamp = new Date(scheduledStart.getTime() + windowMinutes * 60_000);
+      } else {
+        expiryTimestamp = new Date(Date.now() + windowMinutes * 60_000);
+      }
+    } else {
+      expiryTimestamp = new Date(Date.now() + windowMinutes * 60_000);
+    }
 
     // 1. Fast path: already CONFIRMED. Return the row without
     //    touching `confirmationExpiresAt` (idempotent — preserves
