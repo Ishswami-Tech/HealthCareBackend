@@ -22,7 +22,7 @@ import {
   ParticipantStatus,
 } from '@services/video/video-consultation-tracker.service';
 import { AppointmentsService } from '@services/appointments/appointments.service';
-import { parseIstDateTime, formatDateTimeInIST } from '../../../../libs/utils/date-time.util';
+import { parseIstDateTime } from '../../../../libs/utils/date-time.util';
 
 /** Represents the join-status of both parties for a single appointment */
 interface ParticipationStatus {
@@ -287,10 +287,10 @@ export class VideoAppointmentSchedulerService {
       // *candidate fetch* bounded so the worst-case DB load is
       // O(BATCH_SIZE) per minute.
       for (const appointment of candidates) {
-        // Prefer the persisted `confirmationExpiresAt` stamped at
-        // CONFIRMED time (indexed for cheap scheduler queries). Fall
-        // back to the computed value for legacy rows that predate the
-        // column so we never silently skip an expired appointment.
+        // Expiry and reschedule share the same boundary:
+        // appointment_time + VIDEO_ACTIVE_WINDOW_MINUTES (default 5h).
+        // No 15-min grace buffer — once 5h elapses the appointment
+        // is auto-EXPIRED and no reschedule is possible.
         let expiryAt: Date | null = appointment.confirmationExpiresAt;
         if (!expiryAt) {
           const scheduledStart = parseIstDateTime(appointment.date.toISOString(), appointment.time);
@@ -306,25 +306,12 @@ export class VideoAppointmentSchedulerService {
           continue;
         }
 
-        const participation = await this.resolveParticipation(appointment.id, appointment.clinicId);
-        if (participation === null || participation.doctorJoined || participation.patientJoined) {
-          continue;
-        }
-
-        const formattedExpiry = formatDateTimeInIST(expiryAt, {
-          year: 'numeric',
-          month: 'short',
-          day: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit',
-        });
-
         await this.appointmentsService.updateStatus(
           appointment.id,
           {
             status: AppointmentStatus.EXPIRED,
-            reason: `Confirmed video appointment expired after the join window elapsed at ${formattedExpiry} IST.`,
-            notes: 'Auto-expired by scheduler because neither participant joined in time.',
+            reason: `Video appointment join window (15 min before to 5 hours after ${appointment.time} IST) has elapsed.`,
+            notes: 'Auto-expired by scheduler: join window elapsed.',
           } as UpdateAppointmentStatusDto,
           'system',
           appointment.clinicId,
@@ -334,7 +321,7 @@ export class VideoAppointmentSchedulerService {
         await this.loggingService.log(
           LogType.BUSINESS,
           LogLevel.WARN,
-          `Auto-expired confirmed video appointment ${appointment.id} — join window elapsed`,
+          `Auto-expired video appointment ${appointment.id} — join window elapsed`,
           'VideoAppointmentSchedulerService.handleExpiredConfirmedVideoAppointments',
           { appointmentId: appointment.id, expiredAt: expiryAt }
         );
