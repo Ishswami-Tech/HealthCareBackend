@@ -169,7 +169,7 @@ export class LoggingService {
   private readonly healthLogRetentionMs = 4 * 60 * 60 * 1000;
   private readonly generalLogRetentionMs = 72 * 60 * 60 * 1000;
   private readonly logRetentionCleanupIntervalMs = 5 * 60 * 1000;
-  private lastLogRetentionCleanupAt = 0;
+  private lastLogRetentionCleanupAt = Date.now();
   private logRetentionCleanupPromise: Promise<void> | null = null;
 
   private isInStartupGracePeriod(): boolean {
@@ -754,6 +754,45 @@ export class LoggingService {
     }
   }
 
+  /**
+   * Backward-compatible shorthand methods used by older services.
+   */
+  async debug(
+    message: string,
+    contextOrMetadata?: string | Record<string, unknown>,
+    metadata: Record<string, unknown> = {}
+  ): Promise<void> {
+    const { context, payload } = this.normalizeLegacyLogArgs(contextOrMetadata, metadata);
+    return this.log(LogType.SYSTEM, LogLevel.DEBUG, message, context, payload);
+  }
+
+  async info(
+    message: string,
+    contextOrMetadata?: string | Record<string, unknown>,
+    metadata: Record<string, unknown> = {}
+  ): Promise<void> {
+    const { context, payload } = this.normalizeLegacyLogArgs(contextOrMetadata, metadata);
+    return this.log(LogType.SYSTEM, LogLevel.INFO, message, context, payload);
+  }
+
+  async warn(
+    message: string,
+    contextOrMetadata?: string | Record<string, unknown>,
+    metadata: Record<string, unknown> = {}
+  ): Promise<void> {
+    const { context, payload } = this.normalizeLegacyLogArgs(contextOrMetadata, metadata);
+    return this.log(LogType.SYSTEM, LogLevel.WARN, message, context, payload);
+  }
+
+  async error(
+    message: string,
+    contextOrMetadata?: string | Record<string, unknown>,
+    metadata: Record<string, unknown> = {}
+  ): Promise<void> {
+    const { context, payload } = this.normalizeLegacyLogArgs(contextOrMetadata, metadata);
+    return this.log(LogType.SYSTEM, LogLevel.ERROR, message, context, payload);
+  }
+
   private isNoisyLog(message: string, context: string, level: LogLevel): boolean {
     // Filter out DEBUG level logs (always noisy)
     if (level === LogLevel.DEBUG) {
@@ -917,15 +956,22 @@ export class LoggingService {
       );
       const finalEndTime = endTime || now;
 
-      void this.cleanupExpiredLogCache();
+      // Throttle cleanup to every 5 min max — already handles dedup internally
+      if (now.getTime() - this.lastLogRetentionCleanupAt >= this.logRetentionCleanupIntervalMs) {
+        void this.cleanupExpiredLogCache();
+      }
 
-      // ALWAYS read from cache first (logs are stored in 'logs' list via rPush)
-      // Cache is the primary source of truth for real-time log viewing
-      // Database is only used for audit trail persistence
+      // ALWAYS read from cache first — use paginated range instead of fetching all 10,000
       let cachedLogs: string[] = [];
       try {
         if (this.cacheService) {
-          cachedLogs = (await this.cacheService.lRange('logs', 0, -1)) || [];
+          // Paginated negative-index range:
+          //   page 1 / limit 50 → (-50, -1)   = last 50 entries
+          //   page 2 / limit 50 → (-100, -51) = previous 50
+          // Always fetch only the slice needed — avoids pulling 10k entries.
+          const rangeStart = -((effectivePage - 1) * effectiveLimit + effectiveLimit);
+          const rangeEnd = -((effectivePage - 1) * effectiveLimit + 1);
+          cachedLogs = (await this.cacheService.lRange('logs', rangeStart, rangeEnd)) || [];
           // Debug: Log cache read results in development
           if (!this.configService?.isProduction()) {
             console.warn(
@@ -1601,6 +1647,31 @@ export class LoggingService {
       serviceName: this.serviceName,
       tenantType: 'healthcare',
     });
+  }
+
+  private normalizeLegacyLogArgs(
+    contextOrMetadata?: string | Record<string, unknown>,
+    metadata: Record<string, unknown> = {}
+  ): { context: string; payload: Record<string, unknown> } {
+    if (typeof contextOrMetadata === 'string') {
+      return {
+        context: contextOrMetadata,
+        payload: metadata,
+      };
+    }
+
+    const payload = {
+      ...(contextOrMetadata || {}),
+      ...(metadata || {}),
+    };
+    const context =
+      typeof payload['module'] === 'string'
+        ? payload['module']
+        : typeof payload['context'] === 'string'
+          ? payload['context']
+          : 'LoggingService';
+
+    return { context, payload };
   }
 
   /**
