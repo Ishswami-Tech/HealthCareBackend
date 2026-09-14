@@ -382,8 +382,19 @@ export abstract class BaseCacheClientService {
   }
 
   async ping(): Promise<string> {
-    if (!this.client || this.client.status !== 'ready') {
-      throw new Error(`${this.PROVIDER_NAME} client not ready`);
+    if (!this.client) {
+      throw new Error(`${this.PROVIDER_NAME} client not initialized`);
+    }
+    // If client exists but isn't ready, attempt reconnection before failing
+    if (this.client.status !== 'ready') {
+      try {
+        await this.client.connect();
+      } catch {
+        // Reconnection failed — fall through to throw below
+      }
+    }
+    if (this.client.status !== 'ready') {
+      throw new Error(`${this.PROVIDER_NAME} client not ready (status: ${this.client.status})`);
     }
     return this.client.ping();
   }
