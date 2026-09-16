@@ -22,7 +22,7 @@ import type {
 import type { UserUpdateInput, UserWhereInput } from '@core/types/input.types';
 import type { Doctor, Patient, Receptionist, ClinicAdmin, SuperAdmin, AuditLog } from '@core/types';
 import { AuditInfo } from '@core/types/database.types';
-import { formatISODateInIST, nowIso } from '../../libs/utils/date-time.util';
+import { formatISODateInIST, nowIso } from '@utils/date-time.util';
 import { normalizeAuthPhoneNumber } from '../auth/core/phone-normalizer.util';
 
 export interface ProfileCompletionValidationResult {
@@ -80,6 +80,10 @@ export class UsersService {
       conditionalFields: {},
     },
     LAB_TECHNICIAN: {
+      requiredFields: [],
+      conditionalFields: {},
+    },
+    NUTRITIONIST: {
       requiredFields: [],
       conditionalFields: {},
     },
@@ -566,7 +570,7 @@ export class UsersService {
       if (targetRole === Role.PATIENT) {
         try {
           const primaryInsurance = Array.isArray(data.insurance) ? data.insurance[0] : undefined;
-          const coverageStartDate = new Date().toISOString().slice(0, 10);
+          const coverageStartDate = formatISODateInIST(new Date());
           const mappedInsurance:
             | {
                 provider: string;

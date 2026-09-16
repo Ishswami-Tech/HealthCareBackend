@@ -133,7 +133,7 @@ export class FastifyFrameworkAdapter implements IFastifyFrameworkAdapter {
       // HTTP/2 support: controlled by enableHttp2 option and ENABLE_HTTP2 env var
       ...(options.environment === 'production' &&
       options.enableHttp2 !== false &&
-      getEnvBoolean('ENABLE_HTTP2', true)
+      getEnvBoolean('ENABLE_HTTP2', false)
         ? ({ http2: true } as { http2: true })
         : {}),
     };

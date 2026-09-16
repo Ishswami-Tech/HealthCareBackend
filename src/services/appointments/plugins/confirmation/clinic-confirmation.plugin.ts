@@ -4,6 +4,7 @@ import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-
 import { AppointmentConfirmationService } from './appointment-confirmation.service';
 import { LoggingService } from '@infrastructure/logging';
 import type { PrescriptionMedicationDto } from '@dtos/ehr.dto';
+import type { TreatmentPlanDto } from '@dtos/appointment.dto';
 
 interface ConfirmationPluginData {
   operation: string;
@@ -13,7 +14,7 @@ interface ConfirmationPluginData {
   clinicId?: string | undefined;
   userId?: string | undefined;
   diagnosis?: string | undefined;
-  treatmentPlan?: string | undefined;
+  treatmentPlan?: TreatmentPlanDto | undefined;
   medications?: PrescriptionMedicationDto[] | undefined;
 }
 

@@ -294,6 +294,11 @@ export class PharmacyController {
     @Request() req: ClinicAuthenticatedRequest
   ) {
     const clinicId = req.clinicContext?.clinicId;
+    const paymentProvider =
+      provider && (req.user?.role === Role.SUPER_ADMIN || req.user?.role === Role.CLINIC_ADMIN)
+        ? provider
+        : undefined;
+
     return this.pharmacyService.createPrescriptionPaymentIntent(
       id,
       clinicId,
@@ -301,7 +306,7 @@ export class PharmacyController {
         ...(req.user?.sub ? { userId: req.user.sub } : {}),
         ...(req.user?.role ? { role: req.user.role } : {}),
       },
-      provider
+      paymentProvider
     );
   }
 

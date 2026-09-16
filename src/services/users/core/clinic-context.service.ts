@@ -9,6 +9,7 @@ import type {
 } from '@core/types/clinic.types';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
+import { getClockPartsInIST } from '@utils/date-time.util';
 
 // Re-export types for backward compatibility
 export type { ClinicContext, ClinicInfo, ClinicLocation, ClinicSettings, UserClinicAssociation };
@@ -322,9 +323,9 @@ export class ClinicContextService {
 
     // Check time restrictions
     if (association.restrictions.timeRestricted) {
-      const now = new Date();
-      const currentDay = now.getDay();
-      const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+      const clock = getClockPartsInIST();
+      const currentDay = clock?.weekday ?? 0;
+      const currentTime = `${String(clock?.hour ?? 0).padStart(2, '0')}:${String(clock?.minute ?? 0).padStart(2, '0')}`;
 
       const workingHours = association.restrictions.workingHours;
 
@@ -565,11 +566,11 @@ export class ClinicContextService {
 
     if (!location || !location.operatingHours) return false;
 
-    const now = new Date();
+    const clock = getClockPartsInIST();
     const dayName = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][
-      now.getDay()
+      clock?.weekday ?? 0
     ];
-    const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+    const currentTime = `${String(clock?.hour ?? 0).padStart(2, '0')}:${String(clock?.minute ?? 0).padStart(2, '0')}`;
 
     const daySchedule = location.operatingHours[dayName as keyof typeof location.operatingHours];
 

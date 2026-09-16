@@ -25,7 +25,6 @@ import { ClinicTemplateService } from './services/clinic-template.service';
 import { CommunicationTemplateService } from './services/communication-template.service';
 import { CommunicationAlertingService } from './services/communication-alerting.service';
 import { TemplateController } from './controllers/template.controller';
-import { NotificationDashboardController } from './controllers/notification-dashboard.controller';
 
 /**
  * Unified Communication Module
@@ -82,7 +81,7 @@ import { NotificationDashboardController } from './controllers/notification-dash
 
     forwardRef(() => ResilienceModule), // Provides CircuitBreakerService
   ],
-  controllers: [CommunicationController, TemplateController, NotificationDashboardController],
+  controllers: [CommunicationController, TemplateController],
   providers: [
     CommunicationService,
     {

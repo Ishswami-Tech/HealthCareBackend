@@ -50,7 +50,7 @@ export interface TranscriptionSearchResult {
 @Injectable()
 export class VideoTranscriptionService {
   private readonly TRANSCRIPTION_CACHE_TTL = 7200; // 2 hours
-  private readonly TRANSCRIPTION_QUEUE = 'analytics-queue';
+  private readonly TRANSCRIPTION_QUEUE = QueueService.HEALTHCARE_QUEUE;
   private readonly MEDICAL_TERMS = [
     'diagnosis',
     'symptom',

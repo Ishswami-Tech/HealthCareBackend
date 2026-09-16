@@ -18,6 +18,7 @@ import {
   formatDateInIST,
   formatDateTimeInIST,
   formatDateKeyInIST,
+  IST_TIMEZONE,
   nowIso,
 } from '../../libs/utils/date-time.util';
 
@@ -54,9 +55,6 @@ import {
   AppointmentStatus,
   AppointmentType,
   TreatmentType,
-  AppointmentServiceCategory,
-  AppointmentQueueCategory,
-  AppointmentBillingMode,
   AppointmentServiceMetadataDto,
   AppointmentPriority,
   ProcessCheckInDto,
@@ -67,6 +65,10 @@ import {
   ConfirmVideoFinalSlotDto,
 } from '@dtos/appointment.dto';
 import { Role } from '@core/types/enums.types';
+import {
+  findTreatmentCatalogEntry,
+  getAppointmentTreatmentCatalog,
+} from '@core/types/treatment-catalog.types';
 import { isVideoCallAppointmentType } from '@core/types/appointment-guards.types';
 import { isVideoSlotAwaitingConfirmation } from './core/appointment-state-contract';
 
@@ -97,250 +99,7 @@ type AssistantDoctorCoverageAssignmentRecord = {
   isActive: boolean;
 };
 
-const TEST_APPOINTMENT_DURATION_MINUTES = 3;
-
-const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
-  {
-    treatmentType: TreatmentType.GENERAL_CONSULTATION,
-    label: 'General Consultation',
-    description: 'Comprehensive health assessment and treatment planning',
-    category: AppointmentServiceCategory.CONSULTATION,
-    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON, AppointmentType.VIDEO_CALL],
-    queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
-    serviceBucket: 'GENERAL',
-    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
-    assistantDoctorEligible: true,
-    active: true,
-    videoConsultationFee: 1179,
-  },
-  {
-    treatmentType: TreatmentType.FOLLOW_UP,
-    label: 'Follow-up Consultation',
-    description: 'Progress review and treatment adjustments',
-    category: AppointmentServiceCategory.CONSULTATION,
-    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON, AppointmentType.VIDEO_CALL],
-    queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
-    serviceBucket: 'FOLLOW_UP',
-    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
-    assistantDoctorEligible: true,
-    active: true,
-    videoConsultationFee: 1179,
-  },
-  {
-    treatmentType: TreatmentType.THERAPY,
-    aliasTreatmentTypes: [TreatmentType.SURGERY],
-    label: 'Procedural Care',
-    description: 'Combined therapeutic and surgical procedure workflow',
-    category: AppointmentServiceCategory.TREATMENT,
-    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON],
-    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
-    serviceBucket: 'PROCEDURAL_CARE',
-    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
-    assistantDoctorEligible: false,
-    active: true,
-  },
-  {
-    treatmentType: TreatmentType.LAB_TEST,
-    label: 'Diagnostic',
-    description: 'Combined diagnostic, imaging, and preventive care workflow',
-    category: AppointmentServiceCategory.DIAGNOSIS,
-    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON],
-    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
-    serviceBucket: 'DIAGNOSTIC',
-    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
-    assistantDoctorEligible: false,
-    active: true,
-  },
-  {
-    treatmentType: TreatmentType.SPECIAL_CASE,
-    label: 'Special Case',
-    description: 'Complex, sensitive, or unusual consultation that needs tailored handling',
-    category: AppointmentServiceCategory.CONSULTATION,
-    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON, AppointmentType.VIDEO_CALL],
-    queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
-    serviceBucket: 'SPECIAL_CASE',
-    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
-    assistantDoctorEligible: true,
-    active: true,
-    videoConsultationFee: 1179,
-  },
-  {
-    treatmentType: TreatmentType.GERIATRIC_CARE,
-    label: 'Senior Citizen',
-    description: 'Care pathway tailored for senior citizens and older adults',
-    category: AppointmentServiceCategory.CONSULTATION,
-    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON, AppointmentType.VIDEO_CALL],
-    queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
-    serviceBucket: 'SENIOR_CITIZEN',
-    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
-    assistantDoctorEligible: true,
-    active: true,
-    videoConsultationFee: 1179,
-  },
-  {
-    treatmentType: TreatmentType.VIDDHAKARMA,
-    label: 'Viddhakarma',
-    description: 'Therapeutic puncture-based Ayurvedic procedural care',
-    category: AppointmentServiceCategory.SURGERY,
-    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON],
-    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
-    serviceBucket: 'VIDDHAKARMA',
-    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
-    assistantDoctorEligible: false,
-    active: true,
-  },
-  {
-    treatmentType: TreatmentType.AGNIKARMA,
-    label: 'Agnikarma',
-    description: 'Therapeutic heat procedure for musculoskeletal pain relief',
-    category: AppointmentServiceCategory.SURGERY,
-    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON],
-    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
-    serviceBucket: 'AGNIKARMA',
-    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
-    assistantDoctorEligible: false,
-    active: true,
-  },
-  {
-    treatmentType: TreatmentType.PANCHAKARMA,
-    label: 'Panchakarma Therapy',
-    description: 'Traditional detoxification and rejuvenation treatment',
-    category: AppointmentServiceCategory.TREATMENT,
-    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON],
-    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
-    serviceBucket: 'PANCHAKARMA',
-    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
-    assistantDoctorEligible: false,
-    active: true,
-  },
-  {
-    treatmentType: TreatmentType.NADI_PARIKSHA,
-    label: 'Nadi Pariksha',
-    description: 'Traditional pulse diagnosis to assess dosha imbalances',
-    category: AppointmentServiceCategory.DIAGNOSIS,
-    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON],
-    queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
-    serviceBucket: 'DIAGNOSIS',
-    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
-    assistantDoctorEligible: true,
-    active: true,
-  },
-  {
-    treatmentType: TreatmentType.DOSHA_ANALYSIS,
-    label: 'Ayurvedic Procedures',
-    description: 'Combined Ayurvedic procedure workflow including dosha analysis',
-    category: AppointmentServiceCategory.DIAGNOSIS,
-    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON, AppointmentType.VIDEO_CALL],
-    queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
-    serviceBucket: 'AYURVEDIC_PROCEDURES',
-    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
-    assistantDoctorEligible: true,
-    active: true,
-    videoConsultationFee: 1179,
-  },
-  {
-    treatmentType: TreatmentType.SHIRODHARA,
-    label: 'Shirodhara',
-    description: 'Continuous oil flow on the forehead for stress and anxiety care',
-    category: AppointmentServiceCategory.TREATMENT,
-    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON],
-    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
-    serviceBucket: 'SHIRODHARA',
-    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
-    assistantDoctorEligible: false,
-    active: true,
-  },
-  {
-    treatmentType: TreatmentType.VIRECHANA,
-    label: 'Ayurvedic Procedures',
-    description: 'Therapeutic purgation as part of Panchakarma care',
-    category: AppointmentServiceCategory.TREATMENT,
-    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON],
-    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
-    serviceBucket: 'PANCHAKARMA',
-    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
-    assistantDoctorEligible: false,
-    active: true,
-  },
-  {
-    treatmentType: TreatmentType.ABHYANGA,
-    label: 'Ayurvedic Procedures',
-    description: 'Full-body Ayurvedic therapeutic oil massage',
-    category: AppointmentServiceCategory.TREATMENT,
-    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON],
-    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
-    serviceBucket: 'ABHYANGA',
-    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
-    assistantDoctorEligible: false,
-    active: true,
-  },
-  {
-    treatmentType: TreatmentType.SWEDANA,
-    label: 'Ayurvedic Procedures',
-    description: 'Herbal steam therapy for detoxification and relaxation',
-    category: AppointmentServiceCategory.TREATMENT,
-    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON],
-    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
-    serviceBucket: 'SWEDANA',
-    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
-    assistantDoctorEligible: false,
-    active: true,
-  },
-  {
-    treatmentType: TreatmentType.BASTI,
-    label: 'Ayurvedic Procedures',
-    description: 'Therapeutic medicated enema under Ayurvedic care plan',
-    category: AppointmentServiceCategory.TREATMENT,
-    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON],
-    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
-    serviceBucket: 'PANCHAKARMA',
-    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
-    assistantDoctorEligible: false,
-    active: true,
-  },
-  {
-    treatmentType: TreatmentType.NASYA,
-    label: 'Ayurvedic Procedures',
-    description: 'Nasal administration therapy as part of Ayurvedic treatment',
-    category: AppointmentServiceCategory.TREATMENT,
-    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON],
-    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
-    serviceBucket: 'PANCHAKARMA',
-    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
-    assistantDoctorEligible: false,
-    active: true,
-  },
-  {
-    treatmentType: TreatmentType.RAKTAMOKSHANA,
-    label: 'Ayurvedic Procedures',
-    description: 'Therapeutic bloodletting procedure under supervised care',
-    category: AppointmentServiceCategory.SURGERY,
-    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON],
-    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
-    serviceBucket: 'SURGICAL',
-    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
-    assistantDoctorEligible: false,
-    active: true,
-  },
-];
+const VIDEO_APPOINTMENT_RESCHEDULE_WINDOW_HOURS = 5;
 
 /**
  * Enhanced Appointments Service
@@ -508,119 +267,343 @@ export class AppointmentsService {
     return new Date(Date.now() + hoursBefore * 60 * 60 * 1000);
   }
 
+  async processExpiredVideoSessionClosures(settings?: {
+    scheduledThresholdMinutes?: number;
+    inProgressThresholdMinutes?: number;
+  }): Promise<{
+    totalChecked: number;
+    closed: number;
+    failed: number;
+    details: Array<{
+      appointmentId: string;
+      clinicId: string;
+      closedAt: Date;
+      reason: string;
+    }>;
+  }> {
+    const mergedSettings = {
+      scheduledThresholdMinutes: 15,
+      inProgressThresholdMinutes: 45,
+      ...settings,
+    };
+
+    const now = new Date();
+    const istOffset = 5.5 * 60 * 60 * 1000;
+    const nowIST = new Date(now.getTime() + istOffset);
+
+    const candidates = await this.databaseService.executeHealthcareRead(async client => {
+      const prismaClient = client as unknown as Prisma.TransactionClient;
+      return await prismaClient.$queryRaw<
+        Array<{
+          id: string;
+          appointmentId: string;
+          patientId: string;
+          doctorId: string;
+          clinicId: string;
+          status: string;
+          startTime: Date | null;
+          createdAt: Date;
+        }>
+      >`
+        SELECT id, "appointmentId", "patientId", "doctorId", "clinicId",
+               status, "startTime", "createdAt"
+        FROM video_consultations
+        WHERE status IN ('SCHEDULED', 'IN_PROGRESS')
+          AND (
+            (status = 'SCHEDULED' AND "createdAt" < ${new Date(
+              nowIST.getTime() - mergedSettings.scheduledThresholdMinutes * 60 * 1000
+            )}::timestamp)
+            OR
+            (status = 'IN_PROGRESS' AND "startTime" IS NOT NULL
+             AND "startTime" < ${new Date(
+               nowIST.getTime() - mergedSettings.inProgressThresholdMinutes * 60 * 1000
+             )}::timestamp)
+          )
+      `;
+    });
+
+    const details: Array<{
+      appointmentId: string;
+      patientId: string;
+      doctorId: string;
+      clinicId: string;
+      closedAt: Date;
+      reason: string;
+    }> = [];
+    let closedCount = 0;
+    let failedCount = 0;
+
+    for (const consultation of candidates) {
+      const threshold =
+        consultation.status === 'SCHEDULED'
+          ? mergedSettings.scheduledThresholdMinutes
+          : mergedSettings.inProgressThresholdMinutes;
+
+      const formattedStart = consultation.startTime
+        ? formatDateTimeInIST(consultation.startTime, {
+            year: 'numeric',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+          })
+        : formatDateTimeInIST(consultation.createdAt, {
+            year: 'numeric',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+          });
+
+      let reason: string;
+      if (consultation.status === 'SCHEDULED') {
+        reason =
+          `Auto-expired: video consultation was not joined within ${threshold} minutes of creation (${formattedStart} IST). ` +
+          `The session has been closed.`;
+      } else {
+        reason =
+          `Auto-closed: video session exceeded the ${threshold}-minute hard cap (started at ${formattedStart} IST). ` +
+          `The session has been closed.`;
+      }
+
+      try {
+        await this.databaseService.executeHealthcareWrite(
+          async client => {
+            const prismaClient = client as unknown as Prisma.TransactionClient;
+            const delegate = getVideoConsultationDelegate(prismaClient);
+
+            const endTime = nowIST;
+            const startTime = consultation.startTime
+              ? new Date(consultation.startTime)
+              : new Date(consultation.createdAt);
+            const durationSeconds = Math.max(
+              0,
+              Math.floor((endTime.getTime() - startTime.getTime()) / 1000)
+            );
+
+            await delegate.update({
+              where: { id: consultation.id },
+              data: {
+                status: 'COMPLETED',
+                endTime,
+                duration: durationSeconds,
+              },
+            });
+
+            const existing = await prismaClient.appointment.findUnique({
+              where: { id: consultation.appointmentId },
+              select: { id: true, status: true },
+            });
+
+            if (existing) {
+              const existingStatus = existing.status as unknown as AppointmentStatus;
+              if (
+                existingStatus !== AppointmentStatus.COMPLETED &&
+                existingStatus !== AppointmentStatus.EXPIRED &&
+                existingStatus !== AppointmentStatus.CANCELLED
+              ) {
+                await prismaClient.appointment.update({
+                  where: { id: consultation.appointmentId },
+                  data: { status: AppointmentStatus.COMPLETED },
+                });
+              }
+            }
+          },
+          {
+            userId: 'system',
+            userRole: 'SYSTEM',
+            clinicId: consultation.clinicId,
+            operation: 'UPDATE_VIDEO_CONSULTATION',
+            resourceType: 'VIDEO_CONSULTATION',
+            resourceId: consultation.id,
+            timestamp: nowIST,
+            details: {
+              appointmentId: consultation.appointmentId,
+              doctorId: consultation.doctorId,
+              status: 'COMPLETED',
+              reason,
+            },
+          }
+        );
+
+        await this.emitAppointmentEnterpriseEvent('appointment.completed', {
+          eventId: `video-session-closed-${consultation.appointmentId}-${Date.now()}`,
+          clinicId: consultation.clinicId,
+          priority: EventPriority.HIGH,
+          userId: consultation.patientId,
+          payload: {
+            appointmentId: consultation.appointmentId,
+            doctorId: consultation.doctorId,
+            clinicId: consultation.clinicId,
+            patientId: consultation.patientId,
+            videoConsultationId: consultation.id,
+            reason,
+            appointment: {
+              id: consultation.appointmentId,
+              status: AppointmentStatus.COMPLETED,
+            },
+          },
+        });
+
+        closedCount++;
+        details.push({
+          appointmentId: consultation.appointmentId,
+          patientId: consultation.patientId,
+          doctorId: consultation.doctorId,
+          clinicId: consultation.clinicId,
+          closedAt: nowIST,
+          reason,
+        });
+      } catch (error) {
+        failedCount++;
+        void this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.WARN,
+          `Failed to auto-close video session: ${
+            error instanceof Error ? error.message : 'Unknown error'
+          }`,
+          'AppointmentsService.processExpiredVideoSessionClosures',
+          {
+            videoConsultationId: consultation.id,
+            appointmentId: consultation.appointmentId,
+            clinicId: consultation.clinicId,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
+      }
+    }
+
+    return {
+      totalChecked: candidates.length,
+      closed: closedCount,
+      failed: failedCount,
+      details,
+    };
+  }
+
   @Cron(CronExpression.EVERY_DAY_AT_3AM)
   async handleNoShowCancellationCron() {
     await this.processNoShowCancellations();
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_7AM, { timeZone: 'Asia/Kolkata' })
+  @Cron(CronExpression.EVERY_DAY_AT_7AM, { timeZone: IST_TIMEZONE })
   async handleDoctorDailyAppointmentSummaryCron() {
+    await this.triggerDoctorDailySummary({ triggeredBy: 'cron' });
+  }
+
+  /**
+   * Shared implementation for the 7 AM cron and the manual-trigger endpoint.
+   * Enqueues one DOCTOR_SUMMARY job per doctor-clinic pair.
+   */
+  async triggerDoctorDailySummary(opts: { triggeredBy?: string; dateKey?: string } = {}) {
     const runStart = Date.now();
-    try {
-      const todayKey = formatDateKeyInIST(new Date());
+    const todayKey = opts.dateKey || formatDateKeyInIST(new Date());
+    const triggeredBy = opts.triggeredBy || 'manual';
 
-      await this.loggingService.log(
-        LogType.NOTIFICATION,
-        LogLevel.INFO,
-        'Doctor daily appointment summary cron started',
-        'AppointmentsService',
-        { todayKey }
-      );
-
-      const doctorClinics = await this.databaseService.executeHealthcareRead<
-        Array<{ doctor: { id: string; userId: string }; clinicId: string }>
-      >(async client => {
-        const prismaClient = client as unknown as Prisma.TransactionClient;
-        return await prismaClient.doctorClinic.findMany({
-          select: {
-            doctorId: true,
-            clinicId: true,
-            doctor: {
-              select: { id: true, userId: true },
-            },
-          },
-        });
-      });
-
-      let enqueuedCount = 0;
-      let skipCount = 0;
-
-      for (const dc of doctorClinics) {
-        try {
-          // Thin enqueue — summary is computed at process time by DoctorSummaryService.
-          // Use a distinct jobId suffix that stays compatible with BullMQ custom IDs.
-          const deterministicJobId = `doctor-summary-${dc.doctor.userId}-${dc.clinicId}-${todayKey}-cron`;
-
-          const existingJob = await this.queueService.getJob(
-            'healthcare-queue',
-            deterministicJobId
-          );
-          if (existingJob) {
-            skipCount++;
-            continue;
-          }
-
-          await this.queueService.addJob(
-            JobType.DOCTOR_SUMMARY,
-            'send-doctor-daily-summary',
-            {
-              doctorId: dc.doctor.id,
-              doctorUserId: dc.doctor.userId,
-              clinicId: dc.clinicId,
-              triggeredBy: 'cron',
-            },
-            {
-              priority: JobPriorityLevel.NORMAL,
-              correlationId: deterministicJobId,
-              attempts: 3,
-            }
-          );
-          enqueuedCount++;
-        } catch (error) {
-          void this.loggingService.log(
-            LogType.NOTIFICATION,
-            LogLevel.ERROR,
-            `Failed to enqueue doctor summary for doctor ${dc.doctor.userId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
-            'AppointmentsService',
-            { doctorId: dc.doctor.id, error }
-          );
-        }
-      }
-
-      await this.loggingService.log(
-        LogType.NOTIFICATION,
-        LogLevel.INFO,
-        'Doctor daily appointment summary cron resolved doctor clinics',
-        'AppointmentsService',
-        {
-          todayKey,
-          totalDoctors: doctorClinics.length,
-          enqueuedCount,
-          skipCount,
-        }
-      );
-
-      await this.loggingService.log(
-        LogType.NOTIFICATION,
-        LogLevel.INFO,
-        'Doctor daily appointment summary cron completed — jobs enqueued',
-        'AppointmentsService',
-        {
-          enqueuedCount,
-          skipCount,
-          totalDoctors: doctorClinics.length,
-          durationMs: Date.now() - runStart,
-        }
-      );
-    } catch (error) {
+    const istDay = new Date(
+      new Date().toLocaleString('en-US', { timeZone: IST_TIMEZONE })
+    ).getDay();
+    if (istDay === 0 || istDay === 6) {
       void this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Doctor daily appointment summary cron failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        LogType.NOTIFICATION,
+        LogLevel.DEBUG,
+        'Doctor daily appointment summary skipped — weekend',
         'AppointmentsService',
-        { error }
+        { todayKey, istDay, triggeredBy }
       );
+      return {
+        skipped: true,
+        reason: 'weekend',
+        todayKey,
+        enqueuedCount: 0,
+        skipCount: 0,
+        totalDoctors: 0,
+      };
     }
+
+    await this.loggingService.log(
+      LogType.NOTIFICATION,
+      LogLevel.INFO,
+      'Doctor daily appointment summary started',
+      'AppointmentsService',
+      { todayKey, triggeredBy }
+    );
+
+    const doctorClinics = await this.databaseService.executeHealthcareRead<
+      Array<{ doctor: { id: string; userId: string }; clinicId: string }>
+    >(async client => {
+      const prismaClient = client as unknown as Prisma.TransactionClient;
+      return await prismaClient.doctorClinic.findMany({
+        select: {
+          doctorId: true,
+          clinicId: true,
+          doctor: { select: { id: true, userId: true } },
+        },
+      });
+    });
+
+    let enqueuedCount = 0;
+    let skipCount = 0;
+
+    for (const dc of doctorClinics) {
+      try {
+        const deterministicJobId = `doctor-summary-${dc.doctor.userId}-${dc.clinicId}-${todayKey}-${triggeredBy}`;
+
+        const existingJob = await this.queueService.getJob('healthcare-queue', deterministicJobId);
+        if (existingJob) {
+          skipCount++;
+          continue;
+        }
+
+        await this.queueService.addJob(
+          JobType.DOCTOR_SUMMARY,
+          'send-doctor-daily-summary',
+          {
+            doctorId: dc.doctor.id,
+            doctorUserId: dc.doctor.userId,
+            clinicId: dc.clinicId,
+            triggeredBy,
+          },
+          {
+            priority: JobPriorityLevel.NORMAL,
+            correlationId: deterministicJobId,
+            attempts: 3,
+          }
+        );
+        enqueuedCount++;
+      } catch (error) {
+        void this.loggingService.log(
+          LogType.NOTIFICATION,
+          LogLevel.ERROR,
+          `Failed to enqueue doctor summary for doctor ${dc.doctor.userId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'AppointmentsService',
+          { doctorId: dc.doctor.id, error }
+        );
+      }
+    }
+
+    await this.loggingService.log(
+      LogType.NOTIFICATION,
+      LogLevel.INFO,
+      'Doctor daily appointment summary completed — jobs enqueued',
+      'AppointmentsService',
+      {
+        todayKey,
+        totalDoctors: doctorClinics.length,
+        enqueuedCount,
+        skipCount,
+        durationMs: Date.now() - runStart,
+        triggeredBy,
+      }
+    );
+
+    return {
+      skipped: false,
+      todayKey,
+      enqueuedCount,
+      skipCount,
+      totalDoctors: doctorClinics.length,
+    };
   }
 
   @Cron(CronExpression.EVERY_HOUR)
@@ -1160,46 +1143,13 @@ export class AppointmentsService {
   }
 
   getAppointmentServiceCatalog(): AppointmentServiceMetadataDto[] {
-    return APPOINTMENT_SERVICE_CATALOG.map(service => ({
-      ...service,
-      appointmentModes: [...service.appointmentModes],
-      ...(service.aliasTreatmentTypes
-        ? { aliasTreatmentTypes: [...service.aliasTreatmentTypes] }
-        : {}),
-    }));
+    return getAppointmentTreatmentCatalog() as AppointmentServiceMetadataDto[];
   }
 
   private getAppointmentServiceMetadata(
     treatmentType?: TreatmentType | string | null
   ): AppointmentServiceMetadataDto {
-    const normalizedTreatmentType = this.resolveCatalogTreatmentType(treatmentType);
-    return (
-      APPOINTMENT_SERVICE_CATALOG.find(
-        service =>
-          String(service.treatmentType) === String(normalizedTreatmentType) ||
-          service.aliasTreatmentTypes?.some(
-            alias => String(alias) === String(normalizedTreatmentType)
-          )
-      ) ||
-      APPOINTMENT_SERVICE_CATALOG.find(
-        service => service.treatmentType === TreatmentType.GENERAL_CONSULTATION
-      )!
-    );
-  }
-
-  private resolveCatalogTreatmentType(
-    treatmentType?: TreatmentType | string | null
-  ): string | null {
-    const normalized = String(treatmentType || '')
-      .trim()
-      .toUpperCase();
-    if (!normalized) {
-      return treatmentType ?? null;
-    }
-    if (normalized === String(TreatmentType.SURGERY)) {
-      return TreatmentType.THERAPY;
-    }
-    return normalized;
+    return findTreatmentCatalogEntry(treatmentType) as AppointmentServiceMetadataDto;
   }
 
   private asMetadataRecord(metadata: unknown): Record<string, unknown> {
@@ -1237,6 +1187,20 @@ export class AppointmentsService {
     }
 
     return parseIstDateTime(appointment.date, appointment.time);
+  }
+
+  private resolveVideoAppointmentRescheduleDeadline(appointment: {
+    date: Date;
+    time: string;
+  }): Date | null {
+    const scheduledStart = parseIstDateTime(appointment.date, appointment.time);
+    if (!scheduledStart) {
+      return null;
+    }
+
+    return new Date(
+      scheduledStart.getTime() + VIDEO_APPOINTMENT_RESCHEDULE_WINDOW_HOURS * 60 * 60 * 1000
+    );
   }
 
   private normalizeVideoSlotDate(slotDate: string): Date | null {
@@ -2746,6 +2710,58 @@ export class AppointmentsService {
       );
     }
 
+    if (
+      [
+        AppointmentStatus.CANCELLED,
+        AppointmentStatus.EXPIRED,
+        AppointmentStatus.COMPLETED,
+      ].includes(appointment.status as AppointmentStatus)
+    ) {
+      throw this.errors.validationError(
+        'status',
+        `This appointment cannot be rescheduled because it is already ${String(appointment.status).toLowerCase()}.`,
+        'AppointmentsService.rescheduleAppointment'
+      );
+    }
+
+    if (String(appointment.type) === 'VIDEO_CALL') {
+      if (String(appointment.status).toUpperCase() !== String(AppointmentStatus.CONFIRMED)) {
+        throw this.errors.validationError(
+          'status',
+          'Only confirmed video appointments can be rescheduled.',
+          'AppointmentsService.rescheduleAppointment'
+        );
+      }
+
+      const rescheduleDeadline = this.resolveVideoAppointmentRescheduleDeadline({
+        date: appointment.date,
+        time: appointment.time,
+      });
+      const now = new Date();
+
+      if (!rescheduleDeadline) {
+        throw this.errors.validationError(
+          'date',
+          'Unable to determine the appointment reschedule deadline.',
+          'AppointmentsService.rescheduleAppointment'
+        );
+      }
+
+      if (now.getTime() >= rescheduleDeadline.getTime()) {
+        throw this.errors.validationError(
+          'date',
+          'Rescheduling is only allowed until the 5-hour appointment window expires.',
+          'AppointmentsService.rescheduleAppointment'
+        );
+      }
+    }
+
+    // Patient-self-confirmed video flow: when a VIDEO_CALL appointment is in
+    // SCHEDULED status with proposedSlots populated, the patient has already
+    // chosen their slots. We still want to verify the proposal hasn't been
+    // totally orphaned (e.g. all proposed slots passed) before allowing a
+    // reschedule — but the reschedule itself is allowed.
+    //
     // Production policy: Allow rescheduling up to 24h before.
     // Temporarily disabled for testing so short-notice appointment changes can be exercised.
     // const appointmentDateTime = new Date(
@@ -2789,17 +2805,30 @@ export class AppointmentsService {
       );
     }
 
-    // Update appointment
-    const updated = await this.databaseService.updateAppointmentSafe(appointmentId, {
+    // Update appointment — clear video-specific metadata so stale proposal
+    // data does not survive a reschedule.  proposedSlots and
+    // confirmedSlotIndex are reset to their defaults so a fresh cycle
+    // begins after the new date/time is set.
+    //
+    // For VIDEO_CALL appointments the old paymentExpiresAt must also be
+    // cleared: the scheduler treats it as the authoritative expiry moment.
+    // Leaving it set would cause the row to be auto-expired by the OLD
+    // deadline even though the patient now has a new future date.
+    const isVideo = String(appointment.type) === 'VIDEO_CALL';
+    const updateData: Parameters<typeof this.databaseService.updateAppointmentSafe>[1] = {
       date: new Date(newDate),
       time: newTime,
       status: AppointmentStatus.SCHEDULED, // Reset to scheduled
+      ...(isVideo ? { paymentExpiresAt: null } : {}),
+      proposedSlots: [],
+      confirmedSlotIndex: null,
       metadata: {
         ...metadata,
         rescheduleCount: rescheduleCount + 1,
         lastRescheduledAt: new Date(),
       },
-    });
+    };
+    const updated = await this.databaseService.updateAppointmentSafe(appointmentId, updateData);
 
     await this.syncPaidAppointmentBillingAfterReschedule(appointment, newDate, newTime, userId);
 
@@ -3070,7 +3099,19 @@ export class AppointmentsService {
 
     const normalizedStatus = updateDto.status;
 
-    // 2. Dispatch based on new status
+    // 2. Business rule: IN_PERSON appointments must complete QR check-in
+    //    (reach CONFIRMED status) before a consultation can be started.
+    if (
+      String(appointment.type) === String(AppointmentType.IN_PERSON) &&
+      String(appointment.status).toUpperCase() !== String(AppointmentStatus.CONFIRMED)
+    ) {
+      throw this.errors.businessRuleViolation(
+        'In-person appointment is not confirmed. Patient must scan the clinic QR before the consultation can start.',
+        'AppointmentsService.updateStatus'
+      );
+    }
+
+    // 3. Dispatch based on new status
     switch (normalizedStatus) {
       case AppointmentStatus.CONFIRMED:
         return this.processCheckIn(
@@ -4244,9 +4285,6 @@ export class AppointmentsService {
     _role: string = 'USER'
   ): Promise<unknown> {
     try {
-      // Validate appointment exists in current clinic
-      await this.getAppointmentById(appointmentId, clinicId);
-
       // Hot path: Direct plugin injection for performance
       const consultationPayload = {
         operation: 'startConsultation',

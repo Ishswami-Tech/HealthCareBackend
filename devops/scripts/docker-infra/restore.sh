@@ -43,6 +43,58 @@ DRAGONFLY_CONTAINER="dragonfly"
 BACKUP_ID="${1:-latest}"
 RESTORE_SOURCE=""  # Will be set to "local" or "s3"
 
+find_backup_script() {
+    local candidates=(
+        "${SCRIPT_DIR}/backup.sh"
+        "/opt/healthcare-backend/devops/scripts/docker-infra/backup.sh"
+        "/tmp/backup.sh"
+    )
+
+    for candidate in "${candidates[@]}"; do
+        if [[ -f "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+stop_application_containers_for_restore() {
+    local app_containers=(
+        "${CONTAINER_PREFIX}api-green"
+        "${CONTAINER_PREFIX}api-blue"
+        "${CONTAINER_PREFIX}api-next"
+        "${CONTAINER_PREFIX}api"
+        "${CONTAINER_PREFIX}worker-green"
+        "${CONTAINER_PREFIX}worker-blue"
+        "${CONTAINER_PREFIX}worker-next"
+        "${CONTAINER_PREFIX}worker"
+    )
+
+    log_info "Stopping application containers before restore..."
+    docker stop "${app_containers[@]}" 2>/dev/null || true
+}
+
+create_pre_restore_backup() {
+    local backup_script
+    backup_script=$(find_backup_script) || {
+        log_error "Backup script not found; cannot create pre-restore safety backup"
+        return 1
+    }
+
+    chmod +x "$backup_script" 2>/dev/null || true
+    log_info "Creating pre-restore backup using dual storage (local + S3)..."
+
+    if "$backup_script" pre-deployment; then
+        log_success "Pre-restore backup completed"
+        return 0
+    fi
+
+    log_error "Pre-restore backup failed"
+    return 1
+}
+
 # Find backup (local or S3)
 find_backup() {
     # Security: Validate backup ID before use
@@ -248,7 +300,11 @@ restore_postgres() {
     # Stop app containers temporarily (safety measure during database restore)
     # This prevents app from writing to database during restore
     # NOTE: This is NOT a health check - it's a safety measure for data consistency
-    docker stop "${CONTAINER_PREFIX}api" "${CONTAINER_PREFIX}worker" 2>/dev/null || true
+    stop_application_containers_for_restore
+
+    # Create a fresh safety backup before touching userdb.
+    # This backup uses the standard dual-storage flow (local + S3).
+    create_pre_restore_backup || return 1
     
     # Drop and recreate database (suppress verbose output, keep errors)
     docker exec "$container" psql -U postgres -q -c "DROP DATABASE IF EXISTS userdb;" >/dev/null || true

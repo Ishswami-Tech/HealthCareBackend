@@ -31,6 +31,7 @@ import {
   CommunicationPriority,
   type CommunicationChannel,
 } from '@core/types';
+import { findTreatmentCatalogEntryOrUndefined } from '@core/types/treatment-catalog.types';
 import type { NotificationData } from '@core/types/appointment.types';
 import type { EnterpriseEventPayload } from '@core/types';
 
@@ -229,6 +230,245 @@ export class NotificationEventListener implements OnModuleInit {
             userId: payload.userId,
             socketRoom: `user:${payload.userId}`,
           });
+        }
+        return recipients;
+      },
+      shouldNotify: () => true,
+    },
+    // EHR Prescription Created - Patient, Doctor, and Clinic Notification
+    {
+      eventPattern: /^ehr\.prescription\.created$/,
+      category: CommunicationCategory.PRESCRIPTION,
+      channels: ['socket', 'push', 'email', 'whatsapp'],
+      priority: CommunicationPriority.HIGH,
+      template: 'prescription_created',
+      recipients: payload => {
+        const recipients: Array<{
+          userId?: string;
+          email?: string;
+          deviceToken?: string;
+          socketRoom?: string;
+        }> = [];
+        const patientId =
+          payload.userId ||
+          (payload.metadata?.['patientId'] as string | undefined) ||
+          ((payload as unknown as Record<string, unknown>)['patientId'] as string | undefined);
+        const doctorId =
+          (payload.metadata?.['doctorId'] as string | undefined) ||
+          ((payload as unknown as Record<string, unknown>)['doctorId'] as string | undefined);
+
+        if (patientId) {
+          recipients.push({
+            userId: patientId,
+            socketRoom: `user:${patientId}`,
+          });
+        }
+        if (doctorId) {
+          recipients.push({
+            userId: doctorId,
+            socketRoom: `user:${doctorId}`,
+          });
+        }
+        if (payload.clinicId) {
+          recipients.push({
+            socketRoom: `clinic:${payload.clinicId}`,
+          });
+        }
+        return recipients;
+      },
+      shouldNotify: () => true,
+    },
+    // Diet Plan Created/Generated - Care Plan Notification
+    {
+      eventPattern: /^diet\.plan\.(created|generated)$/,
+      category: CommunicationCategory.PRESCRIPTION,
+      channels: ['socket', 'push', 'email', 'whatsapp'],
+      priority: CommunicationPriority.NORMAL,
+      template: 'diet_plan_ready',
+      recipients: payload => {
+        const recipients: Array<{
+          userId?: string;
+          email?: string;
+          deviceToken?: string;
+          socketRoom?: string;
+        }> = [];
+        const patientId =
+          payload.userId ||
+          (payload.metadata?.['patientId'] as string | undefined) ||
+          ((payload as unknown as Record<string, unknown>)['patientId'] as string | undefined);
+        const doctorId =
+          (payload.metadata?.['doctorId'] as string | undefined) ||
+          ((payload as unknown as Record<string, unknown>)['doctorId'] as string | undefined);
+
+        if (patientId) {
+          recipients.push({
+            userId: patientId,
+            socketRoom: `user:${patientId}`,
+          });
+        }
+        if (doctorId) {
+          recipients.push({
+            userId: doctorId,
+            socketRoom: `user:${doctorId}`,
+          });
+        }
+        if (payload.clinicId) {
+          recipients.push({
+            socketRoom: `clinic:${payload.clinicId}`,
+          });
+        }
+        return recipients;
+      },
+      shouldNotify: () => true,
+    },
+    // Pharmacy Medicine Desk Queue Updates
+    {
+      eventPattern: /^pharmacy\.medicine_desk\.updated$/,
+      category: CommunicationCategory.PRESCRIPTION,
+      channels: ['socket', 'push', 'email', 'whatsapp'],
+      priority: CommunicationPriority.NORMAL,
+      template: 'pharmacy_medicine_desk_update',
+      recipients: payload => {
+        const recipients: Array<{
+          userId?: string;
+          email?: string;
+          deviceToken?: string;
+          socketRoom?: string;
+        }> = [];
+        const patientId =
+          (payload.metadata?.['patientId'] as string | undefined) ||
+          ((payload as unknown as Record<string, unknown>)['patientId'] as string | undefined);
+        const doctorId =
+          (payload.metadata?.['doctorId'] as string | undefined) ||
+          ((payload as unknown as Record<string, unknown>)['doctorId'] as string | undefined);
+
+        if (patientId) {
+          recipients.push({
+            userId: patientId,
+            socketRoom: `user:${patientId}`,
+          });
+        }
+        if (doctorId) {
+          recipients.push({
+            userId: doctorId,
+            socketRoom: `user:${doctorId}`,
+          });
+        }
+        if (payload.clinicId) {
+          recipients.push({
+            socketRoom: `clinic:${payload.clinicId}:doctors`,
+          });
+        }
+        return recipients;
+      },
+      shouldNotify: () => true,
+    },
+    // Ayurveda: Prakriti Assessment Completed
+    {
+      eventPattern: /^ayurveda\.prakriti\.assessed$/,
+      category: CommunicationCategory.PRESCRIPTION,
+      channels: ['socket', 'push', 'email', 'whatsapp'],
+      priority: CommunicationPriority.NORMAL,
+      template: 'ayurveda_prakriti_result',
+      recipients: payload => {
+        const recipients: Array<{
+          userId?: string;
+          email?: string;
+          deviceToken?: string;
+          socketRoom?: string;
+        }> = [];
+        const patientId =
+          (payload.metadata?.['patientId'] as string | undefined) ||
+          ((payload as unknown as Record<string, unknown>)['patientId'] as string | undefined);
+        const doctorId =
+          (payload.metadata?.['doctorId'] as string | undefined) ||
+          ((payload as unknown as Record<string, unknown>)['doctorId'] as string | undefined);
+        if (patientId) {
+          recipients.push({ userId: patientId, socketRoom: `user:${patientId}` });
+        }
+        if (doctorId) {
+          recipients.push({ userId: doctorId, socketRoom: `user:${doctorId}` });
+        }
+        if (payload.clinicId) {
+          recipients.push({ socketRoom: `clinic:${payload.clinicId}` });
+        }
+        return recipients;
+      },
+      shouldNotify: () => true,
+    },
+    // Ayurveda: Diagnosis Created
+    {
+      eventPattern: /^ayurveda\.diagnosis\.created$/,
+      category: CommunicationCategory.EHR_RECORD,
+      channels: ['socket', 'push', 'email'],
+      priority: CommunicationPriority.HIGH,
+      template: 'ayurveda_diagnosis_ready',
+      recipients: payload => {
+        const recipients: Array<{
+          userId?: string;
+          email?: string;
+          deviceToken?: string;
+          socketRoom?: string;
+        }> = [];
+        const patientId =
+          (payload.metadata?.['patientId'] as string | undefined) ||
+          ((payload as unknown as Record<string, unknown>)['patientId'] as string | undefined);
+        if (patientId) {
+          recipients.push({ userId: patientId, socketRoom: `user:${patientId}` });
+        }
+        if (payload.clinicId) {
+          recipients.push({ socketRoom: `clinic:${payload.clinicId}` });
+        }
+        return recipients;
+      },
+      shouldNotify: () => true,
+    },
+    // Ayurveda: Prescription Created
+    {
+      eventPattern: /^ayurveda\.prescription\.created$/,
+      category: CommunicationCategory.PRESCRIPTION,
+      channels: ['socket', 'push', 'whatsapp'],
+      priority: CommunicationPriority.HIGH,
+      template: 'ayurveda_prescription_ready',
+      recipients: payload => {
+        const recipients: Array<{
+          userId?: string;
+          email?: string;
+          deviceToken?: string;
+          socketRoom?: string;
+        }> = [];
+        const patientId =
+          (payload.metadata?.['patientId'] as string | undefined) ||
+          ((payload as unknown as Record<string, unknown>)['patientId'] as string | undefined);
+        if (patientId) {
+          recipients.push({ userId: patientId, socketRoom: `user:${patientId}` });
+        }
+        if (payload.clinicId) {
+          recipients.push({ socketRoom: `clinic:${payload.clinicId}` });
+        }
+        return recipients;
+      },
+      shouldNotify: () => true,
+    },
+    // Ayurveda: Dosha Imbalance Detected
+    {
+      eventPattern: /^ayurveda\.dosha\.imbalance$/,
+      category: CommunicationCategory.PRESCRIPTION,
+      channels: ['socket', 'push'],
+      priority: CommunicationPriority.HIGH,
+      template: 'ayurveda_dosha_imbalance',
+      recipients: payload => {
+        const recipients: Array<{
+          userId?: string;
+          email?: string;
+          deviceToken?: string;
+          socketRoom?: string;
+        }> = [];
+        const patientId =
+          (payload.metadata?.['patientId'] as string | undefined) ||
+          ((payload as unknown as Record<string, unknown>)['patientId'] as string | undefined);
+        if (patientId) {
+          recipients.push({ userId: patientId, socketRoom: `user:${patientId}` });
         }
         return recipients;
       },
@@ -1282,7 +1522,20 @@ export class NotificationEventListener implements OnModuleInit {
     let body = 'You have a new notification';
 
     // Customize based on event type
-    if (eventType.startsWith('ehr.')) {
+    if (eventType.startsWith('ehr.prescription.')) {
+      const medicationCount =
+        Number(payload.metadata?.['medicationsCount'] ?? payload.metadata?.['count'] ?? 0) ||
+        Number((payload as unknown as Record<string, unknown>)['count'] ?? 0);
+      const prescriptionId = resolveText(
+        payload.metadata?.['prescriptionId'] ||
+          (payload as unknown as Record<string, unknown>)['prescriptionId'],
+        ''
+      );
+      title = 'Prescription Ready';
+      body = medicationCount
+        ? `Your prescription${prescriptionId ? ` (${prescriptionId})` : ''} has been prepared with ${medicationCount} medication${medicationCount === 1 ? '' : 's'}.`
+        : `Your prescription${prescriptionId ? ` (${prescriptionId})` : ''} has been prepared.`;
+    } else if (eventType.startsWith('ehr.')) {
       const recordType = eventType.split('.')[1]?.replace(/_/g, ' ') || 'record';
       title = 'New Medical Record';
       body = `A new ${recordType} has been added to your health records`;
@@ -1308,6 +1561,98 @@ export class NotificationEventListener implements OnModuleInit {
       } else if (eventType.includes('.rescheduled')) {
         title = 'APPOINTMENT RESCHEDULED';
         body = `YOUR APPOINTMENT HAS BEEN RESCHEDULED AT ${displayName}.`;
+      }
+    } else if (eventType.startsWith('diet.plan.')) {
+      const goal = resolveText(
+        payload.metadata?.['goal'] || (payload as unknown as Record<string, unknown>)['goal'],
+        'dietary support'
+      );
+      const durationDays = Number(
+        payload.metadata?.['durationDays'] ??
+          (payload as unknown as Record<string, unknown>)['durationDays'] ??
+          0
+      );
+      const planTitle = resolveText(
+        payload.metadata?.['planTitle'] || (payload as unknown as Record<string, unknown>)['title'],
+        'Diet Plan'
+      );
+      title = `${planTitle} Ready`;
+      body =
+        durationDays > 0
+          ? `Your ${goal} diet plan has been generated for ${durationDays} days.`
+          : `Your ${goal} diet plan has been generated.`;
+    } else if (eventType.startsWith('pharmacy.medicine_desk.')) {
+      const action = resolveText(
+        payload.metadata?.['action'] || (payload as unknown as Record<string, unknown>)['action'],
+        'UPDATED'
+      ).toUpperCase();
+      const status = resolveText(
+        payload.metadata?.['status'] || (payload as unknown as Record<string, unknown>)['status'],
+        ''
+      ).toUpperCase();
+      const queuePosition = Number(
+        payload.metadata?.['queuePosition'] ??
+          (payload as unknown as Record<string, unknown>)['queuePosition'] ??
+          0
+      );
+      const totalInQueue = Number(
+        payload.metadata?.['totalInQueue'] ??
+          (payload as unknown as Record<string, unknown>)['totalInQueue'] ??
+          0
+      );
+      const readyForHandover =
+        Boolean(payload.metadata?.['readyForHandover']) ||
+        Boolean((payload as unknown as Record<string, unknown>)['readyForHandover']);
+      const pendingAmount = Number(
+        payload.metadata?.['pendingAmount'] ??
+          (payload as unknown as Record<string, unknown>)['pendingAmount'] ??
+          0
+      );
+
+      title = 'Pharmacy Update';
+      if (readyForHandover || action === 'DISPENSED' || status === 'READY_FOR_HANDOVER') {
+        body = 'Your medicines are ready at the pharmacy counter.';
+      } else if (pendingAmount > 0) {
+        body = `Your prescription is queued in pharmacy. Pending amount: ${pendingAmount}.`;
+      } else if (queuePosition > 0) {
+        body = `Your prescription is in the pharmacy queue at position ${queuePosition}${totalInQueue > 0 ? ` of ${totalInQueue}` : ''}.`;
+      } else {
+        body = 'Your pharmacy request has been updated.';
+      }
+    } else if (eventType.startsWith('ayurveda.')) {
+      if (eventType.includes('.prakriti.assessed')) {
+        const prakritiType = resolveText(
+          payload.metadata?.['prakritiType'] ||
+            (payload as unknown as Record<string, unknown>)['prakritiType'],
+          'your'
+        );
+        title = 'Prakriti Assessment Complete';
+        body = `Your Ayurvedic constitution (Prakriti) has been assessed as ${prakritiType}. Your personalized treatment plan is being prepared.`;
+      } else if (eventType.includes('.diagnosis.created')) {
+        const diagnosisLabel = resolveText(
+          payload.metadata?.['diagnosisLabel'] ||
+            (payload as unknown as Record<string, unknown>)['diagnosisLabel'],
+          'new'
+        );
+        title = 'Ayurvedic Diagnosis Ready';
+        body = `A new Ayurvedic diagnosis (${diagnosisLabel}) has been recorded in your health records.`;
+      } else if (eventType.includes('.prescription.created')) {
+        title = 'Ayurvedic Prescription Ready';
+        body =
+          'Your Ayurvedic prescription has been created. Please collect your medicines from the pharmacy.';
+      } else if (eventType.includes('.dosha.imbalance')) {
+        const dominantDosha = resolveText(
+          payload.metadata?.['dominantDosha'] ||
+            (payload as unknown as Record<string, unknown>)['dominantDosha'],
+          ''
+        );
+        title = 'Dosha Imbalance Alert';
+        body = dominantDosha
+          ? `${dominantDosha} imbalance has been detected. Please consult your Ayurvedic physician.`
+          : 'A dosha imbalance has been detected. Please consult your Ayurvedic physician.';
+      } else {
+        title = 'Ayurveda Update';
+        body = 'You have a new Ayurveda-related notification.';
       }
     } else if (eventType.startsWith('user.')) {
       if (eventType.includes('.logged_in')) {
@@ -1508,6 +1853,17 @@ export class NotificationEventListener implements OnModuleInit {
       (nestedPayload['type'] as string | undefined) ||
       (nestedPayload['appointmentType'] as string | undefined) ||
       'in-person';
+    const treatmentType =
+      (payload.metadata?.['treatmentType'] as string | undefined) ||
+      (eventPayload['treatmentType'] as string | undefined) ||
+      (appointment['treatmentType'] as string | undefined) ||
+      (nestedPayload['treatmentType'] as string | undefined) ||
+      undefined;
+    const serviceLabel =
+      (payload.metadata?.['serviceLabel'] as string | undefined) ||
+      (eventPayload['serviceLabel'] as string | undefined) ||
+      findTreatmentCatalogEntryOrUndefined(treatmentType)?.label ||
+      undefined;
     const appointmentDateValue =
       payload.metadata?.['appointmentDate'] ||
       payload.metadata?.['scheduledDate'] ||
@@ -1585,6 +1941,7 @@ export class NotificationEventListener implements OnModuleInit {
           asString(nestedPayload['clinicName']) ||
           'Healthcare Clinic',
         appointmentType,
+        ...(serviceLabel ? { serviceLabel } : {}),
       },
     };
   }

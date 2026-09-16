@@ -1,54 +1,152 @@
 #!/bin/bash
-# Smart Deployment Orchestrator
-# Implements intelligent deployment logic based on infrastructure and application changes
+# ============================================================================
+# deploy.sh — Multi-environment Docker deployment orchestrator
+# ----------------------------------------------------------------------------
+# Handles deployments for both production and preprod environments.
+# Production uses blue-green (zero-downtime) when BLUE_GREEN=true.
+# Preprod uses standard rolling deploy (BLUE_GREEN=false).
+#
+# Both environments pull images directly from GHCR (authenticated via
+# GITHUB_TOKEN + GITHUB_USERNAME). No local registry or Coolify required.
+#
+# Usage:
+#   ./deploy.sh --env production|preprod [--blue-green] [--dry-run]
+#
+# Environment variables (set by CI or defaults):
+#   DEPLOY_ENV         - Target environment (production|preprod)
+#   CONTAINER_PREFIX    - "latest-" for production, "preprod-" for preprod
+#   COMPOSE_FILE       - docker-compose.prod.yml or docker-compose.preprod.yml
+#   BLUE_GREEN         - "true" for zero-downtime production deploy
+#   INFRA_CHANGED      - "true" if infra files changed (triggers infra deploy)
+#   APP_CHANGED        - "true" if app code changed (triggers app deploy)
+#   GITHUB_TOKEN       - GHCR auth token (passed from CI)
+#   GITHUB_USERNAME    - GHCR auth username (passed from CI)
+#
+# Requirements: 1.x, 4.x, 6.x, 7.x, 8.x, 10.x
+# ============================================================================
 
 set -euo pipefail
+
+# ----------------------------------------------------------------------------
+# Defaults
+# ----------------------------------------------------------------------------
+DEPLOY_ENV="${DEPLOY_ENV:-production}"
+CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
+BLUE_GREEN="${BLUE_GREEN:-false}"
+DRY_RUN="${DRY_RUN:-false}"
+INFRA_CHANGED="${INFRA_CHANGED:-true}"
+APP_CHANGED="${APP_CHANGED:-true}"
+INFRA_HEALTHY="${INFRA_HEALTHY:-false}"
+INFRA_ALREADY_HANDLED="${INFRA_ALREADY_HANDLED:-false}"
+BACKUP_ID="${BACKUP_ID:-}"
+POSTGRES_CONTAINER="postgres"
+DRAGONFLY_CONTAINER="dragonfly"
+
+# ----------------------------------------------------------------------------
+# Argument parsing
+# ----------------------------------------------------------------------------
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --env)
+            DEPLOY_ENV="$2"
+            shift 2
+            ;;
+        --blue-green)
+            BLUE_GREEN="true"
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN="true"
+            shift
+            ;;
+        --compose-file)
+            COMPOSE_FILE="$2"
+            shift 2
+            ;;
+        --container-prefix)
+            CONTAINER_PREFIX="$2"
+            shift 2
+            ;;
+        --infra-changed)
+            INFRA_CHANGED="true"
+            shift
+            ;;
+        --app-changed)
+            APP_CHANGED="true"
+            shift
+            ;;
+        --skip-infra)
+            INFRA_ALREADY_HANDLED="true"
+            shift
+            ;;
+        -h|--help)
+            cat <<EOF
+Usage: $0 [OPTIONS]
+
+Options:
+  --env ENV              Target environment: production|preprod (default: production)
+  --blue-green           Enable blue-green deployment (production only)
+  --dry-run              Print actions without executing
+  --compose-file FILE    Override compose file (default: auto from env)
+  --container-prefix P   Override container prefix (default: auto from env)
+  --infra-changed        Force infrastructure deployment
+  --app-changed          Force application deployment
+  --skip-infra           Skip infrastructure (already handled by CI)
+  -h, --help             Show this help
+
+Environment Variables:
+  DEPLOY_ENV         - Target environment (production|preprod)
+  CONTAINER_PREFIX    - "latest-" or "preprod-"
+  COMPOSE_FILE       - docker-compose.prod.yml or docker-compose.preprod.yml
+  BLUE_GREEN         - "true" for zero-downtime production deploy
+EOF
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            exit 2
+            ;;
+    esac
+done
+
+# ----------------------------------------------------------------------------
+# Validate environment
+# ----------------------------------------------------------------------------
+if [[ "$DEPLOY_ENV" != "production" && "$DEPLOY_ENV" != "preprod" ]]; then
+    echo "ERROR: --env must be 'production' or 'preprod'" >&2
+    exit 2
+fi
+
+# ----------------------------------------------------------------------------
+# Auto-configure based on environment
+# ----------------------------------------------------------------------------
+auto_configure() {
+    case "$DEPLOY_ENV" in
+        production)
+            [[ "$CONTAINER_PREFIX" == "latest-" ]] || CONTAINER_PREFIX="latest-"
+            [[ "$COMPOSE_FILE" == "docker-compose.prod.yml" ]] || COMPOSE_FILE="docker-compose.prod.yml"
+            BLUE_GREEN="${BLUE_GREEN:-true}"
+            ;;
+        preprod)
+            [[ "$CONTAINER_PREFIX" == "preprod-" ]] || CONTAINER_PREFIX="preprod-"
+            [[ "$COMPOSE_FILE" == "docker-compose.preprod.yml" ]] || COMPOSE_FILE="docker-compose.preprod.yml"
+            BLUE_GREEN="false"
+            ;;
+    esac
+    echo "Deploy config: env=${DEPLOY_ENV} prefix=${CONTAINER_PREFIX} compose=${COMPOSE_FILE} blue_green=${BLUE_GREEN}"
+}
 
 # Save deploy script directory BEFORE sourcing utils.sh (which sets its own SCRIPT_DIR)
 DEPLOY_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_DIR="${DEPLOY_SCRIPT_DIR}"  # Will be overwritten by utils.sh, but we keep original
 source "${DEPLOY_SCRIPT_DIR}/../shared/utils.sh"
 # Restore deploy script directory after sourcing utils.sh
-# Restore deploy script directory after sourcing utils.sh
 SCRIPT_DIR="${DEPLOY_SCRIPT_DIR}"
 
 log_info "Deploy script started"
 log_info "Using BASE_DIR: ${BASE_DIR}"
 log_info "Using ENV_FILE: ${ENV_FILE}"
-
-# Verify environment file exists
-if [ ! -f "${ENV_FILE}" ]; then
-    log_error "CRITICAL: Environment file not found at ${ENV_FILE}"
-    log_error "This will cause migration and container startup failures."
-    log_error "Ensure CI/CD is creating the file in the correct location: ${BASE_DIR}/.env.production"
-    exit 1
-fi
-
-# This script is Docker-specific for production deployments
-
-# Container prefix (only for app containers, infrastructure uses fixed names)
-CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
-
-# Fixed container names for infrastructure (never change)
-POSTGRES_CONTAINER="postgres"
-DRAGONFLY_CONTAINER="dragonfly"
-
-# Parse environment variables with defaults
-# These are set by CI/CD workflow, but we provide safe defaults for manual execution
-INFRA_CHANGED="${INFRA_CHANGED:-false}"
-# CRITICAL: Default APP_CHANGED to true for production deployments (main branch)
-# This ensures we always deploy the latest image, preventing Docker from using cached :latest images
-# Note: This script is only called for production deployments (main branch) via CI/CD
-# For other branches, the deploy job doesn't run, so this default only affects production
-APP_CHANGED="${APP_CHANGED:-true}"
-INFRA_HEALTHY="${INFRA_HEALTHY:-true}"
-INFRA_STATUS="${INFRA_STATUS:-healthy}"
-BACKUP_ID="${BACKUP_ID:-}"
-
-# Flag to indicate if infrastructure operations were already handled by CI/CD
-# When INFRA_ALREADY_HANDLED=true, skip infrastructure operations in deploy.sh
-# (They were already done by separate GitHub Actions jobs)
-INFRA_ALREADY_HANDLED="${INFRA_ALREADY_HANDLED:-false}"
 
 # Normalize boolean values (handle "true"/"false" strings and actual booleans)
 normalize_bool() {
@@ -221,13 +319,13 @@ stop_infrastructure_gracefully() {
 deploy_infrastructure() {
     log_info "Deploying infrastructure..."
     
-    # Ensure docker-compose.prod.yml exists (restores from /tmp or git if missing)
+    # Ensure compose file exists (restores from /tmp or git if missing)
     if ! ensure_compose_file; then
         log_error "Failed to ensure docker-compose.prod.yml exists"
         return 1
     fi
     
-    local compose_file="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
+    local compose_file="${BASE_DIR}/devops/docker/${COMPOSE_FILE}"
     
     # Ensure directory exists before changing into it
     local compose_dir="$(dirname "$compose_file")"
@@ -251,13 +349,13 @@ deploy_infrastructure() {
         log_warning "Graceful stop had issues, but continuing..."
     }
     
-    # Pull infrastructure images (e.g. postgres:18) so server uses versions from docker-compose.prod.yml, not cached old images
+    # Pull infrastructure images so server uses versions from compose file, not cached old images
     log_info "Pulling infrastructure images (postgres:18, dragonfly, portainer)..."
-    docker compose -f docker-compose.prod.yml --profile infrastructure pull --quiet || true
+    docker compose -f "$COMPOSE_FILE" --profile infrastructure pull --quiet || true
     
     # Recreate infrastructure (volumes are preserved by docker compose)
     # Using --force-recreate to ensure containers are recreated with pulled images (e.g. PostgreSQL 18)
-    if docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate; then
+    if docker compose -f "$COMPOSE_FILE" --profile infrastructure up -d --force-recreate; then
         log_success "Infrastructure deployed"
         
         # Wait for health (using fixed container names) with retry logic
@@ -319,7 +417,7 @@ deploy_infrastructure() {
 deploy_application() {
     log_info "Deploying application..."
     
-    local compose_file="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
+    local compose_file="${BASE_DIR}/devops/docker/${COMPOSE_FILE}"
     cd "$(dirname "$compose_file")" || return 1
     
     # Validate container dependencies before deployment
@@ -585,7 +683,7 @@ deploy_application() {
     # NOTE: Only pulling api and worker, NOT infrastructure containers
     log_info "Pulling via docker compose to sync with compose file (ONLY api and worker images)..."
     # The --quiet flag suppresses output but still pulls the latest version
-    docker compose -f docker-compose.prod.yml --profile infrastructure --profile app pull --quiet api worker 2>&1 || {
+    docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app pull --quiet api worker 2>&1 || {
         log_warning "docker compose pull had issues, but direct pull succeeded - continuing..."
         log_info "Direct docker pull was successful, docker-compose will use that image"
     }
@@ -608,10 +706,10 @@ deploy_application() {
     local worker_container="${CONTAINER_PREFIX}worker"
     
     # Step 1: Stop via docker compose (graceful)
-    docker compose -f docker-compose.prod.yml --profile infrastructure --profile app stop api worker 2>&1 || true
+    docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app stop api worker 2>&1 || true
     
     # Step 2: Remove via docker compose
-    docker compose -f docker-compose.prod.yml --profile infrastructure --profile app rm -f api worker 2>&1 || true
+    docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app rm -f api worker 2>&1 || true
     
     # Step 3: ALWAYS force stop/remove directly (regardless of container state)
     # This ensures containers are removed even if docker compose didn't catch them
@@ -701,7 +799,7 @@ deploy_application() {
     # --no-deps ensures infrastructure containers (postgres, dragonfly, etc.) are NOT recreated
     # We specify api worker explicitly to only recreate these two containers
     # Note: Containers were already stopped and removed above, so this will create fresh ones with new image
-    if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1 | tee /tmp/docker-compose-up.log; then
+    if docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1 | tee /tmp/docker-compose-up.log; then
         log_info "Waiting for containers to start..."
         sleep 5
         
@@ -758,7 +856,7 @@ deploy_application() {
                 export DOCKER_IMAGE="${DOCKER_IMAGE}"
                 
                 # Force recreate with explicit image pull
-                if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api 2>&1; then
+                if docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api 2>&1; then
                     log_info "Container recreated, verifying again..."
                     sleep 3
                     local new_api_image_id=$(docker inspect --format='{{.Image}}' "$api_container" 2>/dev/null || echo "")
@@ -807,7 +905,7 @@ deploy_application() {
                 export DOCKER_IMAGE="${DOCKER_IMAGE}"
                 
                 # Force recreate with explicit image pull
-                if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps worker 2>&1; then
+                if docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps worker 2>&1; then
                     log_info "Container recreated, verifying again..."
                     sleep 3
                     local new_worker_image_id=$(docker inspect --format='{{.Image}}' "$worker_container" 2>/dev/null || echo "")
@@ -988,7 +1086,7 @@ deploy_application() {
             # Use Node.js instead of curl (curl not available in container)
             docker exec "$api_container" node -e "
                 const http = require('http');
-                http.get('http://localhost:8088/health', (res) => {
+                http.get('http://localhost:8088/infra-health', (res) => {
                     let data = '';
                     res.on('data', (chunk) => { data += chunk; });
                     res.on('end', () => {
@@ -1202,7 +1300,7 @@ verify_container_images() {
 }
 
 # Verify application readiness (requires actual database connection)
-# Uses /health/ready endpoint which checks if database is actually connected
+# Uses /infra-health endpoint which checks only infrastructure readiness
 # This ensures pipeline fails if database connection is not established
 verify_application_health() {
     local api_container="$1"
@@ -1213,7 +1311,7 @@ verify_application_health() {
     local elapsed=0
     
     log_info "Verifying application health (requires database connection, timeout: ${health_timeout}s)..."
-    log_info "Using /health endpoint - this requires actual database connection (no grace period)"
+    log_info "Using /infra-health endpoint for deploy gating - this avoids depending on the public /health contract"
     
     while [[ $elapsed -lt $health_timeout ]]; do
         # Try internal health check using Node.js (curl not available in container)
@@ -1221,7 +1319,7 @@ verify_application_health() {
         local health_response="000"
         if docker exec "$api_container" node -e "
             const http = require('http');
-            const req = http.get('http://localhost:8088/health', (res) => {
+            const req = http.get('http://localhost:8088/infra-health', (res) => {
                 process.exit(res.statusCode === 200 ? 0 : 1);
             });
             req.on('error', () => process.exit(1));
@@ -1236,7 +1334,7 @@ verify_application_health() {
         fi
         
         # Try external health check (from host, curl should be available on host)
-        local external_response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8088/health 2>/dev/null || echo "000")
+        local external_response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8088/infra-health 2>/dev/null || echo "000")
         if [[ "$external_response" == "200" ]]; then
             log_success "Application health check passed (external HTTP 200) - database is connected"
             return 0
@@ -1304,7 +1402,7 @@ recover_containers() {
     
     # Start containers
     export DOCKER_IMAGE="${DOCKER_IMAGE}"
-    if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
+    if docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
         log_info "Containers started, waiting for startup..."
         sleep 10
         
@@ -1346,7 +1444,7 @@ fix_container_images() {
     
     # Start containers with fresh image
     export DOCKER_IMAGE="${DOCKER_IMAGE}"
-    if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
+    if docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
         sleep 5
         
         # Verify the fix
@@ -1398,7 +1496,7 @@ recover_unhealthy_containers() {
         sleep 3
         
         export DOCKER_IMAGE="${DOCKER_IMAGE}"
-        if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
+        if docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
             sleep 15
             
             if container_running "$api_container" && container_running "$worker_container"; then
@@ -1431,7 +1529,7 @@ fix_environment_variables() {
 
     # Start with explicit environment
     DOCKER_IMAGE="${DOCKER_IMAGE}" \
-        docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1 || {
+        docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1 || {
         log_error "Failed to start containers with fixed environment"
         return 1
     }
@@ -1491,7 +1589,7 @@ rollback_to_backup_image() {
     
     # Start containers with backup image
     export DOCKER_IMAGE="${DOCKER_IMAGE}"
-    if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --force-recreate --no-deps api worker 2>&1; then
+    if docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --force-recreate --no-deps api worker 2>&1; then
         sleep 10
         
         if container_running "$api_container" && container_running "$worker_container"; then
@@ -1668,7 +1766,7 @@ verify_and_deploy_latest_image() {
         # Start containers with latest image
         log_info "Starting containers with latest image..."
         export DOCKER_IMAGE="${DOCKER_IMAGE}"
-        if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
+        if docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
             log_info "Containers started, waiting for startup..."
             sleep 10
             
@@ -1895,23 +1993,23 @@ run_migrations_safely() {
     }
     
     local database_url=""
-    local env_production_path="${BASE_DIR}/.env.production"
-    [[ ! -f "$env_production_path" ]] && env_production_path="${SCRIPT_DIR}/../../.env.production"
+    local env_file_path="${ENV_FILE:-${BASE_DIR}/.env.production}"
+    [[ ! -f "$env_file_path" ]] && env_file_path="${SCRIPT_DIR}/../../.env.production"
     
     # Priority 1: Check if DATABASE_URL is set in deployment script environment (from GitHub Actions)
     if [[ -n "${DATABASE_URL:-}" ]] && validate_database_url "${DATABASE_URL}"; then
         database_url="${DATABASE_URL}"
         log_info "Using DATABASE_URL from GitHub Actions/environment variable"
     else
-        # Priority 2: Try to read from .env.production file
-        log_info "DATABASE_URL not found in environment, checking .env.production file..."
-        if [[ -f "$env_production_path" ]]; then
+        # Priority 2: Try to read from the resolved env file
+        log_info "DATABASE_URL not found in environment, checking resolved env file..."
+        if [[ -f "$env_file_path" ]]; then
             local env_db_url
-            env_db_url=$(grep -E "^DATABASE_URL=" "$env_production_path" 2>/dev/null | head -n 1 | sed 's/^DATABASE_URL=//' | sed 's/^["'\'']//;s/["'\'']$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || echo "")
+            env_db_url=$(grep -E "^DATABASE_URL=" "$env_file_path" 2>/dev/null | head -n 1 | sed 's/^DATABASE_URL=//' | sed 's/^["'\'']//;s/["'\'']$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || echo "")
             
             if [[ -n "$env_db_url" ]] && validate_database_url "$env_db_url"; then
                 database_url="$env_db_url"
-                log_success "Using DATABASE_URL from .env.production file"
+                log_success "Using DATABASE_URL from resolved env file"
             fi
         fi
         
@@ -1932,7 +2030,7 @@ run_migrations_safely() {
             log_error "=========================================="
             log_error "DATABASE_URL must be provided via one of:"
             log_error "  1. GitHub Actions environment variable/secrets (recommended)"
-            log_error "  2. .env.production file"
+            log_error "  2. Resolved env file"
             log_error "  3. Existing running container environment"
             log_error "=========================================="
             return 1
@@ -2041,7 +2139,7 @@ setTimeout(()=>{console.log('TIMEOUT');process.exit(1)},10000);
         log_info "Running Prisma migration via one-shot container..."
         oneshot_migration_output=$(docker run --rm \
             --network app-network \
-            --env-file "${BASE_DIR}/.env.production" \
+            --env-file "${ENV_FILE}" \
             -e "DATABASE_URL=$database_url" \
             --entrypoint bash \
             "$migration_image" \
@@ -2085,11 +2183,8 @@ setTimeout(()=>{console.log('TIMEOUT');process.exit(1)},10000);
             log_error "One-shot migration failed with exit code: $oneshot_migration_exit_code"
             log_error "Full output saved to /tmp/migration.log"
             echo "$oneshot_migration_output" > /tmp/migration.log 2>&1 || true
-            
-            # Rollback if we have a backup
             if [[ -n "$PRE_MIGRATION_BACKUP" ]]; then
-                log_warning "Rolling back to pre-migration backup..."
-                restore_backup "$PRE_MIGRATION_BACKUP"
+                log_warning "Pre-migration backup preserved for manual recovery: $PRE_MIGRATION_BACKUP"
             fi
             return 1
         fi
@@ -2200,38 +2295,38 @@ setTimeout(()=>{console.log('TIMEOUT');process.exit(1)},10000);
    
     
     local database_url
-    local env_production_path="${SCRIPT_DIR}/../../.env.production"
+    local env_file_path="${ENV_FILE:-${SCRIPT_DIR}/../../.env.production}"
     
     # Priority 1: Check if DATABASE_URL is set in deployment script environment (from GitHub Actions)
     if [[ -n "${DATABASE_URL:-}" ]] && validate_database_url "${DATABASE_URL}"; then
         database_url="${DATABASE_URL}"
         log_info "Using DATABASE_URL from GitHub Actions/environment variable"
     else
-        # Priority 2: Try to read from .env.production file (backup from previous deployment)
-        log_info "DATABASE_URL not found in environment, checking .env.production file..."
-        if [[ -f "$env_production_path" ]]; then
-            # Read DATABASE_URL from .env.production
+        # Priority 2: Try to read from the resolved env file
+        log_info "DATABASE_URL not found in environment, checking resolved env file..."
+        if [[ -f "$env_file_path" ]]; then
+            # Read DATABASE_URL from the resolved env file
             # Handle both formats: DATABASE_URL=value and DATABASE_URL="value" or DATABASE_URL='value'
             local env_db_url
-            env_db_url=$(grep -E "^DATABASE_URL=" "$env_production_path" 2>/dev/null | head -n 1 | sed 's/^DATABASE_URL=//' | sed 's/^["'\'']//;s/["'\'']$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || echo "")
+            env_db_url=$(grep -E "^DATABASE_URL=" "$env_file_path" 2>/dev/null | head -n 1 | sed 's/^DATABASE_URL=//' | sed 's/^["'\'']//;s/["'\'']$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || echo "")
             
             if [[ -n "$env_db_url" ]] && validate_database_url "$env_db_url"; then
                 database_url="$env_db_url"
-                log_success "Using DATABASE_URL from .env.production file (backup from previous deployment)"
+                log_success "Using DATABASE_URL from resolved env file (backup from previous deployment)"
             else
                 if [[ -n "$env_db_url" ]]; then
-                    log_warning "DATABASE_URL found in .env.production but is invalid format"
+                    log_warning "DATABASE_URL found in resolved env file but is invalid format"
                 else
-                    log_warning "DATABASE_URL not found in .env.production file"
+                    log_warning "DATABASE_URL not found in resolved env file"
                 fi
             fi
         else
-            log_warning ".env.production file not found at: $env_production_path"
+            log_warning "Resolved env file not found at: $env_file_path"
         fi
         
         # Priority 3: Try to read from existing container environment (if container is running)
         if [[ -z "${database_url:-}" ]]; then
-            log_info "DATABASE_URL not found in .env.production, checking existing container..."
+            log_info "DATABASE_URL not found in resolved env file, checking existing container..."
             if container_running "${CONTAINER_PREFIX}api"; then
                 local db_url_output
                 db_url_output=$(docker exec "${CONTAINER_PREFIX}api" printenv DATABASE_URL 2>&1)
@@ -2259,15 +2354,15 @@ setTimeout(()=>{console.log('TIMEOUT');process.exit(1)},10000);
             log_error "=========================================="
             log_error "DATABASE_URL must be provided via one of:"
             log_error "  1. GitHub Actions environment variable/secrets (recommended)"
-            log_error "  2. .env.production file (backup from previous deployment)"
+            log_error "  2. Resolved env file (backup from previous deployment)"
             log_error "  3. Existing running container environment"
             log_error ""
             log_error "For security reasons, no hardcoded DATABASE_URL is allowed."
-            log_error "Please ensure DATABASE_URL is set in GitHub Actions secrets or .env.production file."
+            log_error "Please ensure DATABASE_URL is set in GitHub Actions secrets or the resolved env file."
             log_error ""
             log_error "To fix:"
             log_error "  - Set DATABASE_URL in GitHub Actions workflow secrets/env vars"
-            log_error "  - Or ensure .env.production exists with DATABASE_URL"
+            log_error "  - Or ensure the resolved env file exists with DATABASE_URL"
             log_error "  - Or ensure container is running with DATABASE_URL in environment"
             log_error "=========================================="
             return 1
@@ -2329,7 +2424,7 @@ setTimeout(()=>{console.log('TIMEOUT');process.exit(1)},10000);
         log_error "Please verify:"
         log_error "  1. PostgreSQL container is running and healthy"
         log_error "  2. Password in DATABASE_URL matches POSTGRES_PASSWORD in docker-compose"
-        log_error "  3. .env.production file doesn't override DATABASE_URL with wrong password"
+        log_error "  3. The env file doesn't override DATABASE_URL with wrong password"
         log_error ""
         log_error "Database connection failed even after password fix attempt"
         log_error "This indicates a serious configuration issue"
@@ -2615,8 +2710,7 @@ console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'
         else
             log_error "Schema validation failed after migration"
             if [[ -n "$PRE_MIGRATION_BACKUP" ]]; then
-                log_warning "Rolling back to pre-migration backup..."
-                restore_backup "$PRE_MIGRATION_BACKUP"
+                log_warning "Pre-migration backup preserved for manual recovery: $PRE_MIGRATION_BACKUP"
             fi
             return 1
         fi
@@ -2874,7 +2968,7 @@ BASELINE_SQL
             
             log_error ""
             log_error "RECOMMENDED ACTIONS:"
-            log_error "1. Increase container memory limit in docker-compose.prod.yml"
+            log_error "1. Increase container memory limit in ${COMPOSE_FILE}"
             log_error "2. Check container logs: docker logs ${CONTAINER_PREFIX}api"
             log_error "3. Check system memory: free -h"
             log_error "4. Consider running migrations with lower memory footprint"
@@ -2897,10 +2991,7 @@ BASELINE_SQL
             log_warning "Migration recovery summary: ${migration_recovery_action}"
         fi
         if [[ -n "$PRE_MIGRATION_BACKUP" ]]; then
-            log_warning "Rolling back to pre-migration backup..."
-            restore_backup "$PRE_MIGRATION_BACKUP" || {
-                log_error "CRITICAL: Backup restore also failed - database may be in inconsistent state"
-            }
+            log_warning "Pre-migration backup preserved for manual recovery: $PRE_MIGRATION_BACKUP"
         fi
         
         # CRITICAL: Always return error code to ensure deployment fails
@@ -2961,7 +3052,7 @@ rollback_deployment() {
         
         # Stop and remove current containers
         log_info "Stopping current containers..."
-        local compose_file="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
+        local compose_file="${BASE_DIR}/devops/docker/${COMPOSE_FILE}"
         if [[ -f "$compose_file" ]]; then
             cd "$(dirname "$compose_file")" || {
                 log_error "Failed to change to compose directory"
@@ -2969,13 +3060,13 @@ rollback_deployment() {
             }
         fi
         
-        docker compose -f docker-compose.prod.yml --profile infrastructure --profile app stop api worker 2>&1 || true
-        docker compose -f docker-compose.prod.yml --profile infrastructure --profile app rm -f api worker 2>&1 || true
+        docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app stop api worker 2>&1 || true
+        docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app rm -f api worker 2>&1 || true
         
         # Start containers with backup image
         log_info "Starting containers with backup image..."
         export DOCKER_IMAGE="$OLD_IMAGE_BACKUP_TAG"
-        if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --no-deps api worker 2>&1; then
+        if docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app up -d --no-deps api worker 2>&1; then
             log_success "Containers restarted with backup image"
             # Wait a moment for containers to start
             sleep 5
@@ -3172,10 +3263,10 @@ main() {
                 log_info "Using backup script: ${backup_script}"
                 
                 # Ensure containers are running for backup (pull first so postgres:18 etc. from compose is used)
-                docker compose -f docker-compose.prod.yml --profile infrastructure pull --quiet postgres dragonfly 2>/dev/null || true
+                docker compose -f "$COMPOSE_FILE" --profile infrastructure pull --quiet postgres dragonfly 2>/dev/null || true
                 if ! container_running "${POSTGRES_CONTAINER}"; then
                     log_warning "PostgreSQL container not running - starting for backup..."
-                    docker compose -f docker-compose.prod.yml --profile infrastructure up -d postgres || {
+                    docker compose -f "$COMPOSE_FILE" --profile infrastructure up -d postgres || {
                         log_error "Failed to start PostgreSQL for backup"
                         exit $EXIT_CRITICAL
                     }
@@ -3187,7 +3278,7 @@ main() {
                 
                 if ! container_running "${DRAGONFLY_CONTAINER}"; then
                     log_warning "Dragonfly container not running - starting for backup..."
-                    docker compose -f docker-compose.prod.yml --profile infrastructure up -d dragonfly || {
+                    docker compose -f "$COMPOSE_FILE" --profile infrastructure up -d dragonfly || {
                         log_error "Failed to start Dragonfly for backup"
                         exit $EXIT_CRITICAL
                     }
@@ -3381,10 +3472,10 @@ main() {
                         log_info "Using backup script: ${backup_script}"
                         
                         # Ensure containers are running for backup (pull first so postgres:18 etc. from compose is used)
-                        docker compose -f docker-compose.prod.yml --profile infrastructure pull --quiet postgres dragonfly 2>/dev/null || true
+                        docker compose -f "$COMPOSE_FILE" --profile infrastructure pull --quiet postgres dragonfly 2>/dev/null || true
                         if ! container_running "${POSTGRES_CONTAINER}"; then
                             log_warning "PostgreSQL container not running - starting for backup..."
-                            docker compose -f docker-compose.prod.yml --profile infrastructure up -d postgres || {
+                            docker compose -f "$COMPOSE_FILE" --profile infrastructure up -d postgres || {
                                 log_error "Failed to start PostgreSQL for backup"
                                 exit $EXIT_CRITICAL
                             }
@@ -3396,7 +3487,7 @@ main() {
                         
                         if ! container_running "${DRAGONFLY_CONTAINER}"; then
                             log_warning "Dragonfly container not running - starting for backup..."
-                            docker compose -f docker-compose.prod.yml --profile infrastructure up -d dragonfly || {
+                            docker compose -f "$COMPOSE_FILE" --profile infrastructure up -d dragonfly || {
                                 log_error "Failed to start Dragonfly for backup"
                                 exit $EXIT_CRITICAL
                             }

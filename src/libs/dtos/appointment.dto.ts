@@ -1,4 +1,3 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsString,
   IsOptional,
@@ -18,8 +17,31 @@ import {
   Matches,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsClinicId } from '@core/decorators/clinic-id.validator';
-import { Role } from '@core/types/enums.types';
+import {
+  Role,
+  AppointmentType,
+  TreatmentType,
+  AppointmentServiceCategory,
+  AppointmentQueueCategory,
+  AppointmentBillingMode,
+} from '@core/types/enums.types';
+import {
+  FOLLOW_UP_PLAN_TYPES,
+  FOLLOW_UP_PRIORITY_LEVELS,
+  type FollowUpPlanType,
+  type FollowUpPriorityLevel,
+} from '@core/types/appointment.types';
+import type { TreatmentFamily } from '@core/types/treatment-catalog.types';
+
+export {
+  AppointmentType,
+  TreatmentType,
+  AppointmentServiceCategory,
+  AppointmentQueueCategory,
+  AppointmentBillingMode,
+} from '@core/types/enums.types';
 
 /**
  * Appointment status enumeration
@@ -44,68 +66,6 @@ export enum AppointmentStatus {
   TRANSFERRED = 'TRANSFERRED',
   DISCHARGED = 'DISCHARGED',
   FOLLOW_UP_SCHEDULED = 'FOLLOW_UP_SCHEDULED',
-}
-
-/**
- * Appointment type enumeration
- * @enum {string} AppointmentType
- * @description Defines the different types of appointments available
- * @example AppointmentType.IN_PERSON
- */
-export enum AppointmentType {
-  IN_PERSON = 'IN_PERSON',
-  VIDEO_CALL = 'VIDEO_CALL',
-  HOME_VISIT = 'HOME_VISIT',
-}
-
-/**
- * Treatment type enumeration
- * @enum {string} TreatmentType
- * @description Defines the clinical intent of the appointment
- */
-export enum TreatmentType {
-  GENERAL_CONSULTATION = 'GENERAL_CONSULTATION',
-  FOLLOW_UP = 'FOLLOW_UP',
-  THERAPY = 'THERAPY',
-  SURGERY = 'SURGERY',
-  LAB_TEST = 'LAB_TEST',
-  IMAGING = 'IMAGING',
-  VACCINATION = 'VACCINATION',
-  SPECIAL_CASE = 'SPECIAL_CASE',
-  GERIATRIC_CARE = 'GERIATRIC_CARE',
-  // Ayurveda Types
-  VIDDHAKARMA = 'VIDDHAKARMA',
-  AGNIKARMA = 'AGNIKARMA',
-  PANCHAKARMA = 'PANCHAKARMA',
-  NADI_PARIKSHA = 'NADI_PARIKSHA',
-  DOSHA_ANALYSIS = 'DOSHA_ANALYSIS',
-  SHIRODHARA = 'SHIRODHARA',
-  VIRECHANA = 'VIRECHANA',
-  ABHYANGA = 'ABHYANGA',
-  SWEDANA = 'SWEDANA',
-  BASTI = 'BASTI',
-  NASYA = 'NASYA',
-  RAKTAMOKSHANA = 'RAKTAMOKSHANA',
-}
-
-export enum AppointmentServiceCategory {
-  CONSULTATION = 'CONSULTATION',
-  DIAGNOSIS = 'DIAGNOSIS',
-  TREATMENT = 'TREATMENT',
-  SURGERY = 'SURGERY',
-  COUNSELING = 'COUNSELING',
-  THERAPY = 'THERAPY',
-}
-
-export enum AppointmentQueueCategory {
-  DOCTOR_CONSULTATION = 'DOCTOR_CONSULTATION',
-  THERAPY_PROCEDURE = 'THERAPY_PROCEDURE',
-  MEDICINE_DESK = 'MEDICINE_DESK',
-}
-
-export enum AppointmentBillingMode {
-  SUBSCRIPTION_INCLUDED = 'SUBSCRIPTION_INCLUDED',
-  PER_APPOINTMENT_PAYMENT = 'PER_APPOINTMENT_PAYMENT',
 }
 
 /**
@@ -152,6 +112,192 @@ export enum PaymentMethod {
   CHEQUE = 'CHEQUE',
   INSURANCE = 'INSURANCE',
   DIGITAL_PAYMENT = 'DIGITAL_PAYMENT',
+}
+
+export enum TreatmentRequirementKind {
+  MEDICINE = 'MEDICINE',
+  OIL = 'OIL',
+  HERB = 'HERB',
+  CONSUMABLE = 'CONSUMABLE',
+  ROOM = 'ROOM',
+  BED = 'BED',
+  EQUIPMENT = 'EQUIPMENT',
+  NURSING = 'NURSING',
+  DIET = 'DIET',
+  INVESTIGATION = 'INVESTIGATION',
+  PROCEDURE = 'PROCEDURE',
+  OTHER = 'OTHER',
+}
+
+export class TreatmentRequirementDto {
+  @ApiProperty({
+    enum: TreatmentRequirementKind,
+    enumName: 'TreatmentRequirementKind',
+    description: 'Category of treatment requirement',
+  })
+  @IsEnum(TreatmentRequirementKind)
+  kind!: TreatmentRequirementKind;
+
+  @ApiProperty({
+    example: 'Medicated oil',
+    description: 'Requirement name or description',
+  })
+  @IsString()
+  @IsNotEmpty()
+  name!: string;
+
+  @ApiPropertyOptional({
+    example: 2,
+    description: 'Requested quantity or count',
+  })
+  @IsOptional()
+  @IsNumber()
+  quantity?: number;
+
+  @ApiPropertyOptional({
+    example: 'ml',
+    description: 'Unit for the requirement quantity',
+  })
+  @IsOptional()
+  @IsString()
+  unit?: string;
+
+  @ApiPropertyOptional({
+    example: 'Use before morning session',
+    description: 'Doctor or staff instructions for this requirement',
+  })
+  @IsOptional()
+  @IsString()
+  instructions?: string;
+
+  @ApiPropertyOptional({
+    example: 250,
+    description: 'Estimated unit cost for this requirement',
+  })
+  @IsOptional()
+  @IsNumber()
+  unitCost?: number;
+
+  @ApiPropertyOptional({
+    example: 'pharmacy',
+    description: 'Where this requirement should be fulfilled',
+  })
+  @IsOptional()
+  @IsString()
+  source?: string;
+}
+
+export class TreatmentPricingDto {
+  @ApiPropertyOptional({
+    example: 'INR',
+    description: 'Currency code for the pricing breakdown',
+  })
+  @IsOptional()
+  @IsString()
+  currency?: string;
+
+  @ApiPropertyOptional({
+    example: 1500,
+    description: 'Base fee for the selected treatment or procedure',
+  })
+  @IsOptional()
+  @IsNumber()
+  baseFee?: number;
+
+  @ApiPropertyOptional({
+    example: 300,
+    description: 'Fee for rooms, beds, equipment, or other resources',
+  })
+  @IsOptional()
+  @IsNumber()
+  resourceFee?: number;
+
+  @ApiPropertyOptional({
+    example: 450,
+    description: 'Fee for medicines, oils, consumables, and other stocked items',
+  })
+  @IsOptional()
+  @IsNumber()
+  inventoryFee?: number;
+
+  @ApiPropertyOptional({
+    example: 0,
+    description: 'Any additional fee component not covered above',
+  })
+  @IsOptional()
+  @IsNumber()
+  additionalFee?: number;
+
+  @ApiPropertyOptional({
+    example: 2250,
+    description: 'Total estimated fee for the treatment plan',
+  })
+  @IsOptional()
+  @IsNumber()
+  totalFee?: number;
+}
+
+export class TreatmentPlanDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  diagnosis!: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  treatment!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  followUp?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  recommendations?: string[];
+
+  @ApiPropertyOptional({
+    description: 'High-level classification for the treatment plan',
+  })
+  @IsOptional()
+  @IsString()
+  category?: string;
+
+  @ApiPropertyOptional({
+    description: 'Canonical treatment type such as Panchakarma',
+  })
+  @IsOptional()
+  @IsString()
+  treatmentType?: string;
+
+  @ApiPropertyOptional({
+    description: 'Specific sub-procedure selected by the doctor',
+  })
+  @IsOptional()
+  @IsString()
+  subProcedure?: string;
+
+  @ApiPropertyOptional({
+    type: () => [TreatmentRequirementDto],
+    description: 'Generic doctor-defined treatment requirements',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TreatmentRequirementDto)
+  requirements?: TreatmentRequirementDto[];
+
+  @ApiPropertyOptional({
+    type: () => TreatmentPricingDto,
+    description: 'Estimated fee breakdown for the treatment plan',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => TreatmentPricingDto)
+  pricing?: TreatmentPricingDto;
 }
 
 /**
@@ -377,6 +523,13 @@ export class AppointmentServiceMetadataDto {
   description!: string;
 
   @ApiProperty({
+    example: 'GENERAL',
+    enum: ['GENERAL', 'AYURVEDA'],
+    description: 'Top-level treatment family used for product grouping and analytics',
+  })
+  treatmentFamily!: TreatmentFamily;
+
+  @ApiProperty({
     enum: AppointmentServiceCategory,
     example: AppointmentServiceCategory.CONSULTATION,
   })
@@ -556,10 +709,10 @@ export class UpdateAppointmentDto {
   @IsString()
   prescription?: string;
 
-  @ApiPropertyOptional({ description: 'Treatment Plan' })
+  @ApiPropertyOptional({ description: 'Structured treatment plan', type: Object })
   @IsOptional()
-  @IsString()
-  treatmentPlan?: string;
+  @IsObject({ message: 'Treatment plan must be an object' })
+  treatmentPlan?: TreatmentPlanDto;
 
   @ApiPropertyOptional({ description: 'Follow-up Date' })
   @IsOptional()
@@ -1439,10 +1592,10 @@ export class CompleteAppointmentDto {
   @IsString({ message: 'Diagnosis must be a string' })
   diagnosis?: string;
 
-  @ApiPropertyOptional({ description: 'Treatment plan', required: false })
+  @ApiPropertyOptional({ description: 'Structured treatment plan', required: false, type: Object })
   @IsOptional()
-  @IsString({ message: 'Treatment plan must be a string' })
-  treatmentPlan?: string;
+  @IsObject({ message: 'Treatment plan must be an object' })
+  treatmentPlan?: TreatmentPlanDto;
 
   @ApiPropertyOptional({ description: 'Prescription text', required: false })
   @IsOptional()
@@ -1470,12 +1623,12 @@ export class CompleteAppointmentDto {
 
   @ApiPropertyOptional({
     description: 'Follow-up type',
-    enum: ['routine', 'urgent', 'specialist', 'therapy', 'surgery'],
+    enum: FOLLOW_UP_PLAN_TYPES,
     required: false,
   })
   @IsOptional()
   @IsString({ message: 'Follow-up type must be a string' })
-  followUpType?: 'routine' | 'urgent' | 'specialist' | 'therapy' | 'surgery';
+  followUpType?: FollowUpPlanType;
 
   @ApiPropertyOptional({ description: 'Follow-up instructions', required: false })
   @IsOptional()
@@ -1484,12 +1637,12 @@ export class CompleteAppointmentDto {
 
   @ApiPropertyOptional({
     description: 'Follow-up priority',
-    enum: ['low', 'normal', 'high', 'urgent'],
+    enum: FOLLOW_UP_PRIORITY_LEVELS,
     required: false,
   })
   @IsOptional()
   @IsString({ message: 'Follow-up priority must be a string' })
-  followUpPriority?: 'low' | 'normal' | 'high' | 'urgent';
+  followUpPriority?: FollowUpPriorityLevel;
 
   @ApiPropertyOptional({
     description: 'Tests recommended',
@@ -1693,9 +1846,9 @@ export class FollowUpPlanResponseDto {
 
   @ApiProperty({
     description: 'Follow-up type',
-    enum: ['routine', 'urgent', 'specialist', 'therapy', 'surgery'],
+    enum: FOLLOW_UP_PLAN_TYPES,
   })
-  followUpType!: 'routine' | 'urgent' | 'specialist' | 'therapy' | 'surgery';
+  followUpType!: FollowUpPlanType;
 
   @ApiProperty({ description: 'Scheduled date for follow-up' })
   scheduledFor!: Date;
@@ -1708,9 +1861,9 @@ export class FollowUpPlanResponseDto {
 
   @ApiProperty({
     description: 'Priority level',
-    enum: ['low', 'normal', 'high', 'urgent'],
+    enum: FOLLOW_UP_PRIORITY_LEVELS,
   })
-  priority!: 'low' | 'normal' | 'high' | 'urgent';
+  priority!: FollowUpPriorityLevel;
 
   @ApiProperty({ description: 'Follow-up instructions' })
   instructions!: string;
@@ -1877,11 +2030,11 @@ export class UpdateFollowUpPlanDto {
 
   @ApiPropertyOptional({
     description: 'Follow-up type',
-    enum: ['routine', 'urgent', 'specialist', 'therapy', 'surgery'],
+    enum: FOLLOW_UP_PLAN_TYPES,
   })
   @IsOptional()
   @IsString({ message: 'Follow-up type must be a string' })
-  followUpType?: 'routine' | 'urgent' | 'specialist' | 'therapy' | 'surgery';
+  followUpType?: FollowUpPlanType;
 
   @ApiPropertyOptional({ description: 'Follow-up instructions' })
   @IsOptional()
@@ -1890,11 +2043,11 @@ export class UpdateFollowUpPlanDto {
 
   @ApiPropertyOptional({
     description: 'Follow-up priority',
-    enum: ['low', 'normal', 'high', 'urgent'],
+    enum: FOLLOW_UP_PRIORITY_LEVELS,
   })
   @IsOptional()
   @IsString({ message: 'Priority must be a string' })
-  priority?: 'low' | 'normal' | 'high' | 'urgent';
+  priority?: FollowUpPriorityLevel;
 
   @ApiPropertyOptional({
     description: 'Medications',
@@ -2111,10 +2264,10 @@ export class UpdateAppointmentStatusDto {
   @IsString()
   diagnosis?: string;
 
-  @ApiPropertyOptional({ description: 'Treatment Plan' })
+  @ApiPropertyOptional({ description: 'Structured treatment plan', type: Object })
   @IsOptional()
-  @IsString()
-  treatmentPlan?: string;
+  @IsObject({ message: 'Treatment plan must be an object' })
+  treatmentPlan?: TreatmentPlanDto;
 
   @ApiPropertyOptional({ description: 'Prescription text' })
   @IsOptional()
@@ -2133,11 +2286,11 @@ export class UpdateAppointmentStatusDto {
 
   @ApiPropertyOptional({
     description: 'Follow-up type',
-    enum: ['routine', 'urgent', 'specialist', 'therapy', 'surgery'],
+    enum: FOLLOW_UP_PLAN_TYPES,
   })
   @IsOptional()
   @IsString()
-  followUpType?: 'routine' | 'urgent' | 'specialist' | 'therapy' | 'surgery';
+  followUpType?: FollowUpPlanType;
 
   @ApiPropertyOptional({ description: 'Follow-up instructions' })
   @IsOptional()
@@ -2146,11 +2299,11 @@ export class UpdateAppointmentStatusDto {
 
   @ApiPropertyOptional({
     description: 'Follow-up priority',
-    enum: ['low', 'normal', 'high', 'urgent'],
+    enum: FOLLOW_UP_PRIORITY_LEVELS,
   })
   @IsOptional()
   @IsString()
-  followUpPriority?: 'low' | 'normal' | 'high' | 'urgent';
+  followUpPriority?: FollowUpPriorityLevel;
 
   @ApiPropertyOptional({ description: 'Medications prescribed', type: [String] })
   @IsOptional()

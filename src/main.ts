@@ -812,6 +812,7 @@ async function bootstrap() {
         'docs',
         'queue-dashboard',
         'logger',
+        'logger/health',
         { path: 'logger/ui/events', method: 'GET' },
         { path: 'logger/logs', method: 'GET' },
         { path: 'logger/events', method: 'GET' },

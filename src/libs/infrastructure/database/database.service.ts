@@ -1682,6 +1682,14 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   }
 
   /**
+   * Backward-compatible Prisma accessor.
+   * Existing services still reference `databaseService.prisma`.
+   */
+  get prisma(): PrismaService {
+    return this.prismaService;
+  }
+
+  /**
    * Get connection health status
    * @see IDatabaseClient.getHealthStatus
    */

@@ -1,8 +1,72 @@
 #!/bin/bash
-# Infrastructure health check for the deployment stack.
-# Checks only PostgreSQL, Dragonfly, and Portainer.
+# ============================================================================
+# health-check.sh — Multi-environment infrastructure health checker
+# ----------------------------------------------------------------------------
+# Usage:
+#   ./health-check.sh --env production|preprod [--json]
+#
+# Environment variables:
+#   DEPLOY_ENV         - Target environment (production|preprod)
+#   CONTAINER_PREFIX    - "latest-" or "preprod-"
+#   COMPOSE_FILE       - docker-compose.prod.yml or docker-compose.preprod.yml
+#   BASE_DIR           - Base deployment directory (default: /opt/healthcare-backend)
+# ----------------------------------------------------------------------------
 
 set -euo pipefail
+
+# ----------------------------------------------------------------------------
+# Defaults and argument parsing
+# ----------------------------------------------------------------------------
+DEPLOY_ENV="${DEPLOY_ENV:-production}"
+CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
+BASE_DIR="${BASE_DIR:-/opt/healthcare-backend}"
+OUTPUT_JSON=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --env)
+            DEPLOY_ENV="$2"
+            shift 2
+            ;;
+        --json)
+            OUTPUT_JSON=true
+            shift
+            ;;
+        -h|--help)
+            cat <<EOF
+Usage: $0 [OPTIONS]
+
+Options:
+  --env ENV              Target environment: production|preprod (default: production)
+  --json                 Output JSON format
+  -h, --help             Show this help
+EOF
+            exit 0
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+# ----------------------------------------------------------------------------
+# Auto-configure based on environment
+# ----------------------------------------------------------------------------
+case "$DEPLOY_ENV" in
+    production)
+        [[ "$CONTAINER_PREFIX" == "latest-" ]] || CONTAINER_PREFIX="latest-"
+        [[ "$COMPOSE_FILE" == "docker-compose.prod.yml" ]] || COMPOSE_FILE="docker-compose.prod.yml"
+        ;;
+    preprod)
+        [[ "$CONTAINER_PREFIX" == "preprod-" ]] || CONTAINER_PREFIX="preprod-"
+        [[ "$COMPOSE_FILE" == "docker-compose.preprod.yml" ]] || COMPOSE_FILE="docker-compose.preprod.yml"
+        ;;
+esac
+
+# Fixed container names for infrastructure (never change, regardless of env)
+POSTGRES_CONTAINER="postgres"
+DRAGONFLY_CONTAINER="dragonfly"
 
 validate_container_name() {
     local container="$1"
@@ -26,11 +90,9 @@ declare -A SERVICE_DETAILS
 
 SERVICE_STATUS["postgres"]="unknown"
 SERVICE_STATUS["dragonfly"]="unknown"
-SERVICE_STATUS["portainer"]="unknown"
 
 SERVICE_DETAILS["postgres"]='{"status":"unknown"}'
 SERVICE_DETAILS["dragonfly"]='{"status":"unknown"}'
-SERVICE_DETAILS["portainer"]='{"status":"unknown"}'
 
 set_service_status() {
     local service="$1"
@@ -41,6 +103,65 @@ set_service_status() {
     SERVICE_DETAILS["$service"]="$details"
 }
 
+compose_file() {
+    local candidates=(
+        "${BASE_DIR}/devops/docker/${COMPOSE_FILE}"
+        "$(cd "$(dirname "${BASH_SOURCE[0]}")/../docker" 2>/dev/null && pwd)/${COMPOSE_FILE}"
+        "/tmp/${COMPOSE_FILE}"
+    )
+
+    for candidate in "${candidates[@]}"; do
+        if [[ -f "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+auto_recreate_enabled() {
+    local flag="${AUTO_RECREATE_SERVICES:-${AUTO_RECREATE_MISSING:-false}}"
+    [[ "$flag" == "true" ]]
+}
+
+recreate_service() {
+    local service="$1"
+    local label="$2"
+
+    if ! auto_recreate_enabled; then
+        return 1
+    fi
+
+    local compose
+    if ! compose=$(compose_file); then
+        set_service_status "$service" "missing" "{\"status\":\"missing\",\"error\":\"Compose file not found\"}"
+        return 1
+    fi
+
+    echo "INFO: Auto-recreating ${label} using docker compose" >&2
+    if docker compose -f "$compose" up -d --no-deps --force-recreate "$service" >/dev/null 2>&1; then
+        sleep 5
+        return 0
+    fi
+
+    echo "WARNING: Failed to recreate ${label} using docker compose" >&2
+    return 1
+}
+
+postgres_healthy() {
+    local container="postgres"
+
+    docker exec "$container" pg_isready -U postgres -d userdb >/dev/null 2>&1 && \
+        docker exec "$container" psql -U postgres -d userdb -c "SELECT 1" >/dev/null 2>&1
+}
+
+dragonfly_healthy() {
+    local container="dragonfly"
+
+    docker exec "$container" redis-cli -p 6379 ping >/dev/null 2>&1
+}
+
 check_postgres() {
     local container="postgres"
 
@@ -49,22 +170,27 @@ check_postgres() {
         return 1
     fi
 
-    if ! container_running "$container"; then
-        set_service_status "postgres" "missing" '{"status":"missing","error":"Container not running"}'
-        return 1
-    fi
-
-    if docker exec "$container" pg_isready -U postgres -d userdb >/dev/null 2>&1; then
-        if docker exec "$container" psql -U postgres -d userdb -c "SELECT 1" >/dev/null 2>&1; then
+    if container_running "$container"; then
+        if postgres_healthy; then
             set_service_status "postgres" "healthy" '{"status":"healthy","ready":true,"port":5432}'
             return 0
         fi
 
-        set_service_status "postgres" "unhealthy" '{"status":"unhealthy","error":"Test query failed"}'
+        if recreate_service "postgres" "PostgreSQL" && container_running "$container" && postgres_healthy; then
+            set_service_status "postgres" "healthy" '{"status":"healthy","ready":true,"port":5432,"recreated":true}'
+            return 0
+        fi
+
+        set_service_status "postgres" "unhealthy" '{"status":"unhealthy","error":"PostgreSQL probe failed"}'
         return 1
     fi
 
-    set_service_status "postgres" "unhealthy" '{"status":"unhealthy","error":"pg_isready failed"}'
+    if recreate_service "postgres" "PostgreSQL" && container_running "$container" && postgres_healthy; then
+        set_service_status "postgres" "healthy" '{"status":"healthy","ready":true,"port":5432,"recreated":true}'
+        return 0
+    fi
+
+    set_service_status "postgres" "missing" '{"status":"missing","error":"Container not running"}'
     return 1
 }
 
@@ -76,77 +202,27 @@ check_dragonfly() {
         return 1
     fi
 
-    if ! container_running "$container"; then
-        set_service_status "dragonfly" "missing" '{"status":"missing","error":"Container not running"}'
+    if container_running "$container"; then
+        if dragonfly_healthy; then
+            set_service_status "dragonfly" "healthy" '{"status":"healthy","ready":true,"port":6379,"ping":"PONG"}'
+            return 0
+        fi
+
+        if recreate_service "dragonfly" "Dragonfly" && container_running "$container" && dragonfly_healthy; then
+            set_service_status "dragonfly" "healthy" '{"status":"healthy","ready":true,"port":6379,"ping":"PONG","recreated":true}'
+            return 0
+        fi
+
+        set_service_status "dragonfly" "unhealthy" '{"status":"unhealthy","error":"PING failed"}'
         return 1
     fi
 
-    if docker exec "$container" redis-cli -p 6379 ping >/dev/null 2>&1; then
-        set_service_status "dragonfly" "healthy" '{"status":"healthy","ready":true,"port":6379,"ping":"PONG"}'
+    if recreate_service "dragonfly" "Dragonfly" && container_running "$container" && dragonfly_healthy; then
+        set_service_status "dragonfly" "healthy" '{"status":"healthy","ready":true,"port":6379,"ping":"PONG","recreated":true}'
         return 0
     fi
 
-    set_service_status "dragonfly" "unhealthy" '{"status":"unhealthy","error":"PING failed"}'
-    return 1
-}
-
-check_portainer() {
-    local container="portainer"
-    local container_port="9000/tcp"
-    local host_port
-
-    if ! validate_container_name "$container"; then
-        set_service_status "portainer" "invalid" '{"status":"invalid","error":"Invalid container name"}'
-        return 1
-    fi
-
-    if ! container_running "$container"; then
-        set_service_status "portainer" "missing" '{"status":"missing","error":"Container not running"}'
-        return 1
-    fi
-
-    local docker_health
-    docker_health="$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null || echo "unknown")"
-
-    if [[ "$docker_health" == "healthy" ]]; then
-        set_service_status "portainer" "healthy" '{"status":"healthy","ready":true,"port":9000,"health":"docker"}'
-        return 0
-    fi
-
-    if [[ "$docker_health" == "restarting" ]]; then
-        set_service_status "portainer" "unhealthy" '{"status":"unhealthy","error":"Container restarting"}'
-        return 1
-    fi
-
-    host_port="$(container_host_port "$container" "$container_port")"
-    if [[ -z "$host_port" ]]; then
-        set_service_status "portainer" "unhealthy" '{"status":"unhealthy","error":"Port mapping unavailable"}'
-        return 1
-    fi
-
-    local attempt=0
-    local max_attempts=6
-    while [[ $attempt -lt $max_attempts ]]; do
-        attempt=$((attempt + 1))
-
-        if command -v curl >/dev/null 2>&1; then
-            if curl -fsS --max-time 3 "http://127.0.0.1:${host_port}/api/status" >/dev/null 2>&1; then
-                set_service_status "portainer" "healthy" '{"status":"healthy","ready":true,"port":9000,"health":"api"}'
-                return 0
-            fi
-        elif command -v wget >/dev/null 2>&1; then
-            if wget -q --spider --timeout=3 "http://127.0.0.1:${host_port}/api/status" >/dev/null 2>&1; then
-                set_service_status "portainer" "healthy" '{"status":"healthy","ready":true,"port":9000,"health":"api"}'
-                return 0
-            fi
-        fi
-
-        if [[ $attempt -lt $max_attempts ]]; then
-            sleep 5
-        fi
-    done
-
-    set_service_status "portainer" "unhealthy" '{"status":"unhealthy","error":"Health endpoint failed"}'
+    set_service_status "dragonfly" "missing" '{"status":"missing","error":"Container not running"}'
     return 1
 }
 
@@ -158,8 +234,7 @@ emit_json() {
   "status": "${overall_status}",
   "services": {
     "postgres": ${SERVICE_DETAILS[postgres]},
-    "dragonfly": ${SERVICE_DETAILS[dragonfly]},
-    "portainer": ${SERVICE_DETAILS[portainer]}
+    "dragonfly": ${SERVICE_DETAILS[dragonfly]}
   }
 }
 EOF
@@ -173,9 +248,8 @@ main() {
 
     check_postgres || true
     check_dragonfly || true
-    check_portainer || true
 
-    for service in postgres dragonfly portainer; do
+    for service in postgres dragonfly; do
         case "${SERVICE_STATUS[$service]}" in
             healthy)
                 ;;

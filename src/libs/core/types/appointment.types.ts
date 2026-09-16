@@ -1014,6 +1014,18 @@ export interface ReminderResult {
 // FOLLOW-UP TYPES
 // ============================================================================
 
+export const FOLLOW_UP_PLAN_TYPES = [
+  'routine',
+  'urgent',
+  'specialist',
+  'therapy',
+  'surgery',
+] as const;
+export type FollowUpPlanType = (typeof FOLLOW_UP_PLAN_TYPES)[number];
+
+export const FOLLOW_UP_PRIORITY_LEVELS = ['low', 'normal', 'high', 'urgent'] as const;
+export type FollowUpPriorityLevel = (typeof FOLLOW_UP_PRIORITY_LEVELS)[number];
+
 /**
  * Follow-up plan
  */
@@ -1023,10 +1035,10 @@ export interface FollowUpPlan {
   patientId: string;
   doctorId: string;
   clinicId: string;
-  followUpType: 'routine' | 'urgent' | 'specialist' | 'therapy' | 'surgery';
+  followUpType: FollowUpPlanType;
   scheduledFor: Date;
   status: 'scheduled' | 'completed' | 'cancelled' | 'overdue';
-  priority: 'low' | 'normal' | 'high' | 'urgent';
+  priority: FollowUpPriorityLevel;
   instructions: string;
   medications?: string[];
   tests?: string[];

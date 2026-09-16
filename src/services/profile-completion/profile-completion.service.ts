@@ -56,6 +56,10 @@ export class ProfileCompletionService {
       requiredFields: [],
       conditionalFields: {},
     },
+    NUTRITIONIST: {
+      requiredFields: [],
+      conditionalFields: {},
+    },
     FINANCE_BILLING: {
       requiredFields: [],
       conditionalFields: {},

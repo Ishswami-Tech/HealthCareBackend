@@ -99,7 +99,7 @@ export class DoctorSummaryService {
       Array<{
         time: string | null;
         type: string | null;
-        patient: { user: { name: string | null } } | null;
+        patient: { user: { name: string | null; phone: string | null } } | null;
         clinic: { name: string | null } | null;
       }>
     >(async client => {
@@ -111,7 +111,7 @@ export class DoctorSummaryService {
                 Array<{
                   time: string | null;
                   type: string | null;
-                  patient: { user: { name: string | null } } | null;
+                  patient: { user: { name: string | null; phone: string | null } } | null;
                   clinic: { name: string | null } | null;
                 }>
               >)
@@ -128,7 +128,7 @@ export class DoctorSummaryService {
             time: true,
             type: true,
             patient: {
-              select: { user: { select: { name: true } } },
+              select: { user: { select: { name: true, phone: true } } },
             },
             clinic: { select: { name: true } },
           },
@@ -137,7 +137,19 @@ export class DoctorSummaryService {
       );
     });
 
-    // 5. Format single-line list
+    // 5. Skip if no appointments — no need to send an empty summary message
+    if (appointments.length === 0) {
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.DEBUG,
+        `DoctorSummaryService: 0 appointments for doctor ${doctorUserId} at ${clinicId} on ${todayKey} — skipping summary`,
+        'DoctorSummaryService',
+        { doctorId, doctorUserId, clinicId, todayKey }
+      );
+      return null;
+    }
+
+    // 6. Format single-line list
     const appointmentsList = this.formatAppointmentsList(appointments);
     const totalCount = String(appointments.length);
     const dateLabel = formatDateInIST(summaryStart, {
@@ -167,7 +179,7 @@ export class DoctorSummaryService {
     appointments: Array<{
       time: string | null;
       type: string | null;
-      patient: { user: { name: string | null } } | null;
+      patient: { user: { name: string | null; phone: string | null } } | null;
       clinic: { name: string | null } | null;
     }>
   ): string {
@@ -185,9 +197,10 @@ export class DoctorSummaryService {
           })
         : 'TBD';
       const patientName = apt.patient?.user?.name || 'Unknown';
+      const patientPhone = apt.patient?.user?.phone || '';
+      const phoneLabel = patientPhone ? ` ${patientPhone}` : '';
       const typeLabel = this.formatAppointmentType(apt.type);
-      const clinicLabel = apt.clinic?.name ? ` @ ${apt.clinic.name}` : '';
-      lines.push(`${timeLabel} - ${patientName}${clinicLabel} (${typeLabel})`);
+      lines.push(`${timeLabel} - ${patientName}${phoneLabel} (${typeLabel})`);
     }
 
     return lines.join(' | ');

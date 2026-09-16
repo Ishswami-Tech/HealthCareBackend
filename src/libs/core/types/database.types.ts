@@ -180,6 +180,188 @@ export interface Queue {
   clinicId: string;
   updatedAt: Date;
 }
+export interface Ward {
+  id: string;
+  clinicId: string;
+  clinicLocationId: string;
+  name: string;
+  wardType: string;
+  location: string | null;
+  totalBeds: number;
+  defaultDailyRate: number | null;
+  isActive: boolean;
+  notes: string | null;
+  createdBy: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  clinicLocation?: ClinicLocation | null;
+  beds?: Bed[];
+}
+export interface Bed {
+  id: string;
+  clinicId: string;
+  clinicLocationId: string;
+  wardId: string;
+  bedNumber: string;
+  roomNumber: string | null;
+  bedType: string | null;
+  dailyRate: number | null;
+  hasOxygen: boolean;
+  hasVentilator: boolean;
+  features: Record<string, boolean> | null;
+  status: string;
+  notes: string | null;
+  createdBy: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  clinicLocation?: ClinicLocation | null;
+  ward?: Ward | null;
+}
+export interface Admission {
+  id: string;
+  admissionNumber: string;
+  patientId: string;
+  clinicId: string;
+  clinicLocationId: string;
+  wardId: string;
+  bedId: string;
+  admittingDoctorId: string;
+  status: string;
+  admittedAt: Date;
+  primaryDiagnosis: string | null;
+  secondaryDiagnoses: Record<string, unknown> | Array<Record<string, unknown>> | null;
+  admissionReason: string;
+  expectedDischargeDate: Date | null;
+  referringDoctor: string | null;
+  attendantName: string | null;
+  attendantPhone: string | null;
+  insuranceDetails: Record<string, unknown> | Array<Record<string, unknown>> | null;
+  notes: string | null;
+  dischargedAt: Date | null;
+  dischargeType: string | null;
+  dischargedById: string | null;
+  finalDiagnosis: string | null;
+  treatmentSummary: string | null;
+  followUpInstructions: string | null;
+  followUpDate: Date | null;
+  dischargeMedications: Record<string, unknown> | Array<Record<string, unknown>> | null;
+  dischargeAdvice: string | null;
+  createdBy: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  bed?: Bed | null;
+  ward?: Ward | null;
+}
+export interface BedAssignment {
+  id: string;
+  admissionId: string;
+  bedId: string;
+  wardId: string;
+  assignedAt: Date;
+  releasedAt: Date | null;
+  isActive: boolean;
+  transferReason: string | null;
+  authorizedBy: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+export interface BedCharge {
+  id: string;
+  admissionId: string;
+  patientId: string;
+  clinicId: string;
+  clinicLocationId: string;
+  chargeDate: Date;
+  days: number;
+  bedRate: number;
+  bedCharges: number;
+  totalCharges: number;
+  isBilled: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+export interface DischargeSummary {
+  id: string;
+  admissionId: string;
+  patientId: string;
+  clinicId: string;
+  clinicLocationId: string;
+  finalDiagnosis: string | null;
+  treatmentSummary: string | null;
+  dischargeType: string;
+  dischargedAt: Date;
+  dischargedById: string | null;
+  followUpInstructions: string | null;
+  followUpDate: Date | null;
+  dischargeMedications: Record<string, unknown> | Array<Record<string, unknown>> | null;
+  dischargeAdvice: string | null;
+  notes: string | null;
+  nursingNotesCount: number;
+  vitalsEntriesCount: number;
+  medicationsAdministered: number;
+  pdfGenerated: boolean;
+  pdfUrl: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+export interface NursingNote {
+  id: string;
+  admissionId: string;
+  patientId: string;
+  clinicId: string;
+  clinicLocationId: string;
+  severity: string;
+  content: string;
+  recordedBy: string | null;
+  recordedAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+export interface VitalsFlowsheet {
+  id: string;
+  admissionId: string;
+  patientId: string;
+  clinicId: string;
+  clinicLocationId: string;
+  bpSystolic: number | null;
+  bpDiastolic: number | null;
+  heartRate: number | null;
+  temperature: number | null;
+  respiratoryRate: number | null;
+  oxygenSaturation: number | null;
+  bloodGlucose: number | null;
+  weight: number | null;
+  height: number | null;
+  bmi: number | null;
+  painScore: number | null;
+  recordedBy: string;
+  notes: string | null;
+  recordedAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+  recordedByUser?: User | null;
+}
+export interface BedsideMedication {
+  id: string;
+  admissionId: string;
+  patientId: string;
+  clinicId: string;
+  clinicLocationId: string;
+  medicationName: string;
+  dosage: string;
+  route: string;
+  frequency: string | null;
+  administeredBy: string;
+  verifiedById: string | null;
+  administeredAt: Date;
+  batchNumber: string | null;
+  adverseReactions: string | null;
+  notes: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  administeredByUser?: User | null;
+  verifiedByUser?: User | null;
+}
 export interface HealthRecord {
   id: string;
   patientId: string;

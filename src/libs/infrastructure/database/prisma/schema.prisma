@@ -106,6 +106,9 @@ model User {
   whatsappSuppressions    WhatsAppSuppressionList[]
   communicationTemplates  CommunicationTemplate[]
   clinicExpenses          ClinicExpense[]
+  ipdVitalsRecorded       VitalsFlowsheet[]         @relation("IpdVitalsRecordedBy")
+  ipdMedicationsAdministered BedsideMedication[]     @relation("IpdMedicationAdministeredBy")
+  ipdMedicationsVerified  BedsideMedication[]       @relation("IpdMedicationVerifiedBy")
 
   @@index([primaryClinicId])
   @@index([email])
@@ -197,6 +200,14 @@ model Clinic {
   clinicExpenses               ClinicExpense[]
   insuranceClaims              InsuranceClaim[]
   communicationTemplates       CommunicationTemplate[]
+  wards                        Ward[]
+  beds                         Bed[]
+  admissions                   Admission[]
+  bedCharges                   BedCharge[]
+  dischargeSummaries           DischargeSummary[]
+  nursingNotes                 NursingNote[]
+  vitalsFlowsheets             VitalsFlowsheet[]
+  bedsideMedications           BedsideMedication[]
 
   @@index([app_name])
   @@index([isActive])
@@ -241,9 +252,302 @@ model ClinicLocation {
   checkInLocations CheckInLocation[]
   clinic           Clinic            @relation(fields: [clinicId], references: [id])
   medicines        Medicine[]
+  wards            Ward[]
+  beds             Bed[]
+  admissions       Admission[]
+  bedCharges       BedCharge[]
+  dischargeSummaries DischargeSummary[]
+  nursingNotes     NursingNote[]
+  vitalsFlowsheets  VitalsFlowsheet[]
+  bedsideMedications BedsideMedication[]
 
   @@index([clinicId])
   @@map("clinic_locations")
+}
+
+model Ward {
+  id               String         @id @default(uuid())
+  clinicId         String
+  clinicLocationId  String
+  name             String
+  wardType         String
+  location         String?
+  totalBeds        Int            @default(0)
+  defaultDailyRate Float?
+  isActive         Boolean        @default(true)
+  notes            String?
+  createdBy        String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  clinic           Clinic         @relation(fields: [clinicId], references: [id])
+  clinicLocation   ClinicLocation @relation(fields: [clinicLocationId], references: [id])
+  beds             Bed[]
+  admissions       Admission[]
+  bedAssignments   BedAssignment[]
+
+  @@unique([clinicId, clinicLocationId, name])
+  @@index([clinicId])
+  @@index([clinicLocationId])
+  @@index([wardType])
+  @@map("wards")
+}
+
+model Bed {
+  id               String         @id @default(uuid())
+  clinicId         String
+  clinicLocationId  String
+  wardId           String
+  bedNumber        String
+  roomNumber       String?
+  bedType          String?
+  dailyRate        Float?
+  hasOxygen        Boolean        @default(false)
+  hasVentilator    Boolean        @default(false)
+  features         Json?
+  status           String         @default("AVAILABLE")
+  notes            String?
+  createdBy        String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  clinic           Clinic         @relation(fields: [clinicId], references: [id])
+  clinicLocation   ClinicLocation @relation(fields: [clinicLocationId], references: [id])
+  ward             Ward           @relation(fields: [wardId], references: [id])
+  admissions       Admission[]
+  bedAssignments   BedAssignment[]
+
+  @@unique([wardId, bedNumber])
+  @@index([clinicId])
+  @@index([clinicLocationId])
+  @@index([wardId])
+  @@index([status])
+  @@map("beds")
+}
+
+model Admission {
+  id                   String               @id @default(uuid())
+  admissionNumber      String               @unique
+  patientId            String
+  clinicId             String
+  clinicLocationId     String
+  wardId               String
+  bedId                String
+  admittingDoctorId    String
+  status               String               @default("ADMITTED")
+  admittedAt           DateTime             @default(now())
+  primaryDiagnosis     String?
+  secondaryDiagnoses   Json?
+  admissionReason      String
+  expectedDischargeDate DateTime?
+  referringDoctor      String?
+  attendantName       String?
+  attendantPhone      String?
+  insuranceDetails    Json?
+  notes               String?
+  dischargedAt        DateTime?
+  dischargeType       String?
+  dischargedById      String?
+  finalDiagnosis      String?
+  treatmentSummary    String?
+  followUpInstructions String?
+  followUpDate        DateTime?
+  dischargeMedications Json?
+  dischargeAdvice     String?
+  createdBy           String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  clinic              Clinic               @relation(fields: [clinicId], references: [id])
+  clinicLocation      ClinicLocation       @relation(fields: [clinicLocationId], references: [id])
+  patient             Patient              @relation(fields: [patientId], references: [id])
+  ward                Ward                 @relation(fields: [wardId], references: [id])
+  bed                 Bed                  @relation(fields: [bedId], references: [id])
+  bedAssignments      BedAssignment[]
+  bedCharges          BedCharge[]
+  dischargeSummary    DischargeSummary?
+  nursingNotes        NursingNote[]
+  vitalsFlowsheets    VitalsFlowsheet[]
+  bedsideMedications  BedsideMedication[]
+
+  @@unique([clinicId, admissionNumber])
+  @@index([clinicId])
+  @@index([clinicLocationId])
+  @@index([patientId])
+  @@index([wardId])
+  @@index([bedId])
+  @@index([status])
+  @@map("admissions")
+}
+
+model BedAssignment {
+  id             String    @id @default(uuid())
+  admissionId    String
+  bedId          String
+  wardId         String
+  assignedAt     DateTime  @default(now())
+  releasedAt     DateTime?
+  isActive       Boolean   @default(true)
+  transferReason String?
+  authorizedBy   String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  admission      Admission @relation(fields: [admissionId], references: [id])
+  bed            Bed       @relation(fields: [bedId], references: [id])
+  ward           Ward      @relation(fields: [wardId], references: [id])
+
+  @@index([admissionId])
+  @@index([bedId])
+  @@index([wardId])
+  @@index([isActive])
+  @@map("bed_assignments")
+}
+
+model BedCharge {
+  id             String    @id @default(uuid())
+  admissionId    String
+  patientId      String
+  clinicId       String
+  clinicLocationId String
+  chargeDate     DateTime
+  days           Int
+  bedRate        Float
+  bedCharges     Float
+  totalCharges   Float
+  isBilled       Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  admission      Admission @relation(fields: [admissionId], references: [id])
+  clinic         Clinic    @relation(fields: [clinicId], references: [id])
+  clinicLocation ClinicLocation @relation(fields: [clinicLocationId], references: [id])
+  patient        Patient   @relation(fields: [patientId], references: [id])
+
+  @@unique([admissionId, chargeDate])
+  @@index([clinicId])
+  @@index([clinicLocationId])
+  @@index([patientId])
+  @@index([chargeDate])
+  @@map("bed_charges")
+}
+
+model DischargeSummary {
+  id                     String    @id @default(uuid())
+  admissionId            String    @unique
+  patientId              String
+  clinicId               String
+  clinicLocationId       String
+  finalDiagnosis         String?
+  treatmentSummary       String?
+  dischargeType          String
+  dischargedAt           DateTime
+  dischargedById         String?
+  followUpInstructions   String?
+  followUpDate           DateTime?
+  dischargeMedications   Json?
+  dischargeAdvice        String?
+  notes                  String?
+  nursingNotesCount      Int       @default(0)
+  vitalsEntriesCount     Int       @default(0)
+  medicationsAdministered Int      @default(0)
+  pdfGenerated           Boolean   @default(false)
+  pdfUrl                 String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  admission              Admission @relation(fields: [admissionId], references: [id])
+  clinic                 Clinic    @relation(fields: [clinicId], references: [id])
+  clinicLocation         ClinicLocation @relation(fields: [clinicLocationId], references: [id])
+
+  @@index([clinicId])
+  @@index([clinicLocationId])
+  @@map("discharge_summaries")
+}
+
+model NursingNote {
+  id            String    @id @default(uuid())
+  admissionId   String
+  patientId     String
+  clinicId      String
+  clinicLocationId String
+  severity      String
+  content       String
+  recordedBy    String?
+  recordedAt    DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  admission     Admission @relation(fields: [admissionId], references: [id])
+  patient       Patient   @relation(fields: [patientId], references: [id])
+  clinic        Clinic    @relation(fields: [clinicId], references: [id])
+  clinicLocation ClinicLocation @relation(fields: [clinicLocationId], references: [id])
+
+  @@index([admissionId])
+  @@index([clinicId])
+  @@index([clinicLocationId])
+  @@index([recordedAt])
+  @@map("nursing_notes")
+}
+
+model VitalsFlowsheet {
+  id            String    @id @default(uuid())
+  admissionId   String
+  patientId     String
+  clinicId      String
+  clinicLocationId String
+  bpSystolic    Int?
+  bpDiastolic   Int?
+  heartRate     Int?
+  temperature   Float?
+  respiratoryRate Int?
+  oxygenSaturation Int?
+  bloodGlucose  Float?
+  weight        Float?
+  height        Float?
+  bmi           Float?
+  painScore     Int?
+  recordedBy    String
+  notes         String?
+  recordedAt    DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  admission     Admission @relation(fields: [admissionId], references: [id])
+  patient       Patient   @relation(fields: [patientId], references: [id])
+  clinic        Clinic    @relation(fields: [clinicId], references: [id])
+  clinicLocation ClinicLocation @relation(fields: [clinicLocationId], references: [id])
+  recordedByUser User     @relation("IpdVitalsRecordedBy", fields: [recordedBy], references: [id])
+
+  @@index([admissionId])
+  @@index([clinicId])
+  @@index([clinicLocationId])
+  @@index([recordedAt])
+  @@map("vitals_flowsheets")
+}
+
+model BedsideMedication {
+  id                String    @id @default(uuid())
+  admissionId       String
+  patientId         String
+  clinicId          String
+  clinicLocationId  String
+  medicationName    String
+  dosage            String
+  route             String
+  frequency         String?
+  administeredBy    String
+  verifiedById      String?
+  administeredAt    DateTime  @default(now())
+  batchNumber       String?
+  adverseReactions  String?
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  admission         Admission @relation(fields: [admissionId], references: [id])
+  patient           Patient   @relation(fields: [patientId], references: [id])
+  clinic            Clinic    @relation(fields: [clinicId], references: [id])
+  clinicLocation    ClinicLocation @relation(fields: [clinicLocationId], references: [id])
+  administeredByUser User    @relation("IpdMedicationAdministeredBy", fields: [administeredBy], references: [id])
+  verifiedByUser     User?    @relation("IpdMedicationVerifiedBy", fields: [verifiedById], references: [id])
+
+  @@index([admissionId])
+  @@index([clinicId])
+  @@index([clinicLocationId])
+  @@index([administeredAt])
+  @@map("bedside_medications")
 }
 
 model SuperAdmin {
@@ -423,6 +727,11 @@ model Patient {
   eligibilityChecks  EligibilityCheck[]
   healthRecords      HealthRecord[]
   insurance          Insurance[]
+  admissions         Admission[]
+  bedCharges         BedCharge[]
+  nursingNotes       NursingNote[]
+  vitalsFlowsheets   VitalsFlowsheet[]
+  bedsideMedications BedsideMedication[]
   user               User                         @relation(fields: [userId], references: [id])
   prescriptions      Prescription[]
   queueEntries       QueueEntry[]
@@ -1207,6 +1516,7 @@ model Vital {
 model NadiPariksha {
   id           String   @id @default(uuid())
   userId       String
+  clinicId     String?
   diagnosis    String
   pulseType    String
   notes        String?
@@ -1217,6 +1527,7 @@ model NadiPariksha {
   user         User     @relation(fields: [userId], references: [id])
 
   @@index([userId])
+  @@index([clinicId])
 }
 
 model AyurvedicPrescription {
@@ -1237,6 +1548,7 @@ model AyurvedicPrescription {
 model PrakritiAnalysis {
   id           String   @id @default(uuid())
   userId       String
+  clinicId     String?
   vataLevel    Int
   pittaLevel   Int
   kaphaLevel   Int
@@ -1248,6 +1560,153 @@ model PrakritiAnalysis {
   user         User     @relation(fields: [userId], references: [id])
 
   @@index([userId])
+  @@index([clinicId])
+}
+
+// ─── Ayurvedic Clinical Data Models ─────────────────────────────────────
+// These models support the Ayurvedic clinical workflow: Prakriti assessment,
+// Nadi Pariksha (pulse diagnosis), Dosha imbalance tracking, Samprapti
+// (disease pathogenesis) staging, and comprehensive Ayurvedic diagnosis.
+
+model prakritiAssessment {
+  id                   String   @id @default(uuid())
+  patientId            String
+  clinicId             String?
+  primaryDosha         String
+  secondaryDosha       String?
+  vataScore            Int
+  pittaScore           Int
+  kaphaScore           Int
+  questionnaireAnswers Json
+  patientNotes         String?
+  practitionerNotes    String?
+  isConfirmed          Boolean  @default(false)
+  recommendations      String?
+  assessedAt           DateTime @default(now())
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  createdBy            String?
+
+  @@index([patientId])
+  @@index([clinicId])
+  @@index([assessedAt])
+  @@map("prakriti_assessments")
+}
+
+model nadiPariksha {
+  id            String   @id @default(uuid())
+  patientId     String
+  clinicId      String?
+  dominantDosha String
+  pulseQuality  String
+  regularity    String?
+  strength      String?
+  abnormalities String?
+  interpretation String
+  observations String?
+  side          String?
+  performedBy   String
+  assessedAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([patientId])
+  @@index([clinicId])
+  @@index([assessedAt])
+  @@map("nadi_pariksha_records")
+}
+
+model doshaImbalance {
+  id               String    @id @default(uuid())
+  patientId        String
+  clinicId         String?
+  diagnosisId      String?
+  doshaType        String
+  imbalanceType    String
+  severity         String
+  vitalsAffected   String[]
+  symptoms         String[]
+  rootCauses       String[]
+  practitionerNotes String?
+  interventions    String[]
+  assessedAt       DateTime  @default(now())
+  assessedBy       String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([patientId])
+  @@index([clinicId])
+  @@index([doshaType])
+  @@index([assessedAt])
+  @@map("dosha_imbalances")
+}
+
+model ayurvedicDiagnosis {
+  id                      String    @id @default(uuid())
+  patientId               String
+  clinicId                String?
+  prakritiAssessmentId    String?
+  nadiParikshaId          String?
+  primaryDisease          String
+  secondaryDiseases       String[]
+  diseaseClassification   String?
+  vyadhiType              String?
+  clinicalAssessment      String
+  agniStatus              String?
+  amaPresence             String?
+  srotasAffected          String?
+  notes                   String?
+  confidenceLevel         String?
+  status                  String    @default("ACTIVE")
+  createdBy               String?
+  diagnosedAt             DateTime  @default(now())
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@index([patientId])
+  @@index([clinicId])
+  @@index([diagnosedAt])
+  @@index([status])
+  @@map("ayurvedic_diagnoses")
+}
+
+model sampraptiStage {
+  id               String    @id @default(uuid())
+  diagnosisId      String
+  clinicId         String?
+  stageName        String
+  stageOrder       Int
+  doshaInvolved    String
+  dhatuAffected    String?
+  description      String
+  symptoms         String[]
+  clinicalFindings String?
+  isActive         Boolean   @default(true)
+  completedAt      DateTime?
+  recordedBy       String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([diagnosisId])
+  @@index([clinicId])
+  @@index([stageOrder])
+  @@map("samprapti_stages")
+}
+
+model prakritiAssessmentQuestion {
+  id           String   @id @default(uuid())
+  questionText String
+  category     String   // VATA, PITTA, KAPHA
+  options      Json     // [{text, score}]
+  displayOrder Int      @default(0)
+  isActive     Boolean  @default(true)
+  version      String   @default("1.0")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([category])
+  @@index([displayOrder])
+  @@map("prakriti_assessment_questions")
 }
 
 model Immunization {
@@ -1404,6 +1863,85 @@ model DietaryRestriction {
   user         User      @relation(fields: [userId], references: [id])
 
   @@index([userId])
+}
+
+// ─── Diet & Nutrition Models ─────────────────────────────────────────
+model FoodItem {
+  id                  String    @id @default(uuid())
+  name                String
+  sanskritName        String?
+  category            FoodCategory
+  primaryRasa         Rasa
+  secondaryRasas      Rasa[]
+  virya               Virya
+  vipaka              Vipaka
+  pacifies            Dosha[]
+  aggravates          Dosha[]
+  description         String?
+  defaultPortionGrams Int?
+  tags                String[]
+  isActive            Boolean   @default(true)
+  createdAt           DateTime  @default(now())
+
+  planItems            DietPlanItem[]
+  compatibilityRulesA  FoodCompatibilityRule[] @relation("FoodCompatibilityA")
+  compatibilityRulesB  FoodCompatibilityRule[] @relation("FoodCompatibilityB")
+
+  @@index([category])
+  @@index([isActive])
+}
+
+model DietPlan {
+  id                String           @id @default(uuid())
+  patientId         String
+  clinicId          String
+  title             String
+  goal              DietaryGoal
+  status            DietPlanStatus   @default(DRAFT)
+  startDate         DateTime
+  endDate           DateTime
+  summary           String?
+  prakritiAnalysisId String?
+  createdBy         String
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  items             DietPlanItem[]
+
+  @@index([patientId])
+  @@index([clinicId])
+  @@index([status])
+}
+
+model DietPlanItem {
+  id               String     @id @default(uuid())
+  dietPlanId       String
+  foodItemId       String
+  mealSlot         MealSlot
+  quantityGrams    Int
+  preparationNotes String?
+  rationale        String?
+  dayNumber        Int        @default(1)
+  dietPlan         DietPlan   @relation(fields: [dietPlanId], references: [id], onDelete: Cascade)
+  foodItem         FoodItem   @relation(fields: [foodItemId], references: [id])
+
+  @@index([dietPlanId])
+  @@index([foodItemId])
+}
+
+model FoodCompatibilityRule {
+  id          String                @id @default(uuid())
+  foodItemIdA String
+  foodItemIdB String
+  severity    CompatibilitySeverity
+  description String
+  classicalReference String?
+  createdAt   DateTime              @default(now())
+  foodA       FoodItem              @relation("FoodCompatibilityA", fields: [foodItemIdA], references: [id])
+  foodB       FoodItem              @relation("FoodCompatibilityB", fields: [foodItemIdB], references: [id])
+
+  @@unique([foodItemIdA, foodItemIdB])
+  @@index([foodItemIdA])
+  @@index([foodItemIdB])
 }
 
 model Permission {
@@ -2226,6 +2764,63 @@ enum Prakriti {
   PITTA_KAPHA
   VATA_KAPHA
   TRIDOSHA
+}
+
+enum FoodCategory {
+  SUKHA_AHARA
+  ASUKHA_AHARA
+  SATMYA_ASATMYA
+}
+
+enum MealSlot {
+  BREAKFAST
+  MID_MORNING
+  LUNCH
+  EVENING
+  DINNER
+  BEDTIME
+}
+
+enum DietaryGoal {
+  WEIGHT_LOSS
+  WEIGHT_GAIN
+  DETOX
+  BALANCE
+  REJUVENATION
+}
+
+enum DietPlanStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+  EXPIRED
+}
+
+enum Rasa {
+  MADHURA
+  AMLA
+  LAVANA
+  KATU
+  TIKTA
+  KASHAYA
+}
+
+enum Virya {
+  USHNA
+  SHEETA
+}
+
+enum Vipaka {
+  MADHURA
+  AMLA
+  KATU
+}
+
+enum CompatibilitySeverity {
+  LOW
+  MODERATE
+  HIGH
+  CONTRAINDICATED
 }
 
 enum MedicineType {

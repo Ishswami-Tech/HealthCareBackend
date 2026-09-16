@@ -214,7 +214,8 @@ export class WhatsAppService {
     location: string,
     clinicId?: string,
     detailsUrl?: string,
-    appointmentType: string = 'in-person'
+    appointmentType: string = 'in-person',
+    serviceLabel?: string
   ): Promise<boolean> {
     if (!this.whatsAppConfig.enabled && !clinicId) {
       void this.loggingService.log(
@@ -249,7 +250,8 @@ export class WhatsAppService {
           appointmentType,
           doctorName,
           `${appointmentDate} at ${appointmentTime}`,
-          detailsUrl
+          detailsUrl,
+          serviceLabel
         ),
         clinicId
       );
@@ -286,7 +288,8 @@ export class WhatsAppService {
     clinicId?: string,
     detailsUrl?: string,
     appointmentType: string = 'in-person',
-    recipientRole: 'patient' | 'doctor' = 'patient'
+    recipientRole: 'patient' | 'doctor' = 'patient',
+    serviceLabel?: string
   ): Promise<boolean> {
     if (!this.whatsAppConfig.enabled && !clinicId) {
       void this.loggingService.log(
@@ -320,7 +323,8 @@ export class WhatsAppService {
               patientName,
               appointmentDate,
               appointmentTime,
-              detailsUrl
+              detailsUrl,
+              serviceLabel
             )
           : formatAppointmentConfirmationTemplateParams(
               patientName,
@@ -328,7 +332,8 @@ export class WhatsAppService {
               doctorName,
               appointmentDate,
               appointmentTime,
-              detailsUrl
+              detailsUrl,
+              serviceLabel
             );
 
       await this.sendTemplateMessage(formattedPhone, templateId, templateParams, clinicId);

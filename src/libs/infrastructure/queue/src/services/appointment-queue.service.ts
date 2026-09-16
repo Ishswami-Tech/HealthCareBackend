@@ -5,7 +5,11 @@ import { EventService } from '@infrastructure/events/event.service';
 import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
 import type { IEventService } from '@core/types';
 import { isEventService } from '@core/types';
-import { LaneType } from '@core/types/enums.types';
+import { LaneType, AppointmentQueueCategory } from '@core/types/enums.types';
+import {
+  findTreatmentCatalogEntryOrUndefined,
+  isAyurvedaTreatmentType,
+} from '@core/types/treatment-catalog.types';
 import type { EnterpriseEventPayload } from '@core/types/event.types';
 
 import type { AppointmentQueueStats } from '@core/types';
@@ -70,42 +74,17 @@ export class AppointmentQueueService {
   }
 
   private resolveDisplayLabel(queueCategory: string, treatmentType?: string): string {
-    const normalizedTreatment = this.normalizeQueueLabel(treatmentType);
-    const normalizedCategory = this.normalizeQueueLabel(queueCategory);
+    const catalogEntry = findTreatmentCatalogEntryOrUndefined(treatmentType);
+    if (catalogEntry) {
+      return catalogEntry.label;
+    }
 
-    if (normalizedTreatment === 'general_consultation') return 'General Consultation';
-    if (normalizedTreatment === 'follow_up') return 'Follow Up';
-    if (normalizedTreatment === 'special_case') return 'Special Case';
-    if (normalizedTreatment === 'geriatric_care' || normalizedTreatment === 'senior_citizen')
-      return 'Senior Citizen';
-    if (
-      normalizedTreatment === 'lab_test' ||
-      normalizedTreatment === 'imaging' ||
-      normalizedTreatment === 'vaccination'
-    )
-      return 'Diagnostic';
-    if (
-      normalizedTreatment === 'dosha_analysis' ||
-      normalizedTreatment === 'virechana' ||
-      normalizedTreatment === 'abhyanga' ||
-      normalizedTreatment === 'swedana' ||
-      normalizedTreatment === 'basti' ||
-      normalizedTreatment === 'nasya' ||
-      normalizedTreatment === 'raktamokshana'
-    ) {
-      return 'Ayurvedic Procedures';
-    }
-    if (
-      normalizedTreatment === 'therapy' ||
-      normalizedTreatment === 'surgery' ||
-      normalizedTreatment === 'therapy_procedure' ||
-      normalizedCategory === 'therapy_procedure'
-    ) {
-      return 'Procedural Care';
-    }
+    const normalizedCategory = this.normalizeQueueLabel(queueCategory);
     if (normalizedCategory === 'doctor_consultation') return 'Consultation';
     if (normalizedCategory === 'medicine_desk') return 'Medicine Desk';
-    if (normalizedCategory === 'therapy_procedure') return 'Procedural Care';
+    if (normalizedCategory === 'therapy_procedure') {
+      return isAyurvedaTreatmentType(treatmentType) ? 'Ayurvedic Procedures' : 'Procedural Care';
+    }
     return String(queueCategory || treatmentType || 'General Consultation')
       .split(/[_\s-]+/)
       .filter(Boolean)
@@ -605,10 +584,16 @@ export class AppointmentQueueService {
 
       if (appointmentType) {
         queueEntry.type = appointmentType;
-        queueEntry.displayLabel = this.resolveDisplayLabel('DOCTOR_CONSULTATION', appointmentType);
+        queueEntry.displayLabel = this.resolveDisplayLabel(
+          AppointmentQueueCategory.DOCTOR_CONSULTATION,
+          appointmentType
+        );
       }
       if (!queueEntry.displayLabel) {
-        queueEntry.displayLabel = this.resolveDisplayLabel('DOCTOR_CONSULTATION', appointmentType);
+        queueEntry.displayLabel = this.resolveDisplayLabel(
+          AppointmentQueueCategory.DOCTOR_CONSULTATION,
+          appointmentType
+        );
       }
       if (notes) queueEntry.notes = notes;
       if (locationId) queueEntry.locationId = locationId;
@@ -638,7 +623,7 @@ export class AppointmentQueueService {
           clinicId,
           queueOwnerId: doctorId,
           locationId,
-          queueCategory: 'DOCTOR_CONSULTATION',
+          queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
         },
       });
 
@@ -929,7 +914,8 @@ export class AppointmentQueueService {
               appointmentId,
               clinicId,
               queueOwnerId: entryData.queueOwnerId || entryData.doctorId,
-              queueCategory: entryData.queueCategory || 'DOCTOR_CONSULTATION',
+              queueCategory:
+                entryData.queueCategory || AppointmentQueueCategory.DOCTOR_CONSULTATION,
               displayLabel: entryData.displayLabel,
               locationId: entryData.locationId,
             },
@@ -1026,10 +1012,13 @@ export class AppointmentQueueService {
             appointmentId,
             clinicId,
             queueOwnerId: doctorId,
-            queueCategory: 'DOCTOR_CONSULTATION',
+            queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
             displayLabel:
               entryData.displayLabel ||
-              this.resolveDisplayLabel('DOCTOR_CONSULTATION', entryData.type),
+              this.resolveDisplayLabel(
+                AppointmentQueueCategory.DOCTOR_CONSULTATION,
+                entryData.type
+              ),
             queuePositions: updatedPositions,
           },
         });
@@ -1143,7 +1132,7 @@ export class AppointmentQueueService {
               action: 'REORDERED',
               clinicId,
               queueOwnerId: doctorId,
-              queueCategory: 'DOCTOR_CONSULTATION',
+              queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
               queuePositions: updatedPositions,
             },
           });
@@ -1157,7 +1146,7 @@ export class AppointmentQueueService {
               action: 'REORDERED',
               clinicId,
               queueOwnerId: doctorId,
-              queueCategory: 'DOCTOR_CONSULTATION',
+              queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
               queuePositions: updatedPositions,
             },
           });
@@ -1516,7 +1505,7 @@ export class AppointmentQueueService {
           appointmentId,
           clinicId,
           queueOwnerId: doctorId,
-          queueCategory: 'DOCTOR_CONSULTATION',
+          queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
           displayLabel: removedEntry?.displayLabel,
         },
       });
@@ -1590,7 +1579,7 @@ export class AppointmentQueueService {
           nextPatient: entryData,
           clinicId,
           queueOwnerId: doctorId,
-          queueCategory: 'DOCTOR_CONSULTATION',
+          queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
           displayLabel: entryData.displayLabel,
         },
       });
@@ -1631,7 +1620,7 @@ export class AppointmentQueueService {
         action: 'PAUSED',
         clinicId,
         queueOwnerId: doctorId,
-        queueCategory: 'DOCTOR_CONSULTATION',
+        queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
       },
     });
     return { success: true, message: 'Queue paused' };
@@ -1660,7 +1649,7 @@ export class AppointmentQueueService {
         action: 'RESUMED',
         clinicId,
         queueOwnerId: doctorId,
-        queueCategory: 'DOCTOR_CONSULTATION',
+        queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
       },
     });
     return { success: true, message: 'Queue resumed' };

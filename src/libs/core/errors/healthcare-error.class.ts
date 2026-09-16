@@ -51,10 +51,57 @@ export class HealthcareError extends HttpException {
   constructor(
     code: ErrorCode,
     message?: string,
-    statusCode: HttpStatus = HttpStatus.INTERNAL_SERVER_ERROR,
+    statusCode?: HttpStatus,
     metadata?: ErrorMetadata,
     context?: string
+  );
+  constructor(
+    message: string,
+    code: ErrorCode,
+    metadata?: ErrorMetadata,
+    context?: string,
+    statusCode?: HttpStatus
+  );
+  constructor(...args: unknown[]);
+  constructor(
+    arg1: ErrorCode | string,
+    arg2?: string | ErrorCode,
+    arg3?: HttpStatus | ErrorMetadata,
+    arg4?: ErrorMetadata | string,
+    arg5?: string | HttpStatus
   ) {
+    const isLegacySignature = typeof arg1 === 'string' && typeof arg2 === 'string';
+    const code = isLegacySignature ? (arg2 as ErrorCode) : (arg1 as ErrorCode);
+    const message = isLegacySignature ? arg1 : (arg2 as string | undefined);
+    const statusCode = isLegacySignature
+      ? typeof arg5 === 'number'
+        ? arg5
+        : HttpStatus.INTERNAL_SERVER_ERROR
+      : typeof arg3 === 'number'
+        ? arg3
+        : HttpStatus.INTERNAL_SERVER_ERROR;
+    const metadata = isLegacySignature
+      ? {
+          ...(arg3 && typeof arg3 === 'object' ? arg3 : {}),
+          ...(arg4 && typeof arg4 === 'object' ? arg4 : {}),
+        }
+      : arg4 && typeof arg4 === 'object'
+        ? arg4
+        : arg3 && typeof arg3 === 'object'
+          ? arg3
+          : undefined;
+    const context = isLegacySignature
+      ? typeof arg4 === 'string'
+        ? arg4
+        : typeof arg5 === 'string'
+          ? arg5
+          : undefined
+      : typeof arg4 === 'string'
+        ? arg4
+        : typeof arg5 === 'string'
+          ? arg5
+          : undefined;
+
     const errorMessage = message || ErrorMessages[code];
     // Pass the error response object to HttpException
     const response = {

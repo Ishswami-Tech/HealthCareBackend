@@ -59,15 +59,10 @@ export class PaymentService {
       return explicit.trim().toLowerCase() === 'true';
     }
 
-    const localUrls = [process.env['FRONTEND_URL'], process.env['BASE_URL']].filter(
-      (value): value is string => typeof value === 'string' && value.length > 0
-    );
-
-    if (localUrls.some(value => /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(value))) {
-      return true;
-    }
-
-    return process.env['NODE_ENV'] === 'local-prod';
+    // Never infer demo mode from localhost. Local development must exercise
+    // the configured sandbox gateway, otherwise callbacks can confirm an
+    // appointment without a real payment.
+    return false;
   }
 
   private createDemoPaymentResult(

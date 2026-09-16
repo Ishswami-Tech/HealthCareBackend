@@ -13,6 +13,8 @@ import {
   Controller,
   Post,
   Get,
+  Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -525,6 +527,195 @@ export class CommunicationController {
       success,
       ...(success ? {} : { error: 'Failed to register device token' }),
     };
+  }
+
+  /**
+   * Patient notification inbox. Kept separate from chat history: chat
+   * messages and persisted notification records have different contracts.
+   */
+  @Get('history/:userId')
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('notifications', 'read', { requireOwnership: true })
+  async getNotificationHistory(
+    @Param('userId') userId: string,
+    @Query('type') type?: string,
+    @Query('isRead') isRead?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+    @Request() req?: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req?.clinicContext?.clinicId;
+    const take = Math.min(Math.max(Number(limit) || 50, 1), 100);
+    const skip = Math.max(Number(offset) || 0, 0);
+    const readFilter = isRead === undefined ? undefined : isRead === 'true';
+
+    const notifications = await this.databaseService.executeHealthcareRead(async client => {
+      const notificationClient = client as unknown as {
+        notification: {
+          findMany: (args: {
+            where: {
+              userId: string;
+              clinicId?: string;
+              type?: string;
+              read?: boolean;
+            };
+            orderBy: { createdAt: string };
+            take: number;
+            skip: number;
+          }) => Promise<
+            Array<{
+              id: string;
+              userId: string;
+              type: string;
+              message: string;
+              read: boolean;
+              status: string;
+              createdAt: Date;
+              data: unknown;
+            }>
+          >;
+        };
+      };
+      return notificationClient.notification.findMany({
+        where: {
+          userId,
+          ...(clinicId ? { clinicId } : {}),
+          ...(type ? { type } : {}),
+          ...(readFilter === undefined ? {} : { read: readFilter }),
+        },
+        orderBy: { createdAt: 'desc' },
+        take,
+        skip,
+      });
+    });
+
+    return {
+      notifications: notifications.map(notification => ({
+        id: notification.id,
+        userId: notification.userId,
+        type: notification.type,
+        message: notification.message,
+        read: notification.read,
+        isRead: notification.read,
+        status: notification.status,
+        createdAt: notification.createdAt,
+        data: {},
+      })),
+    };
+  }
+
+  @Get('history/:userId/unread-count')
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('notifications', 'read', { requireOwnership: true })
+  async getUnreadNotificationCount(
+    @Param('userId') userId: string,
+    @Request() req?: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req?.clinicContext?.clinicId;
+    const count = await this.databaseService.executeHealthcareRead(client => {
+      const notificationClient = client as unknown as {
+        notification: {
+          count: (args: {
+            where: { userId: string; read: boolean; clinicId?: string };
+          }) => Promise<number>;
+        };
+      };
+      return notificationClient.notification.count({
+        where: { userId, read: false, ...(clinicId ? { clinicId } : {}) },
+      });
+    });
+    return { count };
+  }
+
+  @Patch('history/:id/read')
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('notifications', 'read', { requireOwnership: true })
+  async markNotificationRead(@Param('id') id: string, @Request() req?: ClinicAuthenticatedRequest) {
+    return {
+      notification: await this.databaseService.executeHealthcareWrite(
+        async client => {
+          const notificationClient = client as {
+            notification: {
+              update: (args: {
+                where: { id: string };
+                data: { read: boolean };
+              }) => Promise<unknown>;
+            };
+          };
+          return await notificationClient.notification.update({
+            where: { id },
+            data: { read: true },
+          });
+        },
+        {
+          operation: 'MARK_NOTIFICATION_READ',
+          resourceType: 'NOTIFICATION',
+          resourceId: id,
+          userId: req?.user?.sub || '',
+          userRole: req?.user?.role || 'PATIENT',
+          clinicId: req?.clinicContext?.clinicId || '',
+        }
+      ),
+    };
+  }
+
+  @Patch('history/mark-all-read')
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('notifications', 'read', { requireOwnership: true })
+  async markAllNotificationsRead(
+    @Query('userId') userId: string,
+    @Request() req?: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req?.clinicContext?.clinicId;
+    const result = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const nc = client as {
+          notification: {
+            updateMany: (args: {
+              where: { userId: string; read: boolean; clinicId?: string };
+              data: { read: boolean };
+            }) => Promise<{ count: number }>;
+          };
+        };
+        return await nc.notification.updateMany({
+          where: { userId, read: false, ...(clinicId ? { clinicId } : {}) },
+          data: { read: true },
+        });
+      },
+      {
+        operation: 'MARK_ALL_NOTIFICATIONS_READ',
+        resourceType: 'NOTIFICATION',
+        userId: req?.user?.sub || '',
+        userRole: req?.user?.role || 'PATIENT',
+        clinicId: clinicId || '',
+      }
+    );
+    return { success: true, markedCount: result.count };
+  }
+
+  @Delete(':id')
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('notifications', 'read', { requireOwnership: true })
+  async deleteNotification(@Param('id') id: string, @Request() req?: ClinicAuthenticatedRequest) {
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const nc = client as {
+          notification: {
+            delete: (args: { where: { id: string } }) => Promise<unknown>;
+          };
+        };
+        return await nc.notification.delete({ where: { id } });
+      },
+      {
+        operation: 'DELETE_NOTIFICATION',
+        resourceType: 'NOTIFICATION',
+        resourceId: id,
+        userId: req?.user?.sub || '',
+        userRole: req?.user?.role || 'PATIENT',
+        clinicId: req?.clinicContext?.clinicId || '',
+      }
+    );
+    return { success: true };
   }
 
   /**

@@ -381,27 +381,20 @@ export abstract class BaseCacheClientService {
     }
   }
 
-  async scan(cursor: string, pattern?: string, count: number = 500): Promise<[string, string[]]> {
-    if (!this.client || this.client.status !== 'ready') {
-      return ['0', []];
-    }
-    try {
-      const options = pattern ? { MATCH: pattern, COUNT: count } : { COUNT: count };
-      const scanClient = this.client as unknown as {
-        scan(
-          cursor: string,
-          options: { MATCH?: string; COUNT: number }
-        ): Promise<[string, string[]]>;
-      };
-      return await scanClient.scan(cursor, options);
-    } catch {
-      return ['0', []];
-    }
-  }
-
   async ping(): Promise<string> {
-    if (!this.client || this.client.status !== 'ready') {
-      throw new Error(`${this.PROVIDER_NAME} client not ready`);
+    if (!this.client) {
+      throw new Error(`${this.PROVIDER_NAME} client not initialized`);
+    }
+    // If client exists but isn't ready, attempt reconnection before failing
+    if (this.client.status !== 'ready') {
+      try {
+        await this.client.connect();
+      } catch {
+        // Reconnection failed — fall through to throw below
+      }
+    }
+    if (this.client.status !== 'ready') {
+      throw new Error(`${this.PROVIDER_NAME} client not ready (status: ${this.client.status})`);
     }
     return this.client.ping();
   }
@@ -599,17 +592,6 @@ export abstract class BaseCacheClientService {
       return await this.client.zrangebyscore(key, min, max);
     } catch {
       return [];
-    }
-  }
-
-  async zrem(key: string, member: string): Promise<number> {
-    if (!this.client || this.client.status !== 'ready') {
-      return 0;
-    }
-    try {
-      return await this.client.zrem(key, member);
-    } catch {
-      return 0;
     }
   }
 

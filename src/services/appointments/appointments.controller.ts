@@ -1,4 +1,4 @@
-import { nowIso } from '@utils/date-time.util';
+import { nowIso, IST_TIMEZONE } from '@utils/date-time.util';
 import {
   Controller,
   Get,
@@ -82,7 +82,6 @@ import {
   UpdateAssistantDoctorCoverageDto,
   AssistantDoctorCoverageResponseDto,
   ProcessCheckInDto,
-  StartConsultationDto,
   ProposeVideoSlotsDto,
   ConfirmVideoSlotDto,
   ConfirmVideoFinalSlotDto,
@@ -1981,7 +1980,7 @@ export class AppointmentsController {
   @ApiOperation({
     summary: 'Reschedule a video appointment',
     description:
-      'Reschedule a video appointment to a new date/time. Must be done at least 24 hours before the original slot. Maximum 2 reschedules per appointment.',
+      'Reschedule a video appointment to a new date/time. Must be done before the 5-hour appointment window expires. Maximum 2 reschedules per appointment.',
   })
   @ApiParam({ name: 'id', description: 'Appointment ID (UUID)', type: 'string', format: 'uuid' })
   @ApiBody({
@@ -2030,13 +2029,13 @@ export class AppointmentsController {
       const parsed = new Date(payload.newAppointmentDate);
       if (!Number.isNaN(parsed.getTime())) {
         newDate = new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'Asia/Kolkata',
+          timeZone: IST_TIMEZONE,
           year: 'numeric',
           month: '2-digit',
           day: '2-digit',
         }).format(parsed);
         newTime = new Intl.DateTimeFormat('en-GB', {
-          timeZone: 'Asia/Kolkata',
+          timeZone: IST_TIMEZONE,
           hour: '2-digit',
           minute: '2-digit',
           hour12: false,
@@ -2391,7 +2390,7 @@ export class AppointmentsController {
    */
   @Post(':id/check-in')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.NURSE)
+  @Roles(Role.RECEPTIONIST, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.NURSE)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: true,
@@ -2746,98 +2745,6 @@ export class AppointmentsController {
     }
   }
 
-  /**
-   * Start consultation
-   * @deprecated Use PATCH /:id/status instead
-   * POST /appointments/:id/start
-   */
-  /**
-   * @deprecated Use PATCH /appointments/:id/status with status=IN_PROGRESS instead
-   */
-  @Post(':id/start-consultation')
-  @HttpCode(HttpStatus.OK)
-  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.NURSE, Role.RECEPTIONIST)
-  @ClinicRoute()
-  @RequireResourcePermission('appointments', 'update', {
-    requireOwnership: false,
-  })
-  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
-  @RateLimitAPI({ points: 20, duration: 60 })
-  @ApiOperation({
-    summary: 'Start consultation',
-    description: 'Starts the consultation for an appointment',
-  })
-  @ApiParam({
-    name: 'id',
-    description: 'ID of the appointment',
-    type: 'string',
-  })
-  @ApiBody({
-    type: StartConsultationDto,
-  })
-  @ApiResponse({
-    status: HttpStatus.OK,
-    description: 'Consultation started successfully',
-  })
-  @InvalidateAppointmentCache()
-  async startConsultation(
-    @Param('id', ParseUUIDPipe) appointmentId: string,
-    @Body(ValidationPipe) startDto: StartConsultationDto,
-    @Request() req: ClinicAuthenticatedRequest
-  ): Promise<ServiceResponse<{ message: string }>> {
-    const startTime = Date.now();
-    const context = 'AppointmentsController.startConsultation';
-    const userId = req.user?.id || '';
-    const clinicId = req.clinicContext?.clinicId || '';
-
-    try {
-      await this.appointmentService.startConsultation(
-        appointmentId,
-        startDto,
-        userId,
-        clinicId,
-        req.user?.role || 'USER'
-      );
-
-      await this.loggingService.log(
-        LogType.BUSINESS,
-        LogLevel.INFO,
-        'Consultation started via API',
-        context,
-        {
-          appointmentId,
-          userId,
-          clinicId,
-          responseTime: Date.now() - startTime,
-        }
-      );
-
-      return {
-        success: true,
-        data: { message: 'Consultation started successfully' },
-      };
-    } catch (error) {
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to start consultation: ${error instanceof Error ? error.message : String(error)}`,
-        context,
-        {
-          appointmentId,
-          clinicId: req.clinicContext?.clinicId,
-          error: error instanceof Error ? error.stack : undefined,
-          responseTime: Date.now() - startTime,
-        }
-      );
-
-      if (error instanceof HealthcareError) {
-        throw error;
-      }
-
-      throw this.errors.internalServerError(context);
-    }
-  }
-
   // =============================================
   // QR CODE CHECK-IN ENDPOINTS
   // =============================================
@@ -3155,8 +3062,8 @@ export class AppointmentsController {
           const dateB = new Date(b.date);
 
           // Today's appointments first
-          const aIsToday = dateA.toDateString() === today.toDateString();
-          const bIsToday = dateB.toDateString() === today.toDateString();
+          const aIsToday = isSameIstDay(dateA, today);
+          const bIsToday = isSameIstDay(dateB, today);
 
           if (aIsToday && !bIsToday) return -1;
           if (!aIsToday && bIsToday) return 1;
@@ -5536,6 +5443,49 @@ export class AppointmentsController {
     return {
       success: true,
       data: { appointmentId, verified: true },
+    };
+  }
+
+  /**
+   * Manually trigger the doctor daily appointment summary
+   * Useful when the 7 AM cron misses execution (e.g., worker was down).
+   * The jobs are enqueued for the worker to process via WhatsApp.
+   */
+  @Post('summary/trigger')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('appointments', 'update')
+  @RateLimitAPI({ points: 5, duration: 60 })
+  @ApiOperation({
+    summary: 'Trigger doctor daily summary manually',
+    description:
+      'Manually enqueues doctor daily appointment summary jobs. Use this when the 7 AM cron was missed (e.g., worker downtime). The worker must be running to process the queued jobs.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Doctor summary jobs enqueued',
+  })
+  async triggerDoctorDailySummary(@Request() _req: ClinicAuthenticatedRequest): Promise<{
+    success: true;
+    data: {
+      skipped: boolean;
+      reason?: string;
+      todayKey: string;
+      enqueuedCount: number;
+      skipCount: number;
+      totalDoctors: number;
+    };
+    message: string;
+  }> {
+    const result = await this.appointmentService.triggerDoctorDailySummary({
+      triggeredBy: 'manual',
+    });
+    return {
+      success: true,
+      data: result,
+      message: result.skipped
+        ? `Doctor summary skipped (${result.reason})`
+        : `Enqueued ${result.enqueuedCount} doctor summary job(s), skipped ${result.skipCount} existing`,
     };
   }
 }

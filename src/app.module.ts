@@ -11,8 +11,8 @@ import { LoggingControllersModule } from '@infrastructure/logging/logging-contro
 import { AppService } from './app.service';
 import { AppointmentsModule } from './services/appointments/appointments.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { ScheduleModule } from '@nestjs/schedule';
 import { QueueModule } from '@infrastructure/queue';
+import { BullBoardModule } from '@infrastructure/queue/src/bull-board/bull-board.module';
 import { CommunicationModule } from '@communication/communication.module';
 import { BillingModule } from './services/billing/billing.module';
 import { EHRModule } from './services/ehr/ehr.module';
@@ -20,7 +20,11 @@ import { VideoModule } from './services/video/video.module';
 import { ResilienceModule } from '@core/resilience/resilience.module';
 import { ErrorsModule } from '@core/errors';
 import { SecurityModule } from '@security/security.module';
+import { AyurvedaModule } from './services/ayurveda/ayurveda.module';
+import { DietModule } from './services/diet/diet.module';
 import { PharmacyModule } from './services/pharmacy/pharmacy.module';
+import { PharmacyInventoryModule } from './services/pharmacy-inventory/pharmacy-inventory.module';
+import { IpdModule } from './services/ipd/ipd.module';
 import { EventsModule } from '@infrastructure/events/events.module';
 import { CacheModule } from '@infrastructure/cache/cache.module';
 import { SessionModule } from '@core/session/session.module';
@@ -30,6 +34,7 @@ import { StaffModule } from './services/staff/staff.module';
 import { AnalyticsModule } from './services/analytics/analytics.module';
 import { ProfileCompletionModule } from './services/profile-completion/profile-completion.module';
 import { BusinessRulesModule } from '@core/business-rules';
+import { ScheduleModule } from '@nestjs/schedule';
 // import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.middleware';
 
 @Module({
@@ -45,13 +50,14 @@ import { BusinessRulesModule } from '@core/business-rules';
       maxListeners: 20,
       verboseMemoryLeak: true,
     }),
-    ScheduleModule.forRoot({
-      // Timezone is controlled at the container level (TZ: Asia/Kolkata in docker-compose).
-      // All @Cron expressions fire in both API and worker containers.
-      // The worker is the primary cron executor; API crons are harmless duplicates.
-      // Future: gate crons behind SERVICE_NAME env to only fire on worker.
-    }),
+    // ScheduleModule is required for @Cron() decorators in AppointmentsModule,
+    // BillingModule, VideoModule etc. NestJS DI needs SchedulerRegistry from
+    // ScheduleModule during module scanning — without it the app won't start.
+    // Cron jobs only fire in the worker container (separate NestJS process with
+    // its own ScheduleModule.forRoot() in worker-bootstrap.ts).
+    ScheduleModule.forRoot({ cronJobs: false }),
     QueueModule.forRoot(),
+    BullBoardModule.forRoot(),
     // Cache must initialize before logging so the log dashboard can persist and read entries.
     CacheModule.forRoot(),
     // JWT is configured in AuthModule - no need for global registration here
@@ -80,11 +86,18 @@ import { BusinessRulesModule } from '@core/business-rules';
     ClinicModule,
     BillingModule,
     EHRModule,
+    // Ayurvedic clinical data module (Prakriti, Nadi Pariksha, Dosha tracking, Samprapti)
+    AyurvedaModule,
+    DietModule,
     PharmacyModule,
+    // Pharmacy inventory management module (batch/lot tracking, FEFO, expiry alerts, auto-reorder, inter-clinic transfer)
+    PharmacyInventoryModule,
+    // Automation module (merged into CommunicationModule)
+    CommunicationModule,
+    // IPD module (admission, beds, wards, discharge, nurse station, daily billing)
+    IpdModule,
     // Video consultation module (provider-agnostic video integration)
     VideoModule,
-    // Unified Communication Module (includes all channels: socket, push, email, WhatsApp, SMS, listeners)
-    CommunicationModule,
     // Support modules
     HealthModule,
     PatientsModule,

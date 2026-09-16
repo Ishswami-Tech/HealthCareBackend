@@ -6,6 +6,7 @@
 
 import { IsString, IsOptional, IsDateString } from 'class-validator';
 import { IsClinicId } from '@core/decorators/clinic-id.validator';
+import type { TreatmentPlanDto } from './appointment.dto';
 import type {
   MedicalHistoryResponse,
   LabReportResponse,
@@ -443,9 +444,8 @@ export class CreatePrescriptionDto {
   @IsOptional()
   diagnosis?: string | undefined;
 
-  @IsString()
   @IsOptional()
-  treatmentPlan?: string | undefined;
+  treatmentPlan?: TreatmentPlanDto | undefined;
 
   @IsOptional()
   medications?: PrescriptionMedicationDto[] | undefined;

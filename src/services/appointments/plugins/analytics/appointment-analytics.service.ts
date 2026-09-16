@@ -4,6 +4,7 @@ import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel, PrismaTransactionClientWithDelegates } from '@core/types';
 import { DatabaseService } from '@infrastructure/database';
+import { getClockPartsInIST } from '@utils/date-time.util';
 import type {
   AppointmentMetrics,
   DoctorMetrics,
@@ -1003,7 +1004,7 @@ export class AppointmentAnalyticsService {
 
           waitTimes.push(waitTime);
 
-          const checkInHour = checkIn.checkedInAt.getHours();
+          const checkInHour = getClockPartsInIST(checkIn.checkedInAt)?.hour ?? 0;
           if (!byHour[checkInHour]) byHour[checkInHour] = [];
           byHour[checkInHour].push(waitTime);
 
@@ -1210,10 +1211,10 @@ export class AppointmentAnalyticsService {
           else if (diffMinutes <= 30) onTimeCheckIns++;
           else lateCheckIns++;
 
-          const dayOfWeek = checkIn.checkedInAt.getDay();
+          const dayOfWeek = getClockPartsInIST(checkIn.checkedInAt)?.weekday ?? 0;
           byDayOfWeek[dayOfWeek] = (byDayOfWeek[dayOfWeek] || 0) + 1;
 
-          const hour = checkIn.checkedInAt.getHours();
+          const hour = getClockPartsInIST(checkIn.checkedInAt)?.hour ?? 0;
           byHour[hour] = (byHour[hour] || 0) + 1;
 
           byLocation[checkIn.locationId] = (byLocation[checkIn.locationId] || 0) + 1;

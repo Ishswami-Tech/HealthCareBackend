@@ -131,7 +131,7 @@ export class QueueModule {
                 connectTimeout: 30000,
                 commandTimeout: 15000,
                 lazyConnect: false,
-                family: 4,
+                family: 0, // 0 = auto (IPv4 + IPv6); Docker DNS may return IPv6
                 keepAlive: 60000,
                 keepAliveInitialDelay: 0,
                 showFriendlyErrorStack: false,

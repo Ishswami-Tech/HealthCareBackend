@@ -21,6 +21,7 @@ export function generateAppointmentConfirmationTemplate(
   unsubscribeUrl?: string
 ): string {
   const appointmentType = safeText(data.appointmentType, 'appointment');
+  const serviceLabel = safeText(data.serviceLabel, appointmentType);
   const patientName = safeText(data.patientName, 'there');
   const doctorName = safeText(data.doctorName, 'Doctor');
   const clinicName = safeText(data.clinicName, 'Healthcare Clinic');
@@ -44,13 +45,13 @@ export function generateAppointmentConfirmationTemplate(
         <p style="font-size: 18px; color: #333; margin: 0 0 30px 0;">Hello ${patientName},</p>
 
         <p style="font-size: 16px; color: #555; margin: 0 0 30px 0;">
-          Your ${appointmentType} appointment with ${doctorName} has been confirmed.
+          Your ${serviceLabel} appointment with ${doctorName} has been confirmed.
         </p>
 
         <div style="background: #f8f9fc; padding: 25px; border-radius: 8px; margin: 30px 0; border-left: 4px solid #2f855a;">
           <h3 style="margin: 0 0 20px 0; color: #2c3e50; font-size: 20px;">Appointment Details</h3>
           <div style="display: grid; gap: 12px;">
-            <div><strong style="color: #2c3e50;">Type:</strong> <span style="color: #555;">${appointmentType}</span></div>
+            <div><strong style="color: #2c3e50;">Type:</strong> <span style="color: #555;">${serviceLabel}</span></div>
             <div><strong style="color: #2c3e50;">Doctor:</strong> <span style="color: #555;">${doctorName}</span></div>
             <div><strong style="color: #2c3e50;">Date:</strong> <span style="color: #555;">${data.appointmentDate}</span></div>
             <div><strong style="color: #2c3e50;">Time:</strong> <span style="color: #555;">${data.appointmentTime}</span></div>

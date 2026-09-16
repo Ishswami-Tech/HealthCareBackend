@@ -11,6 +11,7 @@ import { NotFoundException } from '@nestjs/common';
 
 import type { AppointmentQRCodeData, ConfirmationResult } from '@core/types/appointment.types';
 import { EHRService } from '@services/ehr/ehr.service';
+import type { TreatmentPlanDto } from '@dtos/appointment.dto';
 
 // Re-export types for backward compatibility (with alias for QRCodeData)
 export type { ConfirmationResult };
@@ -218,7 +219,7 @@ export class AppointmentConfirmationService {
     domain: string,
     clinicalData?: {
       diagnosis?: string | undefined;
-      treatmentPlan?: string | undefined;
+      treatmentPlan?: TreatmentPlanDto | undefined;
       medications?: ClinicalMedicationInput[] | undefined;
       clinicId?: string | undefined;
       userId?: string | undefined;
@@ -550,7 +551,7 @@ export class AppointmentConfirmationService {
     domain: string,
     clinicalData?: {
       diagnosis?: string | undefined;
-      treatmentPlan?: string | undefined;
+      treatmentPlan?: TreatmentPlanDto | undefined;
       medications?: ClinicalMedicationInput[] | undefined;
       clinicId?: string | undefined;
       userId?: string | undefined;
@@ -588,7 +589,7 @@ export class AppointmentConfirmationService {
               ? { instructions: medication.instructions }
               : {}),
           })),
-          notes: clinicalData.treatmentPlan,
+          notes: this.summarizeTreatmentPlan(clinicalData.treatmentPlan),
         })
         .catch(err => {
           this.logger.error(`Failed to persist EHR data for appointment ${appointmentId}:`, err);
@@ -744,5 +745,23 @@ export class AppointmentConfirmationService {
           : 'AS_DIRECTED',
       ...(medication.instructions !== undefined ? { instructions: medication.instructions } : {}),
     };
+  }
+
+  private summarizeTreatmentPlan(plan?: TreatmentPlanDto): string {
+    if (!plan) {
+      return '';
+    }
+
+    const parts = [
+      plan.category,
+      plan.treatmentType,
+      plan.subProcedure,
+      plan.diagnosis,
+      plan.treatment,
+      plan.followUp,
+      ...(plan.recommendations || []),
+    ].filter((part): part is string => typeof part === 'string' && part.trim().length > 0);
+
+    return parts.join(' | ');
   }
 }

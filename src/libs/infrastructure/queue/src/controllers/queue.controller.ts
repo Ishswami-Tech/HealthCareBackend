@@ -22,6 +22,7 @@ import { RolesGuard } from '@core/guards/roles.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { Role } from '@core/types/enums.types';
+import { findTreatmentCatalogEntryOrUndefined } from '@core/types/treatment-catalog.types';
 import { QueueMonitoringService } from '../monitoring/queue-monitoring.service';
 import type {
   ManualQueueAlertCreateInput,
@@ -1379,6 +1380,7 @@ export class QueueController {
   ): string {
     const value = this.pick(jobFamily, queueCategory, queueType, treatmentType, appointmentType);
     const normalized = this.normalizeQueueTaxonomyToken(value);
+    const catalogEntry = findTreatmentCatalogEntryOrUndefined(value);
 
     if (normalized === 'billing_and_payments') return 'Billing and Payments';
     if (normalized === 'appointments') return 'Appointments';
@@ -1389,19 +1391,7 @@ export class QueueController {
     if (normalized === 'procedural_care') return 'Procedural Care';
     if (normalized === 'lab_test' || normalized === 'imaging' || normalized === 'vaccination')
       return 'Diagnostic';
-    if (normalized === 'dosha_analysis') return 'Ayurvedic Procedures';
-    if (
-      normalized === 'therapy' ||
-      normalized === 'surgery' ||
-      normalized === 'virechana' ||
-      normalized === 'abhyanga' ||
-      normalized === 'swedana' ||
-      normalized === 'basti' ||
-      normalized === 'nasya' ||
-      normalized === 'raktamokshana'
-    ) {
-      return 'Ayurvedic Procedures';
-    }
+    if (catalogEntry) return catalogEntry.label;
     if (normalized === 'general_consultation') return 'General Consultation';
     if (normalized === 'follow_up') return 'Follow Up';
     if (normalized === 'home_visit') return 'Home Visit';
@@ -1450,12 +1440,10 @@ export class QueueController {
       normalizedJobType.includes('lab') ||
       normalizedJobType.includes('imaging') ||
       normalizedJobType.includes('bulk_ehr') ||
-      normalizedJobType.includes('ayurveda') ||
       normalizedQueueType.includes('email') ||
       normalizedQueueType.includes('notification') ||
       normalizedQueueType.includes('lab') ||
-      normalizedQueueType.includes('imaging') ||
-      normalizedQueueType.includes('ayurveda')
+      normalizedQueueType.includes('imaging')
     ) {
       return 'clinical-support';
     }

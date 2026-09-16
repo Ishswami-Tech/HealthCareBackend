@@ -1,5 +1,6 @@
 import { nowIso } from '@utils/date-time.util';
 import {
+  HttpStatus,
   Injectable,
   Optional,
   Inject,
@@ -13,6 +14,7 @@ import { LoggingService } from '@infrastructure/logging';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { EventService } from '@infrastructure/events/event.service';
 import { ConfigService } from '@config/config.service';
+import { HealthcareErrorsService } from '@core/errors/healthcare-errors.service';
 import {
   LogType,
   LogLevel,
@@ -241,7 +243,7 @@ export class ClinicService {
               language: data.language,
               createdBy: data.createdBy,
               isActive: data.isActive ?? true,
-              ...(data.settings ? { settings: data.settings } : {}),
+              ...(data.settings && { settings: data.settings as never }),
             } as PrismaDelegateArgs,
             include: {
               locations: {
@@ -948,6 +950,21 @@ export class ClinicService {
     return this.fetchAllClinics(userId, role, clinicId);
   }
 
+  /**
+   * Resolve the configured clinic ID from env/config without ever returning an empty string.
+   * Returns the configured CLINIC_ID, or null if not set. An empty string here would silently
+   * bypass tenant-isolation checks in the PATIENT code paths, so we explicitly reject it.
+   */
+  private resolveConfiguredClinicId(): string | null {
+    const fromConfig =
+      typeof this.configService?.get === 'function'
+        ? this.configService.get<string | undefined>('CLINIC_ID')
+        : undefined;
+    const fromEnv = process.env['CLINIC_ID'];
+    const raw = fromConfig || fromEnv || undefined;
+    return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+  }
+
   private async fetchAllClinics(
     userId: string,
     role?: string,
@@ -982,8 +999,7 @@ export class ClinicService {
       } else if (role === Role.PATIENT) {
         // Enforce single-tenant view if CLINIC_ID is configured or passed in context
         // Patients should only see the specific clinic they are accessing
-        const contextClinicId =
-          clinicId || this.configService?.get<string>('CLINIC_ID', '') || process.env['CLINIC_ID'];
+        const contextClinicId = clinicId || this.resolveConfiguredClinicId();
 
         if (contextClinicId) {
           whereClause = {
@@ -1095,8 +1111,7 @@ export class ClinicService {
     try {
       // Enforce isolation for patients
       if (role === Role.PATIENT && userId) {
-        const configuredClinicId =
-          this.configService?.get<string>('CLINIC_ID', '') || process.env['CLINIC_ID'];
+        const configuredClinicId = this.resolveConfiguredClinicId();
 
         // 1. Allow access if ID matches Configured ID (Single Tenant Env)
         // 2. Allow access if ID matches Context ID (Multi-Tenant Header)
@@ -1189,8 +1204,7 @@ export class ClinicService {
           }
         );
 
-        const configuredClinicId =
-          this.configService?.get<string>('CLINIC_ID', '') || process.env['CLINIC_ID'];
+        const configuredClinicId = this.resolveConfiguredClinicId();
         const isPublic =
           (configuredClinicId && clinicData.id === configuredClinicId) ||
           (clinicId && clinicData.id === clinicId);

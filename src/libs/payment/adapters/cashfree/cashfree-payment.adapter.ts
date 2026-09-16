@@ -107,6 +107,7 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
   private secretKey: string = '';
   private baseUrl: string = 'https://sandbox.cashfree.com/pg';
   private apiVersion: string = '2025-01-01';
+  private environment: 'sandbox' | 'production' = 'sandbox';
 
   constructor(loggingService: LoggingService, httpService: HttpService) {
     super(loggingService);
@@ -128,7 +129,12 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
       throw new Error('Cashfree credentials must be decrypted before use');
     }
     const credentials = creds;
-    this.appId = credentials['appId'] || credentials['app_id'] || credentials['x_client_id'] || '';
+    this.appId =
+      credentials['appId'] ||
+      credentials['app_id'] ||
+      credentials['apiKey'] ||
+      credentials['x_client_id'] ||
+      '';
     this.secretKey =
       credentials['secretKey'] || credentials['secret_key'] || credentials['x_client_secret'] || '';
     this.baseUrl =
@@ -137,6 +143,7 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
       (credentials['environment'] === 'production'
         ? 'https://api.cashfree.com/pg'
         : 'https://sandbox.cashfree.com/pg');
+    this.environment = credentials['environment'] === 'production' ? 'production' : 'sandbox';
     this.apiVersion = credentials['apiVersion'] || credentials['api_version'] || '2025-01-01';
 
     if (!this.appId || !this.secretKey) {
@@ -406,6 +413,7 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         (typeof orderMeta['payment_link'] === 'string' ? orderMeta['payment_link'] : undefined) ||
         (typeof orderRecord['payment_link'] === 'string' ? orderRecord['payment_link'] : undefined);
       pendingResult.metadata = {
+        environment: this.environment,
         ...(data.payment_session_id ? { paymentSessionId: data.payment_session_id } : {}),
         ...(redirectUrl ? { redirectUrl } : {}),
         orderStatus: data.order_status,

@@ -139,7 +139,7 @@ export class PaymentConfigService implements OnModuleInit {
   /**
    * Get default configuration (fallback)
    */
-  private getDefaultConfig(clinicId: string): ClinicPaymentConfig {
+  getDefaultConfig(clinicId: string): ClinicPaymentConfig {
     const cashfreeAppId = this.configService.getEnv('CASHFREE_APP_ID') || '';
     const cashfreeSecretKey = this.configService.getEnv('CASHFREE_SECRET_KEY') || '';
     const cashfreeEnv = this.configService.getEnv('CASHFREE_ENVIRONMENT', 'sandbox');

@@ -212,29 +212,18 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
       // merchantOrderId after a partial success can surface as an invalid or
       // duplicate transaction id.
       const merchantOrderId = this.buildMerchantOrderId(options.orderId);
-      const redirectUrl =
-        (options.metadata?.['redirectUrl'] as string) ||
-        (() => {
-          const baseUrl =
-            (options.metadata?.['baseUrl'] as string) ||
-            process.env['FRONTEND_URL'] ||
-            'http://localhost:3000';
-          return `${baseUrl}/payment/callback`;
-        })();
       const sdk = await this.loadPhonePeSdk();
-      const paymentRequest = sdk.StandardCheckoutPayRequest.builder()
+      const paymentRequest = sdk.CreateSdkOrderRequest.StandardCheckoutBuilder()
         .merchantOrderId(merchantOrderId)
         .amount(amountInPaise)
-        .redirectUrl(redirectUrl)
+        .expireAfter(1200)
         .build();
 
       const client = this.getClient();
-      const response = await client.pay(paymentRequest);
+      const response = await client.createSdkOrder(paymentRequest);
 
-      const paymentRedirectUrl = response.redirectUrl;
-
-      if (typeof paymentRedirectUrl !== 'string' || !paymentRedirectUrl) {
-        throw new Error('Failed to create payment intent');
+      if (!response.orderId || !response.token) {
+        throw new Error('PhonePe SDK order token was not returned');
       }
 
       await this.logger.log(
@@ -250,7 +239,8 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
         }
       );
 
-      // Return pending result with redirect URL in metadata
+      // Return the native SDK order token. The mobile app starts the SDK
+      // transaction; no browser bridge or hosted checkout is involved.
       return {
         success: true,
         paymentId: merchantOrderId,
@@ -259,10 +249,13 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
         status: 'pending',
         provider: this.getProviderName(),
         timestamp: new Date(),
-        orderId: merchantOrderId,
+        orderId: response.orderId,
         metadata: {
-          redirectUrl: paymentRedirectUrl,
+          environment: this.environment,
           merchantOrderId,
+          merchantId: this.clientId,
+          orderToken: response.token,
+          expireAt: response.expireAt,
           state: response.state || 'PENDING',
         },
         providerResponse: response,

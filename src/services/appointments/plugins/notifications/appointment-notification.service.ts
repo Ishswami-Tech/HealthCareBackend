@@ -15,6 +15,7 @@ import {
 } from '@communication/channels/socket/socket.service';
 import { DatabaseService } from '@infrastructure/database';
 import { EmailTemplate } from '@core/types';
+import { findTreatmentCatalogEntryOrUndefined } from '@core/types/treatment-catalog.types';
 import type {
   PrismaTransactionClientWithDelegates,
   PrismaDelegateArgs,
@@ -79,6 +80,22 @@ function resolveClinicDisplayName(templateData: unknown): string {
   }
 
   return resolveText(data['appName'], 'Healthcare App');
+}
+
+function resolveServiceLabel(templateData: unknown): string {
+  const data = templateData as Record<string, unknown>;
+  const directServiceLabel = resolveText(data['serviceLabel'], '');
+  if (directServiceLabel) {
+    return directServiceLabel;
+  }
+
+  const appointmentType = resolveText(data['appointmentType'], '');
+  const catalogEntry = findTreatmentCatalogEntryOrUndefined(appointmentType);
+  if (catalogEntry?.label) {
+    return catalogEntry.label;
+  }
+
+  return appointmentType || 'Appointment';
 }
 
 @Injectable()
@@ -567,12 +584,14 @@ export class AppointmentNotificationService {
     }
 
     const appointmentType = this.normalizeAppointmentType(templateData.appointmentType);
+    const serviceLabel = resolveServiceLabel(templateData);
     const detailsUrl = appointmentId
       ? this.buildAppointmentDetailsUrl(appointmentId, appointmentType)
       : undefined;
     const enrichedTemplateData = {
       ...(templateData as Record<string, unknown>),
       appointmentType,
+      serviceLabel,
       detailsUrl,
     };
     const subject = this.getEmailSubject(type, enrichedTemplateData);
@@ -594,6 +613,7 @@ export class AppointmentNotificationService {
         location: templateData.location,
         clinicName: templateData.clinicName,
         appointmentType,
+        serviceLabel,
         appointmentId,
         detailsUrl,
       },
@@ -651,6 +671,7 @@ export class AppointmentNotificationService {
 
     try {
       const appointmentType = this.normalizeAppointmentType(templateData.appointmentType);
+      const serviceLabel = resolveServiceLabel(templateData);
       const detailsUrl = this.buildAppointmentDetailsUrl(
         notificationData.appointmentId,
         appointmentType
@@ -686,7 +707,8 @@ export class AppointmentNotificationService {
               clinicId,
               detailsUrl,
               appointmentType,
-              role
+              role,
+              serviceLabel
             );
             didSend = true;
           } else if (role === 'doctor') {
@@ -698,6 +720,7 @@ export class AppointmentNotificationService {
               templateData.location,
               templateData.clinicName,
               appointmentType,
+              serviceLabel,
               detailsUrl
             );
             await this.whatsAppService.sendCustomMessage(phone, customMessage, clinicId);
@@ -714,7 +737,8 @@ export class AppointmentNotificationService {
               templateData.location,
               clinicId,
               detailsUrl,
-              appointmentType
+              appointmentType,
+              serviceLabel
             );
             didSend = true;
           }
@@ -742,6 +766,7 @@ export class AppointmentNotificationService {
             type,
             templateData,
             appointmentType,
+            serviceLabel,
             detailsUrl
           );
           await this.whatsAppService.sendCustomMessage(ccPhone, ccMessage, clinicId);
@@ -971,6 +996,7 @@ export class AppointmentNotificationService {
     const appointmentType = this.normalizeAppointmentType(
       resolveText(data['appointmentType'], 'appointment')
     );
+    const serviceLabel = resolveText(data['serviceLabel'], appointmentType);
     const detailsUrl = resolveText(data['detailsUrl'], '');
     const cancellationReason = resolveText(data['cancellationReason'], '');
     const cancelledBy = resolveText(data['cancelledBy'], '');
@@ -987,7 +1013,7 @@ export class AppointmentNotificationService {
           ? `<p><a href="${detailsUrl}">View appointment details</a></p>`
           : '';
     const typeLabel =
-      appointmentType === 'video' ? 'video appointment' : `${appointmentType} appointment`;
+      appointmentType === 'video' ? 'video appointment' : `${serviceLabel} appointment`;
     const videoScheduledLine = `scheduled for ${appointmentDate} at ${appointmentTime}`;
     const bodies = {
       reminder: `
@@ -1131,15 +1157,17 @@ export class AppointmentNotificationService {
     location?: string,
     clinicName?: string,
     appointmentType?: string,
+    serviceLabel?: string,
     detailsUrl?: string
   ): string {
     const clinicLabel = resolveText(clinicName, 'Healthcare Clinic');
     const typeLabel = resolveText(appointmentType, 'in-person').toUpperCase();
+    const serviceLabelText = resolveText(serviceLabel, typeLabel);
     const locationLabel = resolveText(location, clinicLabel);
     const joinLink = detailsUrl ? `\nJoin link: ${detailsUrl}` : '';
 
     return [
-      `New ${typeLabel} appointment booked for ${doctorName}`,
+      `New ${serviceLabelText} appointment booked for ${doctorName}`,
       '',
       `Patient: ${patientName}`,
       `Date: ${appointmentDate}`,
@@ -1155,6 +1183,7 @@ export class AppointmentNotificationService {
     type: string,
     templateData: Record<string, unknown>,
     appointmentType?: string,
+    serviceLabel?: string,
     detailsUrl?: string
   ): string {
     const patientName = resolveText(templateData['patientName'] as string | undefined, 'Patient');
@@ -1167,7 +1196,10 @@ export class AppointmentNotificationService {
       templateData['appointmentTime'] as string | undefined,
       'TBD'
     );
-    const typeLabel = resolveText(appointmentType, 'in-person').toUpperCase();
+    const typeLabel = resolveText(
+      serviceLabel,
+      resolveText(appointmentType, 'in-person')
+    ).toUpperCase();
 
     const typeLabels: Record<string, string> = {
       reminder: `Reminder sent to ${patientName}`,

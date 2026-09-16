@@ -196,11 +196,7 @@ export class DragonflyCacheProvider implements IAdvancedCacheProvider {
   }
 
   async ping(): Promise<string> {
-    try {
-      return await this.dragonflyService.ping();
-    } catch {
-      throw new Error('Dragonfly client not ready');
-    }
+    return await this.dragonflyService.ping();
   }
 
   async isHealthy(): Promise<boolean> {
@@ -680,14 +676,6 @@ export class DragonflyCacheProvider implements IAdvancedCacheProvider {
     }
   }
 
-  async zrem(key: string, member: string): Promise<number> {
-    try {
-      return await this.dragonflyService.zrem(key, member);
-    } catch {
-      return 0;
-    }
-  }
-
   async zremrangebyscore(key: string, min: number, max: number): Promise<number> {
     try {
       return await this.dragonflyService.zremrangebyscore(key, min, max);
@@ -741,14 +729,6 @@ export class DragonflyCacheProvider implements IAdvancedCacheProvider {
       return await this.dragonflyService.keys(pattern);
     } catch {
       return [];
-    }
-  }
-
-  async scan(cursor: string, pattern?: string, count: number = 500): Promise<[string, string[]]> {
-    try {
-      return await this.dragonflyService.scan(cursor, pattern, count);
-    } catch {
-      return ['0', []];
     }
   }
 

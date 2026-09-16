@@ -264,144 +264,77 @@ export class ClinicFollowUpPlugin extends BaseAppointmentPlugin {
    * Create routine follow-up
    */
   private async createRoutineFollowUp(data: unknown): Promise<unknown> {
-    const pluginData = data as FollowUpPluginData;
-    if (
-      !pluginData.appointmentId ||
-      !pluginData.patientId ||
-      !pluginData.doctorId ||
-      !pluginData.clinicId
-    ) {
-      throw new Error('Missing required fields for createRoutineFollowUp');
-    }
-    const followUpType = 'routine';
-    const daysAfter = pluginData.daysAfter || 7;
-    const instructions =
-      pluginData.instructions || 'Routine follow-up appointment to monitor progress';
-    const priority = pluginData.priority || 'normal';
-
-    return await this.followUpService.createFollowUpPlan(
-      pluginData.appointmentId,
-      pluginData.patientId,
-      pluginData.doctorId,
-      pluginData.clinicId,
-      followUpType,
-      daysAfter,
-      instructions,
-      priority,
-      pluginData.medications,
-      pluginData.tests,
-      pluginData.restrictions,
-      pluginData.notes
-    );
+    return await this.createNamedFollowUp(data, {
+      requiredFields: 'createRoutineFollowUp',
+      followUpType: 'routine',
+      daysAfter: 7,
+      instructions: 'Routine follow-up appointment to monitor progress',
+      priority: 'normal',
+    });
   }
 
   /**
    * Create urgent follow-up
    */
   private async createUrgentFollowUp(data: unknown): Promise<unknown> {
-    const pluginData = data as FollowUpPluginData;
-    if (
-      !pluginData.appointmentId ||
-      !pluginData.patientId ||
-      !pluginData.doctorId ||
-      !pluginData.clinicId
-    ) {
-      throw new Error('Missing required fields for createUrgentFollowUp');
-    }
-    const followUpType = 'urgent';
-    const daysAfter = pluginData.daysAfter || 1;
-    const instructions = pluginData.instructions || 'Urgent follow-up appointment required';
-    const priority = 'urgent';
-
-    return await this.followUpService.createFollowUpPlan(
-      pluginData.appointmentId,
-      pluginData.patientId,
-      pluginData.doctorId,
-      pluginData.clinicId,
-      followUpType,
-      daysAfter,
-      instructions,
-      priority,
-      pluginData.medications,
-      pluginData.tests,
-      pluginData.restrictions,
-      pluginData.notes
-    );
+    return await this.createNamedFollowUp(data, {
+      requiredFields: 'createUrgentFollowUp',
+      followUpType: 'urgent',
+      daysAfter: 1,
+      instructions: 'Urgent follow-up appointment required',
+      priority: 'urgent',
+    });
   }
 
   /**
    * Create specialist follow-up
    */
   private async createSpecialistFollowUp(data: unknown): Promise<unknown> {
-    const pluginData = data as FollowUpPluginData;
-    if (
-      !pluginData.appointmentId ||
-      !pluginData.patientId ||
-      !pluginData.doctorId ||
-      !pluginData.clinicId
-    ) {
-      throw new Error('Missing required fields for createSpecialistFollowUp');
-    }
-    const followUpType = 'specialist';
-    const daysAfter = pluginData.daysAfter || 14;
-    const instructions = pluginData.instructions || 'Specialist follow-up appointment';
-    const priority = pluginData.priority || 'high';
-
-    return await this.followUpService.createFollowUpPlan(
-      pluginData.appointmentId,
-      pluginData.patientId,
-      pluginData.doctorId,
-      pluginData.clinicId,
-      followUpType,
-      daysAfter,
-      instructions,
-      priority,
-      pluginData.medications,
-      pluginData.tests,
-      pluginData.restrictions,
-      pluginData.notes
-    );
+    return await this.createNamedFollowUp(data, {
+      requiredFields: 'createSpecialistFollowUp',
+      followUpType: 'specialist',
+      daysAfter: 14,
+      instructions: 'Specialist follow-up appointment',
+      priority: 'high',
+    });
   }
 
   /**
    * Create therapy follow-up
    */
   private async createTherapyFollowUp(data: unknown): Promise<unknown> {
-    const pluginData = data as FollowUpPluginData;
-    if (
-      !pluginData.appointmentId ||
-      !pluginData.patientId ||
-      !pluginData.doctorId ||
-      !pluginData.clinicId
-    ) {
-      throw new Error('Missing required fields for createTherapyFollowUp');
-    }
-    const followUpType = 'therapy';
-    const daysAfter = pluginData.daysAfter || 3;
-    const instructions =
-      pluginData.instructions || 'Therapy follow-up to assess progress and adjust treatment plan';
-    const priority = pluginData.priority || 'normal';
-
-    return await this.followUpService.createFollowUpPlan(
-      pluginData.appointmentId,
-      pluginData.patientId,
-      pluginData.doctorId,
-      pluginData.clinicId,
-      followUpType,
-      daysAfter,
-      instructions,
-      priority,
-      pluginData.medications,
-      pluginData.tests,
-      pluginData.restrictions,
-      pluginData.notes
-    );
+    return await this.createNamedFollowUp(data, {
+      requiredFields: 'createTherapyFollowUp',
+      followUpType: 'therapy',
+      daysAfter: 3,
+      instructions: 'Therapy follow-up to assess progress and adjust treatment plan',
+      priority: 'normal',
+    });
   }
 
   /**
    * Create surgery follow-up
    */
   private async createSurgeryFollowUp(data: unknown): Promise<unknown> {
+    return await this.createNamedFollowUp(data, {
+      requiredFields: 'createSurgeryFollowUp',
+      followUpType: 'surgery',
+      daysAfter: 14,
+      instructions: 'Post-surgery follow-up to check healing and recovery',
+      priority: 'high',
+    });
+  }
+
+  private async createNamedFollowUp(
+    data: unknown,
+    config: {
+      requiredFields: string;
+      followUpType: string;
+      daysAfter: number;
+      instructions: string;
+      priority: 'low' | 'normal' | 'high' | 'urgent';
+    }
+  ): Promise<unknown> {
     const pluginData = data as FollowUpPluginData;
     if (
       !pluginData.appointmentId ||
@@ -409,23 +342,18 @@ export class ClinicFollowUpPlugin extends BaseAppointmentPlugin {
       !pluginData.doctorId ||
       !pluginData.clinicId
     ) {
-      throw new Error('Missing required fields for createSurgeryFollowUp');
+      throw new Error(`Missing required fields for ${config.requiredFields}`);
     }
-    const followUpType = 'surgery';
-    const daysAfter = pluginData.daysAfter || 14;
-    const instructions =
-      pluginData.instructions || 'Post-surgery follow-up to check healing and recovery';
-    const priority = pluginData.priority || 'high';
 
     return await this.followUpService.createFollowUpPlan(
       pluginData.appointmentId,
       pluginData.patientId,
       pluginData.doctorId,
       pluginData.clinicId,
-      followUpType,
-      daysAfter,
-      instructions,
-      priority,
+      pluginData.followUpType || config.followUpType,
+      pluginData.daysAfter || config.daysAfter,
+      pluginData.instructions || config.instructions,
+      pluginData.priority || config.priority,
       pluginData.medications,
       pluginData.tests,
       pluginData.restrictions,

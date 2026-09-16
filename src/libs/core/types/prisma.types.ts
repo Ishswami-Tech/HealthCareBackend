@@ -31,6 +31,15 @@ import type {
   PrescriptionItem,
   Therapy,
   Queue,
+  Ward,
+  Bed,
+  Admission,
+  BedAssignment,
+  BedCharge,
+  DischargeSummary,
+  NursingNote,
+  VitalsFlowsheet,
+  BedsideMedication,
   HealthRecord,
   ClinicExpense,
   MedicalDocument,
@@ -560,9 +569,16 @@ export interface QueryRawDelegate {
   ) => Promise<T>;
 }
 
+export interface ExecuteRawDelegate {
+  $executeRaw: (
+    query: TemplateStringsArray | string,
+    ...values: Array<string | number | boolean | null>
+  ) => Promise<number>;
+}
+
 export interface TransactionDelegate {
   $transaction: <T>(
-    fn: (tx: Record<string, never>) => Promise<T>,
+    fn: (tx: PrismaTransactionClientWithDelegates) => Promise<T>,
     options?: {
       maxWait?: number;
       timeout?: number;
@@ -647,6 +663,127 @@ export interface QueueDelegate extends PrismaDelegateBase<Queue> {
   create: (args: PrismaDelegateArgs) => Promise<Queue>;
   update: (args: PrismaDelegateArgs) => Promise<Queue>;
   delete: (args: PrismaDelegateArgs) => Promise<Queue>;
+  createMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  updateMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  deleteMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  count: (args?: PrismaDelegateArgs) => Promise<number>;
+}
+
+export interface WardDelegate extends PrismaDelegateBase<Ward> {
+  findUnique: (args: PrismaDelegateArgs) => Promise<Ward | null>;
+  findFirst: (args: PrismaDelegateArgs) => Promise<Ward | null>;
+  findMany: (args: PrismaDelegateArgs) => Promise<Ward[]>;
+  create: (args: PrismaDelegateArgs) => Promise<Ward>;
+  update: (args: PrismaDelegateArgs) => Promise<Ward>;
+  delete: (args: PrismaDelegateArgs) => Promise<Ward>;
+  createMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  updateMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  deleteMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  count: (args?: PrismaDelegateArgs) => Promise<number>;
+}
+
+export interface BedDelegate extends PrismaDelegateBase<Bed> {
+  findUnique: (args: PrismaDelegateArgs) => Promise<Bed | null>;
+  findFirst: (args: PrismaDelegateArgs) => Promise<Bed | null>;
+  findMany: (args: PrismaDelegateArgs) => Promise<Bed[]>;
+  create: (args: PrismaDelegateArgs) => Promise<Bed>;
+  update: (args: PrismaDelegateArgs) => Promise<Bed>;
+  delete: (args: PrismaDelegateArgs) => Promise<Bed>;
+  createMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  updateMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  deleteMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  count: (args?: PrismaDelegateArgs) => Promise<number>;
+}
+
+export interface AdmissionDelegate extends PrismaDelegateBase<Admission> {
+  findUnique: (args: PrismaDelegateArgs) => Promise<Admission | null>;
+  findFirst: (args: PrismaDelegateArgs) => Promise<Admission | null>;
+  findMany: (args: PrismaDelegateArgs) => Promise<Admission[]>;
+  create: (args: PrismaDelegateArgs) => Promise<Admission>;
+  update: (args: PrismaDelegateArgs) => Promise<Admission>;
+  delete: (args: PrismaDelegateArgs) => Promise<Admission>;
+  createMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  updateMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  deleteMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  count: (args?: PrismaDelegateArgs) => Promise<number>;
+}
+
+export interface BedAssignmentDelegate extends PrismaDelegateBase<BedAssignment> {
+  findUnique: (args: PrismaDelegateArgs) => Promise<BedAssignment | null>;
+  findFirst: (args: PrismaDelegateArgs) => Promise<BedAssignment | null>;
+  findMany: (args: PrismaDelegateArgs) => Promise<BedAssignment[]>;
+  create: (args: PrismaDelegateArgs) => Promise<BedAssignment>;
+  update: (args: PrismaDelegateArgs) => Promise<BedAssignment>;
+  delete: (args: PrismaDelegateArgs) => Promise<BedAssignment>;
+  createMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  updateMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  deleteMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  count: (args?: PrismaDelegateArgs) => Promise<number>;
+}
+
+export interface BedChargeDelegate extends PrismaDelegateBase<
+  BedCharge,
+  { _sum?: { totalCharges: number | null }; _count?: { id: number } }
+> {
+  findUnique: (args: PrismaDelegateArgs) => Promise<BedCharge | null>;
+  findFirst: (args: PrismaDelegateArgs) => Promise<BedCharge | null>;
+  findMany: (args: PrismaDelegateArgs) => Promise<BedCharge[]>;
+  create: (args: PrismaDelegateArgs) => Promise<BedCharge>;
+  update: (args: PrismaDelegateArgs) => Promise<BedCharge>;
+  delete: (args: PrismaDelegateArgs) => Promise<BedCharge>;
+  createMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  updateMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  deleteMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  count: (args?: PrismaDelegateArgs) => Promise<number>;
+  aggregate: (args: PrismaDelegateArgs) => Promise<{ _sum?: { totalCharges: number | null } }>;
+}
+
+export interface DischargeSummaryDelegate extends PrismaDelegateBase<DischargeSummary> {
+  findUnique: (args: PrismaDelegateArgs) => Promise<DischargeSummary | null>;
+  findFirst: (args: PrismaDelegateArgs) => Promise<DischargeSummary | null>;
+  findMany: (args: PrismaDelegateArgs) => Promise<DischargeSummary[]>;
+  create: (args: PrismaDelegateArgs) => Promise<DischargeSummary>;
+  update: (args: PrismaDelegateArgs) => Promise<DischargeSummary>;
+  delete: (args: PrismaDelegateArgs) => Promise<DischargeSummary>;
+  createMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  updateMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  deleteMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  count: (args?: PrismaDelegateArgs) => Promise<number>;
+}
+
+export interface NursingNoteDelegate extends PrismaDelegateBase<NursingNote> {
+  findUnique: (args: PrismaDelegateArgs) => Promise<NursingNote | null>;
+  findFirst: (args: PrismaDelegateArgs) => Promise<NursingNote | null>;
+  findMany: (args: PrismaDelegateArgs) => Promise<NursingNote[]>;
+  create: (args: PrismaDelegateArgs) => Promise<NursingNote>;
+  update: (args: PrismaDelegateArgs) => Promise<NursingNote>;
+  delete: (args: PrismaDelegateArgs) => Promise<NursingNote>;
+  createMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  updateMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  deleteMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  count: (args?: PrismaDelegateArgs) => Promise<number>;
+}
+
+export interface VitalsFlowsheetDelegate extends PrismaDelegateBase<VitalsFlowsheet> {
+  findUnique: (args: PrismaDelegateArgs) => Promise<VitalsFlowsheet | null>;
+  findFirst: (args: PrismaDelegateArgs) => Promise<VitalsFlowsheet | null>;
+  findMany: (args: PrismaDelegateArgs) => Promise<VitalsFlowsheet[]>;
+  create: (args: PrismaDelegateArgs) => Promise<VitalsFlowsheet>;
+  update: (args: PrismaDelegateArgs) => Promise<VitalsFlowsheet>;
+  delete: (args: PrismaDelegateArgs) => Promise<VitalsFlowsheet>;
+  createMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  updateMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  deleteMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  count: (args?: PrismaDelegateArgs) => Promise<number>;
+}
+
+export interface BedsideMedicationDelegate extends PrismaDelegateBase<BedsideMedication> {
+  findUnique: (args: PrismaDelegateArgs) => Promise<BedsideMedication | null>;
+  findFirst: (args: PrismaDelegateArgs) => Promise<BedsideMedication | null>;
+  findMany: (args: PrismaDelegateArgs) => Promise<BedsideMedication[]>;
+  create: (args: PrismaDelegateArgs) => Promise<BedsideMedication>;
+  update: (args: PrismaDelegateArgs) => Promise<BedsideMedication>;
+  delete: (args: PrismaDelegateArgs) => Promise<BedsideMedication>;
   createMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
   updateMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
   deleteMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
@@ -763,11 +900,33 @@ export interface PrismaClientWithDelegates {
   prescriptionItem: PrescriptionItemDelegate;
   therapy: TherapyDelegate;
   queue: QueueDelegate;
+  ward: WardDelegate;
+  bed: BedDelegate;
+  admission: AdmissionDelegate;
+  bedAssignment: BedAssignmentDelegate;
+  bedCharge: BedChargeDelegate;
+  dischargeSummary: DischargeSummaryDelegate;
+  nursingNote: NursingNoteDelegate;
+  vitalsFlowsheet: VitalsFlowsheetDelegate;
+  bedsideMedication: BedsideMedicationDelegate;
   notification: NotificationDelegate;
   clinicExpense: ClinicExpenseDelegate;
   medicalDocument: MedicalDocumentDelegate;
   insurance: InsuranceDelegate;
   insuranceClaim: InsuranceClaimDelegate;
+  $queryRaw: QueryRawDelegate['$queryRaw'];
+  $executeRaw: ExecuteRawDelegate['$executeRaw'];
+  stockBatch: any;
+  stockMovement: any;
+  stockTransfer: any;
+  purchaseOrder: any;
+  reorderRule: any;
+  stockAlert: any;
+  sampraptiStage: any;
+  ayurvedicDiagnosis: any;
+  prakritiAssessment: any;
+  nadiPariksha: any;
+  doshaImbalance: any;
   // Transaction
   $transaction: TransactionDelegate['$transaction'];
 }
@@ -862,6 +1021,10 @@ export interface PrismaClientLike {
     query: TemplateStringsArray | string,
     ...values: Array<string | number | boolean | null>
   ) => Promise<T>;
+  $executeRaw: (
+    query: TemplateStringsArray | string,
+    ...values: Array<string | number | boolean | null>
+  ) => Promise<number>;
   $transaction: <T>(
     fn: (tx: Record<string, never>) => Promise<T>,
     options?: {
@@ -916,6 +1079,9 @@ export interface StrictPrismaClient {
   medicalDocument: MedicalDocumentDelegate;
   insurance: InsuranceDelegate;
   insuranceClaim: InsuranceClaimDelegate;
+  ward: any;
+  bed: any;
+  sampraptiStage: any;
   // Core methods
   $queryRaw: QueryRawDelegate['$queryRaw'];
   $transaction: TransactionDelegate['$transaction'];

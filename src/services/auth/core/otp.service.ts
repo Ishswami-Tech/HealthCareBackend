@@ -27,6 +27,7 @@ type VerifiedOtpCacheEntry = {
 export class OtpService {
   private readonly config: OtpConfig;
   private readonly otpDebugEnabled: boolean;
+  private readonly isDevelopment: boolean;
   private readonly REQUESTS_PER_STAGE = 3;
   private readonly VERIFIED_OTP_TTL_SECONDS = 60;
 
@@ -68,6 +69,8 @@ export class OtpService {
     this.otpDebugEnabled =
       this.configService.getEnvBoolean('ENABLE_OTP_DEBUG', false) ||
       this.configService.getEnvBoolean('DEBUG_MODE', false);
+
+    this.isDevelopment = this.configService.isDevelopment();
   }
 
   private normalizeIdentifier(identifier: string): string {
@@ -111,6 +114,25 @@ export class OtpService {
       context,
       timestamp: nowIso(),
     });
+  }
+
+  /**
+   * Log full OTP for local development testing.
+   * Active when NODE_ENV=development OR ENABLE_OTP_DEBUG=true
+   * Never logs OTPs in staging/production unless explicitly opted in.
+   */
+  private logDevOtp(identifier: string, otp: string, channel: string, purpose: string): void {
+    if (!this.isDevelopment && !this.otpDebugEnabled) {
+      return;
+    }
+
+    void this.loggingService.log(
+      LogType.AUTH,
+      LogLevel.WARN,
+      `[OTP DEV] channel=${channel} purpose=${purpose} identifier=${identifier} OTP=${otp}`,
+      'OtpService',
+      { identifier, channel, purpose, otp }
+    );
   }
 
   private buildOtpCacheEntry(otp: string): OtpCacheEntry {
@@ -259,6 +281,9 @@ export class OtpService {
       const otpKey = `otp:${normalizedEmail}`;
       const expirySeconds = this.config.expiryMinutes * 60;
       const otpEntry = this.buildOtpCacheEntry(otp);
+
+      // Dev-only: log full OTP for testing
+      this.logDevOtp(normalizedEmail, otp, 'email', purpose);
 
       this.logOtp('Email OTP generated and cached', {
         normalizedEmail,
@@ -415,6 +440,9 @@ export class OtpService {
       const otpKey = `otp:${normalizedPhone}`;
       const expirySeconds = this.config.expiryMinutes * 60;
       const otpEntry = this.buildOtpCacheEntry(otp);
+
+      // Dev-only: log full OTP for testing
+      this.logDevOtp(normalizedPhone, otp, 'whatsapp', purpose);
 
       this.logOtp('WhatsApp OTP generated and cached', {
         normalizedPhone,

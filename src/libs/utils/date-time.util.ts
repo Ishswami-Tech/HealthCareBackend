@@ -78,6 +78,29 @@ export function formatTimeInIST(
   }).format(date);
 }
 
+export function getClockPartsInIST(dateInput: DateInput = new Date()): {
+  weekday: number;
+  hour: number;
+  minute: number;
+} | null {
+  const date = normalizeDateInput(dateInput);
+  if (!date) return null;
+  const parts = buildFormatter({
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(
+    parts.find(part => part.type === 'weekday')?.value || ''
+  );
+  const hour = Number(parts.find(part => part.type === 'hour')?.value);
+  const minute = Number(parts.find(part => part.type === 'minute')?.value);
+  return weekday >= 0 && Number.isFinite(hour) && Number.isFinite(minute)
+    ? { weekday, hour: hour === 24 ? 0 : hour, minute }
+    : null;
+}
+
 export function formatISODateInIST(dateInput: DateInput): string {
   return formatDateKeyInIST(dateInput);
 }

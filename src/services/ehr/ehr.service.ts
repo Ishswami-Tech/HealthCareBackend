@@ -350,6 +350,9 @@ export class EHRService {
    * @param data Prescription data
    */
   async createPrescription(data: CreatePrescriptionDto): Promise<void> {
+    let createdPrescription: { id: string } | undefined;
+    const medicationCount = data.medications?.length || 0;
+
     // Audit execution as a single unit or transaction
     await this.databaseService.executeHealthcareWrite(
       async client => {
@@ -373,6 +376,7 @@ export class EHRService {
             notes: data.notes || '',
           } as PrismaDelegateArgs,
         });
+        createdPrescription = prescription;
 
         // 2. Create individual prescription items
         if (data.medications && data.medications.length > 0) {
@@ -424,7 +428,15 @@ export class EHRService {
     await this.invalidateUserEHRCache(data.userId);
     await this.eventService.emit('ehr.prescription.created', {
       userId: data.userId,
-      count: data.medications?.length || 0,
+      patientId: data.userId,
+      doctorId: data.doctorId || undefined,
+      clinicId: data.clinicId || undefined,
+      prescriptionId: createdPrescription?.id,
+      count: medicationCount,
+      medicationsCount: medicationCount,
+      diagnosis: data.diagnosis,
+      treatmentPlan: data.treatmentPlan,
+      notes: data.notes,
     });
   }
 

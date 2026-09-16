@@ -15,7 +15,6 @@ import {
   UsePipes,
   BadRequestException,
   Query,
-  Logger,
   ForbiddenException,
 } from '@nestjs/common';
 import { ClinicIdPipe } from '@core/pipes/clinic-id.pipe';
@@ -52,6 +51,8 @@ import type { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { ClinicStatsResponseDto, ClinicOperatingHoursResponseDto } from '@dtos/clinic.dto';
 import { ClinicLocationService } from './services/clinic-location.service';
+import { LoggingService } from '@infrastructure/logging/logging.service';
+import { LogType, LogLevel } from '@core/types/logging.types';
 
 @ApiTags('clinic')
 @ApiBearerAuth()
@@ -72,13 +73,81 @@ import { ClinicLocationService } from './services/clinic-location.service';
   })
 )
 export class ClinicController {
-  private readonly logger = new Logger(ClinicController.name);
+  private readonly contextName = ClinicController.name;
+  private readonly logger: {
+    log: (message: string, ...args: unknown[]) => void;
+    error: (message: string, ...args: unknown[]) => void;
+    warn: (message: string, ...args: unknown[]) => void;
+  };
 
   constructor(
     private readonly clinicService: ClinicService,
     private readonly clinicLocationService: ClinicLocationService,
-    private readonly errors: HealthcareErrorsService
-  ) {}
+    private readonly errors: HealthcareErrorsService,
+    private readonly loggingService: LoggingService
+  ) {
+    const extractMeta = (args: unknown[]): Record<string, unknown> | undefined => {
+      if (args.length === 0) return undefined;
+      const first = args[0];
+      if (first instanceof Error) {
+        return { message: first.message, stack: first.stack } as Record<string, unknown>;
+      }
+      if (typeof first === 'object' && first !== null) {
+        return first as Record<string, unknown>;
+      }
+      return undefined;
+    };
+
+    this.logger = {
+      log: (message: string, ...args: unknown[]) => {
+        void this.loggingService.log(
+          LogType.CLINIC_OPERATIONS,
+          LogLevel.INFO,
+          message,
+          this.contextName,
+          extractMeta(args)
+        );
+      },
+      error: (message: string, ...args: unknown[]) => {
+        void this.loggingService.log(
+          LogType.CLINIC_OPERATIONS,
+          LogLevel.ERROR,
+          message,
+          this.contextName,
+          extractMeta(args)
+        );
+      },
+      warn: (message: string, ...args: unknown[]) => {
+        void this.loggingService.log(
+          LogType.CLINIC_OPERATIONS,
+          LogLevel.WARN,
+          message,
+          this.contextName,
+          extractMeta(args)
+        );
+      },
+    };
+  }
+
+  /**
+   * Defense-in-depth: validate that the resolved clinicId is non-empty.
+   * The ClinicGuard should always set this, but we validate here to prevent
+   * empty-string clinicId from reaching service/database queries, where it
+   * could match all rows (CRITICAL tenant-isolation bypass).
+   */
+  private resolveClinicId(req: ClinicAuthenticatedRequest, allowHeaderFallback = false): string {
+    const fromContext = req.clinicContext?.clinicId;
+    const fromHeader = allowHeaderFallback ? (req.headers['x-clinic-id'] as string) : undefined;
+    const clinicId = fromContext || fromHeader || '';
+
+    if (!clinicId.trim()) {
+      throw new BadRequestException(
+        'Clinic context is required. Provide a valid X-Clinic-ID header or ensure your token carries clinic membership.'
+      );
+    }
+
+    return clinicId.trim();
+  }
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
@@ -169,9 +238,15 @@ export class ClinicController {
         // Allow clinic-context-only reads for booking flows that are clinic-scoped but do not carry a user subject.
       }
 
-      this.logger.log(`Creating clinic by user ${userId}`, {
-        clinicName: createClinicDto.name,
-      });
+      this.loggingService.log(
+        LogType.CLINIC_OPERATIONS,
+        LogLevel.INFO,
+        `Creating clinic by user ${userId}`,
+        this.contextName,
+        {
+          clinicName: createClinicDto.name,
+        }
+      );
 
       const result = (await this.clinicService.createClinic({
         ...createClinicDto,
@@ -223,12 +298,20 @@ export class ClinicController {
         clinicAdminId: string;
       };
 
-      this.logger.log(`Clinic created successfully: ${result.id}`);
+      this.loggingService.log(
+        LogType.CLINIC_OPERATIONS,
+        LogLevel.INFO,
+        `Clinic created successfully: ${result.id}`,
+        this.contextName
+      );
       return result;
     } catch (_error) {
-      this.logger.error(
+      this.loggingService.log(
+        LogType.CLINIC_OPERATIONS,
+        LogLevel.ERROR,
         `Failed to create clinic: ${(_error as Error).message}`,
-        (_error as Error).stack
+        this.contextName,
+        { stack: (_error as Error).stack }
       );
       throw _error;
     }
@@ -288,30 +371,45 @@ export class ClinicController {
     try {
       const userId = req.user?.sub || req.user?.id || 'anonymous';
       const role = req.user?.role;
-      // Get clinic ID from context or header for filtering
-      const clinicId = req.clinicContext?.clinicId || (req.headers['x-clinic-id'] as string);
+      // Get clinic ID from context or header for filtering. Validate to prevent
+      // empty-string fallback reaching service queries (tenant isolation).
+      const clinicId = this.resolveClinicId(req, true);
 
       if (!userId || userId === 'anonymous') {
         // Allow clinic-context-only reads for booking flows that are clinic-scoped but do not carry a user subject.
       }
 
-      this.logger.log(`Getting clinics for user ${userId}`, {
-        page,
-        limit,
-        search,
-        clinicId,
-      });
+      this.loggingService.log(
+        LogType.CLINIC_OPERATIONS,
+        LogLevel.INFO,
+        `Getting clinics for user ${userId}`,
+        this.contextName,
+        {
+          page,
+          limit,
+          search,
+          clinicId,
+        }
+      );
 
       const result = await this.clinicService.getAllClinics(userId, role, clinicId);
 
-      this.logger.log(
-        `Retrieved ${Array.isArray(result) ? result.length : 0} clinics for user ${userId}`
+      this.loggingService.log(
+        LogType.CLINIC_OPERATIONS,
+        LogLevel.INFO,
+        `Retrieved ${Array.isArray(result) ? result.length : 0} clinics for user ${userId}`,
+        this.contextName
       );
       return result;
     } catch (_error) {
-      this.logger.error(
-        `Failed to get clinics: ${_error instanceof Error ? _error.message : 'Unknown _error'}`,
-        _error instanceof Error ? _error.stack : ''
+      this.loggingService.log(
+        LogType.CLINIC_OPERATIONS,
+        LogLevel.ERROR,
+        `Failed to get clinics: ${_error instanceof Error ? _error.message : 'Unknown error'}`,
+        this.contextName,
+        {
+          error: _error instanceof Error ? _error.message : 'Unknown error',
+        }
       );
       throw _error;
     }
@@ -423,11 +521,14 @@ export class ClinicController {
     status: HttpStatus.NOT_FOUND,
     description: 'Clinic not found.',
   })
-  async getClinicById(@Param('id') id: string, @Req() req: ClinicAuthenticatedRequest) {
+  async getClinicById(
+    @Param('id', ClinicIdPipe) id: string,
+    @Req() req: ClinicAuthenticatedRequest
+  ) {
     try {
       const userId = req.user?.sub || req.user?.id || 'anonymous';
       const role = req.user?.role;
-      const clinicId = req.clinicContext?.clinicId || (req.headers['x-clinic-id'] as string);
+      const clinicId = this.resolveClinicId(req, true);
 
       if (!userId || userId === 'anonymous') {
         // Allow clinic-context-only reads for booking flows that are clinic-scoped but do not carry a user subject.

@@ -181,10 +181,11 @@ export class SMTPEmailAdapter extends BaseEmailAdapter {
 
     // Create a properly typed SentMessageInfo
     const result: nodemailer.SentMessageInfo = {
-      messageId,
+      messageId: messageId || '',
       accepted: [],
       rejected: [],
       pending: [],
+      envelope: { from: '', to: [] },
       response: '250 OK',
     };
 

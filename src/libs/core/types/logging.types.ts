@@ -136,6 +136,9 @@ export interface EventEntry {
   type: string;
   data: Record<string, unknown>;
   timestamp: string | Date;
+  category?: string;
+  priority?: string;
+  status?: string;
   clinicId?: string;
   userId?: string;
 }

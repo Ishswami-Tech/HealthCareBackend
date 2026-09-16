@@ -1,18 +1,20 @@
-import { Module, forwardRef, OnModuleInit } from '@nestjs/common';
+import { Module, OnModuleInit } from '@nestjs/common';
 import { RbacService } from './rbac.service';
 import { RoleService } from './role.service';
 import { PermissionService } from './permission.service';
 import { RbacGuard } from './rbac.guard';
 import { RbacDecorators } from './rbac.decorators';
 // Use direct imports to avoid TDZ issues with barrel exports
-import { DatabaseModule } from '@infrastructure/database/database.module';
+// DatabaseModule is @Global() and loaded before RbacModule in AppModule - its services are globally available
+// We removed the DatabaseModule import to break the circular dependency:
+//   DatabaseModule -> GuardsModule -> RbacModule -> DatabaseModule (CYCLE)
 // CacheModule is @Global() - no need to import it explicitly
 // LoggingModule is @Global() - LoggingService is available without explicit import
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 
 @Module({
-  imports: [forwardRef(() => DatabaseModule)],
+  // No imports - DatabaseModule, CacheModule, and LoggingModule are all @Global()
   providers: [RbacService, RoleService, PermissionService, RbacGuard, RbacDecorators],
   exports: [
     RbacService,

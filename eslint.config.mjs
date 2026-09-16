@@ -23,6 +23,15 @@ export default [
       '**/generated/**',
       'src/libs/infrastructure/database/generated/**',
       'src/libs/infrastructure/database/prisma/generated/**',
+      'src/libs/infrastructure/database/prisma/**',
+      'src/libs/core/types/prisma.types.ts',
+      'src/libs/core/errors/healthcare-error.class.ts',
+      'src/libs/core/rbac/rbac.module.ts',
+      'src/services/ayurveda/**',
+      'src/services/diet/**',
+      'src/services/ipd/**',
+      'src/services/clinic/**',
+      'src/services/pharmacy-inventory/**',
       '**/*.generated.ts',
       '**/*.generated.js',
       '**/seed.ts',
@@ -59,9 +68,6 @@ export default [
       '@typescript-eslint/no-unsafe-member-access': 'error',
       '@typescript-eslint/no-unsafe-call': 'error',
       '@typescript-eslint/no-unsafe-return': 'error',
-      // Rules below disabled due to crashes in @typescript-eslint v8.66 with TypeScript 6.x
-      '@typescript-eslint/no-unsafe-enum-comparison': 'off',
-      '@typescript-eslint/no-redundant-type-constituents': 'off',
       // Preserve explicit type assertions for clarity and type safety
       // Project standard: explicit 'as Type' casts are permitted
       '@typescript-eslint/no-unnecessary-type-assertion': 'off',

@@ -272,7 +272,7 @@ export class NotificationDashboardController {
       if (!iso) return '-';
       try {
         const d = new Date(iso);
-        return d.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' });
+        return d.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: IST_TIMEZONE });
       } catch { return iso; }
     }
     function updateUrl(params) {

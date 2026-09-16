@@ -113,6 +113,15 @@ import type {
   CounselorDelegate,
   ClinicDelegate,
   AuditLogDelegate,
+  WardDelegate,
+  BedDelegate,
+  AdmissionDelegate,
+  BedAssignmentDelegate,
+  BedChargeDelegate,
+  DischargeSummaryDelegate,
+  NursingNoteDelegate,
+  VitalsFlowsheetDelegate,
+  BedsideMedicationDelegate,
   TransactionDelegate,
 } from '@core/types/prisma.types';
 
@@ -238,6 +247,32 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   readonly subscription!: SubscriptionDelegate;
   readonly invoice!: InvoiceDelegate;
   readonly payment!: PaymentDelegate;
+  readonly ward!: WardDelegate;
+  readonly bed!: BedDelegate;
+  readonly admission!: AdmissionDelegate;
+  readonly bedAssignment!: BedAssignmentDelegate;
+  readonly bedCharge!: BedChargeDelegate;
+  readonly dischargeSummary!: DischargeSummaryDelegate;
+  readonly nursingNote!: NursingNoteDelegate;
+  readonly vitalsFlowsheet!: VitalsFlowsheetDelegate;
+  readonly bedsideMedication!: BedsideMedicationDelegate;
+  readonly foodItem!: any;
+  readonly dietPlan!: any;
+  readonly dietPlanItem!: any;
+  readonly dietaryRestriction!: any;
+  readonly foodCompatibilityRule!: any;
+  readonly prakritiAnalysis!: any;
+  readonly stockBatch!: any;
+  readonly stockMovement!: any;
+  readonly stockTransfer!: any;
+  readonly purchaseOrder!: any;
+  readonly reorderRule!: any;
+  readonly stockAlert!: any;
+  readonly sampraptiStage!: any;
+  readonly ayurvedicDiagnosis!: any;
+  readonly prakritiAssessment!: any;
+  readonly nadiPariksha!: any;
+  readonly doshaImbalance!: any;
   readonly $transaction!: TransactionDelegate['$transaction'];
   private static connectionCount = 0;
   private static readonly MAX_CONNECTIONS = 500; // Optimized for 10M+ users (increased from 200)
@@ -1130,6 +1165,15 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     assignDelegate<SubscriptionDelegate>('subscription', 'subscription');
     assignDelegate<InvoiceDelegate>('invoice', 'invoice');
     assignDelegate<PaymentDelegate>('payment', 'payment');
+    assignDelegate<WardDelegate>('ward', 'ward');
+    assignDelegate<BedDelegate>('bed', 'bed');
+    assignDelegate<AdmissionDelegate>('admission', 'admission');
+    assignDelegate<BedAssignmentDelegate>('bedAssignment', 'bedAssignment');
+    assignDelegate<BedChargeDelegate>('bedCharge', 'bedCharge');
+    assignDelegate<DischargeSummaryDelegate>('dischargeSummary', 'dischargeSummary');
+    assignDelegate<NursingNoteDelegate>('nursingNote', 'nursingNote');
+    assignDelegate<VitalsFlowsheetDelegate>('vitalsFlowsheet', 'vitalsFlowsheet');
+    assignDelegate<BedsideMedicationDelegate>('bedsideMedication', 'bedsideMedication');
     assignDelegate<TransactionDelegate['$transaction']>('$transaction', '$transaction');
   }
 

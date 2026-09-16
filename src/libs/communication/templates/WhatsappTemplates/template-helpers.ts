@@ -151,14 +151,16 @@ export function formatAppointmentConfirmationTemplateParams(
   doctorName: string,
   appointmentDate: string,
   appointmentTime: string,
-  detailsUrl?: string
+  detailsUrl?: string,
+  serviceLabel?: string
 ): WhatsAppTemplateComponent[] {
+  const appointmentLabel = normalizeTemplateText(serviceLabel || appointmentType, 'appointment');
   const components: WhatsAppTemplateComponent[] = [
     {
       type: 'body',
       parameters: [
         { type: 'text', text: normalizeTemplateText(patientName, 'Patient') },
-        { type: 'text', text: normalizeTemplateText(appointmentType, 'in-person') },
+        { type: 'text', text: appointmentLabel },
         { type: 'text', text: normalizeTemplateText(doctorName, 'Doctor') },
         { type: 'text', text: normalizeTemplateText(appointmentDate, 'TBD') },
         { type: 'text', text: normalizeTemplateText(appointmentTime, 'TBD') },
@@ -184,14 +186,16 @@ export function formatAppointmentReminderTemplateParams(
   appointmentType: string,
   doctorName: string,
   appointmentDateTime: string,
-  detailsUrl?: string
+  detailsUrl?: string,
+  serviceLabel?: string
 ): WhatsAppTemplateComponent[] {
+  const appointmentLabel = normalizeTemplateText(serviceLabel || appointmentType, 'appointment');
   const components: WhatsAppTemplateComponent[] = [
     {
       type: 'body',
       parameters: [
         { type: 'text', text: normalizeTemplateText(patientName, 'Patient') },
-        { type: 'text', text: normalizeTemplateText(appointmentType, 'in-person') },
+        { type: 'text', text: appointmentLabel },
         { type: 'text', text: normalizeTemplateText(doctorName, 'Doctor') },
         { type: 'text', text: normalizeTemplateText(appointmentDateTime, 'TBD') },
       ],

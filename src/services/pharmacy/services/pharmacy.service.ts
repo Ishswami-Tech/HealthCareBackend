@@ -16,13 +16,15 @@ import {
   CreateSupplierDto,
   UpdateSupplierDto,
 } from '@dtos/pharmacy.dto';
-import { LogLevel, LogType } from '@core/types';
+import { LogLevel, LogType, AppointmentQueueCategory } from '@core/types';
 import { PrismaDelegateArgs, PrismaTransactionClientWithDelegates } from '@core/types/prisma.types';
 import { PaymentStatus } from '@core/types/enums.types';
 import { PaymentService } from '@payment/payment.service';
 import type { PaymentIntentOptions, PaymentResult } from '@core/types/payment.types';
 import { PaymentProvider } from '@core/types/payment.types';
 import { AppointmentQueueService } from '@infrastructure/queue';
+import { InventoryService } from '@services/pharmacy-inventory/services/inventory.service';
+import { ExpiryAlertService } from '@services/pharmacy-inventory/services/expiry-alert.service';
 
 type PrescriptionDispenseItem = {
   id?: string;
@@ -105,7 +107,9 @@ export class PharmacyService {
     private readonly paymentService: PaymentService,
     private readonly eventService: EventService,
     private readonly loggingService: LoggingService,
-    private readonly appointmentQueueService: AppointmentQueueService
+    private readonly appointmentQueueService: AppointmentQueueService,
+    private readonly inventoryService: InventoryService,
+    private readonly expiryAlertService: ExpiryAlertService
   ) {}
 
   private static readonly COMPLETED_PAYMENT_STATUS = 'COMPLETED';
@@ -142,7 +146,7 @@ export class PharmacyService {
     return {
       prescriptionId,
       paymentFor: PharmacyService.PAYMENT_FOR_PRESCRIPTION_DISPENSE,
-      queueCategory: 'MEDICINE_DESK',
+      queueCategory: AppointmentQueueCategory.MEDICINE_DESK,
     };
   }
 
@@ -516,7 +520,7 @@ export class PharmacyService {
       ...prescription,
       ...context.paymentState,
       entryId: prescription.id,
-      queueCategory: 'MEDICINE_DESK',
+      queueCategory: AppointmentQueueCategory.MEDICINE_DESK,
       queueOwnerId: context.queueOwnerId,
       queueStatus:
         lifecycleStatus === 'DISPENSED'
@@ -620,8 +624,8 @@ export class PharmacyService {
             ...(prescription.doctorId ? { assignedDoctorId: prescription.doctorId } : {}),
             ...(prescription.doctorId ? { primaryDoctorId: prescription.doctorId } : {}),
             ...(prescription.locationId ? { locationId: prescription.locationId } : {}),
-            queueCategory: 'MEDICINE_DESK',
-            type: 'MEDICINE_DESK',
+            queueCategory: AppointmentQueueCategory.MEDICINE_DESK,
+            type: AppointmentQueueCategory.MEDICINE_DESK,
           },
           PharmacyService.MEDICINE_QUEUE_DOMAIN
         );
@@ -736,6 +740,7 @@ export class PharmacyService {
     action: 'CREATED' | 'PAYMENT_UPDATED' | 'DISPENSED' | 'PARTIALLY_DISPENSED' | 'CANCELLED'
   ) {
     try {
+      const prescription = await this.getPrescriptionByIdForAccess(prescriptionId, clinicId);
       const queue = await this.getMedicineDeskQueue(clinicId);
       const activeEntry = queue.find(
         item => String((item as { id?: string }).id || '') === prescriptionId
@@ -751,13 +756,26 @@ export class PharmacyService {
             readyForHandover?: boolean;
           }
         | undefined;
+      const patientUser = prescription.patient?.user;
+      const doctorUser = prescription.doctor?.user;
+      const medicineNames = (prescription.items || [])
+        .map(item => item.medicine?.name)
+        .filter((name): name is string => typeof name === 'string' && name.trim().length > 0);
 
       await this.eventService.emit('pharmacy.medicine_desk.updated', {
         clinicId,
         prescriptionId,
         action,
         entryId: prescriptionId,
-        queueCategory: 'MEDICINE_DESK',
+        patientId: patientUser?.id || prescription.patientId,
+        patientProfileId: prescription.patientId,
+        patientName: patientUser?.name || undefined,
+        doctorId: doctorUser?.id || undefined,
+        doctorProfileId: prescription.doctorId,
+        doctorName: doctorUser?.name || undefined,
+        medicationCount: prescription.items?.length || 0,
+        medicationNames: medicineNames,
+        queueCategory: AppointmentQueueCategory.MEDICINE_DESK,
         queueOwnerId: this.getMedicineDeskQueueOwnerId(clinicId),
         position: activeEntry?.position ?? activeEntry?.queuePosition ?? null,
         queuePosition: activeEntry?.queuePosition ?? activeEntry?.position ?? null,
@@ -791,13 +809,22 @@ export class PharmacyService {
     id: string;
     clinicId: string;
     patientId: string;
+    doctorId: string;
     status: PrescriptionStatus | string;
     items: Array<{
       quantity?: number | null;
       medicineId?: string | null;
-      medicine?: { price?: number | null } | null;
+      medicine?: { name?: string | null; price?: number | null } | null;
     }>;
     patient?: {
+      user?: {
+        id?: string | null;
+        name?: string | null;
+        email?: string | null;
+        phone?: string | null;
+      } | null;
+    } | null;
+    doctor?: {
       user?: {
         id?: string | null;
         name?: string | null;
@@ -855,13 +882,22 @@ export class PharmacyService {
       id: string;
       clinicId: string;
       patientId: string;
+      doctorId: string;
       status: PrescriptionStatus | string;
       items: Array<{
         quantity?: number | null;
         medicineId?: string | null;
-        medicine?: { price?: number | null } | null;
+        medicine?: { name?: string | null; price?: number | null } | null;
       }>;
       patient?: {
+        user?: {
+          id?: string | null;
+          name?: string | null;
+          email?: string | null;
+          phone?: string | null;
+        } | null;
+      } | null;
+      doctor?: {
         user?: {
           id?: string | null;
           name?: string | null;
@@ -1478,13 +1514,6 @@ export class PharmacyService {
           totalRequestedQuantity += requestItem.quantity;
           totalDispensedQuantity += requestItem.quantity;
 
-          await typedClient.medicine.update({
-            where: { id: inventoryMedicineId } as PrismaDelegateArgs,
-            data: {
-              stock: { decrement: requestItem.quantity },
-            } as PrismaDelegateArgs,
-          } as PrismaDelegateArgs);
-
           const nextDispensedQuantity =
             Number(prescriptionItem.dispensedQuantity || 0) + requestItem.quantity;
 
@@ -1516,6 +1545,21 @@ export class PharmacyService {
             eventHistory,
           });
         }
+
+        await this.inventoryService.dispenseFefo(
+          prescriptionId,
+          {
+            items: appliedRequests.map(request => ({
+              prescriptionItemId: request.prescriptionItemId,
+              medicineId: request.inventoryMedicineId,
+              quantity: request.requestItem.quantity,
+            })),
+          },
+          'system',
+          existing.clinicId,
+          typedClient,
+          false
+        );
 
         const requestItemsByItemId = new Map(
           effectiveRequestItems
@@ -1669,6 +1713,12 @@ export class PharmacyService {
           ? 'DISPENSED'
           : 'PARTIALLY_DISPENSED'
       );
+      await this.eventService.emit('pharmacy.dispense.fefo', {
+        prescriptionId,
+        clinicId: resolvedClinicId,
+        itemCount: dto.items?.length || 0,
+        userId: 'system',
+      });
     }
 
     return {
@@ -1688,6 +1738,13 @@ export class PharmacyService {
           prescriptionItem: {
             update: (args: PrismaDelegateArgs) => Promise<unknown>;
           };
+        };
+        const stockBatchClient = typedClient.stockBatch as {
+          findFirst: (args: PrismaDelegateArgs) => Promise<{ id: string } | null>;
+          update: (args: PrismaDelegateArgs) => Promise<unknown>;
+        };
+        const medicineClient = typedClient.medicine as {
+          update: (args: PrismaDelegateArgs) => Promise<unknown>;
         };
 
         const existing = await typedClient.prescription.findUnique({
@@ -1757,6 +1814,21 @@ export class PharmacyService {
             (sum, entry) => sum + Number(entry.quantity || 0),
             0
           );
+          const batchRestocks = reversibleEvents.reduce((accumulator, entry) => {
+            const medicineId = String(entry.medicineId || item.medicineId || '');
+            const batchNumber = String(entry.batchNumber || '');
+            if (!medicineId || !batchNumber) {
+              return accumulator;
+            }
+
+            const key = `${medicineId}::${batchNumber}`;
+            accumulator.set(key, {
+              medicineId,
+              batchNumber,
+              quantity: (accumulator.get(key)?.quantity || 0) + Number(entry.quantity || 0),
+            });
+            return accumulator;
+          }, new Map<string, { medicineId: string; batchNumber: string; quantity: number }>());
           const medicineUpdates = reversibleEvents.reduce((accumulator, entry) => {
             const medicineId = String(entry.medicineId || item.medicineId || '');
             if (!medicineId) {
@@ -1770,8 +1842,31 @@ export class PharmacyService {
             return accumulator;
           }, new Map<string, number>());
 
+          for (const batchRestock of batchRestocks.values()) {
+            const batch = await stockBatchClient.findFirst({
+              where: {
+                productId: batchRestock.medicineId,
+                clinicId: existing.clinicId,
+                lotNumber: batchRestock.batchNumber,
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+
+            if (!batch) {
+              throw new BadRequestException(
+                `Batch ${batchRestock.batchNumber} for medicine ${batchRestock.medicineId} was not found during reversal`
+              );
+            }
+
+            await stockBatchClient.update({
+              where: { id: String(batch.id) } as PrismaDelegateArgs,
+              data: {
+                quantityOnHand: { increment: batchRestock.quantity },
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          }
+
           for (const [medicineId, quantity] of medicineUpdates.entries()) {
-            await typedClient.medicine.update({
+            await medicineClient.update({
               where: { id: medicineId } as PrismaDelegateArgs,
               data: {
                 stock: { increment: quantity },
@@ -2122,7 +2217,9 @@ export class PharmacyService {
         clinicId
       );
 
-      // Fetch medicine stock levels to calculate low stock
+      // NOTE: getStats reads Medicine.stock directly for aggregate performance.
+      // Per-item stock queries (findLowStock, findExpiringSoon) delegate to
+      // pharmacy-inventory for the canonical stockBatch-level truth.
       const medicines = await typedClient.medicine.findMany({
         where: where as PrismaDelegateArgs,
         select: { stock: true, minStockThreshold: true } as PrismaDelegateArgs,
@@ -2243,14 +2340,55 @@ export class PharmacyService {
   }
 
   async findLowStock(clinicId?: string) {
-    return await this.findAllMedicines(clinicId, { lowStock: true });
+    if (!clinicId) {
+      return await this.findAllMedicines(clinicId, { lowStock: true });
+    }
+
+    // Delegate stock-level truth to pharmacy-inventory (canonical stock layer).
+    const medicines = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return typedClient.medicine.findMany({
+        where: { clinicId } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+
+    const enriched = await Promise.all(
+      (medicines as Array<{ id: string; minStockThreshold?: number | null }>).map(async m => {
+        const stock = await this.inventoryService.getOnHandStock(m.id, clinicId);
+        return { ...m, stock: stock.totalOnHand };
+      })
+    );
+
+    return enriched.filter(m => (m.stock ?? 0) <= (m.minStockThreshold ?? 0));
   }
 
   async findExpiringSoon(clinicId?: string, expiringDays: number = 90) {
-    return await this.findAllMedicines(clinicId, {
-      expiringSoon: true,
-      expiringDays,
+    if (!clinicId) {
+      return await this.findAllMedicines(clinicId, { expiringSoon: true, expiringDays });
+    }
+
+    // Delegate expiry scan to pharmacy-inventory (scans stockBatch.expiryDate).
+    const expiringBatches = await this.expiryAlertService.scanExpiringBatches(
+      clinicId,
+      expiringDays
+    );
+    const productIds = Array.from(new Set(expiringBatches.map(b => b.productId)));
+
+    if (productIds.length === 0) {
+      return [];
+    }
+
+    const medicines = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return typedClient.medicine.findMany({
+        where: {
+          clinicId,
+          id: { in: productIds },
+        } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
     });
+
+    return medicines;
   }
 
   async getPrescriptionPaymentSummary(

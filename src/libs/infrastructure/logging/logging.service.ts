@@ -169,7 +169,7 @@ export class LoggingService {
   private readonly healthLogRetentionMs = 4 * 60 * 60 * 1000;
   private readonly generalLogRetentionMs = 72 * 60 * 60 * 1000;
   private readonly logRetentionCleanupIntervalMs = 5 * 60 * 1000;
-  private lastLogRetentionCleanupAt = 0;
+  private lastLogRetentionCleanupAt = Date.now();
   private logRetentionCleanupPromise: Promise<void> | null = null;
 
   private isInStartupGracePeriod(): boolean {
@@ -539,14 +539,13 @@ export class LoggingService {
   /**
    * Log a message with type, level, context, and metadata
    *
-   * CRITICAL: This method ALWAYS stores ALL logs in cache, regardless of:
-   * - Log type (AUDIT, ERROR, SYSTEM, SECURITY, etc.)
-   * - Log level (DEBUG, INFO, WARN, ERROR)
-   * - Whether log is "noisy" or not
-   * - Any other condition
+   * CRITICAL: ALL logs are ALWAYS stored in cache for UI dashboard visibility,
+   * regardless of level or type. The Logger UI shows everything.
    *
-   * Every single log call results in cache storage for UI dashboard visibility.
-   * No exceptions, no filtering, no conditions - ALL logs are stored.
+   * Level filtering only applies to:
+   * - Terminal console output (reduce noise in production)
+   * - Metrics buffer (avoid metric pollution from DEBUG/VERBOSE)
+   * - External notification triggers (email/SMS alerts)
    */
   async log(
     type: LogType,
@@ -556,6 +555,12 @@ export class LoggingService {
     metadata: Record<string, unknown> = {}
   ): Promise<void> {
     const timestamp = new Date();
+
+    // Check if this log passes the configured level filter.
+    // Cache lookups are per-call so a runtime LOG_LEVEL reload takes effect immediately.
+    const configuredLevel = this.getConfiguredLogLevel();
+    const passesLevelFilter = this.shouldLog(level, configuredLevel);
+
     // Enterprise-grade unique ID generation for 1M+ users
     const id = `${timestamp.getTime()}-${this.serviceName}-${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`;
 
@@ -580,9 +585,8 @@ export class LoggingService {
       timestamp: timestamp.toISOString(),
     };
 
-    // CRITICAL: Store in cache FIRST (before any other processing) to ensure ALL logs are stored
-    // This happens unconditionally - no type checking, no level filtering, no conditions
-    // Every single log is stored in cache for UI dashboard visibility
+    // CRITICAL: Store ALL logs in cache FIRST — this is what feeds the Logger UI.
+    // No filtering here — every log call is persisted for dashboard visibility.
     try {
       if (this.cacheService) {
         const logJson = JSON.stringify(logEntry);
@@ -592,19 +596,17 @@ export class LoggingService {
         void this.cleanupExpiredLogCache();
       }
     } catch (_cacheError) {
-      // Handle cache errors gracefully - don't break logging operations
       const errorMessage = _cacheError instanceof Error ? _cacheError.message : String(_cacheError);
-
-      // Suppress initialization errors during bootstrap grace period
-      // These are expected when CacheService hasn't finished initializing yet
       const isInitializationError = this.isBootstrapDependencyError(errorMessage);
-
-      // Only log errors if they're not initialization errors during grace period
       if (!isInitializationError || !this.isInStartupGracePeriod()) {
-        // Log cache errors but don't break - continue with other logging operations
         console.error(`[LoggingService] Failed to store log in cache: ${errorMessage}`);
       }
-      // Silently ignore initialization errors during bootstrap - cache will be available after onModuleInit
+    }
+
+    // Level-gated operations below: terminal output, metrics, notifications.
+    // These respect LOG_LEVEL so production doesn't spam with DEBUG/VERBOSE.
+    if (!passesLevelFilter) {
+      return;
     }
 
     try {
@@ -623,29 +625,9 @@ export class LoggingService {
         // Development: Show all levels except DEBUG
         shouldShowInTerminal = level !== LogLevel.DEBUG;
       } else if (isProduction) {
-        // Production: Only show ERROR, WARN, and important SYSTEM/EMERGENCY logs
-        // Filter out noisy logs even for ERROR/WARN (but allow critical system logs)
-        const isImportantSystemLog =
-          (type === LogType.SYSTEM || type === LogType.EMERGENCY) &&
-          (level === LogLevel.ERROR || level === LogLevel.WARN);
-        const isImportantSecurityLog =
-          type === LogType.SECURITY && (level === LogLevel.ERROR || level === LogLevel.WARN);
-        const isCriticalError = level === LogLevel.ERROR;
-        // Show AUDIT logs with INFO level (important business events like successful registrations)
-        const isImportantAuditLog = type === LogType.AUDIT && level === LogLevel.INFO;
-
-        shouldShowInTerminal =
-          isCriticalError ||
-          level === LogLevel.WARN ||
-          isImportantSystemLog ||
-          isImportantSecurityLog ||
-          isImportantAuditLog;
-
-        // In production, filter out noisy logs (but allow critical errors and important system logs)
-        if (shouldShowInTerminal && !isCriticalError && !isImportantSystemLog) {
-          const isNoisy = this.isNoisyLog(message, context, level);
-          shouldShowInTerminal = !isNoisy;
-        }
+        // Production: Only WARN and ERROR in terminal
+        // All logs are still stored in cache + DB for the dashboard
+        shouldShowInTerminal = level === LogLevel.WARN || level === LogLevel.ERROR;
       } else {
         // Staging/other environments: Show ERROR and WARN
         shouldShowInTerminal = level === LogLevel.ERROR || level === LogLevel.WARN;
@@ -772,6 +754,45 @@ export class LoggingService {
     }
   }
 
+  /**
+   * Backward-compatible shorthand methods used by older services.
+   */
+  async debug(
+    message: string,
+    contextOrMetadata?: string | Record<string, unknown>,
+    metadata: Record<string, unknown> = {}
+  ): Promise<void> {
+    const { context, payload } = this.normalizeLegacyLogArgs(contextOrMetadata, metadata);
+    return this.log(LogType.SYSTEM, LogLevel.DEBUG, message, context, payload);
+  }
+
+  async info(
+    message: string,
+    contextOrMetadata?: string | Record<string, unknown>,
+    metadata: Record<string, unknown> = {}
+  ): Promise<void> {
+    const { context, payload } = this.normalizeLegacyLogArgs(contextOrMetadata, metadata);
+    return this.log(LogType.SYSTEM, LogLevel.INFO, message, context, payload);
+  }
+
+  async warn(
+    message: string,
+    contextOrMetadata?: string | Record<string, unknown>,
+    metadata: Record<string, unknown> = {}
+  ): Promise<void> {
+    const { context, payload } = this.normalizeLegacyLogArgs(contextOrMetadata, metadata);
+    return this.log(LogType.SYSTEM, LogLevel.WARN, message, context, payload);
+  }
+
+  async error(
+    message: string,
+    contextOrMetadata?: string | Record<string, unknown>,
+    metadata: Record<string, unknown> = {}
+  ): Promise<void> {
+    const { context, payload } = this.normalizeLegacyLogArgs(contextOrMetadata, metadata);
+    return this.log(LogType.SYSTEM, LogLevel.ERROR, message, context, payload);
+  }
+
   private isNoisyLog(message: string, context: string, level: LogLevel): boolean {
     // Filter out DEBUG level logs (always noisy)
     if (level === LogLevel.DEBUG) {
@@ -803,6 +824,55 @@ export class LoggingService {
 
     // ERROR and WARN are never considered noisy
     return false;
+  }
+
+  /**
+   * Return the effective minimum log level from config.
+   *
+   * Cache lookups are per-call so a production LOG_LEVEL reload takes effect
+   * immediately without a service restart — cheap enough that it avoids stale
+   * reads that would otherwise keep DEBUG/VERBOSE leaking forever.
+   */
+  private getConfiguredLogLevel(): LogLevel {
+    if (!this.configService) {
+      return LogLevel.INFO;
+    }
+
+    try {
+      const raw = this.configService.get('logging.level');
+      if (typeof raw === 'string') {
+        const normalized = raw.trim().toLowerCase();
+        const map: Record<string, LogLevel> = {
+          error: LogLevel.ERROR,
+          warn: LogLevel.WARN,
+          warning: LogLevel.WARN,
+          info: LogLevel.INFO,
+          debug: LogLevel.DEBUG,
+          verbose: LogLevel.VERBOSE,
+          trace: LogLevel.VERBOSE,
+        };
+        if (map[normalized]) {
+          return map[normalized];
+        }
+      }
+    } catch (_e) {
+      // Config read failed — fall through to sensible default
+    }
+
+    return LogLevel.INFO;
+  }
+
+  private shouldLog(callLevel: LogLevel, configuredLevel: LogLevel): boolean {
+    // Local map avoids class-field initialization timing issues under NestJS DI.
+    const levelSeverity = {
+      [LogLevel.ERROR]: 0,
+      [LogLevel.WARN]: 1,
+      [LogLevel.INFO]: 2,
+      [LogLevel.DEBUG]: 3,
+      [LogLevel.VERBOSE]: 4,
+      [LogLevel.TRACE]: 5,
+    } as const;
+    return levelSeverity[callLevel] <= levelSeverity[configuredLevel];
   }
 
   private addToMetricsBuffer(logEntry: unknown) {
@@ -886,15 +956,22 @@ export class LoggingService {
       );
       const finalEndTime = endTime || now;
 
-      void this.cleanupExpiredLogCache();
+      // Throttle cleanup to every 5 min max — already handles dedup internally
+      if (now.getTime() - this.lastLogRetentionCleanupAt >= this.logRetentionCleanupIntervalMs) {
+        void this.cleanupExpiredLogCache();
+      }
 
-      // ALWAYS read from cache first (logs are stored in 'logs' list via rPush)
-      // Cache is the primary source of truth for real-time log viewing
-      // Database is only used for audit trail persistence
+      // ALWAYS read from cache first — use paginated range instead of fetching all 10,000
       let cachedLogs: string[] = [];
       try {
         if (this.cacheService) {
-          cachedLogs = (await this.cacheService.lRange('logs', 0, -1)) || [];
+          // Paginated negative-index range:
+          //   page 1 / limit 50 → (-50, -1)   = last 50 entries
+          //   page 2 / limit 50 → (-100, -51) = previous 50
+          // Always fetch only the slice needed — avoids pulling 10k entries.
+          const rangeStart = -((effectivePage - 1) * effectiveLimit + effectiveLimit);
+          const rangeEnd = -((effectivePage - 1) * effectiveLimit + 1);
+          cachedLogs = (await this.cacheService.lRange('logs', rangeStart, rangeEnd)) || [];
           // Debug: Log cache read results in development
           if (!this.configService?.isProduction()) {
             console.warn(
@@ -1302,35 +1379,41 @@ export class LoggingService {
    * @param limit - Items per page (default: 100, max: 1000)
    * @returns Paginated events result
    */
-  async getEvents(type?: string, page?: number, limit?: number): Promise<PaginatedEventsResult> {
+  async getEvents(
+    type?: string,
+    page?: number,
+    limit?: number,
+    category?: string,
+    priority?: string,
+    status?: string,
+    level?: string,
+    startTime?: string,
+    endTime?: string,
+    search?: string
+  ): Promise<PaginatedEventsResult> {
     try {
-      // Calculate pagination for events
-      // Override calculatePagination's max limit of 100 to allow up to 10000 for showing all events
       const requestedLimit = limit !== undefined ? limit : 100;
-      const effectiveLimit = Math.min(10000, Math.max(1, requestedLimit)); // Max 10000 for events (matches cache size), min 1
+      const effectiveLimit = Math.min(10000, Math.max(1, requestedLimit));
       const effectivePage = Math.max(1, page || 1);
       const skip = (effectivePage - 1) * effectiveLimit;
       const take = effectiveLimit;
-      const currentPage = effectivePage;
 
-      // Enhanced event retrieval for 1M users
       const cachedEvents: unknown[] = (await this.cacheService?.lRange('events', 0, -1)) || [];
 
-      // Local type alias matching EventEntry structure to avoid import type resolution issues
       type LocalEventEntry = {
         id: string;
         type: string;
+        category?: string;
+        priority?: string;
+        status?: string;
         data: Record<string, unknown>;
         timestamp: string | Date;
         clinicId?: string;
         userId?: string;
       };
 
-      // Type guard function
       const isEventEntry = (obj: unknown): obj is LocalEventEntry => {
-        if (!obj || typeof obj !== 'object') {
-          return false;
-        }
+        if (!obj || typeof obj !== 'object') return false;
         const entry = obj as Record<string, unknown>;
         return (
           typeof entry['id'] === 'string' &&
@@ -1341,14 +1424,12 @@ export class LoggingService {
         );
       };
 
-      const events: LocalEventEntry[] = cachedEvents
+      let events: LocalEventEntry[] = cachedEvents
         .map((event: unknown): LocalEventEntry | null => {
           try {
             if (typeof event === 'string') {
               const parsed: unknown = JSON.parse(event);
-              if (isEventEntry(parsed)) {
-                return parsed;
-              }
+              if (isEventEntry(parsed)) return parsed;
             }
             return null;
           } catch {
@@ -1357,28 +1438,76 @@ export class LoggingService {
         })
         .filter((event): event is LocalEventEntry => event !== null);
 
-      // Apply filters
-      const filteredEvents: LocalEventEntry[] = type
-        ? events.filter((event: LocalEventEntry) => {
-            return event['type'] === type;
-          })
-        : events;
+      // Apply category filter
+      if (category) {
+        events = events.filter(e => e['category'] === category);
+      }
 
-      // Enhanced sorting
-      filteredEvents.sort((a: LocalEventEntry, b: LocalEventEntry) => {
+      // Apply priority filter
+      if (priority) {
+        events = events.filter(e => e['priority'] === priority);
+      }
+
+      // Apply status filter
+      if (status) {
+        events = events.filter(e => e['status'] === status);
+      }
+
+      // Apply level filter (maps level from event data)
+      if (level) {
+        events = events.filter(e => {
+          if (e['data'] && typeof e['data'] === 'object') {
+            const eventData = e['data'] as Record<string, unknown>;
+            const eventLevel = eventData['level'];
+            if (typeof eventLevel === 'string') return eventLevel === level;
+          }
+          return false;
+        });
+      }
+
+      // Apply type filter
+      if (type) {
+        events = events.filter(e => e['type'] === type);
+      }
+
+      // Apply time range filter
+      const startTs = startTime ? new Date(startTime).getTime() : null;
+      const endTs = endTime ? new Date(endTime).getTime() : null;
+      if (startTs !== null || endTs !== null) {
+        events = events.filter(e => {
+          const eventTs = new Date(e['timestamp']).getTime();
+          if (startTs !== null && eventTs < startTs) return false;
+          if (endTs !== null && eventTs > endTs) return false;
+          return true;
+        });
+      }
+
+      // Apply search filter (matches against type, data values, userId, clinicId)
+      if (search && search.trim().length > 0) {
+        const term = search.trim().toLowerCase();
+        events = events.filter(e => {
+          if (e['type']?.toLowerCase().includes(term)) return true;
+          if (e['userId']?.toLowerCase().includes(term)) return true;
+          if (e['clinicId']?.toLowerCase().includes(term)) return true;
+          // Search within data object values
+          if (e['data'] && typeof e['data'] === 'object') {
+            const dataStr = JSON.stringify(e['data']).toLowerCase();
+            if (dataStr.includes(term)) return true;
+          }
+          return false;
+        });
+      }
+
+      // Sort by timestamp descending
+      events.sort((a: LocalEventEntry, b: LocalEventEntry) => {
         const aTime = new Date(a['timestamp']).getTime();
         const bTime = new Date(b['timestamp']).getTime();
         return bTime - aTime;
       });
 
-      // Calculate total before pagination
-      const total: number = filteredEvents.length;
-
-      // Apply pagination
-      const paginatedEvents: LocalEventEntry[] = filteredEvents.slice(skip, skip + take);
-
-      // Create pagination metadata
-      const meta = new PaginationMetaDto(currentPage, take, total);
+      const total: number = events.length;
+      const paginatedEvents: LocalEventEntry[] = events.slice(skip, skip + take);
+      const meta = new PaginationMetaDto(effectivePage, take, total);
 
       // Convert to EventEntry[] for return type (matching interface structure)
       const resultEvents: EventEntry[] = paginatedEvents.map(
@@ -1409,6 +1538,12 @@ export class LoggingService {
             type: eventType,
             data: eventData,
             timestamp: eventTimestamp,
+            ...(event['category'] &&
+              typeof event['category'] === 'string' && { category: event['category'] }),
+            ...(event['priority'] &&
+              typeof event['priority'] === 'string' && { priority: event['priority'] }),
+            ...(event['status'] &&
+              typeof event['status'] === 'string' && { status: event['status'] }),
             ...(clinicIdValue !== undefined && { clinicId: clinicIdValue }),
             ...(userIdValue !== undefined && { userId: userIdValue }),
           };
@@ -1512,6 +1647,31 @@ export class LoggingService {
       serviceName: this.serviceName,
       tenantType: 'healthcare',
     });
+  }
+
+  private normalizeLegacyLogArgs(
+    contextOrMetadata?: string | Record<string, unknown>,
+    metadata: Record<string, unknown> = {}
+  ): { context: string; payload: Record<string, unknown> } {
+    if (typeof contextOrMetadata === 'string') {
+      return {
+        context: contextOrMetadata,
+        payload: metadata,
+      };
+    }
+
+    const payload = {
+      ...(contextOrMetadata || {}),
+      ...(metadata || {}),
+    };
+    const context =
+      typeof payload['module'] === 'string'
+        ? payload['module']
+        : typeof payload['context'] === 'string'
+          ? payload['context']
+          : 'LoggingService';
+
+    return { context, payload };
   }
 
   /**

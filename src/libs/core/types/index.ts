@@ -57,6 +57,9 @@ export * from './input.types';
 export {
   UserStatus,
   AppointmentStatus,
+  AppointmentServiceCategory,
+  AppointmentQueueCategory,
+  AppointmentBillingMode,
   PaymentStatus,
   PaymentMethod,
   BillingInterval,
@@ -76,7 +79,12 @@ export {
   Role as RoleEnum,
   SpecialCase,
   DeliveryStatus,
+  MovementType,
+  TransferStatus,
+  ReorderStrategy,
+  AlertType,
 } from './enums.types';
+export * from './treatment-catalog.types';
 // Export Role type from rbac.types as the primary Role
 export type { Role } from './rbac.types';
 

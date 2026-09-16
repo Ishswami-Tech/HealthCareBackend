@@ -3,7 +3,6 @@ import {
   BadRequestException,
   NotFoundException,
   ForbiddenException,
-  NotImplementedException,
   forwardRef,
   Inject,
 } from '@nestjs/common';
@@ -13,6 +12,7 @@ import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { DatabaseService } from '@infrastructure/database';
 import { AppointmentType, AppointmentStatus } from '@core/types/enums.types';
+import { isAyurvedaTreatmentType } from '@core/types/treatment-catalog.types';
 import { getVideoActiveWindowMinutes } from '@config/video.config';
 import {
   isVideoCallAppointment,
@@ -316,7 +316,8 @@ export class CheckInService {
           (appointment as { domain?: string }).domain || 'clinic',
           appointment.patientId || '',
           clinicId,
-          priority
+          priority,
+          appointment.treatmentType || appointment.type
         );
         result.queuePosition = queuePosition.position;
         result.estimatedWaitTime = queuePosition.estimatedWaitTime;
@@ -1011,7 +1012,8 @@ export class CheckInService {
     domain: string,
     patientId: string, // Add argument
     clinicId: string, // Add argument
-    priority?: string
+    priority?: string,
+    appointmentType?: string
   ): Promise<AppointmentQueuePosition> {
     await this.appointmentQueueService.checkIn(
       {
@@ -1020,6 +1022,7 @@ export class CheckInService {
         patientId,
         clinicId,
         locationId,
+        ...(appointmentType ? { appointmentType } : {}),
         ...(priority !== undefined ? { priority } : {}),
       },
       domain
@@ -1052,10 +1055,8 @@ export class CheckInService {
     );
   }
 
-  private performConsultationStart(_appointmentId: string, _clinicId: string): Promise<unknown> {
-    throw new NotImplementedException(
-      'Consultation start helper is not implemented in the appointment check-in plugin'
-    );
+  private performConsultationStart(appointmentId: string, clinicId: string): Promise<unknown> {
+    return this.startConsultation(appointmentId, clinicId);
   }
 
   private async removeFromQueue(appointmentId: string, clinicId: string): Promise<void> {
@@ -1400,22 +1401,48 @@ export class CheckInService {
    * Process Ayurvedic therapy check-in with location validation
    */
   processAyurvedicCheckIn(
-    _appointmentId: string,
-    _clinicId: string,
-    _checkInData: CheckInData
+    appointmentId: string,
+    clinicId: string,
+    checkInData: CheckInData
   ): Promise<CheckInResult> {
-    throw new NotImplementedException(
-      'Ayurvedic check-in queue processing is not implemented in the appointment check-in plugin'
-    );
+    return this.databaseService.executeHealthcareRead(async _client => {
+      const appointment = await this.validateAppointmentForClinic(appointmentId, clinicId);
+      const appointmentRecord = (await this.databaseService.findAppointmentByIdSafe(
+        appointmentId
+      )) as {
+        treatmentType?: string;
+        type?: string;
+      } | null;
+      const treatmentType = appointmentRecord?.treatmentType || appointmentRecord?.type;
+
+      if (!isAyurvedaTreatmentType(treatmentType)) {
+        throw new BadRequestException('This appointment is not classified as an Ayurvedic visit');
+      }
+
+      await this.validateAyurvedicLocation(
+        checkInData.coordinates || { lat: 0, lng: 0 },
+        checkInData.locationId,
+        clinicId
+      );
+
+      return this.checkInInPerson(
+        appointment as unknown as InPersonAppointment,
+        checkInData.userId
+      );
+    });
   }
 
   /**
    * Get therapy-specific queue for Ayurvedic appointments
    */
   getTherapyQueue(therapyType: string, _clinicId: string): Promise<unknown> {
-    throw new NotImplementedException(
-      `Therapy queue retrieval is not implemented for therapy type ${therapyType} in this plugin`
-    );
+    return this.fetchTherapyQueue(therapyType, _clinicId).then(queue => ({
+      therapyType,
+      clinicId: _clinicId,
+      queue,
+      total: queue.length,
+      retrievedAt: nowIso(),
+    }));
   }
 
   /**
@@ -1423,12 +1450,30 @@ export class CheckInService {
    */
   private validateAyurvedicLocation(
     _patientCoords: { lat: number; lng: number },
-    _locationId: string,
-    _clinicId: string
+    locationId: string,
+    clinicId: string
   ): Promise<boolean> {
-    throw new NotImplementedException(
-      'Ayurvedic location validation is not implemented in the appointment check-in plugin'
-    );
+    return this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as {
+        location: {
+          findFirst: (args: {
+            where: { id: string; clinicId: string; isActive: boolean };
+            select: { id: boolean };
+          }) => Promise<{ id: string } | null>;
+        };
+      };
+
+      const location = await typedClient.location.findFirst({
+        where: { id: locationId, clinicId, isActive: true },
+        select: { id: true },
+      });
+
+      if (!location) {
+        throw new NotFoundException(`No active Ayurvedic location found for ${locationId}`);
+      }
+
+      return true;
+    });
   }
 
   /**
@@ -1436,12 +1481,21 @@ export class CheckInService {
    */
   private addToTherapyQueue(
     appointmentId: string,
-    _doctorId: string,
-    _locationId: string,
-    _therapyType: string
+    doctorId: string,
+    locationId: string,
+    therapyType: string,
+    patientId: string,
+    clinicId: string
   ): Promise<AppointmentQueuePosition> {
-    throw new NotImplementedException(
-      `Therapy queue insertion is not implemented for appointment ${appointmentId}`
+    return this.addToQueue(
+      appointmentId,
+      doctorId,
+      locationId,
+      'clinic',
+      patientId,
+      clinicId,
+      undefined,
+      therapyType
     );
   }
 
@@ -1449,9 +1503,65 @@ export class CheckInService {
    * Fetch therapy-specific queue
    */
   private fetchTherapyQueue(therapyType: string, _clinicId: string): Promise<unknown[]> {
-    throw new NotImplementedException(
-      `Therapy queue fetch is not implemented for therapy type ${therapyType}`
-    );
+    const normalizedTherapyType = String(therapyType || '')
+      .trim()
+      .toUpperCase();
+    return this.databaseService.executeHealthcareRead(async _client => {
+      const queueKeys = await this.cacheService.keys(`queue:clinic:${_clinicId}:*`);
+      const results: unknown[] = [];
+
+      for (const queueKey of queueKeys) {
+        const entries = await this.cacheService.lRange(queueKey, 0, -1);
+        const doctorId = queueKey.split(':')[3] || '';
+
+        for (const entry of entries) {
+          try {
+            const parsed = JSON.parse(entry) as {
+              appointmentId?: string;
+              patientId?: string;
+              doctorId?: string;
+              locationId?: string;
+              status?: string;
+              checkedInAt?: string;
+              displayLabel?: string;
+              type?: string;
+              treatmentType?: string;
+              queueCategory?: string;
+              position?: number;
+              estimatedWaitTime?: number;
+            };
+
+            const entryTherapyType = String(
+              parsed.treatmentType || parsed.type || parsed.displayLabel || ''
+            )
+              .trim()
+              .toUpperCase();
+
+            if (normalizedTherapyType && entryTherapyType !== normalizedTherapyType) {
+              continue;
+            }
+
+            results.push({
+              appointmentId: parsed.appointmentId,
+              patientId: parsed.patientId,
+              doctorId: parsed.doctorId || doctorId,
+              locationId: parsed.locationId,
+              status: parsed.status,
+              checkedInAt: parsed.checkedInAt,
+              displayLabel: parsed.displayLabel,
+              treatmentType: parsed.treatmentType || parsed.type || therapyType,
+              queueCategory: parsed.queueCategory,
+              position: parsed.position,
+              estimatedWaitTime: parsed.estimatedWaitTime,
+            });
+          } catch {
+            continue;
+          }
+        }
+      }
+
+      return results;
+    });
   }
 
   /**

@@ -138,6 +138,23 @@ export class BillingController {
     return normalizedProvider as PaymentProvider;
   }
 
+  private parseAdminPaymentProvider(
+    provider: string | undefined,
+    req?: ClinicAuthenticatedRequest
+  ): PaymentProvider | undefined {
+    const parsedProvider = this.parsePaymentProvider(provider);
+    if (!parsedProvider) {
+      return undefined;
+    }
+
+    const role = req?.user?.['role'];
+    if (role !== Role.SUPER_ADMIN && role !== Role.CLINIC_ADMIN) {
+      throw new ForbiddenException('Payment provider is selected in clinic payment settings.');
+    }
+
+    return parsedProvider;
+  }
+
   // ============ Billing Plans ============
 
   @Get('plans')
@@ -1097,7 +1114,7 @@ export class BillingController {
     @Query('provider') provider?: string,
     @Request() req?: ClinicAuthenticatedRequest
   ) {
-    const paymentProvider = this.parsePaymentProvider(provider);
+    const paymentProvider = this.parseAdminPaymentProvider(provider, req);
 
     const result = await this.billingService.processSubscriptionPayment(
       subscriptionId,
@@ -1136,7 +1153,7 @@ export class BillingController {
     @Query('provider') provider?: string,
     @Request() req?: ClinicAuthenticatedRequest
   ) {
-    const paymentProvider = this.parsePaymentProvider(provider);
+    const paymentProvider = this.parseAdminPaymentProvider(provider, req);
 
     const result = await this.billingService.processAppointmentPayment(
       appointmentId,
@@ -1160,7 +1177,7 @@ export class BillingController {
     @Query('provider') provider?: string,
     @Request() req?: ClinicAuthenticatedRequest
   ) {
-    const paymentProvider = this.parsePaymentProvider(provider);
+    const paymentProvider = this.parseAdminPaymentProvider(provider, req);
     const result = await this.billingService.processInvoicePayment(
       invoiceId,
       paymentProvider,

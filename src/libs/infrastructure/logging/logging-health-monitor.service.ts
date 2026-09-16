@@ -510,6 +510,9 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
           timeout: QUERY_TIMEOUT_MS,
           // Disable redirects for localhost health checks to prevent external URL redirects
           maxRedirects: 0,
+          // Suppress debug logs for internal health check polls (runs every ~20s, very noisy)
+          logRequest: false,
+          suppressErrorLogging: true,
         })
         .then(response => {
           // Response already has status from centralized HTTP service

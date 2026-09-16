@@ -44,7 +44,7 @@ import type { JoinWaitingRoomDto, AdmitPatientDto } from '@dtos/video.dto';
 export class VideoWaitingRoomService {
   private readonly WAITING_ROOM_CACHE_TTL = 1800; // 30 minutes
   private readonly AVERAGE_CONSULTATION_TIME = 900; // 15 minutes in seconds
-  private readonly NOTIFICATION_QUEUE = 'notification-queue';
+  private readonly NOTIFICATION_QUEUE = QueueService.HEALTHCARE_QUEUE;
 
   constructor(
     private readonly databaseService: DatabaseService,

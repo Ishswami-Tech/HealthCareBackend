@@ -877,7 +877,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private async cancelAssociatedVideoSession(
+  async cancelAssociatedVideoSession(
     appointmentId: string,
     auditInfo: {
       userId: string;

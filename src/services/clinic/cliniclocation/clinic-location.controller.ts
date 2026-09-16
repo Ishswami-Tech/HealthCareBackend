@@ -28,6 +28,7 @@ import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
 import { Role } from '@core/types/enums.types';
 import { ClinicLocationService } from '@services/clinic/services/clinic-location.service';
+import { ClinicIdPipe } from '@core/pipes/clinic-id.pipe';
 import { CreateClinicLocationDto, UpdateClinicLocationDto } from '@dtos/clinic.dto';
 import { Cache as CacheDecorator, InvalidateClinicCache } from '@core/decorators';
 import type {
@@ -59,7 +60,7 @@ export class ClinicLocationController {
   @ApiResponse({ status: 403, description: 'Forbidden.' })
   @ApiParam({ name: 'clinicId', description: 'ID of the clinic' })
   async create(
-    @Param('clinicId') clinicId: string,
+    @Param('clinicId', ClinicIdPipe) clinicId: string,
     @Body() createLocationDto: CreateClinicLocationDto,
     @Request() req: { user?: { id?: string; sub?: string } }
   ): Promise<ClinicLocationResponseDto> {
@@ -110,7 +111,7 @@ export class ClinicLocationController {
     type: Boolean,
   })
   async findAll(
-    @Param('clinicId') clinicId: string,
+    @Param('clinicId', ClinicIdPipe) clinicId: string,
     @Request() _req: { user: { id: string } },
     @Query('includeInactive') includeInactive?: string
   ): Promise<ClinicLocationResponseDto[]> {
@@ -141,7 +142,7 @@ export class ClinicLocationController {
   @ApiParam({ name: 'id', description: 'ID of the location' })
   async findOne(
     @Param('id') id: string,
-    @Param('clinicId') clinicId: string,
+    @Param('clinicId', ClinicIdPipe) clinicId: string,
     @Request() _req: { user: { id: string } }
   ): Promise<ClinicLocationResponseDto> {
     const location = await this.locationService.getClinicLocationById(id, false, clinicId);
@@ -170,7 +171,7 @@ export class ClinicLocationController {
   @ApiParam({ name: 'id', description: 'ID of the location' })
   async update(
     @Param('id') id: string,
-    @Param('clinicId') clinicId: string,
+    @Param('clinicId', ClinicIdPipe) clinicId: string,
     @Body() updateLocationDto: UpdateClinicLocationDto,
     @Request() req: { user?: { id?: string; sub?: string } }
   ): Promise<ClinicLocationResponseDto> {
@@ -228,7 +229,7 @@ export class ClinicLocationController {
   @ApiParam({ name: 'id', description: 'ID of the location' })
   async updateWorkingHours(
     @Param('id') id: string,
-    @Param('clinicId') _clinicId: string,
+    @Param('clinicId', ClinicIdPipe) _clinicId: string,
     @Body('workingHours') workingHours: unknown,
     @Request() req: { user?: { id?: string; sub?: string } }
   ): Promise<ClinicLocationResponseDto> {
@@ -260,7 +261,7 @@ export class ClinicLocationController {
   @ApiParam({ name: 'id', description: 'ID of the location' })
   async remove(
     @Param('id') id: string,
-    @Param('clinicId') clinicId: string,
+    @Param('clinicId', ClinicIdPipe) clinicId: string,
     @Request() req: { user?: { id?: string; sub?: string } }
   ): Promise<void> {
     const userId = req.user?.id || req.user?.sub || 'system';

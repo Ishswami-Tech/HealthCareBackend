@@ -220,6 +220,7 @@ export interface AppointmentTemplateData extends EmailTemplateData {
   location: string;
   appointmentId?: string;
   appointmentType?: string;
+  serviceLabel?: string;
   detailsUrl?: string;
   rescheduleUrl?: string;
   cancelUrl?: string;

@@ -16,8 +16,13 @@ import {
   HttpCode,
   HttpStatus,
   BadRequestException,
+  ForbiddenException,
   UnauthorizedException,
   Req,
+  Get,
+  Put,
+  Param,
+  UseGuards,
 } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { ApiTags, ApiOperation, ApiResponse, ApiHeader } from '@nestjs/swagger';
@@ -25,9 +30,24 @@ import { DatabaseService } from '@infrastructure/database';
 import { PaymentService } from './payment.service';
 import { PaymentHandoffTokenService } from './payment.handoff-token.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
-import { LogType, LogLevel, PaymentProvider } from '@core/types';
+import { LogType, LogLevel, PaymentProvider, ClinicPaymentConfig } from '@core/types';
+import { RoleEnum as Role } from '@core/types';
 import { Public } from '@core/decorators/public.decorator';
+import { Roles } from '@core/decorators/roles.decorator';
+import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
+import { RolesGuard } from '@core/guards/roles.guard';
+import { ClinicGuard } from '@core/guards/clinic.guard';
+import { RbacGuard } from '@core/rbac/rbac.guard';
+import { PaymentConfigService } from '@config/payment-config.service';
+import {
+  UpdateClinicPaymentConfigDto,
+  ClinicPaymentConfigResponseDto,
+  VerifyPaymentProviderDto,
+  VerifyPaymentProviderResponseDto,
+  PaymentProviderResponseDto,
+} from '@dtos';
 import type { FastifyRequest } from 'fastify';
+import { resolveClinicUUID } from '@utils/clinic.utils';
 
 type BillingServiceLike = {
   handlePaymentCallback: (
@@ -60,7 +80,8 @@ export class PaymentController {
     private readonly handoffTokenService: PaymentHandoffTokenService,
     private readonly databaseService: DatabaseService,
     private readonly moduleRef: ModuleRef,
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    private readonly paymentConfigService: PaymentConfigService
   ) {}
 
   private getBillingService(): BillingServiceLike {
@@ -498,7 +519,6 @@ export class PaymentController {
         merchantTransactionId = this.getFirstStringAtPath(parsedPayload, [
           ['merchantOrderId'],
           ['merchantTransactionId'],
-          ['originalMerchantOrderId'],
         ]);
         transactionId = this.getFirstStringAtPath(parsedPayload, [['transactionId']]);
         refundId = this.getFirstStringAtPath(parsedPayload, [['refundId'], ['merchantRefundId']]);
@@ -511,7 +531,6 @@ export class PaymentController {
         merchantTransactionId = this.getFirstStringAtPath(body, [
           ['payload', 'merchantOrderId'],
           ['payload', 'orderId'],
-          ['payload', 'originalMerchantOrderId'],
         ]);
         transactionId =
           this.getFirstStringAtPath(paymentDetail, [['transactionId']]) ||
@@ -1260,5 +1279,263 @@ export class PaymentController {
       );
       throw error;
     }
+  }
+
+  // ===========================
+  // Payment Provider Config Endpoints
+  // ===========================
+
+  private async assertPaymentConfigClinicScope(
+    clinicId: string,
+    request: FastifyRequest
+  ): Promise<void> {
+    const typedRequest = request as FastifyRequest & {
+      clinicId?: string;
+      user?: { role?: string };
+    };
+    if (typedRequest.user?.role === Role.SUPER_ADMIN && !typedRequest.clinicId) {
+      return;
+    }
+    if (!typedRequest.clinicId) {
+      throw new ForbiddenException('Clinic context is required for payment configuration.');
+    }
+    const routeClinicUUID = await resolveClinicUUID(this.databaseService, clinicId);
+    if (routeClinicUUID !== typedRequest.clinicId) {
+      throw new ForbiddenException(
+        'Payment configuration clinic does not match the authenticated clinic.'
+      );
+    }
+  }
+
+  /**
+   * Get clinic payment configuration
+   */
+  @Get('config/:clinicId')
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @ApiOperation({ summary: 'Get clinic payment provider configuration' })
+  @ApiResponse({
+    status: 200,
+    description: 'Payment config retrieved',
+    type: ClinicPaymentConfigResponseDto,
+  })
+  @ApiResponse({ status: 404, description: 'Clinic not found' })
+  async getClinicPaymentConfig(
+    @Param('clinicId') clinicId: string,
+    @Req() request: FastifyRequest
+  ): Promise<ClinicPaymentConfigResponseDto> {
+    await this.assertPaymentConfigClinicScope(clinicId, request);
+    await this.loggingService.log(
+      LogType.PAYMENT,
+      LogLevel.INFO,
+      'Fetching clinic payment config',
+      'PaymentController',
+      { clinicId }
+    );
+
+    const config = await this.paymentConfigService.getClinicConfig(clinicId);
+
+    if (!config) {
+      throw new BadRequestException('Payment configuration not found for clinic');
+    }
+
+    return this.mapConfigToResponse(config);
+  }
+
+  /**
+   * Update clinic payment configuration
+   */
+  @Put('config/:clinicId')
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @ApiOperation({ summary: 'Update clinic payment provider configuration' })
+  @ApiResponse({
+    status: 200,
+    description: 'Payment config updated',
+    type: ClinicPaymentConfigResponseDto,
+  })
+  @ApiResponse({ status: 400, description: 'Invalid configuration' })
+  @ApiResponse({ status: 404, description: 'Clinic not found' })
+  async updateClinicPaymentConfig(
+    @Param('clinicId') clinicId: string,
+    @Body() dto: UpdateClinicPaymentConfigDto,
+    @Req() request: FastifyRequest
+  ): Promise<ClinicPaymentConfigResponseDto> {
+    await this.assertPaymentConfigClinicScope(clinicId, request);
+    await this.loggingService.log(
+      LogType.PAYMENT,
+      LogLevel.INFO,
+      'Updating clinic payment config',
+      'PaymentController',
+      { clinicId, primaryProvider: dto.primary?.provider }
+    );
+
+    const existingConfig = await this.paymentConfigService.getClinicConfig(clinicId);
+
+    if (!existingConfig) {
+      throw new BadRequestException('Payment configuration not found for clinic');
+    }
+
+    const mergeCredentials = (
+      existing: Record<string, string> | undefined,
+      incoming: Record<string, string>
+    ): Record<string, string> => {
+      const merged = {
+        ...(existing || {}),
+        ...Object.fromEntries(
+          Object.entries(incoming || {}).filter(
+            ([, value]) => typeof value === 'string' && value.trim().length > 0
+          )
+        ),
+      };
+
+      // The admin DTO uses provider-specific names while adapters consume
+      // provider-neutral names. Normalize once at the persistence boundary.
+      if (merged['cashfreeAppId']) merged['appId'] = merged['cashfreeAppId'];
+      if (merged['cashfreeSecretKey']) merged['secretKey'] = merged['cashfreeSecretKey'];
+      if (merged['phonepeClientId']) merged['clientId'] = merged['phonepeClientId'];
+      if (merged['phonepeClientSecret']) merged['clientSecret'] = merged['phonepeClientSecret'];
+      return merged;
+    };
+
+    const existingPrimary = existingConfig.payment.primary;
+    const primary = {
+      ...dto.primary,
+      credentials: mergeCredentials(
+        existingPrimary?.provider === dto.primary.provider
+          ? existingPrimary.credentials
+          : undefined,
+        dto.primary.credentials
+      ),
+    };
+    const existingFallback = existingConfig.payment.fallback || [];
+    const fallback = (dto.fallback || []).map(entry => {
+      const existing = existingFallback.find(item => item.provider === entry.provider);
+      return {
+        ...entry,
+        credentials: mergeCredentials(existing?.credentials, entry.credentials),
+      };
+    });
+
+    const updatedConfig = {
+      clinicId,
+      payment: {
+        primary,
+        fallback,
+        defaultCurrency: dto.defaultCurrency ?? existingConfig.payment.defaultCurrency,
+        defaultProvider: dto.defaultProvider ?? existingConfig.payment.defaultProvider,
+      },
+      createdAt: existingConfig.createdAt,
+      updatedAt: new Date(),
+    } as unknown as ClinicPaymentConfig;
+
+    await this.paymentConfigService.saveClinicConfig(updatedConfig);
+
+    const freshConfig = await this.paymentConfigService.getClinicConfig(clinicId);
+    if (!freshConfig) {
+      return this.mapConfigToResponse(updatedConfig);
+    }
+    return this.mapConfigToResponse(freshConfig);
+  }
+
+  /**
+   * Verify payment provider credentials
+   * Performs a lightweight format/configuration check without hitting provider APIs
+   */
+  @Post('config/verify')
+  @UseGuards(JwtAuthGuard, RolesGuard, RbacGuard)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @ApiOperation({ summary: 'Verify payment provider credentials (format check)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Verification result',
+    type: VerifyPaymentProviderResponseDto,
+  })
+  @ApiResponse({ status: 400, description: 'Invalid request' })
+  async verifyPaymentProvider(
+    @Body() dto: VerifyPaymentProviderDto
+  ): Promise<VerifyPaymentProviderResponseDto> {
+    await this.loggingService.log(
+      LogType.PAYMENT,
+      LogLevel.INFO,
+      'Verifying payment provider credentials',
+      'PaymentController',
+      { provider: dto.provider }
+    );
+
+    const { provider, credentials } = dto;
+    const missing: string[] = [];
+
+    switch (provider) {
+      case PaymentProvider.RAZORPAY:
+        if (!credentials['razorpayKeyId']) missing.push('razorpayKeyId');
+        if (!credentials['razorpayKeySecret']) missing.push('razorpayKeySecret');
+        break;
+      case PaymentProvider.CASHFREE:
+        if (!credentials['cashfreeAppId']) missing.push('cashfreeAppId');
+        if (!credentials['cashfreeSecretKey']) missing.push('cashfreeSecretKey');
+        break;
+      case PaymentProvider.PHONEPE:
+        if (!credentials['phonepeClientId']) missing.push('phonepeClientId');
+        if (!credentials['phonepeClientSecret']) missing.push('phonepeClientSecret');
+        if (!credentials['phonepeSalt']) missing.push('phonepeSalt');
+        break;
+      default:
+        return { valid: false, error: `Provider ${provider} verification not yet implemented` };
+    }
+
+    if (missing.length > 0) {
+      return {
+        valid: false,
+        error: `Missing required fields: ${missing.join(', ')}`,
+      };
+    }
+
+    return {
+      valid: true,
+      details: 'Credential format validated successfully',
+    };
+  }
+
+  /**
+   * Map internal config to sanitized response DTO
+   */
+  private mapConfigToResponse(config: ClinicPaymentConfig): ClinicPaymentConfigResponseDto {
+    const mapProvider = (
+      p:
+        | {
+            provider: PaymentProvider;
+            enabled: boolean;
+            credentials: Record<string, string>;
+            priority?: number;
+          }
+        | undefined
+    ): PaymentProviderResponseDto => {
+      const result: PaymentProviderResponseDto = {
+        provider: p?.provider || PaymentProvider.CASHFREE,
+        enabled: p?.enabled || false,
+        hasCredentials: !!(p?.credentials && Object.keys(p.credentials).length > 0),
+        providerName: p?.provider
+          ? p.provider.charAt(0).toUpperCase() + p.provider.slice(1)
+          : 'Unknown',
+      };
+      if (p?.priority) {
+        result.priority = p.priority;
+      }
+      return result;
+    };
+
+    const result: ClinicPaymentConfigResponseDto = {
+      clinicId: config.clinicId,
+      primary: mapProvider(config.payment.primary),
+      fallback: (config.payment.fallback || []).map(mapProvider),
+    };
+    if (config.payment.defaultCurrency) {
+      result.defaultCurrency = config.payment.defaultCurrency;
+    }
+    if (config.payment.defaultProvider) {
+      result.defaultProvider = config.payment.defaultProvider;
+    }
+    return result;
   }
 }

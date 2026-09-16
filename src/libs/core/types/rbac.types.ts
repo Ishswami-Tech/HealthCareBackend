@@ -24,6 +24,7 @@ export const RolesList = [
   'PHARMACIST',
   'THERAPIST',
   'LAB_TECHNICIAN',
+  'NUTRITIONIST',
   'FINANCE_BILLING',
   'SUPPORT_STAFF',
   'NURSE',

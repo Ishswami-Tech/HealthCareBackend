@@ -24,7 +24,12 @@ import {
 } from '@core/types';
 import { JobType } from '@core/types/queue.types';
 // Future use: BULK_INVOICE_QUEUE, PAYMENT_RECONCILIATION_QUEUE
-import { SubscriptionStatus, InvoiceStatus, PaymentStatus } from '@core/types/enums.types';
+import {
+  SubscriptionStatus,
+  InvoiceStatus,
+  PaymentStatus,
+  AppointmentQueueCategory,
+} from '@core/types/enums.types';
 import {
   CreateBillingPlanDto,
   UpdateBillingPlanDto,
@@ -56,8 +61,8 @@ import type {
   RefundResult,
 } from '@core/types/payment.types';
 import { PaymentProvider } from '@core/types/payment.types';
-import { formatDateInIST, nowIso } from '../../libs/utils/date-time.util';
-import { formatCurrencyFromMinorUnits } from '../../libs/utils/currency.util';
+import { formatDateInIST, nowIso } from '@utils/date-time.util';
+import { formatCurrencyFromMinorUnits } from '@utils/currency.util';
 
 // Import centralized types
 import type {
@@ -1438,19 +1443,31 @@ export class BillingService implements OnModuleInit {
             .then(results => {
               const rejected = results.filter(result => result.status === 'rejected');
               if (rejected.length > 0) {
-                console.error('[BillingService] Invoice post-processing completed with failures', {
-                  invoiceId: invoice.id,
-                  invoiceNumber,
-                  failedTasks: rejected.length,
-                });
+                void this.loggingService.log(
+                  LogType.BUSINESS,
+                  LogLevel.WARN,
+                  'Invoice post-processing completed with failures',
+                  'BillingService',
+                  {
+                    invoiceId: invoice.id,
+                    invoiceNumber,
+                    failedTasks: rejected.length,
+                  }
+                );
               }
             })
             .catch(() => {
               // This should never fire (Promise.allSettled never rejects),
               // but we guard it to prevent any unhandled rejection
-              console.error('[BillingService] Invoice post-processing promise chain failed', {
-                invoiceId: invoice.id,
-              });
+              void this.loggingService.log(
+                LogType.BUSINESS,
+                LogLevel.ERROR,
+                'Invoice post-processing promise chain failed',
+                'BillingService',
+                {
+                  invoiceId: invoice.id,
+                }
+              );
             });
         });
 
@@ -1494,10 +1511,7 @@ export class BillingService implements OnModuleInit {
   private async createInvoiceRecordAtomically(data: CreateInvoiceDto, totalAmount: number) {
     return this.databaseService.executeHealthcareWrite(
       async client => {
-        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-          $executeRawUnsafe: (query: string, ...values: unknown[]) => Promise<number>;
-          $queryRawUnsafe: <T = unknown>(query: string, ...values: unknown[]) => Promise<T>;
-        };
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
 
         // Allocate invoice number within transaction - uses advisory lock internally
         // to serialize concurrent requests and prevent duplicate invoice numbers
@@ -1538,26 +1552,23 @@ export class BillingService implements OnModuleInit {
   }
 
   private async allocateInvoiceNumberInTransaction(
-    typedClient: PrismaTransactionClientWithDelegates & {
-      $executeRawUnsafe: (query: string, ...values: unknown[]) => Promise<number>;
-      $queryRawUnsafe: <T = unknown>(query: string, ...values: unknown[]) => Promise<T>;
-    }
+    typedClient: PrismaTransactionClientWithDelegates
   ): Promise<string> {
-    // Serialize invoice number allocation within the transaction using advisory lock
-    // This prevents race conditions when multiple invoices are created concurrently
-    await typedClient.$executeRawUnsafe('SELECT pg_advisory_xact_lock($1)', 2026032901);
+    // Serialize invoice number allocation within the transaction using advisory lock.
+    // This prevents race conditions when multiple invoices are created concurrently.
+    // Using $executeRaw/$queryRaw template-tag form (not $unsafe variants) — the
+    // SQL here contains no user-supplied values, but the safer form is the project standard.
+    await typedClient.$executeRaw`SELECT pg_advisory_xact_lock(${2026032901})`;
 
     // Now safe to query - no other transaction can be allocating at the same time
-    const rows = await typedClient.$queryRawUnsafe<Array<{ maxSequence: number | string | null }>>(
-      `
-        SELECT COALESCE(
-          MAX(CAST(SUBSTRING("invoiceNumber" FROM '([0-9]+)$') AS INTEGER)),
-          0
-        ) AS "maxSequence"
-        FROM "Invoice"
-        WHERE "invoiceNumber" ~ '^INV-[0-9]{4}-[0-9]+$'
-      `
-    );
+    const rows = await typedClient.$queryRaw<Array<{ maxSequence: number | string | null }>>`
+      SELECT COALESCE(
+        MAX(CAST(SUBSTRING("invoiceNumber" FROM '([0-9]+)$') AS INTEGER)),
+        0
+      ) AS "maxSequence"
+      FROM "Invoice"
+      WHERE "invoiceNumber" ~ '^INV-[0-9]{4}-[0-9]+$'
+    `;
 
     const maxSequenceRaw = rows?.[0]?.maxSequence ?? 0;
     const maxSequence = Number(maxSequenceRaw);
@@ -1987,7 +1998,7 @@ export class BillingService implements OnModuleInit {
         queueCategory:
           typeof paymentMetadata['queueCategory'] === 'string'
             ? paymentMetadata['queueCategory']
-            : 'MEDICINE_DESK',
+            : AppointmentQueueCategory.MEDICINE_DESK,
         paymentStatus: 'PAID',
         pendingAmount: 0,
         queueStatus: 'PENDING',
@@ -2426,11 +2437,11 @@ export class BillingService implements OnModuleInit {
 
   private getDefaultAppointmentPrice(appointmentType: string): number {
     const prices: Record<string, number> = {
-      IN_PERSON: 1179,
-      VIDEO_CALL: 1179,
+      IN_PERSON: 1251,
+      VIDEO_CALL: 1251,
       HOME_VISIT: 1500,
     };
-    return prices[appointmentType] || 1179;
+    return prices[appointmentType] || 1251;
   }
 
   async checkAppointmentCoverage(subscriptionId: string, appointmentType: string) {
@@ -2744,6 +2755,25 @@ export class BillingService implements OnModuleInit {
 
     if (!appointment) {
       throw new NotFoundException('Appointment not found');
+    }
+
+    if (
+      [
+        AppointmentStatus.CANCELLED,
+        AppointmentStatus.EXPIRED,
+        AppointmentStatus.COMPLETED,
+      ].includes(appointment.status as AppointmentStatus)
+    ) {
+      throw new BadRequestException(
+        'This appointment is no longer payable. Please book a new appointment.'
+      );
+    }
+
+    const paymentExpiresAt = (appointment as { paymentExpiresAt?: Date | null }).paymentExpiresAt;
+    if (paymentExpiresAt && paymentExpiresAt.getTime() <= Date.now()) {
+      throw new BadRequestException(
+        'The payment window for this appointment has expired. Please book a new appointment.'
+      );
     }
 
     const billingUserId = await this.resolveAppointmentBillingUserId(appointment);
@@ -3302,45 +3332,66 @@ export class BillingService implements OnModuleInit {
 
       if (incomingStatusLower === 'completed' && payment.appointmentId && completedAppointment) {
         if (String(completedAppointment.status) !== String(AppointmentStatus.CONFIRMED)) {
-          completedAppointment = await this.databaseService.executeHealthcareWrite(
-            async client => {
-              const appointmentClient = client as unknown as {
-                appointment: {
-                  update: (args: {
-                    where: { id: string };
-                    data: { status: string };
-                  }) => Promise<unknown>;
-                };
-              };
-              return (await appointmentClient.appointment.update({
-                where: { id: payment.appointmentId as string },
-                data: {
-                  status: AppointmentStatus.CONFIRMED,
-                },
-              })) as AppointmentWithRelations;
-            },
-            {
-              userId: 'system',
-              clinicId: completedAppointment.clinicId,
-              resourceType: 'APPOINTMENT',
-              operation: 'UPDATE',
-              resourceId: payment.appointmentId,
-              userRole: 'system',
-              details: {
-                reason: 'Payment callback completed',
-                paymentId: payment.id,
-                orderId,
-              },
-            }
-          );
-        }
+          const paymentExpiresAt = (completedAppointment as { paymentExpiresAt?: Date | null })
+            .paymentExpiresAt;
+          const canConfirm = !paymentExpiresAt || paymentExpiresAt.getTime() > Date.now();
 
-        completedAppointment =
-          (await this.databaseService.findAppointmentByIdSafe(payment.appointmentId)) ??
-          completedAppointment;
+          if (canConfirm) {
+            const confirmationResult = await this.databaseService.executeHealthcareWrite(
+              async client => {
+                const appointmentClient = client as unknown as {
+                  appointment: {
+                    updateMany: (args: {
+                      where: {
+                        id: string;
+                        status: { notIn: string[] };
+                        paymentExpiresAt?: { gt: Date };
+                      };
+                      data: { status: string };
+                    }) => Promise<{ count: number }>;
+                  };
+                };
+                return appointmentClient.appointment.updateMany({
+                  where: {
+                    id: payment.appointmentId as string,
+                    status: {
+                      notIn: [
+                        AppointmentStatus.CANCELLED,
+                        AppointmentStatus.EXPIRED,
+                        AppointmentStatus.COMPLETED,
+                      ],
+                    },
+                    ...(paymentExpiresAt ? { paymentExpiresAt: { gt: new Date() } } : {}),
+                  },
+                  data: { status: AppointmentStatus.CONFIRMED },
+                });
+              },
+              {
+                userId: 'system',
+                clinicId: completedAppointment.clinicId,
+                resourceType: 'APPOINTMENT',
+                operation: 'UPDATE',
+                resourceId: payment.appointmentId,
+                userRole: 'system',
+                details: {
+                  reason: 'Payment callback completed',
+                  paymentId: payment.id,
+                  orderId,
+                },
+              }
+            );
+
+            completedAppointment = confirmationResult.count
+              ? ((await this.databaseService.findAppointmentByIdSafe(payment.appointmentId)) ??
+                completedAppointment)
+              : null;
+          } else {
+            completedAppointment = null;
+          }
+        }
       }
 
-      if (incomingStatusLower === 'completed' && payment.appointmentId) {
+      if (incomingStatusLower === 'completed' && payment.appointmentId && completedAppointment) {
         void this.syncAppointmentAfterPayment({
           appointmentId: payment.appointmentId,
           clinicId: completedAppointment?.clinicId || clinicId,

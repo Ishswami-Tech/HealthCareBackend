@@ -39,7 +39,12 @@ import type {
   AppointmentResult,
   AppointmentMetricsData,
 } from '@core/types/appointment.types';
-import { parseIstDateTime, nowIso } from '../../../libs/utils/date-time.util';
+import {
+  parseIstDateTime,
+  nowIso,
+  formatDateKeyInIST,
+  IST_TIMEZONE,
+} from '../../../libs/utils/date-time.util';
 
 // CoreAppointmentMetrics is an alias for AppointmentMetricsData
 export type CoreAppointmentMetrics = AppointmentMetricsData;
@@ -169,7 +174,7 @@ export class CoreAppointmentService {
         if (!Number.isNaN(utcDate.getTime())) {
           // Use Intl to correctly convert the UTC date to IST date components
           const istFormatted = new Intl.DateTimeFormat('en-CA', {
-            timeZone: 'Asia/Kolkata',
+            timeZone: IST_TIMEZONE,
             year: 'numeric',
             month: '2-digit',
             day: '2-digit',
@@ -182,7 +187,7 @@ export class CoreAppointmentService {
 
           // Get today's date in IST using the same Intl approach
           const todayFormatted = new Intl.DateTimeFormat('en-CA', {
-            timeZone: 'Asia/Kolkata',
+            timeZone: IST_TIMEZONE,
             year: 'numeric',
             month: '2-digit',
             day: '2-digit',
@@ -194,7 +199,7 @@ export class CoreAppointmentService {
 
           // Get current time in IST for past-time check
           const nowTimeParts = new Intl.DateTimeFormat('en-GB', {
-            timeZone: 'Asia/Kolkata',
+            timeZone: IST_TIMEZONE,
             hour: '2-digit',
             minute: '2-digit',
           }).formatToParts(new Date());
@@ -207,7 +212,7 @@ export class CoreAppointmentService {
 
           // Get appointment time in IST
           const aptTimeParts = new Intl.DateTimeFormat('en-GB', {
-            timeZone: 'Asia/Kolkata',
+            timeZone: IST_TIMEZONE,
             hour: '2-digit',
             minute: '2-digit',
           }).formatToParts(utcDate);
@@ -234,7 +239,7 @@ export class CoreAppointmentService {
 
           // Weekend check — get the IST day name and reject Sat/Sun
           const istDayName = new Intl.DateTimeFormat('en-US', {
-            timeZone: 'Asia/Kolkata',
+            timeZone: IST_TIMEZONE,
             weekday: 'long',
           }).format(utcDate);
           if (istDayName === 'Saturday' || istDayName === 'Sunday') {
@@ -511,6 +516,8 @@ export class CoreAppointmentService {
       // to SCHEDULED (and then CONFIRMED by the receptionist).
       const appointmentType = String(createDto.type || '').toUpperCase();
       if (appointmentType === 'VIDEO_CALL') {
+        // Keep video appointment duration aligned with the web booking slot.
+        appointmentData['duration'] = 15;
         const windowMinutes = getVideoPaymentWindowMinutes();
         const expiresAt = new Date(Date.now() + windowMinutes * 60_000);
         appointmentData['status'] = AppointmentStatus.PENDING;
@@ -1037,6 +1044,19 @@ export class CoreAppointmentService {
         };
       }
 
+      // Patient video bookings are managed through payment and rescheduling;
+      // staff and system workflows retain cancellation access.
+      const isPatient = String(context.role).toUpperCase() === 'PATIENT';
+      const isVideoAppointment = String(existingAppointment.type).toUpperCase() === 'VIDEO_CALL';
+      if (isPatient && isVideoAppointment) {
+        return {
+          success: false,
+          error: 'CANCELLATION_NOT_ALLOWED',
+          message: 'Video appointments can only be rescheduled by the patient.',
+          metadata: { processingTime: Date.now() - startTime },
+        };
+      }
+
       // 3. Cancel appointment
       const cancelledAppointment = await this.databaseService.updateAppointmentSafe(appointmentId, {
         status: AppointmentStatus.CANCELLED,
@@ -1523,14 +1543,14 @@ export class CoreAppointmentService {
 
   private getISTDateAndTime(date: Date): { date: string; time: string } {
     const istDate = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Kolkata',
+      timeZone: IST_TIMEZONE,
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
     }).format(date);
 
     const istTime = new Intl.DateTimeFormat('en-GB', {
-      timeZone: 'Asia/Kolkata',
+      timeZone: IST_TIMEZONE,
       hour: '2-digit',
       minute: '2-digit',
       hour12: false,
@@ -1728,7 +1748,7 @@ export class CoreAppointmentService {
       let pauseReason = '';
       let videoCallWindow: { start: string; end: string } | null = null;
       const dayName = new Intl.DateTimeFormat('en-US', {
-        timeZone: 'Asia/Kolkata',
+        timeZone: IST_TIMEZONE,
         weekday: 'long',
       })
         .format(new Date(`${date}T00:00:00.000+05:30`))
@@ -1929,7 +1949,7 @@ export class CoreAppointmentService {
 
             // Update working hours if defined - extract HH:mm using IST to avoid UTC shifts
             const timeFormatOptions = {
-              timeZone: 'Asia/Kolkata',
+              timeZone: IST_TIMEZONE,
               hour: '2-digit',
               minute: '2-digit',
               hour12: false,
@@ -2060,7 +2080,7 @@ export class CoreAppointmentService {
             status: a.status,
           })),
           isToday:
-            new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date()) ===
+            new Intl.DateTimeFormat('en-CA', { timeZone: IST_TIMEZONE }).format(new Date()) ===
             date,
         }
       );
@@ -2154,31 +2174,19 @@ export class CoreAppointmentService {
 
           // 3. For today's availability, filter out slots that have already passed
           const dateParts = date.split('-');
-          // Enforce IST time exactly
           const now = new Date();
-          const istOptions = {
-            timeZone: 'Asia/Kolkata',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-          } as const;
-          const istParts = new Intl.DateTimeFormat('en-US', istOptions).formatToParts(now);
-          const istYear = parseInt(istParts.find(p => p.type === 'year')?.value || '2000', 10);
-          const istMonth = parseInt(istParts.find(p => p.type === 'month')?.value || '1', 10);
-          const istDay = parseInt(istParts.find(p => p.type === 'day')?.value || '1', 10);
 
-          const requestedDate = new Date(
-            parseInt(dateParts[0] || '2000'),
-            parseInt(dateParts[1] || '01') - 1,
-            parseInt(dateParts[2] || '01')
-          );
-          const todayIST = new Date(istYear, istMonth - 1, istDay);
-          const isToday = requestedDate.toDateString() === todayIST.toDateString();
+          const requestedDateKey = [dateParts[0], dateParts[1], dateParts[2]]
+            .map((part, index) =>
+              index === 0 ? String(part || '2000') : String(part || '01').padStart(2, '0')
+            )
+            .join('-');
+          const isToday = requestedDateKey === formatDateKeyInIST(now);
 
           if (isToday) {
             // Calculate current minutes in IST explicitly
             const istTimeOptions = {
-              timeZone: 'Asia/Kolkata',
+              timeZone: IST_TIMEZONE,
               hour: '2-digit',
               minute: '2-digit',
               hour12: false,
@@ -2470,7 +2478,41 @@ export class CoreAppointmentService {
     expectedFromStatuses: AppointmentStatus[] = [AppointmentStatus.SCHEDULED],
     auditContext: Record<string, unknown> = {}
   ): Promise<Appointment | null> {
-    const expiryTimestamp = new Date(Date.now() + getVideoActiveWindowMinutes() * 60_000);
+    // Look up the appointment's scheduled date/time so we can compute
+    // the join-window expiry relative to the appointment time, not
+    // confirmation time. The previous `Date.now() + 5h` approach made
+    // appointments confirmed early expire BEFORE the visit ever
+    // started (e.g. 9 AM confirmation for a 5 PM slot would auto-expire
+    // at 2 PM).
+    const existing = await this.databaseService.findAppointmentsSafe({ id: appointmentId });
+    const existingRow = existing[0] as
+      | {
+          date?: Date | string | null;
+          time?: string | null;
+          type?: string | null;
+        }
+      | undefined;
+
+    let expiryTimestamp: Date;
+    const windowMinutes = getVideoActiveWindowMinutes();
+
+    if (existingRow?.date && existingRow?.time) {
+      // date is a Date in DB; convert to YYYY-MM-DD, time is "HH:mm"
+      const d = existingRow.date;
+      const dateStr = formatDateKeyInIST(d);
+      const timeStr = String(existingRow.time).padStart(5, '0').slice(0, 5);
+      const scheduledStart = new Date(`${dateStr}T${timeStr}:00+05:30`);
+      if (!Number.isNaN(scheduledStart.getTime())) {
+        // The join window is centred on the appointment: it opens 15 min
+        // before scheduled start and closes 5 hours after. The expiry
+        // stamp marks the closing edge of that window.
+        expiryTimestamp = new Date(scheduledStart.getTime() + windowMinutes * 60_000);
+      } else {
+        expiryTimestamp = new Date(Date.now() + windowMinutes * 60_000);
+      }
+    } else {
+      expiryTimestamp = new Date(Date.now() + windowMinutes * 60_000);
+    }
 
     // 1. Fast path: already CONFIRMED. Return the row without
     //    touching `confirmationExpiresAt` (idempotent — preserves

@@ -205,6 +205,162 @@ export class HealthcareErrorsService {
     );
   }
 
+  clinicIdRequired(context?: string): HealthcareError {
+    return this.createError(ErrorCode.CLINIC_ID_REQUIRED, HttpStatus.BAD_REQUEST, context);
+  }
+
+  // IPD / Bed Management Errors
+  ipdBedNotFound(bedId?: string, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.IPD_BED_NOT_FOUND,
+      HttpStatus.NOT_FOUND,
+      context,
+      bedId ? { bedId } : undefined
+    );
+  }
+
+  ipdBedNotAvailable(bedId?: string, status?: string, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.IPD_BED_NOT_AVAILABLE,
+      HttpStatus.BAD_REQUEST,
+      context,
+      bedId ? { bedId, status } : undefined
+    );
+  }
+
+  ipdPatientAlreadyAdmitted(admissionNumber?: string, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.IPD_PATIENT_ALREADY_ADMITTED,
+      HttpStatus.BAD_REQUEST,
+      context,
+      admissionNumber ? { admissionNumber } : undefined
+    );
+  }
+
+  ipdTransferInvalidStatus(status?: string, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.IPD_TRANSFER_INVALID_STATUS,
+      HttpStatus.BAD_REQUEST,
+      context,
+      status ? { status } : undefined
+    );
+  }
+
+  ipdTargetBedNotFound(bedId?: string, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.IPD_TARGET_BED_NOT_FOUND,
+      HttpStatus.NOT_FOUND,
+      context,
+      bedId ? { bedId } : undefined
+    );
+  }
+
+  ipdBedWardMismatch(bedId?: string, wardId?: string, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.IPD_BED_WARD_MISMATCH,
+      HttpStatus.BAD_REQUEST,
+      context,
+      bedId ? { bedId, wardId } : undefined
+    );
+  }
+
+  ipdTargetBedNotAvailable(bedId?: string, status?: string, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.IPD_TARGET_BED_NOT_AVAILABLE,
+      HttpStatus.BAD_REQUEST,
+      context,
+      bedId ? { bedId, status } : undefined
+    );
+  }
+
+  ipdAlreadyDischarged(context?: string): HealthcareError {
+    return this.createError(ErrorCode.IPD_ALREADY_DISCHARGED, HttpStatus.BAD_REQUEST, context);
+  }
+
+  ipdWardAlreadyExists(wardName?: string, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.IPD_WARD_ALREADY_EXISTS,
+      HttpStatus.BAD_REQUEST,
+      context,
+      wardName ? { wardName } : undefined
+    );
+  }
+
+  ipdWardNotFound(wardId?: string, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.IPD_WARD_NOT_FOUND,
+      HttpStatus.NOT_FOUND,
+      context,
+      wardId ? { wardId } : undefined
+    );
+  }
+
+  ipdBedAlreadyExists(bedNumber?: string, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.IPD_BED_ALREADY_EXISTS,
+      HttpStatus.BAD_REQUEST,
+      context,
+      bedNumber ? { bedNumber } : undefined
+    );
+  }
+
+  ipdAdmissionNotFound(admissionId?: string, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.IPD_ADMISSION_NOT_FOUND,
+      HttpStatus.NOT_FOUND,
+      context,
+      admissionId ? { admissionId } : undefined
+    );
+  }
+
+  ipdBedOccupiedTransferRequired(
+    status: string,
+    action: string,
+    context?: string
+  ): HealthcareError {
+    return this.createError(
+      ErrorCode.IPD_BED_OCCUPIED_TRANSFER_REQUIRED,
+      HttpStatus.BAD_REQUEST,
+      context,
+      { status, action }
+    );
+  }
+
+  // Pharmacy Inventory Errors
+  pharmacyBatchNotFound(batchId?: string, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.PHARMACY_BATCH_NOT_FOUND,
+      HttpStatus.NOT_FOUND,
+      context,
+      batchId ? { batchId } : undefined
+    );
+  }
+
+  pharmacyLotNumberDuplicate(lotNumber?: string, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.PHARMACY_LOT_NUMBER_DUPLICATE,
+      HttpStatus.BAD_REQUEST,
+      context,
+      lotNumber ? { lotNumber } : undefined
+    );
+  }
+
+  pharmacyExpiryDateInvalid(context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.PHARMACY_EXPIRY_DATE_INVALID,
+      HttpStatus.BAD_REQUEST,
+      context
+    );
+  }
+
+  pharmacyManufactureDateInvalid(context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.PHARMACY_MANUFACTURE_DATE_INVALID,
+      HttpStatus.BAD_REQUEST,
+      context
+    );
+  }
+
   // Appointment Errors
   appointmentNotFound(appointmentId?: string, context?: string): HealthcareError {
     return this.createError(
@@ -235,6 +391,37 @@ export class HealthcareErrorsService {
 
   appointmentPastDate(context?: string): HealthcareError {
     return this.createError(ErrorCode.APPOINTMENT_PAST_DATE, HttpStatus.BAD_REQUEST, context);
+  }
+
+  // Queue Errors
+  queueAtCapacity(context?: string): HealthcareError {
+    return this.createError(ErrorCode.QUEUE_AT_CAPACITY, HttpStatus.CONFLICT, context);
+  }
+
+  queuePatientAlreadyQueued(context?: string): HealthcareError {
+    return this.createError(ErrorCode.QUEUE_PATIENT_ALREADY_QUEUED, HttpStatus.CONFLICT, context);
+  }
+
+  queueInvalidTransition(from?: string, to?: string, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.QUEUE_INVALID_TRANSITION,
+      HttpStatus.BAD_REQUEST,
+      context,
+      from && to ? { from, to } : undefined
+    );
+  }
+
+  queueNoWaitingPatients(context?: string): HealthcareError {
+    return this.createError(ErrorCode.QUEUE_NO_WAITING_PATIENTS, HttpStatus.BAD_REQUEST, context);
+  }
+
+  queueNotFound(queueId?: string, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.QUEUE_NOT_FOUND,
+      HttpStatus.NOT_FOUND,
+      context,
+      queueId ? { queueId } : undefined
+    );
   }
 
   // Check-In Errors
@@ -636,6 +823,30 @@ export class HealthcareErrorsService {
       context,
       patientId ? { patientId } : undefined
     );
+  }
+
+  // Ayurveda Errors
+  ayurvedaInvalidSampraptiStage(stageOrder?: number, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.AYURVEDA_INVALID_SAMPRAPTI_STAGE,
+      HttpStatus.BAD_REQUEST,
+      context,
+      stageOrder ? { stageOrder } : undefined
+    );
+  }
+
+  ayurvedaInvalidAssessment(message?: string, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.AYURVEDA_INVALID_ASSESSMENT,
+      HttpStatus.BAD_REQUEST,
+      context,
+      undefined,
+      message
+    );
+  }
+
+  ayurvedaPatientRequired(context?: string): HealthcareError {
+    return this.createError(ErrorCode.AYURVEDA_PATIENT_REQUIRED, HttpStatus.BAD_REQUEST, context);
   }
 
   // Error Handling & Logging

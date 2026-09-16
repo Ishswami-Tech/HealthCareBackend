@@ -7,7 +7,7 @@ import { QueueService } from '@infrastructure/queue';
 import { DoctorSummaryService } from '@communication/services/doctor-summary.service';
 import { LogType, LogLevel } from '@core/types';
 import { JobType, JobPriorityLevel } from '@core/types/queue.types';
-import { formatDateKeyInIST } from '@utils/date-time.util';
+import { formatDateKeyInIST, IST_TIMEZONE } from '@utils/date-time.util';
 
 type AppointmentConfirmedEventPayload = {
   appointmentId: string;
@@ -30,14 +30,20 @@ type AppointmentConfirmedEventPayload = {
  *
  * Behavior:
  * - Only confirmed appointments trigger this (the summary only counts CONFIRMED).
- * - Job IDs use 15-minute IST buckets to coalesce rapid back-to-back bookings
- *   without colliding with the per-day dedup table (BullMQ keeps completed jobs).
- * - A pre-check via `getJob` short-circuits if a job for this bucket exists.
+ * - Job IDs are per-doctor-per-day (`doctor-summary-{userId}-{clinicId}-{dateKey}-event`),
+ *   so only ONE event-driven summary is enqueued per doctor per day regardless of
+ *   how many appointments are confirmed.
+ * - A pre-check via `getJob()` short-circuits if a job for this doctor+clinic+date
+ *   already exists in the queue (BullMQ retains completed jobs for monitoring).
+ * - A 30-second in-memory dedup prevents the same appointment confirmation from
+ *   billing + appointment services firing twice from creating extra jobs.
  * - Summary content (appointmentsList, totalCount) is computed at process time.
  */
 @Injectable()
 export class DoctorAppointmentEventListener {
-  private readonly SUMMARY_DELAY_MS = 15 * 60 * 1000;
+  private readonly SUMMARY_DELAY_MS = 5 * 60 * 1000; // 5 minutes after appointment confirmation
+  private readonly doctorSummaryDedup = new Map<string, number>();
+  private readonly doctorSummaryDedupTtlMs = 30_000;
 
   constructor(
     private readonly eventService: EventService,
@@ -60,6 +66,30 @@ export class DoctorAppointmentEventListener {
     const doctorId = payload.doctorId;
     const clinicId = payload.clinicId;
 
+    // Fast in-memory dedup: appointment.confirmed can fire twice from billing +
+    // appointment services for the same appointment. Skip duplicates within 30s.
+    const dedupKey = `appointment.confirmed|${payload.appointmentId ?? ''}`;
+    const now = Date.now();
+    const lastSeen = this.doctorSummaryDedup.get(dedupKey);
+    if (lastSeen && now - lastSeen < this.doctorSummaryDedupTtlMs) {
+      void this.loggingService.log(
+        LogType.APPOINTMENT,
+        LogLevel.DEBUG,
+        `DoctorAppointmentEventListener: skipping duplicate appointment.confirmed for appointment ${payload.appointmentId}`,
+        'DoctorAppointmentEventListener',
+        { appointmentId: payload.appointmentId, doctorId, clinicId }
+      );
+      return;
+    }
+    this.doctorSummaryDedup.set(dedupKey, now);
+    if (this.doctorSummaryDedup.size > 500) {
+      for (const [key, timestamp] of this.doctorSummaryDedup.entries()) {
+        if (now - timestamp >= this.doctorSummaryDedupTtlMs) {
+          this.doctorSummaryDedup.delete(key);
+        }
+      }
+    }
+
     if (!doctorId || !clinicId) {
       void this.loggingService.log(
         LogType.APPOINTMENT,
@@ -67,6 +97,22 @@ export class DoctorAppointmentEventListener {
         'DoctorAppointmentEventListener: missing doctorId/clinicId in event payload',
         'DoctorAppointmentEventListener',
         { hasDoctorId: Boolean(doctorId), hasClinicId: Boolean(clinicId) }
+      );
+      return;
+    }
+
+    // Only send event-driven summary during daytime window (12:00–18:00 IST).
+    // Night bookings are included in the 7 AM cron summary instead.
+    const istHour = new Date(
+      new Date().toLocaleString('en-US', { timeZone: IST_TIMEZONE })
+    ).getHours();
+    if (istHour < 12 || istHour >= 18) {
+      void this.loggingService.log(
+        LogType.APPOINTMENT,
+        LogLevel.DEBUG,
+        `DoctorAppointmentEventListener: skipping event-driven summary — outside 12–18 IST window (current IST hour: ${istHour})`,
+        'DoctorAppointmentEventListener',
+        { doctorId, clinicId, istHour }
       );
       return;
     }
@@ -85,21 +131,16 @@ export class DoctorAppointmentEventListener {
         return;
       }
 
-      // 2. Build 15-minute bucketed jobId (IST date) — fixes the dedup collision
+      // 2. Build per-day jobId — ensures only ONE event-driven summary per doctor per day.
+      //    The cron job uses a "-cron" suffix, so this never collides with it.
       const todayKey = formatDateKeyInIST(new Date());
-      const minutesOfDay =
-        new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getHours() * 60 +
-        new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getMinutes();
-      const bucket = Math.floor(minutesOfDay / 15);
-      const bucketedJobId = `doctor-summary-${doctorUserId}-${clinicId}-${todayKey}-${bucket}`;
-
-      // 3. Short-circuit if a job for this bucket already exists
-      const existingJob = await this.queueService.getJob('healthcare-queue', bucketedJobId);
-      if (existingJob) {
+      const dedupJobId = `doctor-summary-${doctorUserId}-${clinicId}-${todayKey}-event`;
+      const existingEventJob = await this.queueService.getJob('healthcare-queue', dedupJobId);
+      if (existingEventJob) {
         void this.loggingService.log(
           LogType.QUEUE,
           LogLevel.DEBUG,
-          `Coalescing doctor summary for doctor ${doctorUserId} — existing job ${bucketedJobId} covers new booking`,
+          `Coalescing doctor summary for doctor ${doctorUserId} — existing job ${dedupJobId} covers new booking`,
           'DoctorAppointmentEventListener',
           { doctorUserId, clinicId, appointmentId: payload.appointmentId }
         );
@@ -118,7 +159,7 @@ export class DoctorAppointmentEventListener {
         },
         {
           priority: JobPriorityLevel.NORMAL,
-          correlationId: bucketedJobId,
+          correlationId: dedupJobId,
           delay: this.SUMMARY_DELAY_MS,
           attempts: 3,
         }
@@ -134,8 +175,7 @@ export class DoctorAppointmentEventListener {
           doctorId,
           clinicId,
           appointmentId: payload.appointmentId,
-          jobId: bucketedJobId,
-          bucket,
+          jobId: dedupJobId,
         }
       );
     } catch (error) {

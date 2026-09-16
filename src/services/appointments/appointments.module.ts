@@ -127,14 +127,10 @@ import { EHRModule } from '@services/ehr/ehr.module';
 
     // QR Code Module
     QrModule,
-    // QueueModule.forRoot() registers standard queues using BullMQ:
-    // - APPOINTMENT_QUEUE (appointment-queue)
-    // - NOTIFICATION_QUEUE (notification-queue)
-    // - ANALYTICS_QUEUE (analytics-queue)
-    // - REMINDER_QUEUE (reminder-queue)
-    // - FOLLOW_UP_QUEUE (follow-up-queue)
-    // - PAYMENT_PROCESSING_QUEUE (payment-processing-queue)
-    // All appointment services now use QueueService from @infrastructure/queue
+    // QueueModule.forRoot() exposes one canonical BullMQ queue with logical
+    // lanes for appointments, notifications, analytics, reminders, follow-up,
+    // and payment workflows. All appointment services use QueueService from
+    // @infrastructure/queue.
     EventEmitterModule, // Already configured in AppModule with forRoot()
   ],
   controllers: [AppointmentPluginController, AppointmentsController],

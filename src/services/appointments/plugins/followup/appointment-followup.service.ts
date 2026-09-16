@@ -7,8 +7,15 @@ import { AppointmentNotificationService } from '@services/appointments/plugins/n
 import { QueueService, JobPriority } from '@infrastructure/queue';
 import { JobType } from '@core/types/queue.types';
 import { DatabaseService } from '@infrastructure/database';
+import {
+  buildFollowUpTemplateTreatmentGroups,
+  type TreatmentCatalogGroup,
+} from '@core/types/treatment-catalog.types';
+import { FOLLOW_UP_PLAN_TYPES, FOLLOW_UP_PRIORITY_LEVELS } from '@core/types/appointment.types';
 import type {
   FollowUpPlan,
+  FollowUpPlanType,
+  FollowUpPriorityLevel,
   FollowUpTemplate,
   FollowUpResult,
   FollowUpReminder,
@@ -17,6 +24,14 @@ import { formatDateKeyInIST } from '../../../../libs/utils/date-time.util';
 
 // Re-export types for backward compatibility
 export type { FollowUpPlan, FollowUpTemplate, FollowUpResult, FollowUpReminder };
+
+function isFollowUpPlanType(value?: string): value is FollowUpPlanType {
+  return Boolean(value && FOLLOW_UP_PLAN_TYPES.includes(value as FollowUpPlanType));
+}
+
+function isFollowUpPriorityLevel(value?: string): value is FollowUpPriorityLevel {
+  return Boolean(value && FOLLOW_UP_PRIORITY_LEVELS.includes(value as FollowUpPriorityLevel));
+}
 
 @Injectable()
 export class AppointmentFollowUpService {
@@ -67,20 +82,14 @@ export class AppointmentFollowUpService {
 
     try {
       // Validate and cast followUpType to valid type
-      const validFollowUpType: FollowUpPlan['followUpType'] =
-        followUpType === 'routine' ||
-        followUpType === 'urgent' ||
-        followUpType === 'specialist' ||
-        followUpType === 'therapy' ||
-        followUpType === 'surgery'
-          ? followUpType
-          : 'routine';
+      const validFollowUpType: FollowUpPlan['followUpType'] = isFollowUpPlanType(followUpType)
+        ? followUpType
+        : FOLLOW_UP_PLAN_TYPES[0];
 
       // Validate and cast priority to valid type
-      const validPriority: FollowUpPlan['priority'] =
-        priority === 'low' || priority === 'normal' || priority === 'high' || priority === 'urgent'
-          ? priority
-          : 'normal';
+      const validPriority: FollowUpPlan['priority'] = isFollowUpPriorityLevel(priority)
+        ? priority
+        : FOLLOW_UP_PRIORITY_LEVELS[1];
 
       // CRITICAL FIX: Persist to database FIRST, then cache (single source of truth)
       // This ensures data persistence even if cache expires
@@ -265,23 +274,14 @@ export class AppointmentFollowUpService {
         const row = followUp as FollowUpRow;
 
         // Validate and cast followUpType
-        const validFollowUpType: FollowUpPlan['followUpType'] =
-          row.followUpType === 'routine' ||
-          row.followUpType === 'urgent' ||
-          row.followUpType === 'specialist' ||
-          row.followUpType === 'therapy' ||
-          row.followUpType === 'surgery'
-            ? row.followUpType
-            : 'routine';
+        const validFollowUpType: FollowUpPlan['followUpType'] = isFollowUpPlanType(row.followUpType)
+          ? row.followUpType
+          : FOLLOW_UP_PLAN_TYPES[0];
 
         // Validate and cast priority
-        const validPriority: FollowUpPlan['priority'] =
-          row.priority === 'low' ||
-          row.priority === 'normal' ||
-          row.priority === 'high' ||
-          row.priority === 'urgent'
-            ? row.priority
-            : 'normal';
+        const validPriority: FollowUpPlan['priority'] = isFollowUpPriorityLevel(row.priority)
+          ? row.priority
+          : FOLLOW_UP_PRIORITY_LEVELS[1];
 
         // Validate and cast status
         const validStatus: FollowUpPlan['status'] =
@@ -424,25 +424,18 @@ export class AppointmentFollowUpService {
       const followUpPlan = followUp as FollowUpPlan;
 
       // Validate and cast followUpType if provided
-      const validFollowUpType: FollowUpPlan['followUpType'] | undefined =
-        updateData.followUpType &&
-        (updateData.followUpType === 'routine' ||
-          updateData.followUpType === 'urgent' ||
-          updateData.followUpType === 'specialist' ||
-          updateData.followUpType === 'therapy' ||
-          updateData.followUpType === 'surgery')
-          ? updateData.followUpType
-          : undefined;
+      const validFollowUpType: FollowUpPlan['followUpType'] | undefined = isFollowUpPlanType(
+        updateData.followUpType
+      )
+        ? updateData.followUpType
+        : undefined;
 
       // Validate and cast priority if provided
-      const validPriority: FollowUpPlan['priority'] | undefined =
-        updateData.priority &&
-        (updateData.priority === 'low' ||
-          updateData.priority === 'normal' ||
-          updateData.priority === 'high' ||
-          updateData.priority === 'urgent')
-          ? updateData.priority
-          : undefined;
+      const validPriority: FollowUpPlan['priority'] | undefined = isFollowUpPriorityLevel(
+        updateData.priority
+      )
+        ? updateData.priority
+        : undefined;
 
       // Validate and cast status if provided
       const validStatus: FollowUpPlan['status'] | undefined =
@@ -513,42 +506,8 @@ export class AppointmentFollowUpService {
         return cached as FollowUpTemplate[];
       }
 
-      // Mock follow-up templates
-      const templates: FollowUpTemplate[] = [
-        {
-          id: 'template_1',
-          name: 'Routine Follow-up',
-          followUpType: 'routine',
-          daysAfter: 7,
-          instructions: 'Schedule follow-up appointment to monitor progress',
-          isActive: true,
-          conditions: {
-            appointmentType: ['GENERAL_CONSULTATION', 'FOLLOW_UP'],
-          },
-        },
-        {
-          id: 'template_2',
-          name: 'Post-Surgery Follow-up',
-          followUpType: 'surgery',
-          daysAfter: 14,
-          instructions: 'Post-surgery follow-up to check healing and recovery',
-          isActive: true,
-          conditions: {
-            appointmentType: ['SURGERY'],
-          },
-        },
-        {
-          id: 'template_3',
-          name: 'Therapy Follow-up',
-          followUpType: 'therapy',
-          daysAfter: 3,
-          instructions: 'Follow-up on therapy progress and adjust treatment plan',
-          isActive: true,
-          conditions: {
-            appointmentType: ['THERAPY'],
-          },
-        },
-      ];
+      const followUpTemplateGroups = buildFollowUpTemplateTreatmentGroups();
+      const templates = this.buildFollowUpTemplatesFromGroups(followUpTemplateGroups);
 
       await this.cacheService.set(cacheKey, templates, this.TEMPLATE_CACHE_TTL);
       return templates;
@@ -564,6 +523,56 @@ export class AppointmentFollowUpService {
         }
       );
       return [];
+    }
+  }
+
+  private buildFollowUpTemplatesFromGroups(groups: TreatmentCatalogGroup[]): FollowUpTemplate[] {
+    const getConditionValues = (key: string): string[] =>
+      groups.find(group => group.key === key)?.filters.map(filter => filter.value) || [];
+
+    return groups
+      .map(group => this.mapTemplateGroupToFollowUpTemplate(group, getConditionValues))
+      .filter((template): template is FollowUpTemplate => template !== null);
+  }
+
+  private mapTemplateGroupToFollowUpTemplate(
+    group: TreatmentCatalogGroup,
+    getConditionValues: (key: string) => string[]
+  ): FollowUpTemplate | null {
+    const templateDefinition = this.getFollowUpTemplateDefinition(group.key);
+    if (!templateDefinition) {
+      return null;
+    }
+
+    return {
+      id: templateDefinition.id,
+      name: group.label,
+      followUpType: templateDefinition.followUpType,
+      daysAfter: templateDefinition.daysAfter,
+      instructions: group.description,
+      isActive: true,
+      conditions: {
+        appointmentType: getConditionValues(group.key),
+      },
+    };
+  }
+
+  private getFollowUpTemplateDefinition(
+    groupKey: string
+  ): { id: string; followUpType: string; daysAfter: number } | null {
+    switch (groupKey) {
+      case 'followup:routine':
+        return { id: 'template_1', followUpType: 'routine', daysAfter: 7 };
+      case 'followup:procedure':
+        return { id: 'template_2', followUpType: 'procedure', daysAfter: 14 };
+      case 'followup:therapy':
+        return { id: 'template_3', followUpType: 'therapy', daysAfter: 3 };
+      case 'followup:ayurveda':
+        return { id: 'template_4', followUpType: 'ayurveda', daysAfter: 5 };
+      case 'followup:ayurvedic-procedures':
+        return { id: 'template_5', followUpType: 'ayurvedic_procedures', daysAfter: 7 };
+      default:
+        return null;
     }
   }
 

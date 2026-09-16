@@ -1,11 +1,4 @@
-import {
-  Inject,
-  Injectable,
-  Logger,
-  OnApplicationBootstrap,
-  Optional,
-  forwardRef,
-} from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit, Optional, forwardRef } from '@nestjs/common';
 import { HttpAdapterHost } from '@nestjs/core';
 import { InjectQueue } from '@nestjs/bullmq';
 import { createBullBoard } from '@bull-board/api';
@@ -41,7 +34,7 @@ function isFastifyLikeInstance(value: unknown): value is FastifyLikeInstance {
  * for real-time queue visualization and management.
  */
 @Injectable()
-export class BullBoardService implements OnApplicationBootstrap {
+export class BullBoardService implements OnModuleInit {
   private readonly logger = new Logger(BullBoardService.name);
   private bullBoardRegistered = false;
 
@@ -54,21 +47,26 @@ export class BullBoardService implements OnApplicationBootstrap {
     private readonly loggingService?: LoggingService
   ) {}
 
-  async onApplicationBootstrap(): Promise<void> {
+  async onModuleInit(): Promise<void> {
+    this.logger.log('BullBoard onModuleInit called');
     if (this.bullBoardRegistered) {
+      this.logger.log('BullBoard already registered, skipping');
       return;
     }
 
+    this.logger.debug('isCacheEnabled:', isCacheEnabled());
     if (!isCacheEnabled()) {
       this.logger.warn('Bull Board skipped: cache is disabled.');
       return;
     }
 
     const enableBullBoardEnv = process.env['ENABLE_BULL_BOARD']?.trim().toLowerCase();
+    this.logger.debug('ENABLE_BULL_BOARD env:', enableBullBoardEnv);
     const bullBoardEnabled =
       enableBullBoardEnv === undefined
         ? true
         : ['true', '1', 'yes', 'on'].includes(enableBullBoardEnv);
+    this.logger.debug('bullBoardEnabled:', bullBoardEnabled);
 
     if (!bullBoardEnabled) {
       this.logger.warn('Bull Board skipped: dashboard is disabled for this environment.');
@@ -76,12 +74,19 @@ export class BullBoardService implements OnApplicationBootstrap {
     }
 
     const httpAdapter = this.httpAdapterHost.httpAdapter;
+    this.logger.debug('httpAdapter:', !!httpAdapter);
     if (!httpAdapter) {
       this.logger.warn('Bull Board skipped: no HTTP adapter is available.');
       return;
     }
 
     const appInstance: unknown = httpAdapter.getInstance();
+    this.logger.debug(
+      'appInstance type:',
+      typeof appInstance,
+      'hasRegister:',
+      typeof (appInstance as { register?: unknown } | null | undefined)?.register === 'function'
+    );
     if (!isFastifyLikeInstance(appInstance)) {
       this.logger.warn('Bull Board skipped: Fastify instance is not available.');
       return;
@@ -102,8 +107,15 @@ export class BullBoardService implements OnApplicationBootstrap {
         },
       });
 
-      // Await registration to ensure the static plugin inside FastifyAdapter loads correctly
-      await appInstance.register(serverAdapter.registerPlugin(), { prefix: routePrefix });
+      this.logger.log('BullBoard about to register route...');
+      const registerWithTimeout = Promise.race([
+        appInstance.register(serverAdapter.registerPlugin(), { prefix: routePrefix }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('BullBoard register timeout after 10s')), 10000)
+        ),
+      ]);
+      await registerWithTimeout;
+      this.logger.log('BullBoard route registered successfully');
       this.bullBoardRegistered = true;
       this.logger.log('Bull Board registered at /queue-dashboard');
     } catch (error) {

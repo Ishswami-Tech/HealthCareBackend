@@ -30,7 +30,7 @@ import {
   IsObject,
   IsArray,
 } from 'class-validator';
-import { VideoCallStatus } from './appointment.dto';
+import { TreatmentPlanDto, VideoCallStatus } from './appointment.dto';
 import { normalizeAppointmentId } from '@utils/appointment-id.utils';
 
 /**
@@ -1338,29 +1338,6 @@ export class SymptomDto {
   @IsOptional()
   @IsString()
   notes?: string;
-}
-
-export class TreatmentPlanDto {
-  @ApiProperty()
-  @IsString()
-  @IsNotEmpty()
-  diagnosis!: string;
-
-  @ApiProperty()
-  @IsString()
-  @IsNotEmpty()
-  treatment!: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  followUp?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  recommendations?: string[];
 }
 
 export class CreateMedicalNoteDto {

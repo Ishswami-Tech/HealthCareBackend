@@ -1,4 +1,5 @@
 import { getVideoActiveWindowMinutes } from '@config/video.config';
+import { formatDateKeyInIST } from '@utils/date-time.util';
 
 /**
  * Compute the timestamp at which a CONFIRMED appointment will be
@@ -26,8 +27,7 @@ export function computeConfirmationExpiresAt(appointment: {
   if (!appointment?.date) return null;
 
   const rawDate = appointment.date;
-  const dateStr =
-    rawDate instanceof Date ? rawDate.toISOString().slice(0, 10) : String(rawDate).slice(0, 10);
+  const dateStr = formatDateKeyInIST(rawDate);
   const timeStr = String(appointment.time || '00:00');
 
   const start = new Date(`${dateStr}T${timeStr}+05:30`);

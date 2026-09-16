@@ -51,3 +51,5 @@ export * from './doctor.dto';
 export * from './patient.dto';
 export * from './staff.dto';
 export * from './logging.dto';
+export * from './payment.dto';
+export * from './payment.dto';
