@@ -16,6 +16,7 @@ import { LogType, LogLevel } from '@core/types';
 import type { RequestWithAuth } from '@core/types/guard.types';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { ClinicIsolationService } from '@infrastructure/database/internal/clinic-isolation.service';
+import { IS_PUBLIC_KEY } from '@core/decorators/public.decorator';
 
 @Injectable()
 export class RbacGuard implements CanActivate {
@@ -35,6 +36,15 @@ export class RbacGuard implements CanActivate {
 
   private async validateRequest(context: ExecutionContext): Promise<boolean> {
     try {
+      // Allow public routes to bypass RBAC checks
+      const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+        context.getHandler(),
+        context.getClass(),
+      ]);
+      if (isPublic) {
+        return true;
+      }
+
       // Get RBAC requirements from decorator
       const rbacRequirements = this.reflector.getAllAndOverride<RbacRequirement[]>(
         RBAC_METADATA_KEY,
