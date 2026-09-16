@@ -196,11 +196,7 @@ export class DragonflyCacheProvider implements IAdvancedCacheProvider {
   }
 
   async ping(): Promise<string> {
-    try {
-      return await this.dragonflyService.ping();
-    } catch {
-      throw new Error('Dragonfly client not ready');
-    }
+    return await this.dragonflyService.ping();
   }
 
   async isHealthy(): Promise<boolean> {

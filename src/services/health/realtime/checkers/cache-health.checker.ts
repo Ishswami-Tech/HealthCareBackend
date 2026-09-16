@@ -39,12 +39,12 @@ export class CacheHealthChecker {
     }
 
     try {
-      // Lightweight check: Simple get/set operation
+      // Use PING for health check — avoids key-prefix issues and reduces latency
+      // compared to a set/get roundtrip, especially on a shared Dragonfly instance.
       await Promise.race([
         (async () => {
           if (this.cacheService) {
-            await this.cacheService.set(this.TEST_KEY, 'pong', 10); // 10 second TTL
-            await this.cacheService.get(this.TEST_KEY);
+            await this.cacheService.ping();
           }
         })(),
         new Promise<never>((_, reject) =>
@@ -56,7 +56,7 @@ export class CacheHealthChecker {
 
       return {
         service: 'cache',
-        status: responseTime < 50 ? 'healthy' : responseTime < 200 ? 'degraded' : 'unhealthy',
+        status: responseTime < 100 ? 'healthy' : responseTime < 500 ? 'degraded' : 'unhealthy',
         responseTime,
       };
     } catch (error) {
