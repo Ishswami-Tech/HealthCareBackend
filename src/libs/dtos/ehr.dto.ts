@@ -560,6 +560,23 @@ export class UpdateImmunizationDto {
 }
 
 // Comprehensive Health Record DTOs
+/** A file uploaded from the patient portal (or by staff on the patient's behalf). */
+export interface PatientDocumentResponse {
+  id: string;
+  userId: string;
+  clinicId?: string | null;
+  category: string;
+  title: string;
+  notes?: string | null;
+  fileUrl?: string | null;
+  mimeType?: string | null;
+  fileSize?: number | null;
+  uploadedBy?: string | null;
+  date: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export class HealthRecordSummaryDto {
   medicalHistory?: MedicalHistoryResponse[];
   labReports?: LabReportResponse[];
@@ -571,6 +588,7 @@ export class HealthRecordSummaryDto {
   immunizations?: ImmunizationResponse[];
   familyHistory?: FamilyHistoryResponse[];
   lifestyleAssessment?: LifestyleAssessmentResponse;
+  documents?: PatientDocumentResponse[];
 }
 
 export class EHRAISummaryDto {

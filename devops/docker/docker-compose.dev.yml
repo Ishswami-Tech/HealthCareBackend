@@ -1,4 +1,4 @@
-﻿# Quick Start Development Environment
+# Quick Start Development Environment
 # Run with: docker compose -f devops/docker/docker-compose.dev.yml up -d
 # Access: http://localhost:8088
 #
@@ -186,7 +186,7 @@ services:
     # In production/staging, this port should be commented out for security
     # Access via: docker exec -it healthcare-postgres psql -U postgres
     ports:
-      - "5432:5432"
+      - "5433:5432"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres

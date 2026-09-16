@@ -4,7 +4,7 @@ import {
   APPOINTMENT_STATUS_TRANSITIONS,
   canCancelAppointmentStatus,
   isValidAppointmentStatusTransition,
-} from '../src/services/appointments/core/appointment-state-contract.ts';
+} from '../src/services/appointments/core/appointment-state-contract';
 
 function main() {
   assert.equal(isValidAppointmentStatusTransition('AWAITING_SLOT_CONFIRMATION', 'CONFIRMED'), true);
