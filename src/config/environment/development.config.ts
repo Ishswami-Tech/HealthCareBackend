@@ -105,11 +105,7 @@ export default function createDevelopmentConfig(): Config {
       // Use helper functions (which use dotenv) for environment variable access
       level:
         (getEnvWithDefault(ENV_VARS.LOG_LEVEL, 'debug') as
-          | 'error'
-          | 'warn'
-          | 'info'
-          | 'debug'
-          | 'verbose') || 'debug',
+          'error' | 'warn' | 'info' | 'debug' | 'verbose') || 'debug',
       enableAuditLogs: getEnvBoolean('ENABLE_AUDIT_LOGS', true),
     },
     email: {

@@ -137,8 +137,7 @@ class ShimDocumentBuilder implements SwaggerDocumentBuilder {
 }
 
 const liveDocumentBuilder = liveSwagger?.DocumentBuilder as
-  | (new () => SwaggerDocumentBuilder)
-  | undefined;
+  (new () => SwaggerDocumentBuilder) | undefined;
 
 export const DocumentBuilder: new () => SwaggerDocumentBuilder =
   liveDocumentBuilder ?? ShimDocumentBuilder;

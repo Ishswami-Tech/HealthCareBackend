@@ -71,9 +71,7 @@ export class SessionManagementService implements OnModuleInit {
       extendOnActivity: this.configService.getEnvBoolean('SESSION_EXTEND_ON_ACTIVITY', true),
       secureCookies: this.configService.getEnvBoolean('SESSION_SECURE_COOKIES', true),
       sameSite: (this.configService.getEnv('SESSION_SAME_SITE', 'strict') || 'strict') as
-        | 'strict'
-        | 'lax'
-        | 'none',
+        'strict' | 'lax' | 'none',
       distributed: this.configService.getEnvBoolean('SESSION_DISTRIBUTED', true),
       partitions: this.configService.getEnvNumber('SESSION_PARTITIONS', 16),
     };

@@ -97,11 +97,7 @@ export default function createTestConfig(): Config {
       // Use helper functions (which use dotenv) for environment variable access
       level:
         (getEnvWithDefault(ENV_VARS.LOG_LEVEL, 'error') as
-          | 'error'
-          | 'warn'
-          | 'info'
-          | 'debug'
-          | 'verbose') || 'error', // Only errors in tests (faster execution)
+          'error' | 'warn' | 'info' | 'debug' | 'verbose') || 'error', // Only errors in tests (faster execution)
       enableAuditLogs: getEnvBoolean('ENABLE_AUDIT_LOGS', false), // Disabled for tests
     },
     email: {

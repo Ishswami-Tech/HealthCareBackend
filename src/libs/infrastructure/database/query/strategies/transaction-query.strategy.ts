@@ -17,10 +17,7 @@ import { LogType, LogLevel } from '@core/types';
  * Transaction isolation levels
  */
 export type TransactionIsolationLevel =
-  | 'ReadUncommitted'
-  | 'ReadCommitted'
-  | 'RepeatableRead'
-  | 'Serializable';
+  'ReadUncommitted' | 'ReadCommitted' | 'RepeatableRead' | 'Serializable';
 
 /**
  * Transaction query strategy - optimized for transaction operations
