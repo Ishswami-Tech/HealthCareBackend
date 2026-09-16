@@ -148,8 +148,16 @@ export class BillingController {
     }
 
     const role = req?.user?.['role'];
-    if (role !== Role.SUPER_ADMIN && role !== Role.CLINIC_ADMIN) {
-      throw new ForbiddenException('Payment provider is selected in clinic payment settings.');
+    if (
+      role !== Role.SUPER_ADMIN &&
+      role !== Role.CLINIC_ADMIN &&
+      role !== Role.FINANCE_BILLING &&
+      role !== Role.PATIENT &&
+      role !== Role.RECEPTIONIST
+    ) {
+      throw new ForbiddenException(
+        'You are not authorized to select a payment provider. Please contact your clinic administrator.'
+      );
     }
 
     return parsedProvider;
@@ -1107,7 +1115,7 @@ export class BillingController {
    * Process subscription payment (monthly for in-person appointments)
    */
   @Post('subscriptions/:id/process-payment')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.PATIENT, Role.RECEPTIONIST)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
   @RequireResourcePermission('payments', 'create')
   async processSubscriptionPayment(
     @Param('id') subscriptionId: string,
@@ -1145,7 +1153,7 @@ export class BillingController {
    * Process per-appointment payment (for video appointments)
    */
   @Post('appointments/:id/process-payment')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.PATIENT, Role.RECEPTIONIST)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
   @RequireResourcePermission('payments', 'create')
   async processAppointmentPayment(
     @Param('id') appointmentId: string,

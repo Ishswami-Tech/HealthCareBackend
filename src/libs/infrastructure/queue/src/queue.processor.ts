@@ -159,6 +159,8 @@ export class QueueProcessor {
           return await this.processVideoTranscoding(job as unknown as Job<JobData>);
         case JobType.VIDEO_ANALYTICS:
           return await this.processVideoAnalytics(job as unknown as Job<JobData>);
+        case JobType.ANALYTICS:
+          return this.processAppointmentAnalytics(job as unknown as Job<JobData>);
         case JobType.CREATE:
           return this.processCreateJob(job as unknown as Job<JobData>);
         case JobType.UPDATE:
@@ -208,6 +210,10 @@ export class QueueProcessor {
                 return await this.processReminderJob(job as unknown as Job<JobData>);
               if (job.name.includes('notification'))
                 return this.processNotification(job as unknown as Job<JobData>);
+
+              if (action === 'APPOINTMENT_PROCESSING') {
+                return { success: true };
+              }
 
               throw new Error(
                 `Unknown job type: ${jobType} (Action: ${action}, Name: ${job.name})`
@@ -343,6 +349,9 @@ export class QueueProcessor {
             job.data['treatmentType'] as string | undefined,
             job.data['notes'] as string | undefined
           );
+
+        case 'APPOINTMENT_PROCESSING':
+          return this.processAppointmentProcessing(job as unknown as Job<JobData>);
 
         default:
           throw new Error(`Unsupported appointment queue action: ${action}`);
@@ -861,6 +870,50 @@ export class QueueProcessor {
     }
 
     return { success: true };
+  }
+
+  processAppointmentProcessing(job: Job<JobData>): { success: boolean } {
+    try {
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        `Processing appointment background job ${safeStringify(job.id)}`,
+        'QueueProcessor',
+        { jobId: safeStringify(job.id), data: safeStringify(job.data) }
+      );
+      return { success: true };
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Error processing appointment background job`,
+        'QueueProcessor',
+        { jobId: safeStringify(job.id), error: String(error) }
+      );
+      throw error;
+    }
+  }
+
+  processAppointmentAnalytics(job: Job<JobData>): { success: boolean } {
+    try {
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        `Processing appointment analytics job ${safeStringify(job.id)}`,
+        'QueueProcessor',
+        { jobId: safeStringify(job.id), data: safeStringify(job.data) }
+      );
+      return { success: true };
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Error processing appointment analytics job`,
+        'QueueProcessor',
+        { jobId: safeStringify(job.id), error: String(error) }
+      );
+      throw error;
+    }
   }
 
   processPaymentProcessing(job: Job<JobData>): { success: boolean } {

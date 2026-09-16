@@ -958,7 +958,7 @@ export class ClinicService {
   private resolveConfiguredClinicId(): string | null {
     const fromConfig =
       typeof this.configService?.get === 'function'
-        ? this.configService.get<string | undefined>('CLINIC_ID')
+        ? this.configService.get<string | undefined>('CLINIC_ID', undefined)
         : undefined;
     const fromEnv = process.env['CLINIC_ID'];
     const raw = fromConfig || fromEnv || undefined;
