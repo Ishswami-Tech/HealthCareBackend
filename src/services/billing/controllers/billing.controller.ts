@@ -1117,7 +1117,7 @@ export class BillingController {
    */
   @Public()
   @Post('subscriptions/:id/process-payment')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.PATIENT)
   @RequireResourcePermission('payments', 'create')
   async processSubscriptionPayment(
     @Param('id') subscriptionId: string,
@@ -1156,7 +1156,7 @@ export class BillingController {
    */
   @Public()
   @Post('appointments/:id/process-payment')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.PATIENT)
   @RequireResourcePermission('payments', 'create')
   async processAppointmentPayment(
     @Param('id') appointmentId: string,
