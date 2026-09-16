@@ -54,13 +54,62 @@ import { RequiresProfileCompletion } from '@core/decorators/profile-completion.d
 import { PatientCache } from '@core/decorators';
 import { Role } from '@core/types/enums.types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
+import { DatabaseService } from '@infrastructure/database/database.service';
+import { StaticAssetService } from '@infrastructure/storage/static-asset.service';
+import { AssetType } from '@infrastructure/storage/static-asset.service';
+import { FastifyFile, MulterFile } from '@core/decorators/fastify-file.decorator';
+import { ApiConsumes } from '@nestjs/swagger';
+
+/**
+ * Minimal delegate shapes for the two tables the medical-record compatibility
+ * routes touch directly. Typed here rather than cast to `any` so the writes are
+ * checked and the file passes lint.
+ */
+interface PatientDocumentRow {
+  id: string;
+  userId: string;
+}
+
+interface MedicalRecordWriteClient {
+  patientDocument: {
+    create: (args: { data: Record<string, unknown> }) => Promise<PatientDocumentRow>;
+    update: (args: {
+      where: { id: string };
+      data: Record<string, unknown>;
+    }) => Promise<PatientDocumentRow>;
+  };
+  labReport: {
+    update: (args: {
+      where: { id: string };
+      data: Record<string, unknown>;
+    }) => Promise<PatientDocumentRow>;
+  };
+  radiologyReport: {
+    update: (args: {
+      where: { id: string };
+      data: Record<string, unknown>;
+    }) => Promise<PatientDocumentRow>;
+  };
+}
+
+/** Body accepted by the legacy medical-record create endpoint. */
+interface CreateMedicalRecordBody {
+  patientId: string;
+  type?: string;
+  title?: string;
+  content?: string;
+}
 
 @ApiTags('ehr')
 @Controller('ehr')
 @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard, ProfileCompletionGuard)
 @RequiresProfileCompletion()
 export class EHRController {
-  constructor(private readonly ehrService: EHRService) {}
+  constructor(
+    private readonly ehrService: EHRService,
+    private readonly databaseService: DatabaseService,
+    private readonly staticAssetService: StaticAssetService
+  ) {}
 
   // ============ Comprehensive Health Record ============
 
@@ -684,5 +733,169 @@ export class EHRController {
     // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
     const clinicId = req.clinicContext?.clinicId;
     return this.ehrService.getMedicationAdherence(userId, clinicId);
+  }
+
+  // ============ Medical Records (Legacy compat) ============
+  @Post('medical-records')
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.PATIENT,
+    Role.CLINIC_ADMIN,
+    Role.RECEPTIONIST
+  )
+  async createMedicalRecord(
+    @Body() data: CreateMedicalRecordBody,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req.clinicContext?.clinicId || 'CL0002';
+    const doctorId = req.user?.id || 'system';
+    const patientId = data.patientId;
+    const type = data.type; // 'LAB_TEST', 'XRAY', 'MRI', etc.
+    const title = data.title;
+    const content = data.content;
+
+    if (type === 'LAB_TEST') {
+      const record = await this.ehrService.createLabReport({
+        userId: patientId,
+        testName: title || 'Lab Test',
+        result: content || 'Pending review',
+        date: new Date().toISOString(),
+        doctorId,
+        clinicId,
+        notes: content ?? '',
+      });
+      return { id: `LAB_${record.id}` };
+    } else if (type === 'XRAY' || type === 'MRI') {
+      const record = await this.ehrService.createRadiologyReport({
+        userId: patientId,
+        imageType: type,
+        findings: title || type,
+        conclusion: content || 'Uploaded Document',
+        date: new Date().toISOString(),
+        doctorId,
+        clinicId,
+      } as Parameters<typeof this.ehrService.createRadiologyReport>[0]);
+      return { id: `RAD_${record.id}` };
+    } else {
+      // Everything else (PRESCRIPTION, DIAGNOSIS_REPORT, PULSE_DIAGNOSIS) becomes a
+      // PatientDocument.
+      //
+      // This used to write to HealthRecord, which is keyed on Patient.id and
+      // requires a Doctor.id — so a patient uploading their own file violated
+      // both foreign keys, and getComprehensiveHealthRecord never read that
+      // table anyway, so nothing was ever visible afterwards.
+      const record = await this.databaseService.executeHealthcareWrite<PatientDocumentRow>(
+        async client => {
+          return await (client as unknown as MedicalRecordWriteClient).patientDocument.create({
+            data: {
+              userId: patientId,
+              clinicId,
+              category: type || 'DIAGNOSIS_REPORT',
+              title: title || 'Uploaded document',
+              notes: content || null,
+              uploadedBy: doctorId,
+              date: new Date(),
+            },
+          });
+        },
+        {
+          userId: doctorId,
+          userRole: req.user?.role || Role.PATIENT,
+          operation: 'CREATE',
+          resourceType: 'HEALTH_RECORD',
+          clinicId,
+        }
+      );
+
+      await this.ehrService.invalidateUserEHRCache(patientId);
+      return { id: `DOC_${record.id}` };
+    }
+  }
+
+  @Post('medical-records/:id/upload')
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.PATIENT,
+    Role.CLINIC_ADMIN,
+    Role.RECEPTIONIST
+  )
+  @ApiConsumes('multipart/form-data')
+  async uploadMedicalRecordFile(@Param('id') prefixedId: string, @FastifyFile() file: MulterFile) {
+    if (!file) {
+      throw new ForbiddenException('File is required');
+    }
+
+    // The id arrives prefixed by createMedicalRecord (LAB_/RAD_/DOC_), and the
+    // uuid itself contains dashes but no underscore, so split on the first only.
+    const separatorIndex = prefixedId.indexOf('_');
+    const prefix = separatorIndex === -1 ? '' : prefixedId.slice(0, separatorIndex);
+    const id = separatorIndex === -1 ? '' : prefixedId.slice(separatorIndex + 1);
+    if (!prefix || !id) {
+      throw new ForbiddenException('Invalid record ID format');
+    }
+
+    const fileName = `medrecord-${id}-${Date.now()}`;
+    const isImage = file.mimetype?.startsWith('image/');
+    const asset = await this.staticAssetService.uploadFile(
+      file.buffer,
+      fileName,
+      isImage ? AssetType.IMAGE : AssetType.DOCUMENT,
+      file.mimetype,
+      true
+    );
+
+    if (!asset.success || !asset.url) {
+      throw new ForbiddenException(asset.error || 'Failed to upload file to storage');
+    }
+
+    const updated = await this.databaseService.executeHealthcareWrite<PatientDocumentRow>(
+      async client => {
+        const db = client as unknown as MedicalRecordWriteClient;
+        if (prefix === 'LAB') {
+          return await db.labReport.update({
+            where: { id },
+            data: { fileUrl: asset.url, fileKey: asset.key ?? null },
+          });
+        } else if (prefix === 'RAD') {
+          // RadiologyReport has no `images` column — writing to it threw on every
+          // X-ray upload. It now carries fileUrl/fileKey like LabReport.
+          return await db.radiologyReport.update({
+            where: { id },
+            data: { fileUrl: asset.url, fileKey: asset.key ?? null },
+          });
+        } else if (prefix === 'DOC' || prefix === 'GEN') {
+          return await db.patientDocument.update({
+            where: { id },
+            data: {
+              fileUrl: asset.url,
+              fileKey: asset.key ?? null,
+              mimeType: file.mimetype ?? null,
+              fileSize: file.size ?? null,
+            },
+          });
+        }
+
+        throw new ForbiddenException(`Unsupported record type: ${prefix}`);
+      },
+      {
+        userId: 'system',
+        userRole: 'system',
+        operation: 'UPDATE',
+        resourceType: 'HEALTH_RECORD',
+        clinicId: 'CL0002',
+      }
+    );
+
+    // Without this the comprehensive record serves a 30-minute cached copy and
+    // the freshly attached file does not appear.
+    if (updated?.userId) {
+      await this.ehrService.invalidateUserEHRCache(updated.userId);
+    }
+
+    return { url: asset.url };
   }
 }

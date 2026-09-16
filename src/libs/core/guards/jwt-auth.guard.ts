@@ -435,11 +435,13 @@ export class JwtAuthGuard implements CanActivate {
 
   private validateRequest(request: FastifyRequestWithUser): void {
     // Validate Content-Type for POST/PUT/PATCH requests
-    if (
-      ['POST', 'PUT', 'PATCH'].includes(request.method) &&
-      !(request.headers['content-type'] as string)?.includes('application/json')
-    ) {
-      throw new HttpException('Invalid Content-Type', HttpStatus.BAD_REQUEST);
+    if (['POST', 'PUT', 'PATCH'].includes(request.method)) {
+      const contentType = String(request.headers['content-type'] || '').toLowerCase();
+      const isJson = contentType.includes('application/json');
+      const isMultipart = contentType.includes('multipart/form-data');
+      if (!isJson && !isMultipart) {
+        throw new HttpException('Invalid Content-Type', HttpStatus.BAD_REQUEST);
+      }
     }
 
     // Check for required security headers

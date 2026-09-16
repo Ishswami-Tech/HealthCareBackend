@@ -3,7 +3,7 @@
   "collection": "@nestjs/schematics",
   "sourceRoot": "src",
   "compilerOptions": {
-    "deleteOutDir": true,
+    "deleteOutDir": false,
     "builder": "swc",
     "typeCheck": true,
     "swcOptions": {
@@ -12,15 +12,15 @@
     "assets": [
       {
         "include": "views/**/*",
-        "outDir": "dist/src"
+        "outDir": "dist"
       },
       {
-        "include": "src/libs/infrastructure/database/prisma/generated/**/*",
-        "outDir": "dist/libs/infrastructure/database/prisma/generated"
+        "include": "libs/infrastructure/database/prisma/generated/**/*",
+        "outDir": "dist"
       },
       {
-        "include": "src/libs/infrastructure/database/prisma/schema.prisma",
-        "outDir": "dist/libs/infrastructure/database/prisma"
+        "include": "libs/infrastructure/database/prisma/schema.prisma",
+        "outDir": "dist"
       }
     ],
     "watchAssets": true,

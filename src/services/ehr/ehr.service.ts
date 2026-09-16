@@ -43,6 +43,7 @@ import {
   CreateImmunizationDto,
   UpdateImmunizationDto,
   HealthRecordSummaryDto,
+  PatientDocumentResponse,
   EHRAISummaryDto,
   CreatePrescriptionDto,
   BulkEHRImportDto,
@@ -69,6 +70,7 @@ import type {
   MedicationBase,
   ImmunizationBase,
   FamilyHistoryBase,
+  PatientDocumentBase,
   LifestyleAssessmentBase,
 } from '@core/types/ehr.types';
 
@@ -191,6 +193,15 @@ export class EHRService {
                 where: getWhere({ userId }) as PrismaDelegateArgs,
               } as PrismaDelegateArgs);
             }),
+            this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+              const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+                patientDocument: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+              };
+              return await typedClient.patientDocument.findMany({
+                where: getWhere({ userId }) as PrismaDelegateArgs,
+                orderBy: { date: 'desc' } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs);
+            }),
             this.databaseService.executeHealthcareRead<LifestyleAssessmentBase | null>(
               async client => {
                 const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
@@ -216,6 +227,7 @@ export class EHRService {
             MedicationBase[],
             ImmunizationBase[],
             FamilyHistoryBase[],
+            PatientDocumentBase[],
             LifestyleAssessmentBase | null,
           ];
 
@@ -229,7 +241,8 @@ export class EHRService {
           const medicationsRaw = results[6];
           const immunizationsRaw = results[7];
           const familyHistoryRaw = results[8];
-          const lifestyleAssessmentRaw = results[9];
+          const patientDocumentsRaw = results[9];
+          const lifestyleAssessmentRaw = results[10];
 
           // Transform to response types
           const medicalHistory = medicalHistoryRaw.map(record =>
@@ -247,6 +260,9 @@ export class EHRService {
           const medications = medicationsRaw.map(record => this.transformMedication(record));
           const immunizations = immunizationsRaw.map(record => this.transformImmunization(record));
           const familyHistory = familyHistoryRaw.map(record => this.transformFamilyHistory(record));
+          const documents = patientDocumentsRaw.map(record =>
+            this.transformPatientDocument(record)
+          );
           const lifestyleAssessment = lifestyleAssessmentRaw
             ? this.transformLifestyleAssessment(lifestyleAssessmentRaw)
             : {
@@ -276,6 +292,7 @@ export class EHRService {
             immunizations,
             familyHistory,
             lifestyleAssessment,
+            documents,
           };
         } catch (error) {
           await this.loggingService.log(
@@ -679,7 +696,7 @@ export class EHRService {
         } = {
           userId: data.userId,
           testName: data.testName,
-          result: data.result,
+          result: data.result?.trim() || data.notes?.trim() || 'Pending review',
           date: new Date(data.date),
         };
         if (data.unit) {
@@ -3719,6 +3736,25 @@ export class EHRService {
       notes: typedRecord.notes && typeof typedRecord.notes === 'string' ? typedRecord.notes : '',
       createdAt: typedRecord.createdAt.toISOString(),
       updatedAt: typedRecord.updatedAt.toISOString(),
+    };
+  }
+
+  private transformPatientDocument(record: unknown): PatientDocumentResponse {
+    const typedRecord = record as PatientDocumentBase;
+    return {
+      id: typedRecord.id,
+      userId: typedRecord.userId,
+      clinicId: typedRecord.clinicId ?? null,
+      category: typedRecord.category,
+      title: typedRecord.title,
+      notes: typedRecord.notes ?? null,
+      fileUrl: typedRecord.fileUrl ?? null,
+      mimeType: typedRecord.mimeType ?? null,
+      fileSize: typedRecord.fileSize ?? null,
+      uploadedBy: typedRecord.uploadedBy ?? null,
+      date: typedRecord.date ? new Date(typedRecord.date).toISOString() : nowIso(),
+      createdAt: typedRecord.createdAt ? new Date(typedRecord.createdAt).toISOString() : nowIso(),
+      updatedAt: typedRecord.updatedAt ? new Date(typedRecord.updatedAt).toISOString() : nowIso(),
     };
   }
 

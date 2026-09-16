@@ -536,6 +536,24 @@ export interface FamilyHistoryBase {
   updatedAt: Date;
 }
 
+/** Row shape for a patient-portal document upload. */
+export interface PatientDocumentBase {
+  id: string;
+  userId: string;
+  clinicId?: string | null;
+  category: string;
+  title: string;
+  notes?: string | null;
+  fileUrl?: string | null;
+  fileKey?: string | null;
+  mimeType?: string | null;
+  fileSize?: number | null;
+  uploadedBy?: string | null;
+  date: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface LifestyleAssessmentBase {
   id: string;
   userId: string;
