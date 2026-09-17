@@ -59,7 +59,7 @@ export class PaymentConfigService implements OnModuleInit {
       // Try cache first
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        const config = JSON.parse(cached as string) as ClinicPaymentConfig;
+        const config = cached as ClinicPaymentConfig;
         // Decrypt credentials
         const decryptedCachedConfig = await this.decryptConfig(config);
         return this.mergePaymentConfigWithDefaults(decryptedCachedConfig, defaultConfig);

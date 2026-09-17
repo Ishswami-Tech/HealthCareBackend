@@ -1174,7 +1174,7 @@ export class NotificationEventListener implements OnModuleInit {
                   : normalizedEventType === 'appointment.rescheduled'
                     ? 'reschedule'
                     : normalizedEventType === 'appointment.created'
-                      ? 'reminder'
+                      ? 'created'
                       : 'updated';
 
           const nextChannels: NotificationData['channels'] =

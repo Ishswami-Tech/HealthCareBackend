@@ -597,7 +597,7 @@ export class AppointmentNotificationService {
     const subject = this.getEmailSubject(type, enrichedTemplateData);
     const body = this.getEmailBody(type, enrichedTemplateData);
     const emailTemplate =
-      type === 'confirmation'
+      type === 'confirmation' || type === 'created'
         ? EmailTemplate.APPOINTMENT_CONFIRMATION
         : EmailTemplate.APPOINTMENT_REMINDER;
 
