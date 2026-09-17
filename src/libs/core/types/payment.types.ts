@@ -32,6 +32,9 @@ export interface PaymentIntentOptions {
   appointmentId?: string;
   appointmentType?: 'VIDEO_CALL' | 'IN_PERSON' | 'HOME_VISIT';
   clinicId?: string;
+  // Invoice and prescription fields
+  invoiceId?: string;
+  prescriptionId?: string;
 }
 
 /**

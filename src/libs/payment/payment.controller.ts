@@ -1368,6 +1368,133 @@ export class PaymentController {
   }
 
   /**
+   * Create a payment intent — public endpoint for the payment bridge (server-to-server).
+   * Uses X-Clinic-ID header for clinic identification instead of JWT.
+   *
+   * @public
+   * @route POST /payments/payment-intents
+   * @param {string} clinicIdHeader - X-Clinic-ID header for clinic identification
+   * @param {object} body - Request body containing payment details
+   * @param {string} [body.appointmentId] - Appointment ID to process payment for
+   * @param {string} [body.subscriptionId] - Subscription ID to process payment for
+   * @param {string} [body.invoiceId] - Invoice ID to process payment for
+   * @param {string} [body.prescriptionId] - Prescription ID to process payment for
+   * @param {number} body.amount - Payment amount in minor units (e.g., paise)
+   * @param {string} [body.appointmentType] - Appointment type (VIDEO_CALL, IN_PERSON, HOME_VISIT)
+   * @param {string} [body.provider] - Optional payment provider override
+   * @returns {Promise<{ success: boolean; paymentIntent?: Record<string, unknown>; error?: string }>} On success: `{ success: true, paymentIntent }`. On failure: `{ success: false, error }`
+   * @description Creates a payment intent via the clinic's primary provider (or specified override). No user authentication required — clinic is identified by X-Clinic-ID header. Rate limited to prevent abuse.
+   */
+  @RateLimit({ max: 20, windowMs: 60000, message: 'Too many payment intent requests' })
+  @Post('payment-intents')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Create payment intent (public, for payment bridge)' })
+  @ApiHeader({ name: 'X-Clinic-ID', description: 'Clinic identifier', required: true })
+  @ApiResponse({ status: 200, description: 'Payment intent created successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid request' })
+  @ApiResponse({ status: 404, description: 'Clinic not found or no payment config' })
+  async createPaymentIntentPublic(
+    @Headers('x-clinic-id') clinicIdHeader: string | undefined,
+    @Body()
+    body: {
+      appointmentId?: string;
+      subscriptionId?: string;
+      invoiceId?: string;
+      prescriptionId?: string;
+      amount: number;
+      appointmentType?: 'VIDEO_CALL' | 'IN_PERSON' | 'HOME_VISIT';
+      provider?: string;
+      currency?: string;
+      description?: string;
+    }
+  ): Promise<{
+    success: boolean;
+    paymentIntent?: Record<string, unknown>;
+    error?: string;
+  }> {
+    const clinicId = clinicIdHeader
+      ? await resolveClinicUUID(this.databaseService, clinicIdHeader)
+      : null;
+    if (!clinicId) {
+      return { success: false, error: 'X-Clinic-ID header is required.' };
+    }
+
+    const {
+      appointmentId,
+      subscriptionId,
+      invoiceId,
+      prescriptionId,
+      amount,
+      appointmentType,
+      provider,
+      currency = 'INR',
+      description,
+    } = body;
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return { success: false, error: 'Valid amount is required.' };
+    }
+
+    const targetId = subscriptionId || appointmentId || invoiceId || prescriptionId;
+    if (!targetId) {
+      return {
+        success: false,
+        error: 'A target (subscription, appointment, invoice, or prescription) is required.',
+      };
+    }
+
+    try {
+      const parsedProvider = this.parsePaymentProvider(provider);
+
+      const paymentIntent = await this.paymentService.createPaymentIntent(
+        clinicId,
+        {
+          amount,
+          currency,
+          description: description || 'General payment',
+          ...(appointmentId ? { appointmentId } : {}),
+          ...(subscriptionId ? { subscriptionId } : {}),
+          ...(invoiceId ? { invoiceId } : {}),
+          ...(prescriptionId ? { prescriptionId } : {}),
+          appointmentType: appointmentType || 'VIDEO_CALL',
+        } as import('@core/types').PaymentIntentOptions,
+        parsedProvider
+      );
+
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        'Public payment intent created via bridge',
+        'PaymentController',
+        {
+          clinicId,
+          provider: parsedProvider || 'default',
+          appointmentId,
+          subscriptionId,
+          invoiceId,
+          prescriptionId,
+          amount,
+        }
+      );
+
+      return { success: true, paymentIntent: paymentIntent as unknown as Record<string, unknown> };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.ERROR,
+        `Public payment intent creation failed: ${error instanceof Error ? error.message : String(error)}`,
+        'PaymentController',
+        { clinicId, provider, appointmentId, subscriptionId, invoiceId, prescriptionId, amount }
+      );
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to create payment intent.',
+      };
+    }
+  }
+
+  /**
    * Handoff callback handler — verifies the signed token and then
    * forwards to the billing service.
    * Called by the frontend after the payment provider redirects the user back.
