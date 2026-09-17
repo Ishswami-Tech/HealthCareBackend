@@ -47,6 +47,7 @@ import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
 import { RequiresProfileCompletion } from '@core/decorators/profile-completion.decorator';
+
 import { Public } from '@core/decorators/public.decorator';
 
 import { Cache } from '@core/decorators';
