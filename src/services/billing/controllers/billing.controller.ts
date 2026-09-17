@@ -48,8 +48,6 @@ import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
 import { RequiresProfileCompletion } from '@core/decorators/profile-completion.decorator';
 
-import { Public } from '@core/decorators/public.decorator';
-
 import { Cache } from '@core/decorators';
 import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 import { Role } from '@core/types/enums.types';
@@ -1119,7 +1117,6 @@ export class BillingController {
   /**
    * Process subscription payment (monthly for in-person appointments)
    */
-  @Public()
   @Post('subscriptions/:id/process-payment')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.PATIENT)
   @RequireResourcePermission('payments', 'create')
@@ -1158,7 +1155,6 @@ export class BillingController {
   /**
    * Process per-appointment payment (for video appointments)
    */
-  @Public()
   @Post('appointments/:id/process-payment')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.PATIENT)
   @RequireResourcePermission('payments', 'create')

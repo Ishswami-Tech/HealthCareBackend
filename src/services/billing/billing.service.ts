@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   forwardRef,
   Optional,
@@ -3349,6 +3350,41 @@ export class BillingService implements OnModuleInit {
         currentStatusLower === 'completed' ||
         currentStatusLower === 'refunded' ||
         currentStatusLower === 'cancelled';
+
+      // Bind payment record to the gateway result — reject if clinic, amount, or currency mismatch.
+      const paymentRecord = payment as {
+        clinicId?: string;
+        amount?: number;
+        transactionId?: string | null;
+      };
+      if (paymentRecord.clinicId && String(paymentRecord.clinicId) !== String(clinicId)) {
+        throw new ForbiddenException(
+          `Payment record clinic ${paymentRecord.clinicId} does not match callback clinic ${clinicId}`
+        );
+      }
+      if (
+        paymentStatus.amount &&
+        paymentRecord.amount &&
+        Math.abs(paymentRecord.amount - paymentStatus.amount) > 0.01
+      ) {
+        throw new BadRequestException(
+          `Payment amount mismatch: record has ${paymentRecord.amount}, gateway returned ${paymentStatus.amount}`
+        );
+      }
+      if (paymentStatus.currency && String(paymentStatus.currency).toLowerCase() !== 'inr') {
+        void this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.WARN,
+          'Unexpected payment currency',
+          'BillingService',
+          {
+            clinicId,
+            paymentId: payment.id,
+            orderId,
+            currency: paymentStatus.currency,
+          }
+        );
+      }
 
       // Idempotency + anti-regression for repeated gateway callbacks.
       if (

@@ -9,6 +9,7 @@ import {
   Inject,
   forwardRef,
   VERSION_NEUTRAL,
+  Version,
   UsePipes,
   ValidationPipe,
   UseGuards,
@@ -939,6 +940,7 @@ export class LoggingController {
 
   @UseGuards(JwtAuthGuard)
   @Post('audit')
+  @Version([VERSION_NEUTRAL, '1'])
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'Create audit log entry',

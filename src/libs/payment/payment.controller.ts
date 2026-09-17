@@ -1218,21 +1218,28 @@ export class PaymentController {
       }
 
       const clinicId = verifiedPayload.clinicId;
-      const resolvedOrderId = orderId || verifiedPayload.orderId;
-      const resolvedPaymentId = paymentId || verifiedPayload.paymentId;
-      const resolvedProvider = (provider || verifiedPayload.provider) as
-        PaymentProvider | undefined;
+      const resolvedOrderId = verifiedPayload.orderId;
+      const resolvedPaymentId = verifiedPayload.paymentId;
+      const resolvedProvider = verifiedPayload.provider as PaymentProvider | undefined;
       const verificationPaymentId = resolvedPaymentId || resolvedOrderId;
 
-      // 2. Forward to billing service for payment status update
+      let paymentResultStatus = 'completed';
       if (verificationPaymentId) {
-        await this.getBillingService().handlePaymentCallback(
+        const callbackResult = await this.getBillingService().handlePaymentCallback(
           clinicId,
           verificationPaymentId,
-          resolvedOrderId || '',
+          resolvedOrderId,
           resolvedProvider
         );
+        const resultRecord = (callbackResult as { payment?: unknown })?.payment as
+          Record<string, unknown> | undefined;
+        if (resultRecord?.['status'] && typeof resultRecord['status'] === 'string') {
+          paymentResultStatus = String(resultRecord['status']).toLowerCase();
+        }
       }
+
+      // Only return success if payment is truly completed
+      const isSuccessful = paymentResultStatus === 'completed';
 
       await this.loggingService.log(
         LogType.PAYMENT,
@@ -1245,11 +1252,13 @@ export class PaymentController {
           paymentId: verificationPaymentId,
           provider: resolvedProvider,
           jti: verifiedPayload.jti,
+          paymentStatus: paymentResultStatus,
+          isSuccessful,
         }
       );
 
       return {
-        success: true,
+        success: isSuccessful,
         clinicId,
         orderId: resolvedOrderId,
         ...(verificationPaymentId ? { paymentId: verificationPaymentId } : {}),
@@ -1258,7 +1267,9 @@ export class PaymentController {
         ...(verifiedPayload.appointmentType
           ? { appointmentType: verifiedPayload.appointmentType }
           : {}),
-        message: 'Payment callback processed successfully',
+        ...(isSuccessful
+          ? { message: 'Payment callback processed successfully' }
+          : { message: `Payment is ${paymentResultStatus}, not completed` }),
       };
     } catch (error) {
       if (verifiedPayload?.jti) {
