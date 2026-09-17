@@ -341,14 +341,14 @@ export class PaymentConfigService implements OnModuleInit {
     // missing fields fall back to defaults (e.g. environment, baseUrl).
     const defaultPrimary = defaults.payment.primary;
     const clinicPrimary = config.payment.primary;
-    const mergedPrimary =
+    const mergedPrimary: PaymentProviderConfig | undefined =
       clinicPrimary && defaultPrimary
         ? {
             ...clinicPrimary,
             credentials: {
-              ...(defaultPrimary.credentials as Record<string, unknown>),
-              ...(clinicPrimary.credentials as Record<string, unknown>),
-            },
+              ...defaultPrimary.credentials,
+              ...clinicPrimary.credentials,
+            } as PaymentProviderConfig['credentials'],
           }
         : clinicPrimary || defaultPrimary;
 
