@@ -1445,8 +1445,10 @@ export class PaymentController {
     }
 
     try {
-      const parsedProvider = this.parsePaymentProvider(provider);
-
+      // Use the clinic's payment config (primary provider from DB), not the
+      // frontend-provided provider — this prevents clients from forcing
+      // providers the clinic hasn't configured (e.g. sending "razorpay"
+      // when the clinic's primary is "cashfree").
       const paymentIntent = await this.paymentService.createPaymentIntent(
         clinicId,
         {
@@ -1458,8 +1460,8 @@ export class PaymentController {
           ...(invoiceId ? { invoiceId } : {}),
           ...(prescriptionId ? { prescriptionId } : {}),
           appointmentType: appointmentType || 'VIDEO_CALL',
-        } as import('@core/types').PaymentIntentOptions,
-        parsedProvider
+        } as import('@core/types').PaymentIntentOptions
+        // No provider override — use clinic config
       );
 
       await this.loggingService.log(
@@ -1469,7 +1471,7 @@ export class PaymentController {
         'PaymentController',
         {
           clinicId,
-          provider: parsedProvider || 'default',
+          provider: 'clinic-default',
           appointmentId,
           subscriptionId,
           invoiceId,
