@@ -337,7 +337,22 @@ export class PaymentConfigService implements OnModuleInit {
     config: ClinicPaymentConfig,
     defaults: ClinicPaymentConfig
   ): ClinicPaymentConfig {
-    const primary = config.payment.primary || defaults.payment.primary;
+    // Merge primary credentials: clinic credentials take precedence, but
+    // missing fields fall back to defaults (e.g. environment, baseUrl).
+    const defaultPrimary = defaults.payment.primary;
+    const clinicPrimary = config.payment.primary;
+    const mergedPrimary =
+      clinicPrimary && defaultPrimary
+        ? {
+            ...clinicPrimary,
+            credentials: {
+              ...(defaultPrimary.credentials as Record<string, unknown>),
+              ...(clinicPrimary.credentials as Record<string, unknown>),
+            },
+          }
+        : clinicPrimary || defaultPrimary;
+
+    const primary = mergedPrimary;
     const fallbackByProvider = new Map<
       PaymentProvider,
       NonNullable<ClinicPaymentConfig['payment']['fallback']>[number]
