@@ -124,25 +124,24 @@ export class BillingService implements OnModuleInit {
     });
   }
 
-  private async invalidateUserInvoiceCaches(userId: string): Promise<void> {
+  private async invalidateUserEntityCaches(userId: string, entityTag: string): Promise<void> {
     await Promise.all([
-      this.cacheService.invalidateCacheByTag(`user_invoices:${userId}`),
+      this.cacheService.invalidateCacheByTag(`${entityTag}:${userId}`),
       this.cacheService.invalidateCacheByTag(`user:${userId}`),
     ]);
+  }
+
+  // Deprecated: use invalidateUserEntityCaches(userId, entityTag) instead
+  private async invalidateUserInvoiceCaches(userId: string): Promise<void> {
+    await this.invalidateUserEntityCaches(userId, 'user_invoices');
   }
 
   private async invalidateUserPaymentCaches(userId: string): Promise<void> {
-    await Promise.all([
-      this.cacheService.invalidateCacheByTag(`user_payments:${userId}`),
-      this.cacheService.invalidateCacheByTag(`user:${userId}`),
-    ]);
+    await this.invalidateUserEntityCaches(userId, 'user_payments');
   }
 
   private async invalidateUserSubscriptionCaches(userId: string): Promise<void> {
-    await Promise.all([
-      this.cacheService.invalidateCacheByTag(`user_subscriptions:${userId}`),
-      this.cacheService.invalidateCacheByTag(`user:${userId}`),
-    ]);
+    await this.invalidateUserEntityCaches(userId, 'user_subscriptions');
   }
 
   private async withInvoiceWhatsAppSendLock(
@@ -1120,9 +1119,6 @@ export class BillingService implements OnModuleInit {
     requestingUserId?: string,
     clinicId?: string
   ) {
-    // Apply role-based filtering
-    // Patients can only see their own subscriptions
-    // Clinic staff can see subscriptions for their clinic
     if (role === 'PATIENT' && requestingUserId && requestingUserId !== userId) {
       throw new BadRequestException('You can only view your own subscriptions');
     }
@@ -1132,25 +1128,15 @@ export class BillingService implements OnModuleInit {
     return this.cacheService.cache(
       cacheKey,
       async () => {
+        const resolvedClinicId = await this.resolveUserClinicId(userId, clinicId, role);
         const whereClause: Record<string, unknown> = { userId };
-
-        // If clinic staff, also filter by clinic
-        if (role && role !== 'PATIENT' && role !== 'SUPER_ADMIN') {
-          if (clinicId) {
-            whereClause['clinicId'] = clinicId;
-          } else {
-            // Fallback: Get user's clinic to filter subscriptions (Legacy)
-            const user = await this.databaseService.findUserByIdSafe(userId);
-            if (user?.primaryClinicId) {
-              whereClause['clinicId'] = user.primaryClinicId;
-            }
-          }
+        if (resolvedClinicId) {
+          whereClause['clinicId'] = resolvedClinicId;
         }
-
         return await this.databaseService.findSubscriptionsSafe(whereClause);
       },
       {
-        ttl: 1800, // 30 minutes
+        ttl: 1800,
         tags: ['billing_subscriptions', `user:${userId}`],
         priority: 'normal',
       }
@@ -1282,29 +1268,36 @@ export class BillingService implements OnModuleInit {
   @Cron(CronExpression.EVERY_HOUR)
   async checkExpiredSubscriptions() {
     try {
-      const result = (await this.databaseService.executeHealthcareWrite(
+      const expiredSubscriptions = await this.databaseService.executeHealthcareWrite(
         async client => {
           const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
             subscription: {
-              updateMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+              findMany: (args: unknown) => Promise<SubscriptionWithRelations[]>;
+              update: (args: unknown) => Promise<unknown>;
             };
           };
 
           const now = new Date();
-          // Generous grace period (1 day) to allow webhooks to process payments normally
           now.setDate(now.getDate() - 1);
 
-          return await typedClient.subscription.updateMany({
+          const expired = await typedClient.subscription.findMany({
             where: {
               status: SubscriptionStatus.ACTIVE,
-              currentPeriodEnd: {
-                lt: now,
-              },
+              currentPeriodEnd: { lt: now },
             } as PrismaDelegateArgs,
-            data: {
-              status: SubscriptionStatus.PAST_DUE,
-            } as PrismaDelegateArgs,
-          } as PrismaDelegateArgs);
+            select: { id: true, userId: true, clinicId: true },
+          });
+
+          await Promise.all(
+            expired.map(sub =>
+              typedClient.subscription.update({
+                where: { id: sub.id },
+                data: { status: SubscriptionStatus.PAST_DUE },
+              })
+            )
+          );
+
+          return expired;
         },
         {
           userId: 'SYSTEM_CRON',
@@ -1315,20 +1308,20 @@ export class BillingService implements OnModuleInit {
           resourceId: 'BATCH_UPDATE',
           timestamp: new Date(),
         }
-      )) as { count: number };
+      );
 
-      if (result && result.count > 0) {
+      if (expiredSubscriptions.length > 0) {
         await this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
-          `Marked ${result.count} subscriptions as PAST_DUE due to expiration schedule`,
+          `Marked ${expiredSubscriptions.length} subscriptions as PAST_DUE due to expiration schedule`,
           'BillingService',
-          { count: result.count }
+          { count: expiredSubscriptions.length }
         );
-        // We should clear the user subscription caches. Since we only know the count (from updateMany)
-        // a more robust approach in the future would be doing findMany then updating loop.
-        // For now, next time someone requests billing plans they get the cached fallback,
-        // but user cache will auto-expire or update on their next interaction.
+
+        // Invalidate caches for affected users
+        const userIds = [...new Set(expiredSubscriptions.map(s => s.userId))];
+        await Promise.all(userIds.map(id => this.invalidateUserSubscriptionCaches(id)));
       }
     } catch (error) {
       await this.loggingService.log(
@@ -1633,15 +1626,27 @@ export class BillingService implements OnModuleInit {
     );
   }
 
+  private async resolveUserClinicId(
+    userId: string,
+    clinicId?: string,
+    role?: string
+  ): Promise<string | undefined> {
+    if (role && role !== 'PATIENT' && role !== 'SUPER_ADMIN') {
+      if (clinicId) {
+        return clinicId;
+      }
+      const user = await this.databaseService.findUserByIdSafe(userId);
+      return user?.primaryClinicId;
+    }
+    return clinicId;
+  }
+
   async getUserInvoices(
     userId: string,
     role?: string,
     requestingUserId?: string,
     clinicId?: string
   ) {
-    // Apply role-based filtering
-    // Patients can only see their own invoices
-    // Clinic staff can see invoices for their clinic
     if (role === 'PATIENT' && requestingUserId && requestingUserId !== userId) {
       throw new BadRequestException('You can only view your own invoices');
     }
@@ -1651,21 +1656,11 @@ export class BillingService implements OnModuleInit {
     return this.cacheService.cache(
       cacheKey,
       async () => {
+        const resolvedClinicId = await this.resolveUserClinicId(userId, clinicId, role);
         const whereClause: Record<string, unknown> = { userId };
-
-        // If clinic staff, also filter by clinic
-        if (role && role !== 'PATIENT' && role !== 'SUPER_ADMIN') {
-          if (clinicId) {
-            whereClause['clinicId'] = clinicId;
-          } else {
-            // Fallback: Get user's clinic to filter invoices (Legacy)
-            const user = await this.databaseService.findUserByIdSafe(userId);
-            if (user?.primaryClinicId) {
-              whereClause['clinicId'] = user.primaryClinicId;
-            }
-          }
+        if (resolvedClinicId) {
+          whereClause['clinicId'] = resolvedClinicId;
         }
-
         return await this.databaseService.findInvoicesSafe(whereClause);
       },
       {
@@ -1795,62 +1790,14 @@ export class BillingService implements OnModuleInit {
   // ============ Payments ============
 
   async createPayment(data: CreatePaymentDto) {
-    try {
-      if (data.appointmentId) {
-        const existingAppointmentPayments = await this.databaseService.findPaymentsSafe({
-          appointmentId: data.appointmentId,
-          clinicId: data.clinicId,
-        });
-        const existingPayment =
-          existingAppointmentPayments.sort(
-            (left, right) => right.createdAt.getTime() - left.createdAt.getTime()
-          )[0] || null;
-
-        if (existingPayment) {
-          const updatedPayment = await this.databaseService.updatePaymentSafe(existingPayment.id, {
-            amount: data.amount,
-            status: PaymentStatus.PENDING,
-            ...(data.userId ? { userId: data.userId } : {}),
-            ...(data.invoiceId ? { invoiceId: data.invoiceId } : {}),
-            ...(data.subscriptionId ? { subscriptionId: data.subscriptionId } : {}),
-            ...(data.method ? { method: data.method } : {}),
-            ...(data.transactionId ? { transactionId: data.transactionId } : {}),
-            ...(data.description ? { description: data.description } : {}),
-            ...(data.metadata ? { metadata: data.metadata } : {}),
-          });
-
-          await this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.INFO,
-            'Reused existing appointment payment',
-            'BillingService',
-            {
-              paymentId: updatedPayment.id,
-              appointmentId: data.appointmentId,
-              amount: updatedPayment.amount,
-            }
-          );
-
-          await this.emitBillingPaymentStateEvents({
-            paymentId: updatedPayment.id,
-            clinicId: updatedPayment.clinicId,
-            ...(updatedPayment.appointmentId
-              ? {
-                  appointmentId: updatedPayment.appointmentId,
-                  status: 'pending',
-                  payment: updatedPayment,
-                }
-              : {}),
-          });
-
-          if (data.userId) {
-            await this.invalidateUserPaymentCaches(data.userId);
-          }
-
-          return updatedPayment;
-        }
+    if (data.appointmentId) {
+      const recovered = await this.recoverFromDuplicatePayment(data);
+      if (recovered) {
+        return recovered;
       }
+    }
 
+    try {
       const payment = await this.databaseService.createPaymentSafe({
         amount: data.amount,
         clinicId: data.clinicId,
@@ -1893,56 +1840,9 @@ export class BillingService implements OnModuleInit {
       return payment;
     } catch (error) {
       if (data.appointmentId && this.isPaymentAppointmentUniqueConstraint(error)) {
-        const existingAppointmentPayments = await this.databaseService.findPaymentsSafe({
-          appointmentId: data.appointmentId,
-          clinicId: data.clinicId,
-        });
-        const existingPayment =
-          existingAppointmentPayments.sort(
-            (left, right) => right.createdAt.getTime() - left.createdAt.getTime()
-          )[0] || null;
-
-        if (existingPayment) {
-          const updatedPayment = await this.databaseService.updatePaymentSafe(existingPayment.id, {
-            amount: data.amount,
-            status: PaymentStatus.PENDING,
-            ...(data.userId ? { userId: data.userId } : {}),
-            ...(data.invoiceId ? { invoiceId: data.invoiceId } : {}),
-            ...(data.subscriptionId ? { subscriptionId: data.subscriptionId } : {}),
-            ...(data.method ? { method: data.method } : {}),
-            ...(data.transactionId ? { transactionId: data.transactionId } : {}),
-            ...(data.description ? { description: data.description } : {}),
-            ...(data.metadata ? { metadata: data.metadata } : {}),
-          });
-
-          await this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.WARN,
-            'Recovered from duplicate appointment payment create by reusing existing payment',
-            'BillingService',
-            {
-              paymentId: updatedPayment.id,
-              appointmentId: data.appointmentId,
-            }
-          );
-
-          await this.emitBillingPaymentStateEvents({
-            paymentId: updatedPayment.id,
-            clinicId: updatedPayment.clinicId,
-            ...(updatedPayment.appointmentId
-              ? {
-                  appointmentId: updatedPayment.appointmentId,
-                  status: 'pending',
-                  payment: updatedPayment,
-                }
-              : {}),
-          });
-
-          if (data.userId) {
-            await this.invalidateUserPaymentCaches(data.userId);
-          }
-
-          return updatedPayment;
+        const recovered = await this.recoverFromDuplicatePayment(data);
+        if (recovered) {
+          return recovered;
         }
       }
 
@@ -1958,6 +1858,93 @@ export class BillingService implements OnModuleInit {
       );
       throw error;
     }
+  }
+
+  private async recoverFromDuplicatePayment(
+    data: CreatePaymentDto
+  ): Promise<Awaited<ReturnType<typeof this.databaseService.createPaymentSafe>> | null> {
+    const advisoryLockKey = this.computeAppointmentLockKey(data.appointmentId!);
+    const existingPayment = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        await typedClient.$executeRaw`SELECT pg_advisory_xact_lock(${advisoryLockKey})`;
+
+        const payments = await this.databaseService.findPaymentsSafe({
+          appointmentId: data.appointmentId,
+          clinicId: data.clinicId,
+        });
+        const sorted = payments.sort(
+          (left, right) => right.createdAt.getTime() - left.createdAt.getTime()
+        );
+        return sorted[0] || null;
+      },
+      {
+        userId: data.userId || 'SYSTEM',
+        userRole: 'SYSTEM',
+        clinicId: data.clinicId,
+        operation: 'RECOVER_DUPLICATE_PAYMENT',
+        resourceType: 'PAYMENT',
+        resourceId: data.appointmentId!,
+        timestamp: new Date(),
+      }
+    );
+
+    if (!existingPayment) {
+      return null;
+    }
+
+    const updatedPayment = await this.databaseService.updatePaymentSafe(existingPayment.id, {
+      amount: data.amount,
+      status: PaymentStatus.PENDING,
+      ...(data.userId ? { userId: data.userId } : {}),
+      ...(data.invoiceId ? { invoiceId: data.invoiceId } : {}),
+      ...(data.subscriptionId ? { subscriptionId: data.subscriptionId } : {}),
+      ...(data.method ? { method: data.method } : {}),
+      ...(data.transactionId ? { transactionId: data.transactionId } : {}),
+      ...(data.description ? { description: data.description } : {}),
+      ...(data.metadata ? { metadata: data.metadata } : {}),
+    });
+
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.WARN,
+      existingPayment.createdAt.getTime() > new Date().getTime() - 60000
+        ? 'Recovered from duplicate appointment payment create by reusing existing payment'
+        : 'Reused existing appointment payment',
+      'BillingService',
+      {
+        paymentId: updatedPayment.id,
+        appointmentId: data.appointmentId,
+      }
+    );
+
+    await this.emitBillingPaymentStateEvents({
+      paymentId: updatedPayment.id,
+      clinicId: updatedPayment.clinicId,
+      ...(updatedPayment.appointmentId
+        ? {
+            appointmentId: updatedPayment.appointmentId,
+            status: 'pending',
+            payment: updatedPayment,
+          }
+        : {}),
+    });
+
+    if (data.userId) {
+      await this.invalidateUserPaymentCaches(data.userId);
+    }
+
+    return updatedPayment;
+  }
+
+  private computeAppointmentLockKey(appointmentId: string): number {
+    let hash = 0;
+    for (let index = 0; index < appointmentId.length; index++) {
+      const char = appointmentId.charCodeAt(index);
+      hash = (hash << 5) - hash + char;
+      hash |= 0;
+    }
+    return Math.abs(hash);
   }
 
   async updatePayment(id: string, data: UpdatePaymentDto, requester?: BillingAccessContext) {
@@ -2024,9 +2011,6 @@ export class BillingService implements OnModuleInit {
     requestingUserId?: string,
     clinicId?: string
   ) {
-    // Apply role-based filtering
-    // Patients can only see their own payments
-    // Clinic staff can see payments for their clinic
     if (role === 'PATIENT' && requestingUserId && requestingUserId !== userId) {
       throw new BadRequestException('You can only view your own payments');
     }
@@ -2036,21 +2020,11 @@ export class BillingService implements OnModuleInit {
     return this.cacheService.cache(
       cacheKey,
       async () => {
+        const resolvedClinicId = await this.resolveUserClinicId(userId, clinicId, role);
         const whereClause: Record<string, unknown> = { userId };
-
-        // If clinic staff, also filter by clinic
-        if (role && role !== 'PATIENT' && role !== 'SUPER_ADMIN') {
-          if (clinicId) {
-            whereClause['clinicId'] = clinicId;
-          } else {
-            // Fallback: Get user's clinic to filter payments (Legacy)
-            const user = await this.databaseService.findUserByIdSafe(userId);
-            if (user?.primaryClinicId) {
-              whereClause['clinicId'] = user.primaryClinicId;
-            }
-          }
+        if (resolvedClinicId) {
+          whereClause['clinicId'] = resolvedClinicId;
         }
-
         return await this.databaseService.findPaymentsSafe(whereClause);
       },
       {
@@ -3069,6 +3043,118 @@ export class BillingService implements OnModuleInit {
           treatmentType: appointment.treatmentType,
           serviceLabel: serviceMetadata.label,
         }
+      ),
+    ]);
+
+    return {
+      invoice,
+      paymentIntent: paymentIntentWithHandoff,
+    };
+  }
+
+  private async buildPaymentIntentCommon<T extends Record<string, unknown>>(
+    context: {
+      invoice: T;
+      clinicId: string;
+      paymentIntentOptions: PaymentIntentOptions;
+      buildHandoff: (handoffContext: {
+        orderId: string;
+        redirectUrl: string;
+        paymentId: string;
+        provider: string;
+        invoiceId: string;
+      }) => Promise<{
+        token: string;
+        callbackUrl: string;
+      }>;
+      buildRedirectUrl: (context: {
+        clinicId: string;
+        orderId: string;
+        provider?: PaymentProvider;
+        appointmentId?: string;
+        paymentId?: string;
+        appointmentType?: string;
+      }) => string;
+      createPaymentRecord: (context: {
+        amount: number;
+        clinicId: string;
+        userId: string;
+        invoiceId: string;
+        paymentId: string;
+        orderId: string;
+        provider: string;
+      }) => Promise<unknown>;
+      logMessage: string;
+      logContext: Record<string, unknown>;
+    }
+  ): Promise<{ invoice: T; paymentIntent: PaymentResult & Record<string, unknown> }> {
+    const { invoice, paymentIntentOptions, buildHandoff, buildRedirectUrl, createPaymentRecord, logMessage, logContext, clinicId } = context;
+
+    const paymentIntentResult: PaymentResult = await this.paymentService.createPaymentIntent(
+      clinicId,
+      paymentIntentOptions,
+      paymentIntentOptions.provider
+    );
+    const paymentId = paymentIntentResult.paymentId || '';
+    const orderId = paymentIntentResult.orderId || '';
+    const providerName = paymentIntentResult.provider || '';
+    const providerResponse = this.asRecord(paymentIntentResult.providerResponse) || {};
+    const gatewayRedirectUrl =
+      this.asSafeString(paymentIntentResult.metadata?.['redirectUrl']) ||
+      this.asSafeString(providerResponse['redirectUrl']) ||
+      this.asSafeString(providerResponse['redirect_url']);
+
+    const redirectUrl = buildRedirectUrl({
+      clinicId,
+      orderId: orderId || paymentIntentOptions.orderId,
+      provider: paymentIntentResult.provider as PaymentProvider | undefined,
+    });
+
+    const handoff = await buildHandoff({
+      orderId: orderId || paymentIntentOptions.orderId,
+      redirectUrl,
+      paymentId,
+      provider: providerName,
+      invoiceId: paymentIntentOptions.metadata?.invoiceId as string || '',
+    });
+
+    const paymentIntentWithHandoff = {
+      ...paymentIntentResult,
+      handoffToken: handoff.token,
+      handoffCallbackUrl: handoff.callbackUrl,
+      callbackUrl: handoff.callbackUrl,
+    } as PaymentResult & Record<string, unknown>;
+
+    paymentIntentResult.metadata = {
+      ...(this.asRecord(paymentIntentResult.metadata) || {}),
+      clinicId,
+      ...(paymentIntentOptions.metadata || {}),
+      gatewayRedirectUrl,
+      handoffToken: handoff.token,
+      handoffCallbackUrl: handoff.callbackUrl,
+      callbackUrl: handoff.callbackUrl,
+      redirectUrl: handoff.callbackUrl,
+    };
+
+    const invoiceFromOptions = paymentIntentOptions.metadata?.invoiceId as string | undefined;
+    const userIdFromOptions = (paymentIntentOptions.customerId as string) || '';
+    await createPaymentRecord({
+      amount: paymentIntentResult.amount || 0,
+      clinicId,
+      userId: userIdFromOptions,
+      invoiceId: invoiceFromOptions || '',
+      paymentId,
+      orderId,
+      provider: providerName,
+    });
+
+    void Promise.allSettled([
+      this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        logMessage,
+        'BillingService',
+        { ...logContext }
       ),
     ]);
 

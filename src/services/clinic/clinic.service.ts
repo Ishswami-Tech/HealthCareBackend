@@ -956,10 +956,16 @@ export class ClinicService {
    * bypass tenant-isolation checks in the PATIENT code paths, so we explicitly reject it.
    */
   private resolveConfiguredClinicId(): string | null {
-    const fromConfig =
-      typeof this.configService?.get === 'function'
-        ? this.configService.get<string | undefined>('CLINIC_ID', undefined)
-        : undefined;
+    let fromConfig: string | undefined;
+    try {
+      fromConfig =
+        typeof this.configService?.get === 'function'
+          ? this.configService.get<string | undefined>('CLINIC_ID', undefined)
+          : undefined;
+    } catch {
+      // CLINIC_ID may not be set in config store; fall back to env
+      fromConfig = undefined;
+    }
     const fromEnv = process.env['CLINIC_ID'];
     const raw = fromConfig || fromEnv || undefined;
     return typeof raw === 'string' && raw.trim() ? raw.trim() : null;

@@ -139,15 +139,7 @@ export class BillingController {
     return normalizedProvider as PaymentProvider;
   }
 
-  private parseAdminPaymentProvider(
-    provider: string | undefined,
-    req?: ClinicAuthenticatedRequest
-  ): PaymentProvider | undefined {
-    const parsedProvider = this.parsePaymentProvider(provider);
-    if (!parsedProvider) {
-      return undefined;
-    }
-
+  private assertProviderAuthorized(req?: ClinicAuthenticatedRequest): void {
     const role = req?.user?.['role'];
     if (
       role !== Role.SUPER_ADMIN &&
@@ -160,7 +152,18 @@ export class BillingController {
         'You are not authorized to select a payment provider. Please contact your clinic administrator.'
       );
     }
+  }
 
+  private parseAdminPaymentProvider(
+    provider: string | undefined,
+    req?: ClinicAuthenticatedRequest
+  ): PaymentProvider | undefined {
+    const parsedProvider = this.parsePaymentProvider(provider);
+    if (!parsedProvider) {
+      return undefined;
+    }
+
+    this.assertProviderAuthorized(req);
     return parsedProvider;
   }
 

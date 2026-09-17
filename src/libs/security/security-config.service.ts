@@ -425,7 +425,7 @@ export class SecurityConfigService {
             // );
             replyTyped.header(
               'Access-Control-Allow-Headers',
-              'Content-Type, Authorization, X-Session-ID, X-Clinic-ID, Origin, Accept, X-Requested-With, Access-Control-Request-Method, Access-Control-Request-Headers, X-Client-Data, Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-Dest, X-Request-ID, x-request-id, X-Client-Version, x-client-version, X-Client-Platform, x-client-platform, x-cache-bust'
+              'Content-Type, Authorization, X-Session-ID, X-Clinic-ID, Origin, Accept, X-Requested-With, Access-Control-Request-Method, Access-Control-Request-Headers, X-Client-Data, Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-Dest, X-Request-ID, x-request-id, X-Client-Version, x-client-version, X-Client-Platform, x-client-platform, sentry-trace, baggage, x-cache-bust, X-Cache-Bust'
             );
             if (credentialsEnabled) {
               replyTyped.header('Access-Control-Allow-Credentials', 'true');
