@@ -75,7 +75,11 @@ import type {
   PrismaDelegateArgs,
 } from '@core/types/prisma.types';
 import type { InvoicePDFData } from '@core/types/billing.types';
-import type { AppointmentWithRelations, PaymentWithRelations } from '@core/types';
+import type {
+  AppointmentWithRelations,
+  PaymentWithRelations,
+  SubscriptionWithRelations,
+} from '@core/types';
 
 type AppointmentsServiceLike = {
   getAppointmentServiceCatalog: () => AppointmentServiceMetadataDto[];
@@ -1636,7 +1640,7 @@ export class BillingService implements OnModuleInit {
         return clinicId;
       }
       const user = await this.databaseService.findUserByIdSafe(userId);
-      return user?.primaryClinicId;
+      return user?.primaryClinicId ?? undefined;
     }
     return clinicId;
   }
@@ -1870,8 +1874,8 @@ export class BillingService implements OnModuleInit {
         await typedClient.$executeRaw`SELECT pg_advisory_xact_lock(${advisoryLockKey})`;
 
         const payments = await this.databaseService.findPaymentsSafe({
-          appointmentId: data.appointmentId,
           clinicId: data.clinicId,
+          ...(data.appointmentId && { appointmentId: data.appointmentId }),
         });
         const sorted = payments.sort(
           (left, right) => right.createdAt.getTime() - left.createdAt.getTime()
@@ -3052,48 +3056,54 @@ export class BillingService implements OnModuleInit {
     };
   }
 
-  private async buildPaymentIntentCommon<T extends Record<string, unknown>>(
-    context: {
-      invoice: T;
+  private async buildPaymentIntentCommon<T extends Record<string, unknown>>(context: {
+    invoice: T;
+    clinicId: string;
+    paymentIntentOptions: PaymentIntentOptions;
+    buildHandoff: (handoffContext: {
+      orderId: string;
+      redirectUrl: string;
+      paymentId: string;
+      provider: string;
+      invoiceId: string;
+    }) => Promise<{
+      token: string;
+      callbackUrl: string;
+    }>;
+    buildRedirectUrl: (context: {
       clinicId: string;
-      paymentIntentOptions: PaymentIntentOptions;
-      buildHandoff: (handoffContext: {
-        orderId: string;
-        redirectUrl: string;
-        paymentId: string;
-        provider: string;
-        invoiceId: string;
-      }) => Promise<{
-        token: string;
-        callbackUrl: string;
-      }>;
-      buildRedirectUrl: (context: {
-        clinicId: string;
-        orderId: string;
-        provider?: PaymentProvider;
-        appointmentId?: string;
-        paymentId?: string;
-        appointmentType?: string;
-      }) => string;
-      createPaymentRecord: (context: {
-        amount: number;
-        clinicId: string;
-        userId: string;
-        invoiceId: string;
-        paymentId: string;
-        orderId: string;
-        provider: string;
-      }) => Promise<unknown>;
-      logMessage: string;
-      logContext: Record<string, unknown>;
-    }
-  ): Promise<{ invoice: T; paymentIntent: PaymentResult & Record<string, unknown> }> {
-    const { invoice, paymentIntentOptions, buildHandoff, buildRedirectUrl, createPaymentRecord, logMessage, logContext, clinicId } = context;
+      orderId: string;
+      provider?: PaymentProvider;
+      appointmentId?: string;
+      paymentId?: string;
+      appointmentType?: string;
+    }) => string;
+    createPaymentRecord: (context: {
+      amount: number;
+      clinicId: string;
+      userId: string;
+      invoiceId: string;
+      paymentId: string;
+      orderId: string;
+      provider: string;
+    }) => Promise<unknown>;
+    logMessage: string;
+    logContext: Record<string, unknown>;
+  }): Promise<{ invoice: T; paymentIntent: PaymentResult & Record<string, unknown> }> {
+    const {
+      invoice,
+      paymentIntentOptions,
+      buildHandoff,
+      buildRedirectUrl,
+      createPaymentRecord,
+      logMessage,
+      logContext,
+      clinicId,
+    } = context;
 
     const paymentIntentResult: PaymentResult = await this.paymentService.createPaymentIntent(
       clinicId,
-      paymentIntentOptions,
-      paymentIntentOptions.provider
+      paymentIntentOptions
     );
     const paymentId = paymentIntentResult.paymentId || '';
     const orderId = paymentIntentResult.orderId || '';
@@ -3106,16 +3116,16 @@ export class BillingService implements OnModuleInit {
 
     const redirectUrl = buildRedirectUrl({
       clinicId,
-      orderId: orderId || paymentIntentOptions.orderId,
-      provider: paymentIntentResult.provider as PaymentProvider | undefined,
+      orderId: orderId || paymentIntentOptions.orderId || '',
+      provider: providerName as PaymentProvider,
     });
 
     const handoff = await buildHandoff({
-      orderId: orderId || paymentIntentOptions.orderId,
+      orderId: orderId || paymentIntentOptions.orderId || '',
       redirectUrl,
       paymentId,
       provider: providerName,
-      invoiceId: paymentIntentOptions.metadata?.invoiceId as string || '',
+      invoiceId: (paymentIntentOptions.metadata?.['invoiceId'] as string | undefined) || '',
     });
 
     const paymentIntentWithHandoff = {
@@ -3136,7 +3146,7 @@ export class BillingService implements OnModuleInit {
       redirectUrl: handoff.callbackUrl,
     };
 
-    const invoiceFromOptions = paymentIntentOptions.metadata?.invoiceId as string | undefined;
+    const invoiceFromOptions = paymentIntentOptions.metadata?.['invoiceId'] as string | undefined;
     const userIdFromOptions = (paymentIntentOptions.customerId as string) || '';
     await createPaymentRecord({
       amount: paymentIntentResult.amount || 0,
@@ -3149,13 +3159,9 @@ export class BillingService implements OnModuleInit {
     });
 
     void Promise.allSettled([
-      this.loggingService.log(
-        LogType.PAYMENT,
-        LogLevel.INFO,
-        logMessage,
-        'BillingService',
-        { ...logContext }
-      ),
+      this.loggingService.log(LogType.PAYMENT, LogLevel.INFO, logMessage, 'BillingService', {
+        ...logContext,
+      }),
     ]);
 
     return {
