@@ -330,6 +330,8 @@ export class SecurityConfigService {
         'x-client-platform',
         'x-cache-bust',
         'X-Cache-Bust',
+        'baggage',
+        'sentry-trace',
       ],
       exposedHeaders: ['Set-Cookie', 'Authorization'],
       maxAge: 86400, // 24 hours
