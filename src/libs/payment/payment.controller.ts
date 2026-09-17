@@ -27,6 +27,7 @@ import {
 import { ModuleRef } from '@nestjs/core';
 import { ApiTags, ApiOperation, ApiResponse, ApiHeader } from '@nestjs/swagger';
 import { DatabaseService } from '@infrastructure/database';
+import { CacheService } from '@infrastructure/cache';
 import { PaymentService } from './payment.service';
 import { PaymentHandoffTokenService } from './payment.handoff-token.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
@@ -39,6 +40,7 @@ import { RolesGuard } from '@core/guards/roles.guard';
 import { ClinicGuard } from '@core/guards/clinic.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { PaymentConfigService } from '@config/payment-config.service';
+import { RateLimit } from '@core/decorators/rate-limit.decorator';
 import {
   UpdateClinicPaymentConfigDto,
   ClinicPaymentConfigResponseDto,
@@ -81,7 +83,8 @@ export class PaymentController {
     private readonly databaseService: DatabaseService,
     private readonly moduleRef: ModuleRef,
     private readonly loggingService: LoggingService,
-    private readonly paymentConfigService: PaymentConfigService
+    private readonly paymentConfigService: PaymentConfigService,
+    private readonly cacheService: CacheService
   ) {}
 
   private getBillingService(): BillingServiceLike {
@@ -94,6 +97,20 @@ export class PaymentController {
       throw new Error('BILLING_SERVICE is not available');
     }
     return this.billingServiceRef;
+  }
+
+  private async withBillingTimeout<T>(promise: Promise<T>, timeoutMs = 10_000): Promise<T> {
+    const timeout = new Promise<never>((_, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`Billing service call timed out after ${timeoutMs}ms`)),
+        timeoutMs
+      );
+      if (typeof clearTimeout !== 'undefined') {
+        return () => clearTimeout(timer);
+      }
+    });
+
+    return Promise.race([promise, timeout]);
   }
 
   private parsePaymentProvider(provider?: string): PaymentProvider | undefined {
@@ -148,6 +165,35 @@ export class PaymentController {
 
   private asMetadata(value: unknown): Record<string, unknown> {
     return this.getRecord(value) || {};
+  }
+
+  private async ensureWebhookNotProcessed(
+    provider: string,
+    paymentId?: string,
+    paymentSessionId?: string,
+    orderId?: string
+  ): Promise<boolean> {
+    const identifier = paymentId || paymentSessionId || orderId;
+    if (!identifier) {
+      return false;
+    }
+
+    const key = `webhook:processed:${provider}:${identifier}`;
+    const alreadyProcessed = await this.cacheService.exists(key);
+
+    if (alreadyProcessed) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        `Duplicate ${provider} webhook ignored: ${key}`,
+        'PaymentController',
+        { provider, paymentId, paymentSessionId, orderId, cacheKey: key }
+      );
+      return true;
+    }
+
+    await this.cacheService.set(key, '1', 86400);
+    return false;
   }
 
   private getFirstArrayRecordAtPath(source: unknown, path: string[]): Record<string, unknown> {
@@ -238,7 +284,17 @@ export class PaymentController {
 
   /**
    * Razorpay webhook handler
+   *
+   * @public
+   * @route POST /payments/razorpay/webhook
+   * @param {FastifyRequest} request - Raw request with optional `rawBody` for signature verification
+   * @param {Record<string, unknown>} body - Parsed webhook payload from Razorpay
+   * @param {string} signature - Header `X-Razorpay-Signature` containing HMAC-SHA256 signature
+   * @param {string} clinicId - Query parameter `clinicId` for clinic identification
+   * @returns {Promise<{ success: boolean; error?: string }>} `{ success: true }` on success, `{ success: false, error: string }` on failure
+   * @description Verifies Razorpay webhook signature, idempotency-checks the event, and forwards payment callbacks to billing
    */
+  @RateLimit({ max: 30, windowMs: 60000, message: 'Too many payment webhook requests' })
   @Post('razorpay/webhook')
   @Public()
   @HttpCode(HttpStatus.OK)
@@ -250,7 +306,7 @@ export class PaymentController {
     @Body() body: Record<string, unknown>,
     @Headers('x-razorpay-signature') signature: string,
     @Query('clinicId') clinicId: string
-  ): Promise<{ success: boolean }> {
+  ): Promise<{ success: boolean; error?: string }> {
     try {
       if (!this.isProviderEnabled(PaymentProvider.RAZORPAY)) {
         await this.loggingService.log(
@@ -260,7 +316,7 @@ export class PaymentController {
           'PaymentController',
           { clinicId }
         );
-        return { success: false };
+        return { success: false, error: 'Razorpay provider is disabled' };
       }
 
       const event = body['event'] as string;
@@ -313,16 +369,29 @@ export class PaymentController {
           'PaymentController',
           { clinicId: resolvedClinicId }
         );
-        return { success: false };
+        return { success: false, error: 'Invalid Razorpay webhook signature' };
+      }
+
+      if (
+        await this.ensureWebhookNotProcessed(
+          PaymentProvider.RAZORPAY,
+          paymentId,
+          undefined,
+          orderId
+        )
+      ) {
+        return { success: true };
       }
 
       if (event === 'payment.captured' || event === 'payment.failed') {
         if (paymentId && orderId) {
-          await this.getBillingService().handlePaymentCallback(
-            resolvedClinicId,
-            paymentId,
-            orderId,
-            PaymentProvider.RAZORPAY
+          await this.withBillingTimeout(
+            this.getBillingService().handlePaymentCallback(
+              resolvedClinicId,
+              paymentId,
+              orderId,
+              PaymentProvider.RAZORPAY
+            )
           );
         }
       }
@@ -347,16 +416,28 @@ export class PaymentController {
           error: error instanceof Error ? error.stack : undefined,
         }
       );
-      return { success: false };
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 
   /**
    * Cashfree webhook handler
+   *
+   * @public
+   * @route POST /payments/cashfree/webhook
+   * @param {FastifyRequest} request - Raw request with optional `rawBody` for signature verification
+   * @param {Record<string, unknown>} body - Parsed webhook payload from Cashfree
+   * @param {string} webhookSignature - Header `x-webhook-signature` (preferred) or legacy `x-cf-signature`
+   * @param {string} legacySignature - Header `x-cf-signature` (legacy fallback)
+   * @param {string} timestamp - Header `x-webhook-timestamp` containing the event timestamp
+   * @param {string} clinicId - Query parameter `clinicId` for clinic identification
+   * @returns {Promise<{ success: boolean; error?: string }>} `{ success: true }` on success, `{ success: false, error: string }` on failure
+   * @description Verifies Cashfree webhook signature using the timestamp header, idempotency-checks the event, and forwards successful payment callbacks to billing
    */
   @Post('cashfree/webhook')
   @Public()
   @HttpCode(HttpStatus.OK)
+  @RateLimit({ max: 30, windowMs: 60000, message: 'Too many payment webhook requests' })
   @ApiOperation({ summary: 'Handle Cashfree webhook' })
   @ApiHeader({ name: 'x-webhook-signature', description: 'Cashfree webhook signature' })
   @ApiHeader({ name: 'x-cf-signature', description: 'Cashfree legacy signature' })
@@ -369,7 +450,7 @@ export class PaymentController {
     @Headers('x-cf-signature') legacySignature: string,
     @Headers('x-webhook-timestamp') timestamp: string,
     @Query('clinicId') clinicId: string
-  ): Promise<{ success: boolean }> {
+  ): Promise<{ success: boolean; error?: string }> {
     try {
       const signature = webhookSignature || legacySignature;
       const rawPayload =
@@ -437,15 +518,28 @@ export class PaymentController {
           'PaymentController',
           { clinicId: resolvedClinicId }
         );
-        return { success: false };
+        return { success: false, error: 'Invalid Cashfree webhook signature' };
+      }
+
+      if (
+        await this.ensureWebhookNotProcessed(
+          PaymentProvider.CASHFREE,
+          paymentId,
+          undefined,
+          orderId
+        )
+      ) {
+        return { success: true };
       }
 
       if (orderId && paymentId && paymentStatus === 'SUCCESS') {
-        await this.getBillingService().handlePaymentCallback(
-          resolvedClinicId,
-          paymentId,
-          orderId,
-          PaymentProvider.CASHFREE
+        await this.withBillingTimeout(
+          this.getBillingService().handlePaymentCallback(
+            resolvedClinicId,
+            paymentId,
+            orderId,
+            PaymentProvider.CASHFREE
+          )
         );
       }
 
@@ -469,16 +563,27 @@ export class PaymentController {
           error: error instanceof Error ? error.stack : undefined,
         }
       );
-      return { success: false };
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 
   /**
    * PhonePe webhook handler
+   *
+   * @public
+   * @route POST /payments/phonepe/webhook
+   * @param {FastifyRequest} request - Raw request with optional `rawBody` for signature verification
+   * @param {Record<string, unknown>} body - Parsed webhook payload from PhonePe (supports base64-encoded `response` or `request` fields)
+   * @param {string} signature - Header `x-verify` containing PhonePe verify response
+   * @param {string} authorization - Header `Authorization` containing SHA256 auth token
+   * @param {string} clinicId - Query parameter `clinicId` for clinic identification
+   * @returns {Promise<{ success: boolean; error?: string }>} `{ success: true }` on success, `{ success: false, error: string }` on failure
+   * @description Verifies PhonePe webhook using Authorization header, handles both order and refund callbacks, and forwards to billing service
    */
   @Post('phonepe/webhook')
   @Public()
   @HttpCode(HttpStatus.OK)
+  @RateLimit({ max: 30, windowMs: 60000, message: 'Too many payment webhook requests' })
   @ApiOperation({ summary: 'Handle PhonePe webhook' })
   @ApiHeader({ name: 'X-VERIFY', description: 'PhonePe webhook signature' })
   @ApiHeader({ name: 'Authorization', description: 'PhonePe webhook SHA256 auth header' })
@@ -489,7 +594,7 @@ export class PaymentController {
     @Headers('x-verify') signature: string,
     @Headers('authorization') authorization: string,
     @Query('clinicId') clinicId: string
-  ): Promise<{ success: boolean }> {
+  ): Promise<{ success: boolean; error?: string }> {
     try {
       if (!this.isProviderEnabled(PaymentProvider.PHONEPE)) {
         await this.loggingService.log(
@@ -499,7 +604,7 @@ export class PaymentController {
           'PaymentController',
           { clinicId }
         );
-        return { success: false };
+        return { success: false, error: 'PhonePe provider is disabled' };
       }
 
       const base64Payload = (body['response'] || body['request']) as string;
@@ -591,19 +696,7 @@ export class PaymentController {
         !normalizedCallbackType ||
         normalizedCallbackType.includes('ORDER') ||
         normalizedCallbackType.includes('TRANSACTION');
-      const normalizedState = state.trim().toUpperCase();
-      const hasSuccessfulState = ['SUCCESS', 'SUCCEEDED', 'COMPLETED', 'PAID', 'CAPTURED'].includes(
-        normalizedState
-      );
-      const hasReference = Boolean(merchantTransactionId || transactionId);
-      const shouldAcceptFallback =
-        !isValid &&
-        !isRefundCallback &&
-        isOrderCallback &&
-        hasReference &&
-        (hasSuccessfulState || !normalizedState);
-
-      if (!isValid && !shouldAcceptFallback) {
+      if (!isValid) {
         await this.loggingService.log(
           LogType.PAYMENT,
           LogLevel.WARN,
@@ -611,41 +704,40 @@ export class PaymentController {
           'PaymentController',
           { clinicId: resolvedClinicId }
         );
-        return { success: false };
+        return { success: false, error: 'Invalid PhonePe webhook signature' };
       }
 
-      if (shouldAcceptFallback) {
-        await this.loggingService.log(
-          LogType.PAYMENT,
-          LogLevel.WARN,
-          'PhonePe webhook signature validation failed, accepted via callback fallback',
-          'PaymentController',
-          {
-            clinicId: resolvedClinicId,
-            callbackType: normalizedCallbackType,
-            state: normalizedState,
-            merchantTransactionId,
-            transactionId,
-          }
-        );
+      if (
+        await this.ensureWebhookNotProcessed(
+          PaymentProvider.PHONEPE,
+          transactionId,
+          merchantTransactionId,
+          refundId
+        )
+      ) {
+        return { success: true };
       }
 
       if (isRefundCallback && (refundId || merchantTransactionId)) {
-        await this.getBillingService().handleRefundCallback(
-          resolvedClinicId,
-          merchantTransactionId || transactionId || refundId,
-          refundId || merchantTransactionId || transactionId,
-          merchantTransactionId || transactionId || undefined,
-          PaymentProvider.PHONEPE,
-          state || normalizedCallbackType,
-          callbackAmount
+        await this.withBillingTimeout(
+          this.getBillingService().handleRefundCallback(
+            resolvedClinicId,
+            merchantTransactionId || transactionId || refundId,
+            refundId || merchantTransactionId || transactionId,
+            merchantTransactionId || transactionId || undefined,
+            PaymentProvider.PHONEPE,
+            state || normalizedCallbackType,
+            callbackAmount
+          )
         );
       } else if (isOrderCallback && merchantTransactionId) {
-        await this.getBillingService().handlePaymentCallback(
-          resolvedClinicId,
-          merchantTransactionId,
-          merchantTransactionId,
-          PaymentProvider.PHONEPE
+        await this.withBillingTimeout(
+          this.getBillingService().handlePaymentCallback(
+            resolvedClinicId,
+            merchantTransactionId,
+            merchantTransactionId,
+            PaymentProvider.PHONEPE
+          )
         );
       }
 
@@ -676,16 +768,25 @@ export class PaymentController {
           error: error instanceof Error ? error.stack : undefined,
         }
       );
-      return { success: false };
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 
   /**
    * Easebuzz webhook handler
+   *
+   * @public
+   * @route POST /payments/easebuzz/webhook
+   * @param {Record<string, unknown>} body - Parsed webhook payload from Easebuzz containing `merchant_txnid`, `payment_id`, `status`
+   * @param {string} signature - Header `x-easebuzz-signature` containing HMAC signature
+   * @param {string} clinicId - Query parameter `clinicId` for clinic identification
+   * @returns {Promise<{ success: boolean; error?: string }>} `{ success: true }` on success, `{ success: false, error: string }` on failure
+   * @description Verifies Easebuzz webhook signature, checks status equals `success`/`SUCCESS`, and forwards to billing service
    */
   @Post('easebuzz/webhook')
   @Public()
   @HttpCode(HttpStatus.OK)
+  @RateLimit({ max: 30, windowMs: 60000, message: 'Too many payment webhook requests' })
   @ApiOperation({ summary: 'Handle Easebuzz webhook' })
   @ApiHeader({ name: 'X-Easebuzz-Signature', description: 'Easebuzz webhook signature' })
   @ApiResponse({ status: 200, description: 'Webhook processed successfully' })
@@ -693,7 +794,7 @@ export class PaymentController {
     @Body() body: Record<string, unknown>,
     @Headers('x-easebuzz-signature') signature: string,
     @Query('clinicId') clinicId: string
-  ): Promise<{ success: boolean }> {
+  ): Promise<{ success: boolean; error?: string }> {
     try {
       if (!this.isProviderEnabled(PaymentProvider.EASEBUZZ)) {
         await this.loggingService.log(
@@ -703,7 +804,7 @@ export class PaymentController {
           'PaymentController',
           { clinicId }
         );
-        return { success: false };
+        return { success: false, error: 'Easebuzz provider is disabled' };
       }
 
       const merchantTxnId =
@@ -737,15 +838,28 @@ export class PaymentController {
           'PaymentController',
           { clinicId: resolvedClinicId }
         );
-        return { success: false };
+        return { success: false, error: 'Invalid Easebuzz webhook signature' };
+      }
+
+      if (
+        await this.ensureWebhookNotProcessed(
+          PaymentProvider.EASEBUZZ,
+          paymentId,
+          undefined,
+          merchantTxnId
+        )
+      ) {
+        return { success: true };
       }
 
       if ((status === 'success' || status === 'SUCCESS') && paymentId && merchantTxnId) {
-        await this.getBillingService().handlePaymentCallback(
-          resolvedClinicId,
-          paymentId,
-          merchantTxnId,
-          PaymentProvider.EASEBUZZ
+        await this.withBillingTimeout(
+          this.getBillingService().handlePaymentCallback(
+            resolvedClinicId,
+            paymentId,
+            merchantTxnId,
+            PaymentProvider.EASEBUZZ
+          )
         );
       }
 
@@ -769,24 +883,35 @@ export class PaymentController {
           error: error instanceof Error ? error.stack : undefined,
         }
       );
-      return { success: false };
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 
   /**
    * Paytm Business webhook handler
+   *
+   * @public
+   * @route POST /payments/paytm/webhook
+   * @param {FastifyRequest} request - Raw request with optional `rawBody` for signature verification
+   * @param {Record<string, unknown>} body - Parsed webhook payload from Paytm Business (supports nested `body` field)
+   * @param {string} signature - Header `x-paytm-signature` containing Paytm checksum
+   * @param {string} clinicId - Query parameter `clinicId` for clinic identification
+   * @returns {Promise<{ success: boolean; error?: string }>} `{ success: true }` on success, `{ success: false, error: string }` on failure
+   * @description Verifies Paytm webhook checksum, checks `resultStatus` equals `TXN_SUCCESS`, and forwards to billing service
    */
   @Post('paytm/webhook')
   @Public()
   @HttpCode(HttpStatus.OK)
+  @RateLimit({ max: 30, windowMs: 60000, message: 'Too many payment webhook requests' })
   @ApiOperation({ summary: 'Handle Paytm Business webhook' })
   @ApiHeader({ name: 'X-Paytm-Signature', description: 'Paytm webhook checksum' })
   @ApiResponse({ status: 200, description: 'Webhook processed successfully' })
   async handlePaytmWebhook(
+    @Req() request: FastifyRequest & { rawBody?: string | Buffer },
     @Body() body: Record<string, unknown>,
     @Headers('x-paytm-signature') signature: string,
     @Query('clinicId') clinicId: string
-  ): Promise<{ success: boolean }> {
+  ): Promise<{ success: boolean; error?: string }> {
     try {
       if (!this.isProviderEnabled(PaymentProvider.PAYTM)) {
         await this.loggingService.log(
@@ -796,13 +921,29 @@ export class PaymentController {
           'PaymentController',
           { clinicId }
         );
-        return { success: false };
+        return { success: false, error: 'Paytm provider is disabled' };
       }
 
+      const rawPayload =
+        typeof request.rawBody === 'string'
+          ? request.rawBody
+          : Buffer.isBuffer(request.rawBody)
+            ? request.rawBody.toString('utf8')
+            : JSON.stringify(body);
       const paytmBody = body['body'] as Record<string, unknown> | undefined;
+      const topLevelBody = body as Record<string, unknown>;
       const orderId =
-        typeof paytmBody?.['orderId'] === 'string' ? String(paytmBody['orderId']) : '';
-      const paymentId = typeof paytmBody?.['txnId'] === 'string' ? String(paytmBody['txnId']) : '';
+        typeof paytmBody?.['orderId'] === 'string'
+          ? String(paytmBody['orderId'])
+          : typeof topLevelBody['orderId'] === 'string'
+            ? String(topLevelBody['orderId'])
+            : '';
+      const paymentId =
+        typeof paytmBody?.['txnId'] === 'string'
+          ? String(paytmBody['txnId'])
+          : typeof topLevelBody['txnId'] === 'string'
+            ? String(topLevelBody['txnId'])
+            : '';
       const resultInfo = paytmBody?.['resultInfo'] as Record<string, unknown> | null | undefined;
       const resultStatus =
         typeof resultInfo?.['resultStatus'] === 'string' ? String(resultInfo['resultStatus']) : '';
@@ -819,7 +960,7 @@ export class PaymentController {
       const isValid = await this.paymentService.verifyWebhook(
         resolvedClinicId,
         {
-          payload: body,
+          payload: rawPayload,
           signature: signature || '',
         },
         PaymentProvider.PAYTM
@@ -833,15 +974,23 @@ export class PaymentController {
           'PaymentController',
           { clinicId: resolvedClinicId }
         );
-        return { success: false };
+        return { success: false, error: 'Invalid Paytm webhook signature' };
+      }
+
+      if (
+        await this.ensureWebhookNotProcessed(PaymentProvider.PAYTM, paymentId, undefined, orderId)
+      ) {
+        return { success: true };
       }
 
       if (resultStatus === 'TXN_SUCCESS' && paymentId && orderId) {
-        await this.getBillingService().handlePaymentCallback(
-          resolvedClinicId,
-          paymentId,
-          orderId,
-          PaymentProvider.PAYTM
+        await this.withBillingTimeout(
+          this.getBillingService().handlePaymentCallback(
+            resolvedClinicId,
+            paymentId,
+            orderId,
+            PaymentProvider.PAYTM
+          )
         );
       }
 
@@ -865,24 +1014,35 @@ export class PaymentController {
           error: error instanceof Error ? error.stack : undefined,
         }
       );
-      return { success: false };
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 
   /**
    * PayU webhook handler
+   *
+   * @public
+   * @route POST /payments/payu/webhook
+   * @param {FastifyRequest} request - Raw request with optional `rawBody` for signature verification
+   * @param {Record<string, unknown>} body - Parsed webhook payload from PayU containing `orderId`, `txnId`, `status`
+   * @param {string} signature - Header `x-payu-signature` containing HMAC signature
+   * @param {string} clinicId - Query parameter `clinicId` for clinic identification
+   * @returns {Promise<{ success: boolean; error?: string }>} `{ success: true }` on success, `{ success: false, error: string }` on failure
+   * @description Verifies PayU webhook signature, checks status equals `success`/`SUCCESS`, and forwards to billing service
    */
   @Post('payu/webhook')
   @Public()
   @HttpCode(HttpStatus.OK)
+  @RateLimit({ max: 30, windowMs: 60000, message: 'Too many payment webhook requests' })
   @ApiOperation({ summary: 'Handle PayU webhook' })
   @ApiHeader({ name: 'X-PayU-Signature', description: 'PayU webhook signature' })
   @ApiResponse({ status: 200, description: 'Webhook processed successfully' })
   async handlePayUWebhook(
+    @Req() request: FastifyRequest & { rawBody?: string | Buffer },
     @Body() body: Record<string, unknown>,
     @Headers('x-payu-signature') signature: string,
     @Query('clinicId') clinicId: string
-  ): Promise<{ success: boolean }> {
+  ): Promise<{ success: boolean; error?: string }> {
     try {
       if (!this.isProviderEnabled(PaymentProvider.PAYU)) {
         await this.loggingService.log(
@@ -892,9 +1052,15 @@ export class PaymentController {
           'PaymentController',
           { clinicId }
         );
-        return { success: false };
+        return { success: false, error: 'PayU provider is disabled' };
       }
 
+      const rawPayload =
+        typeof request.rawBody === 'string'
+          ? request.rawBody
+          : Buffer.isBuffer(request.rawBody)
+            ? request.rawBody.toString('utf8')
+            : JSON.stringify(body);
       const orderId = typeof body['orderId'] === 'string' ? body['orderId'] : '';
       const status = typeof body['status'] === 'string' ? body['status'] : '';
       const txnId = typeof body['txnId'] === 'string' ? body['txnId'] : '';
@@ -911,7 +1077,7 @@ export class PaymentController {
       const isValid = await this.paymentService.verifyWebhook(
         resolvedClinicId,
         {
-          payload: body,
+          payload: rawPayload,
           signature: signature || '',
         },
         PaymentProvider.PAYU
@@ -925,15 +1091,21 @@ export class PaymentController {
           'PaymentController',
           { clinicId: resolvedClinicId }
         );
-        return { success: false };
+        return { success: false, error: 'Invalid PayU webhook signature' };
+      }
+
+      if (await this.ensureWebhookNotProcessed(PaymentProvider.PAYU, txnId, undefined, orderId)) {
+        return { success: true };
       }
 
       if ((status === 'success' || status === 'SUCCESS') && txnId) {
-        await this.getBillingService().handlePaymentCallback(
-          resolvedClinicId,
-          txnId,
-          orderId,
-          PaymentProvider.PAYU
+        await this.withBillingTimeout(
+          this.getBillingService().handlePaymentCallback(
+            resolvedClinicId,
+            txnId,
+            orderId,
+            PaymentProvider.PAYU
+          )
         );
       }
 
@@ -957,16 +1129,26 @@ export class PaymentController {
           error: error instanceof Error ? error.stack : undefined,
         }
       );
-      return { success: false };
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 
   /**
    * Zoho Payments webhook handler
+   *
+   * @public
+   * @route POST /payments/zoho/webhook
+   * @param {FastifyRequest} request - Raw request with optional `rawBody` for signature verification
+   * @param {Record<string, unknown>} body - Parsed webhook payload from Zoho Payments
+   * @param {string} signature - Header `x-zoho-webhook-signature` containing Zoho webhook signature
+   * @param {string} clinicId - Query parameter `clinicId` for clinic identification
+   * @returns {Promise<{ success: boolean; error?: string }>} `{ success: true }` on success, `{ success: false, error: string }` on failure
+   * @description Verifies Zoho Payments webhook signature, checks payment status, and forwards to billing service
    */
   @Post('zoho/webhook')
   @Public()
   @HttpCode(HttpStatus.OK)
+  @RateLimit({ max: 30, windowMs: 60000, message: 'Too many payment webhook requests' })
   @ApiOperation({ summary: 'Handle Zoho Payments webhook' })
   @ApiHeader({
     name: 'X-Zoho-Webhook-Signature',
@@ -978,7 +1160,7 @@ export class PaymentController {
     @Body() body: Record<string, unknown>,
     @Headers('x-zoho-webhook-signature') signature: string,
     @Query('clinicId') clinicId: string
-  ): Promise<{ success: boolean }> {
+  ): Promise<{ success: boolean; error?: string }> {
     try {
       if (!this.isProviderEnabled(PaymentProvider.ZOHO)) {
         await this.loggingService.log(
@@ -988,7 +1170,7 @@ export class PaymentController {
           'PaymentController',
           { clinicId }
         );
-        return { success: false };
+        return { success: false, error: 'Zoho provider is disabled' };
       }
 
       const rawPayload =
@@ -1011,12 +1193,9 @@ export class PaymentController {
       const paymentId = this.getFirstStringAtPath(body, [
         ['payment_id'],
         ['paymentId'],
-        ['data', 'payment_id'],
-        ['data', 'paymentId'],
         ['payload', 'payment_id'],
         ['payload', 'paymentId'],
         ['payments_session', 'payment_id'],
-        ['payment', 'payment_id'],
       ]);
       const paymentStatus = this.getFirstStringAtPath(body, [
         ['payment_status'],
@@ -1060,17 +1239,23 @@ export class PaymentController {
           'PaymentController',
           { clinicId: resolvedClinicId }
         );
-        return { success: false };
+        return { success: false, error: 'Invalid Zoho webhook signature' };
+      }
+
+      if (await this.ensureWebhookNotProcessed(PaymentProvider.ZOHO, paymentId, paymentSessionId)) {
+        return { success: true };
       }
 
       const callbackPaymentId = paymentId || paymentSessionId;
       const callbackOrderId = paymentSessionId || paymentId;
       if (callbackPaymentId && callbackOrderId) {
-        await this.getBillingService().handlePaymentCallback(
-          resolvedClinicId,
-          callbackPaymentId,
-          callbackOrderId,
-          PaymentProvider.ZOHO
+        await this.withBillingTimeout(
+          this.getBillingService().handlePaymentCallback(
+            resolvedClinicId,
+            callbackPaymentId,
+            callbackOrderId,
+            PaymentProvider.ZOHO
+          )
         );
       }
 
@@ -1100,12 +1285,21 @@ export class PaymentController {
           error: error instanceof Error ? error.stack : undefined,
         }
       );
-      return { success: false };
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 
   /**
    * Generic payment callback handler
+   *
+   * @public
+   * @route POST /payments/callback
+   * @param {string} clinicId - Query parameter `clinicId` for clinic identification (optional if resolvable from payment/order references)
+   * @param {string} paymentId - Query parameter `paymentId` identifying the payment
+   * @param {string} orderId - Query parameter `orderId` identifying the order
+   * @param {string} [provider] - Query parameter `provider` - optional payment provider name (e.g. `razorpay`, `cashfree`, `phonepe`, `paytm`, `payu`, `zoho`, `easebuzz`)
+   * @returns {Promise<{ success: boolean; payment?: unknown; invoice?: unknown; appointment?: unknown; error?: string }>} On success: `{ success: true, payment?, invoice?, appointment? }`. On failure: `{ success: false, error: string }`
+   * @description Frontend-facing callback endpoint. Resolves the clinic from context or payment references, validates the provider, forwards to billing service with timeout protection, and returns updated payment/invoice/appointment data
    */
   @Post('callback')
   @Public()
@@ -1117,7 +1311,13 @@ export class PaymentController {
     @Query('paymentId') paymentId: string,
     @Query('orderId') orderId: string,
     @Query('provider') provider?: string
-  ): Promise<{ success: boolean; payment?: unknown; invoice?: unknown; appointment?: unknown }> {
+  ): Promise<{
+    success: boolean;
+    payment?: unknown;
+    invoice?: unknown;
+    appointment?: unknown;
+    error?: string;
+  }> {
     try {
       if (!paymentId || !orderId) {
         throw new Error('Payment ID and Order ID are required');
@@ -1131,11 +1331,13 @@ export class PaymentController {
 
       const paymentProvider = this.parsePaymentProvider(provider);
 
-      const result = (await this.getBillingService().handlePaymentCallback(
-        resolvedClinicId,
-        paymentId,
-        orderId,
-        paymentProvider
+      const result = (await this.withBillingTimeout(
+        this.getBillingService().handlePaymentCallback(
+          resolvedClinicId,
+          paymentId,
+          orderId,
+          paymentProvider
+        )
       )) as {
         payment?: unknown;
         invoice?: unknown;
@@ -1161,7 +1363,7 @@ export class PaymentController {
           error: error instanceof Error ? error.stack : undefined,
         }
       );
-      return { success: false };
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 
@@ -1169,6 +1371,15 @@ export class PaymentController {
    * Handoff callback handler — verifies the signed token and then
    * forwards to the billing service.
    * Called by the frontend after the payment provider redirects the user back.
+   *
+   * @public
+   * @route POST /payments/callback/handoff
+   * @param {string} [handoffToken] - Query parameter `handoff_token` - signed handoff JWT token issued during payment intent creation
+   * @param {string} [orderId] - Query parameter `order_id` - order identifier (also embedded in handoff token)
+   * @param {string} [paymentId] - Query parameter `payment_id` - payment identifier (also embedded in handoff token)
+   * @param {string} [provider] - Query parameter `provider` - optional payment provider name
+   * @returns {Promise<{ success: boolean; clinicId?: string; orderId?: string; paymentId?: string; provider?: string; appointmentId?: string; appointmentType?: string; message?: string; error?: string }>} On success: `{ success: true, clinicId, orderId, paymentId?, provider?, appointmentId?, appointmentType?, message }`. On auth failure: throws `UnauthorizedException`. On invalid input: throws `BadRequestException`
+   * @description Verifies the handoff JWT token, checks for replay attacks using jti, forwards to billing service with timeout protection, and returns payment status with appointment context. Only returns `success: true` when payment status is `completed`
    */
   @Post('callback/handoff')
   @Public()
@@ -1225,11 +1436,13 @@ export class PaymentController {
 
       let paymentResultStatus = 'completed';
       if (verificationPaymentId) {
-        const callbackResult = await this.getBillingService().handlePaymentCallback(
-          clinicId,
-          verificationPaymentId,
-          resolvedOrderId,
-          resolvedProvider
+        const callbackResult = await this.withBillingTimeout(
+          this.getBillingService().handlePaymentCallback(
+            clinicId,
+            verificationPaymentId,
+            resolvedOrderId,
+            resolvedProvider
+          )
         );
         const resultRecord = (callbackResult as { payment?: unknown })?.payment as
           Record<string, unknown> | undefined;

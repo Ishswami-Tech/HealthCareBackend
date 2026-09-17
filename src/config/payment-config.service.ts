@@ -17,7 +17,7 @@ import { CacheService } from '@infrastructure/cache/cache.service';
 import { CredentialEncryptionService } from '@communication/config/credential-encryption.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types/logging.types';
-import type { ClinicPaymentConfig } from '@core/types/payment.types';
+import { ClinicPaymentConfig, PaymentProviderConfig } from '@core/types/payment.types';
 import { PaymentProvider } from '@core/types/payment.types';
 
 /**
@@ -182,165 +182,151 @@ export class PaymentConfigService implements OnModuleInit {
     const payuEnv = this.configService.getEnv('PAYU_ENVIRONMENT', 'test');
     const payuEnabled = payuMerchantKey.length > 0 && payuMerchantSalt.length > 0;
 
-    // Determine primary provider (priority: Cashfree > Razorpay > PhonePe > Zoho > Easebuzz > Paytm > PayU)
-    let primary: ClinicPaymentConfig['payment']['primary'];
+    // Determine primary provider from env-enabled providers.
+    // If a clinic has already saved a config in DB, mergePaymentConfigWithDefaults
+    // will prefer the clinic's choice. Here we just pick the first env-enabled provider
+    // as the system-wide default.
+    const envProviderEntries: { name: PaymentProvider; config: PaymentProviderConfig }[] = [];
     if (cashfreeEnabled) {
-      primary = {
-        provider: PaymentProvider.CASHFREE,
-        enabled: true,
-        credentials: {
-          appId: cashfreeAppId,
-          secretKey: cashfreeSecretKey,
-          environment: cashfreeEnv || 'sandbox',
-          baseUrl:
-            cashfreeEnv === 'production'
-              ? 'https://api.cashfree.com/pg'
-              : 'https://sandbox.cashfree.com/pg',
-          apiVersion: '2025-01-01',
+      envProviderEntries.push({
+        name: PaymentProvider.CASHFREE,
+        config: {
+          provider: PaymentProvider.CASHFREE,
+          enabled: true,
+          credentials: {
+            appId: cashfreeAppId,
+            secretKey: cashfreeSecretKey,
+            environment: cashfreeEnv || 'sandbox',
+            baseUrl:
+              cashfreeEnv === 'production'
+                ? 'https://api.cashfree.com/pg'
+                : 'https://sandbox.cashfree.com/pg',
+            apiVersion: '2025-01-01',
+          },
+          priority: 1,
         },
-        priority: 1,
-      };
-    } else if (razorpayEnabled) {
-      primary = {
-        provider: PaymentProvider.RAZORPAY,
-        enabled: true,
-        credentials: {
-          keyId: razorpayKeyId,
-          keySecret: razorpayKeySecret,
-          webhookSecret: razorpayWebhookSecret,
+      });
+    }
+    if (razorpayEnabled) {
+      envProviderEntries.push({
+        name: PaymentProvider.RAZORPAY,
+        config: {
+          provider: PaymentProvider.RAZORPAY,
+          enabled: true,
+          credentials: {
+            keyId: razorpayKeyId,
+            keySecret: razorpayKeySecret,
+            webhookSecret: razorpayWebhookSecret,
+          },
+          priority: 1,
         },
-        priority: 1,
-      };
-    } else if (phonepeEnabled) {
-      primary = {
-        provider: PaymentProvider.PHONEPE,
-        enabled: true,
-        credentials: {
-          clientId: phonepeClientId,
-          clientSecret: phonepeClientSecret,
-          clientVersion: phonepeClientVersion,
-          environment: phonepeEnv || 'sandbox',
+      });
+    }
+    if (phonepeEnabled) {
+      envProviderEntries.push({
+        name: PaymentProvider.PHONEPE,
+        config: {
+          provider: PaymentProvider.PHONEPE,
+          enabled: true,
+          credentials: {
+            clientId: phonepeClientId,
+            clientSecret: phonepeClientSecret,
+            clientVersion: phonepeClientVersion,
+            environment: phonepeEnv || 'sandbox',
+          },
+          priority: 1,
         },
-        priority: 1,
-      };
-    } else if (zohoEnabled) {
-      primary = {
-        provider: PaymentProvider.ZOHO,
-        enabled: true,
-        credentials: {
-          accountId: zohoAccountId,
-          accessToken: zohoAccessToken,
-          signingKey: zohoSigningKey,
-          baseUrl: zohoBaseUrl || 'https://payments.zoho.com',
+      });
+    }
+    if (zohoEnabled) {
+      envProviderEntries.push({
+        name: PaymentProvider.ZOHO,
+        config: {
+          provider: PaymentProvider.ZOHO,
+          enabled: true,
+          credentials: {
+            accountId: zohoAccountId,
+            accessToken: zohoAccessToken,
+            signingKey: zohoSigningKey,
+            baseUrl: zohoBaseUrl || 'https://payments.zoho.com',
+          },
+          priority: 1,
         },
-        priority: 1,
-      };
-    } else {
-      primary = {
-        provider: PaymentProvider.CASHFREE,
-        enabled: false,
-        credentials: {},
-        priority: 1,
-      };
+      });
+    }
+    if (easebuzzEnabled) {
+      envProviderEntries.push({
+        name: PaymentProvider.EASEBUZZ,
+        config: {
+          provider: PaymentProvider.EASEBUZZ,
+          enabled: true,
+          credentials: {
+            merchantKey: easebuzzMerchantKey,
+            merchantSalt: easebuzzMerchantSalt,
+            environment: easebuzzEnv || 'TEST',
+          },
+          priority: 1,
+        },
+      });
+    }
+    if (paytmEnabled) {
+      envProviderEntries.push({
+        name: PaymentProvider.PAYTM,
+        config: {
+          provider: PaymentProvider.PAYTM,
+          enabled: true,
+          credentials: {
+            merchantId: paytmMerchantId,
+            merchantKey: paytmMerchantKey,
+            website: paytmWebsite,
+            industryType: paytmIndustryType,
+            environment: paytmEnv || 'staging',
+          },
+          priority: 1,
+        },
+      });
+    }
+    if (payuEnabled) {
+      envProviderEntries.push({
+        name: PaymentProvider.PAYU,
+        config: {
+          provider: PaymentProvider.PAYU,
+          enabled: true,
+          credentials: {
+            merchantKey: payuMerchantKey,
+            merchantSalt: payuMerchantSalt,
+            clientId: payuClientId,
+            clientSecret: payuClientSecret,
+            environment: payuEnv || 'test',
+            baseUrl: payuEnv === 'production' ? 'https://info.payu.in' : 'https://test.payu.in',
+          },
+          priority: 1,
+        },
+      });
     }
 
-    // Build fallback providers
-    const fallback: ClinicPaymentConfig['payment']['fallback'] = [];
-    if (razorpayEnabled && primary.provider !== PaymentProvider.RAZORPAY) {
-      fallback.push({
-        provider: PaymentProvider.RAZORPAY,
-        enabled: true,
-        credentials: {
-          keyId: razorpayKeyId,
-          keySecret: razorpayKeySecret,
-          webhookSecret: razorpayWebhookSecret,
-        },
-        priority: 2,
-      });
-    }
-    if (phonepeEnabled && primary.provider !== PaymentProvider.PHONEPE) {
-      fallback.push({
-        provider: PaymentProvider.PHONEPE,
-        enabled: true,
-        credentials: {
-          clientId: phonepeClientId,
-          clientSecret: phonepeClientSecret,
-          clientVersion: phonepeClientVersion,
-          environment: phonepeEnv || 'sandbox',
-        },
-        priority: 3,
-      });
-    }
-    if (zohoEnabled && primary.provider !== PaymentProvider.ZOHO) {
-      fallback.push({
-        provider: PaymentProvider.ZOHO,
-        enabled: true,
-        credentials: {
-          accountId: zohoAccountId,
-          accessToken: zohoAccessToken,
-          signingKey: zohoSigningKey,
-          baseUrl: zohoBaseUrl || 'https://payments.zoho.com',
-        },
-        priority: 4,
-      });
-    }
-    if (easebuzzEnabled && primary.provider !== PaymentProvider.EASEBUZZ) {
-      fallback.push({
-        provider: PaymentProvider.EASEBUZZ,
-        enabled: true,
-        credentials: {
-          merchantKey: easebuzzMerchantKey,
-          merchantSalt: easebuzzMerchantSalt,
-          environment: easebuzzEnv || 'TEST',
-          baseUrl:
-            easebuzzEnv === 'PRODUCTION'
-              ? 'https://dashboard.easebuzz.in'
-              : 'https://test.easebuzz.in',
-        },
-        priority: 4,
-      });
-    }
-    if (paytmEnabled && primary.provider !== PaymentProvider.PAYTM) {
-      fallback.push({
-        provider: PaymentProvider.PAYTM,
-        enabled: true,
-        credentials: {
-          merchantId: paytmMerchantId,
-          merchantKey: paytmMerchantKey,
-          website: paytmWebsite,
-          industryTypeId: paytmIndustryType,
-          environment: paytmEnv || 'staging',
-          baseUrl:
-            paytmEnv === 'production'
-              ? 'https://securegw.paytm.in'
-              : 'https://securegw-stage.paytm.in',
-        },
-        priority: 5,
-      });
-    }
-    if (payuEnabled && primary.provider !== PaymentProvider.PAYU) {
-      fallback.push({
-        provider: PaymentProvider.PAYU,
-        enabled: true,
-        credentials: {
-          merchantKey: payuMerchantKey,
-          merchantSalt: payuMerchantSalt,
-          clientId: payuClientId,
-          clientSecret: payuClientSecret,
-          environment: payuEnv || 'test',
-          baseUrl: payuEnv === 'production' ? 'https://info.payu.in' : 'https://test.payu.in',
-        },
-        priority: 6,
-      });
-    }
+    const primaryConfig: NonNullable<ClinicPaymentConfig['payment']['primary']> =
+      envProviderEntries.length > 0
+        ? { ...envProviderEntries[0]!.config }
+        : {
+            provider: PaymentProvider.CASHFREE,
+            enabled: false,
+            credentials: {},
+            priority: 1,
+          };
+
+    // Build fallback providers from remaining env-enabled providers
+    const fallback: PaymentProviderConfig[] = envProviderEntries
+      .slice(1)
+      .map(entry => ({ ...entry.config }));
 
     return {
       clinicId,
       payment: {
-        primary,
+        primary: primaryConfig,
         fallback,
         defaultCurrency: this.configService.getEnv('PAYMENT_DEFAULT_CURRENCY', 'INR') || 'INR',
-        defaultProvider: primary.provider,
+        defaultProvider: primaryConfig.provider,
       },
       createdAt: new Date(),
       updatedAt: new Date(),
