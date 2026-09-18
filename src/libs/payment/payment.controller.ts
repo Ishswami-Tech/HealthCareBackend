@@ -56,7 +56,8 @@ type BillingServiceLike = {
     clinicId: string,
     paymentId: string,
     orderId: string,
-    provider?: PaymentProvider
+    provider?: PaymentProvider,
+    surchargeData?: { surchargeServiceCharge: number; surchargeServiceTax: number }
   ) => Promise<unknown>;
   handleRefundCallback: (
     clinicId: string,
