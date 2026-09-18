@@ -309,7 +309,7 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         order_id: orderId,
         customer_details: {
           customer_id: options.customerId || `cust_${Date.now()}`,
-          customer_phone: options.customerPhone || '9999999999',
+          customer_phone: options.customerPhone,
           ...(options.customerEmail && { customer_email: options.customerEmail }),
           ...(options.customerName && { customer_name: options.customerName }),
         },
