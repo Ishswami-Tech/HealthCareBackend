@@ -303,6 +303,10 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
           return `${baseUrl}/api/v1/payments/cashfree/webhook`;
         })();
 
+      if (!options.customerPhone) {
+        throw new Error('customerPhone is required to create a Cashfree order');
+      }
+
       const body: CashfreeOrderRequest = {
         order_amount: amountInUnits,
         order_currency: options.currency.toUpperCase(),
