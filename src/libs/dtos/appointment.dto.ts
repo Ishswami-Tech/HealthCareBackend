@@ -975,6 +975,22 @@ export class AppointmentResponseDto {
   @IsOptional()
   @IsString({ message: 'App domain must be a string' })
   appDomain?: string;
+
+  @ApiPropertyOptional({
+    example: 'Payment window expired before payment was completed.',
+    description: 'Reason for cancellation or expiry of the appointment',
+  })
+  @IsOptional()
+  @IsString({ message: 'Cancellation reason must be a string' })
+  cancellationReason?: string;
+
+  @ApiPropertyOptional({
+    example: 'system',
+    description: 'Who cancelled or expired the appointment (user ID or "system")',
+  })
+  @IsOptional()
+  @IsString({ message: 'Cancelled by must be a string' })
+  cancelledBy?: string;
 }
 
 /**

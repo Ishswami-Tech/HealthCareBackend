@@ -310,8 +310,8 @@ export class VideoAppointmentSchedulerService {
           appointment.id,
           {
             status: AppointmentStatus.EXPIRED,
-            reason: `Video appointment join window (15 min before to 5 hours after ${appointment.time} IST) has elapsed.`,
-            notes: 'Auto-expired by scheduler: join window elapsed.',
+            reason: `Appointment time slot (${appointment.time} IST) has expired. The appointment window was 5 hours from the scheduled start time.`,
+            notes: 'Auto-expired by scheduler: appointment window elapsed.',
           } as UpdateAppointmentStatusDto,
           'system',
           appointment.clinicId,
