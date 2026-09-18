@@ -337,8 +337,9 @@ export class PaymentConfigService implements OnModuleInit {
     config: ClinicPaymentConfig,
     defaults: ClinicPaymentConfig
   ): ClinicPaymentConfig {
-    // Merge primary credentials: clinic credentials take precedence, but
-    // missing fields fall back to defaults (e.g. environment, baseUrl).
+    // Merge primary credentials: env defaults take precedence for
+    // environment/baseUrl (production overrides DB sandbox), but clinic
+    // credentials (appId, secretKey, etc.) take precedence.
     const defaultPrimary = defaults.payment.primary;
     const clinicPrimary = config.payment.primary;
     const mergedPrimary: PaymentProviderConfig | undefined =
@@ -346,8 +347,8 @@ export class PaymentConfigService implements OnModuleInit {
         ? {
             ...clinicPrimary,
             credentials: {
-              ...defaultPrimary.credentials,
               ...clinicPrimary.credentials,
+              ...defaultPrimary.credentials,
             } as PaymentProviderConfig['credentials'],
           }
         : clinicPrimary || defaultPrimary;
