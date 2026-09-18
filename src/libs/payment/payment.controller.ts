@@ -163,6 +163,35 @@ export class PaymentController {
     return '';
   }
 
+  private parseNumberAtPath(source: unknown, paths: string[][]): number | undefined {
+    for (const path of paths) {
+      const value = this.getNumberAtPath(source, path);
+      if (value !== undefined && value !== null) {
+        return value;
+      }
+    }
+    return undefined;
+  }
+
+  private getNumberAtPath(source: unknown, path: string[]): number | undefined {
+    let current: unknown = source;
+    for (const key of path) {
+      if (current && typeof current === 'object' && key in (current as Record<string, unknown>)) {
+        current = (current as Record<string, unknown>)[key];
+      } else {
+        return undefined;
+      }
+    }
+    if (typeof current === 'number') {
+      return current;
+    }
+    if (typeof current === 'string') {
+      const parsed = Number(current);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
+  }
+
   private asMetadata(value: unknown): Record<string, unknown> {
     return this.getRecord(value) || {};
   }
@@ -532,13 +561,27 @@ export class PaymentController {
         return { success: true };
       }
 
+      // Extract Cashfree Dynamic Surcharge (Ticket #8386446)
+      const surchargeServiceCharge = this.parseNumberAtPath(dataObj, [
+        ['payment', 'payment_surcharge', 'payment_surcharge_service_charge'],
+        ['payment_surcharge', 'payment_surcharge_service_charge'],
+      ]);
+      const surchargeServiceTax = this.parseNumberAtPath(dataObj, [
+        ['payment', 'payment_surcharge', 'payment_surcharge_service_tax'],
+        ['payment_surcharge', 'payment_surcharge_service_tax'],
+      ]);
+
       if (orderId && paymentId && paymentStatus === 'SUCCESS') {
         await this.withBillingTimeout(
           this.getBillingService().handlePaymentCallback(
             resolvedClinicId,
             paymentId,
             orderId,
-            PaymentProvider.CASHFREE
+            PaymentProvider.CASHFREE,
+            {
+              surchargeServiceCharge: surchargeServiceCharge ?? 0,
+              surchargeServiceTax: surchargeServiceTax ?? 0,
+            }
           )
         );
       }

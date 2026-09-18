@@ -3314,7 +3314,8 @@ export class BillingService implements OnModuleInit {
     clinicId: string,
     paymentId: string,
     orderId: string,
-    provider?: PaymentProvider
+    provider?: PaymentProvider,
+    surchargeData?: { surchargeServiceCharge: number; surchargeServiceTax: number }
   ): Promise<{ payment: unknown; invoice?: unknown; appointment?: unknown }> {
     try {
       const normalizedProvider = this.normalizePaymentProvider(provider);
@@ -3442,6 +3443,10 @@ export class BillingService implements OnModuleInit {
         status: normalizedIncomingStatus,
         transactionId: paymentStatus.transactionId || paymentId,
         metadata: callbackMetadata,
+        ...(surchargeData && {
+          surchargeServiceCharge: surchargeData.surchargeServiceCharge,
+          surchargeServiceTax: surchargeData.surchargeServiceTax,
+        }),
       });
 
       let invoice: unknown;
