@@ -390,6 +390,85 @@ export class PaymentService {
   }
 
   /**
+   * Verify payment status with provider-aware ID routing.
+   *
+   * Unlike `verifyPayment()` which blindly passes the caller's ID to the gateway,
+   * this method reads the provider's `getVerificationCapability()` and only calls
+   * the gateway with an ID type the provider actually supports.
+   *
+   * If the gateway requires a paymentId but only an orderId is available
+   * (the common case for the handoff callback), gateway verification is SKIPPED
+   * — the webhook remains the source of truth for payment completion.
+   */
+  async verifyPaymentStatus(
+    clinicId: string,
+    options: {
+      orderId?: string;
+      paymentId?: string;
+      provider: PaymentProvider;
+    }
+  ): Promise<PaymentStatusResult> {
+    const { orderId, paymentId, provider } = options;
+
+    if (!provider) {
+      throw new Error('Payment provider is required for status verification');
+    }
+
+    const adapter = await this.getProviderAdapter(clinicId, provider);
+
+    if (!adapter) {
+      throw new Error(`Payment provider "${provider}" is not configured`);
+    }
+
+    const capability = adapter.getVerificationCapability();
+
+    let verificationStrategy: 'order_id' | 'payment_id' | 'skipped';
+
+    if (capability.canVerifyByPaymentId() && paymentId) {
+      verificationStrategy = 'payment_id';
+    } else if (capability.canVerifyByOrderId() && orderId) {
+      verificationStrategy = 'order_id';
+    } else {
+      verificationStrategy = 'skipped';
+    }
+
+    if (verificationStrategy === 'skipped') {
+      const fallbackId = paymentId || orderId || `skip-${Date.now()}`;
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        'Skipping gateway verification — insufficient ID type for provider',
+        'PaymentService',
+        {
+          clinicId,
+          provider,
+          hasOrderId: Boolean(orderId),
+          hasPaymentId: Boolean(paymentId),
+          capability: capability.idType,
+        }
+      );
+
+      return {
+        paymentId: fallbackId,
+        status: 'pending',
+        amount: 0,
+        currency: 'INR',
+        provider,
+        timestamp: new Date(),
+        metadata: { verificationSkipped: true, reason: 'insufficient_ids' },
+      };
+    }
+
+    const idToVerify = paymentId || orderId!;
+
+    const verifyOptions: PaymentStatusOptions = {
+      paymentId: idToVerify,
+      ...(options.orderId && { orderId: options.orderId }),
+    };
+    return await this.verifyPayment(clinicId, verifyOptions, provider);
+  }
+
+  /**
    * Process refund
    */
   async refund(

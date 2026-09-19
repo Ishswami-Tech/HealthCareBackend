@@ -1826,7 +1826,7 @@ export class AppointmentsController {
   @ApiOperation({
     summary: 'Cancel an appointment',
     description:
-      'Cancel an existing appointment. Patients can only cancel their own appointments. Completed appointments cannot be cancelled.',
+      'Cancel an existing appointment. Patients can only cancel their own appointments. Only pending, scheduled, or rescheduled appointments can be cancelled. Confirmed appointments cannot be cancelled.',
   })
   @ApiParam({
     name: 'id',
@@ -1980,7 +1980,7 @@ export class AppointmentsController {
   @ApiOperation({
     summary: 'Reschedule a video appointment',
     description:
-      'Reschedule a video appointment to a new date/time. Must be done before the 5-hour appointment window expires. Maximum 2 reschedules per appointment.',
+      'Reschedule an appointment to a new date/time. Only confirmed appointments can be rescheduled. For video appointments, must be done before the 5-hour appointment window expires. Maximum 2 reschedules per appointment.',
   })
   @ApiParam({ name: 'id', description: 'Appointment ID (UUID)', type: 'string', format: 'uuid' })
   @ApiBody({

@@ -2724,15 +2724,17 @@ export class AppointmentsService {
       );
     }
 
-    if (String(appointment.type) === 'VIDEO_CALL') {
-      if (String(appointment.status).toUpperCase() !== String(AppointmentStatus.CONFIRMED)) {
-        throw this.errors.validationError(
-          'status',
-          'Only confirmed video appointments can be rescheduled.',
-          'AppointmentsService.rescheduleAppointment'
-        );
-      }
+    // Reschedule is only allowed for CONFIRMED appointments
+    if (String(appointment.status).toUpperCase() !== String(AppointmentStatus.CONFIRMED)) {
+      throw this.errors.validationError(
+        'status',
+        'Only confirmed appointments can be rescheduled.',
+        'AppointmentsService.rescheduleAppointment'
+      );
+    }
 
+    // Video appointment: enforce 5-hour reschedule window
+    if (String(appointment.type) === 'VIDEO_CALL') {
       const rescheduleDeadline = this.resolveVideoAppointmentRescheduleDeadline({
         date: appointment.date,
         time: appointment.time,

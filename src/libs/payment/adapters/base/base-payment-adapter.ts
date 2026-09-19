@@ -20,6 +20,7 @@ import type {
   RefundResult,
   WebhookVerificationOptions,
   PaymentProviderConfig,
+  PaymentVerificationCapability,
 } from '@core/types/payment.types';
 import type { ProviderHealthStatus } from '@communication/adapters/interfaces/provider-health-status.types';
 
@@ -49,6 +50,20 @@ export abstract class BasePaymentAdapter implements PaymentProviderAdapter {
    * Get provider name (must be implemented by subclasses)
    */
   abstract getProviderName(): string;
+
+  /**
+   * Declare what identifier types this provider's verification endpoint accepts.
+   * Override in subclasses to declare provider-specific capabilities.
+   * Default: accepts either order_id or payment_id.
+   */
+  getVerificationCapability(): PaymentVerificationCapability {
+    return {
+      idType: 'either',
+      canVerifyByOrderId: () => true,
+      canVerifyByPaymentId: () => true,
+      requiresCapturedPayment: () => false,
+    };
+  }
 
   /**
    * Create payment intent (must be implemented by subclasses)

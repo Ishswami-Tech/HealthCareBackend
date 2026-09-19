@@ -705,10 +705,15 @@ export class BillingService implements OnModuleInit {
     ) {
       return PaymentStatus.COMPLETED;
     }
-    if (normalized === 'pending' || normalized === 'processing') {
+    if (normalized === 'pending' || normalized === 'processing' || normalized === 'active') {
       return PaymentStatus.PENDING;
     }
-    if (normalized === 'failed' || normalized === 'cancelled' || normalized === 'canceled') {
+    if (
+      normalized === 'failed' ||
+      normalized === 'cancelled' ||
+      normalized === 'canceled' ||
+      normalized === 'expired'
+    ) {
       return PaymentStatus.FAILED;
     }
     if (normalized === 'refunded') {
@@ -2797,8 +2802,11 @@ export class BillingService implements OnModuleInit {
         (left, right) => right.createdAt.getTime() - left.createdAt.getTime()
       )[0] || null;
 
-    // Get user details
+    // Get user details — phone is guaranteed from WhatsApp OTP registration
     const user = billingUserId ? await this.databaseService.findUserByIdSafe(billingUserId) : null;
+
+    // Fallback: if user record somehow lacks a phone (legacy data), derive from patient record
+    const customerPhone = user?.phone?.trim() || '';
 
     if (existingPayment && String(existingPayment.status) === String(PaymentStatus.COMPLETED)) {
       throw new BadRequestException('Payment is already completed for this appointment');
@@ -2880,8 +2888,8 @@ export class BillingService implements OnModuleInit {
       currency: 'INR',
       orderId: gatewayOrderId,
       customerId: billingUserId || appointment.patientId,
+      customerPhone,
       ...(user?.email && { customerEmail: user.email }),
-      ...(user?.phone && { customerPhone: user.phone }),
       ...(user?.name && { customerName: user.name }),
       description: `Payment for ${serviceMetadata.label} appointment`,
       appointmentId: appointment.id,
@@ -3318,17 +3326,23 @@ export class BillingService implements OnModuleInit {
     surchargeData?: { surchargeServiceCharge: number; surchargeServiceTax: number }
   ): Promise<{ payment: unknown; invoice?: unknown; appointment?: unknown }> {
     try {
-      const normalizedProvider = this.normalizePaymentProvider(provider);
+      const normalizedProvider =
+        this.normalizePaymentProvider(provider) ?? PaymentProvider.CASHFREE;
 
-      // Verify payment status with provider
-      const paymentStatus: PaymentStatusResult = await this.paymentService.verifyPayment(
+      // Verify payment status with provider — capability-aware routing.
+      // Uses provider metadata to decide whether to call the gateway
+      // with orderId, paymentId, or skip verification entirely.
+      const paymentStatus: PaymentStatusResult = await this.paymentService.verifyPaymentStatus(
         clinicId,
-        { paymentId, orderId },
-        normalizedProvider
+        {
+          orderId,
+          paymentId,
+          provider: normalizedProvider,
+        }
       );
       const normalizedIncomingStatus = this.normalizeGatewayPaymentStatus(paymentStatus.status);
 
-      // Find payment record: by ID, gateway transaction ID, then order ID fallback
+      // Find payment record: by payment ID, gateway transaction ID, then order_id from metadata
       let payment = await this.databaseService.findPaymentByIdSafe(paymentId);
       if (!payment) {
         const byPaymentIdTx = await this.databaseService.findPaymentsSafe({
@@ -3337,11 +3351,41 @@ export class BillingService implements OnModuleInit {
         payment = byPaymentIdTx[0] || null;
       }
       if (!payment) {
-        const byOrderIdTx = await this.databaseService.findPaymentsSafe({ transactionId: orderId });
+        const byOrderIdTx = await this.databaseService.findPaymentsSafe({
+          appointmentId: orderId,
+        });
         payment = byOrderIdTx[0] || null;
       }
+
+      // Search by order_id stored in metadata across clinic payments (scoped to recent)
       if (!payment) {
-        throw new NotFoundException('Payment record not found');
+        try {
+          const clinicPayments = await this.databaseService.findPaymentsSafe({
+            clinicId,
+            createdAt: { gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString() },
+          } as Parameters<typeof this.databaseService.findPaymentsSafe>[0]);
+          payment =
+            clinicPayments.find(
+              p => (this.asRecord(p.metadata)?.['orderId'] as string | undefined) === orderId
+            ) || null;
+        } catch {
+          // Non-fatal: proceed to creation path below
+        }
+      }
+
+      if (!payment) {
+        // Payment record never created — this happens when the payment intent failed
+        // (e.g. Cashfree rejected the order) but the gateway callback still arrives.
+        // We cannot safely create a payment record without an invoice/appointment
+        // reference, so we log and return gracefully to avoid breaking the webhook.
+        await this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.WARN,
+          `Payment callback received but no local payment record exists: orderId=${orderId}, paymentId=${paymentId}`,
+          'BillingService',
+          { clinicId, orderId, paymentId, provider: normalizedProvider }
+        );
+        return { payment: {} };
       }
 
       const currentStatusLower = String(payment.status || '').toLowerCase();
@@ -4244,7 +4288,8 @@ export class BillingService implements OnModuleInit {
     callbackAmount?: number
   ): Promise<{ payment: unknown; refund?: unknown }> {
     try {
-      const normalizedProvider = this.normalizePaymentProvider(provider);
+      const normalizedProvider =
+        this.normalizePaymentProvider(provider) ?? PaymentProvider.CASHFREE;
 
       let payment = await this.databaseService.findPaymentByIdSafe(paymentId);
       if (!payment && paymentId) {

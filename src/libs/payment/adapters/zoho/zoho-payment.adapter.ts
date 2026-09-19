@@ -22,6 +22,7 @@ import type {
   RefundResult,
   WebhookVerificationOptions,
   PaymentProviderConfig,
+  PaymentVerificationCapability,
 } from '@core/types/payment.types';
 
 type ZohoWebhookSignature = {
@@ -141,6 +142,19 @@ export class ZohoPaymentAdapter extends BasePaymentAdapter {
 
   getProviderName(): string {
     return 'zoho';
+  }
+
+  /**
+   * Zoho Payments can resolve verification requests by either order ID or payment ID.
+   * The gateway endpoint accepts both identifiers depending on the transaction stage.
+   */
+  getVerificationCapability(): PaymentVerificationCapability {
+    return {
+      idType: 'either',
+      canVerifyByOrderId: () => true,
+      canVerifyByPaymentId: () => true,
+      requiresCapturedPayment: () => false,
+    };
   }
 
   verify(): Promise<boolean> {

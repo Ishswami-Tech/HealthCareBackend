@@ -23,6 +23,7 @@ import type {
   RefundResult,
   WebhookVerificationOptions,
   PaymentProviderConfig,
+  PaymentVerificationCapability,
 } from '@core/types/payment.types';
 
 // Razorpay SDK types - dynamically imported to handle missing package
@@ -210,6 +211,19 @@ export class RazorpayPaymentAdapter extends BasePaymentAdapter {
   }
 
   /**
+   * Razorpay's `payments.fetch()` requires a payment ID (`pay_*`).
+   * Order IDs (`order_*`) cannot be used to verify payment completion.
+   */
+  getVerificationCapability(): PaymentVerificationCapability {
+    return {
+      idType: 'payment_id',
+      canVerifyByOrderId: () => false,
+      canVerifyByPaymentId: () => true,
+      requiresCapturedPayment: () => true,
+    };
+  }
+
+  /**
    * Verify Razorpay connection
    */
   async verify(): Promise<boolean> {
@@ -364,17 +378,18 @@ export class RazorpayPaymentAdapter extends BasePaymentAdapter {
         },
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
       await this.logger.log(
         LogType.PAYMENT,
         LogLevel.ERROR,
         'Failed to verify Razorpay payment',
         'RazorpayPaymentAdapter',
         {
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage,
           paymentId: options.paymentId,
         }
       );
-      throw error;
+      throw new Error(`Razorpay payment verification failed: ${errorMessage}`);
     }
   }
 

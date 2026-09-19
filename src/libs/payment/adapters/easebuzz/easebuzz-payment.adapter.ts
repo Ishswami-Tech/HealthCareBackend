@@ -22,6 +22,7 @@ import type {
   RefundResult,
   WebhookVerificationOptions,
   PaymentProviderConfig,
+  PaymentVerificationCapability,
 } from '@core/types/payment.types';
 
 // Easebuzz API types
@@ -132,6 +133,19 @@ export class EasebuzzPaymentAdapter extends BasePaymentAdapter {
    */
   getProviderName(): string {
     return 'easebuzz';
+  }
+
+  /**
+   * Easebuzz uses order IDs for verification via `/api/v1/payments/checkPostData`.
+   * The order ID from `createPaymentIntent()` is passed as `txnid` in their API.
+   */
+  getVerificationCapability(): PaymentVerificationCapability {
+    return {
+      idType: 'order_id',
+      canVerifyByOrderId: () => true,
+      canVerifyByPaymentId: () => false,
+      requiresCapturedPayment: () => false,
+    };
   }
 
   /**

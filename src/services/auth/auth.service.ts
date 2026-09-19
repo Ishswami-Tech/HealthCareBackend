@@ -453,7 +453,16 @@ export class AuthService {
         );
       }
 
-      // 2. Resolve and validate clinic (before creating user)
+      // 3. Validate required fields including phone (phone is set via WhatsApp OTP during login)
+      if (!registerDto.phone || !registerDto.phone.trim()) {
+        throw this.errors.validationError(
+          'phone',
+          'Phone number is required for registration',
+          'AuthService.register'
+        );
+      }
+
+      // 4. Resolve and validate clinic (before creating user)
       const { resolveClinicUUID } = await import('@utils/clinic.utils');
       const clinicUUID = await resolveClinicUUID(this.databaseService, clinicId);
       const clinic = await this.databaseService.findClinicByIdSafe(clinicUUID);
@@ -462,7 +471,7 @@ export class AuthService {
         throw this.errors.clinicNotFound(clinicId, 'AuthService.register');
       }
 
-      // 3. Verify OTP if provided
+      // 5. Verify OTP if provided
       if (registerDto.otp) {
         const identifier = registerDto.phone || registerDto.email;
         if (!identifier) {
@@ -484,13 +493,13 @@ export class AuthService {
         await this.otpService.consumeOtp(identifier);
       }
 
-      // 4. Check if user already exists
+      // 6. Check if user already exists
       const existingUser = await this.databaseService.findUserByEmailSafe(registerDto.email);
       if (existingUser) {
         throw this.errors.emailAlreadyExists(registerDto.email, 'AuthService.register');
       }
 
-      // 5. Create user
+      // 7. Create user
       const hashedPassword = await bcrypt.hash(registerDto.password, 12);
       // Age handling for registration (profile completion happens after login)
       // - If DOB is provided during registration, calculate age and validate

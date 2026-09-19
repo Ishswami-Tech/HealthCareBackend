@@ -24,6 +24,7 @@ import type {
   RefundResult,
   WebhookVerificationOptions,
   PaymentProviderConfig,
+  PaymentVerificationCapability,
 } from '@core/types/payment.types';
 
 /**
@@ -98,6 +99,19 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
    */
   getProviderName(): string {
     return 'phonepe';
+  }
+
+  /**
+   * PhonePe's verification uses order IDs (merchantOrderId).
+   * The `orderId` used in `createPaymentIntent()` maps directly to PhonePe's merchant order.
+   */
+  getVerificationCapability(): PaymentVerificationCapability {
+    return {
+      idType: 'order_id',
+      canVerifyByOrderId: () => true,
+      canVerifyByPaymentId: () => false,
+      requiresCapturedPayment: () => false,
+    };
   }
 
   /**

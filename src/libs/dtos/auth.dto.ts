@@ -264,18 +264,18 @@ export class RegisterDto {
   lastName!: string;
 
   @ApiProperty({
-    description: 'User phone number',
-    example: '+1234567890',
+    description: 'User phone number (REQUIRED for WhatsApp OTP and payment processing)',
+    example: '+919876543210',
     pattern: '^\\+?[1-9]\\d{1,14}$',
   })
   @ApiProperty({
     description: 'User phone number',
-    example: '+1234567890',
+    example: '+919876543210',
     pattern: '^\\+?[1-9]\\d{1,14}$',
   })
   @IsString({ message: 'Phone number must be a string' })
-  @IsOptional()
-  phone?: string;
+  @IsNotEmpty({ message: 'Phone number is required for registration' })
+  phone!: string;
 
   @ApiProperty({
     description: 'OTP for verification during registration',
@@ -924,15 +924,6 @@ export class LoginRequestDto extends LoginDto {}
  */
 export class RegisterDtoWithOAuth extends RegisterDto {
   @ApiProperty({
-    description: 'Google ID for OAuth registration',
-    example: 'google-oauth-id-123',
-    required: false,
-  })
-  @IsString({ message: 'Google ID must be a string' })
-  @IsOptional()
-  googleId?: string;
-
-  @ApiProperty({
     description: 'Facebook ID for OAuth registration',
     example: 'facebook-oauth-id-123',
     required: false,
@@ -957,16 +948,7 @@ export class RegisterDtoWithOAuth extends RegisterDto {
  * @description Extends VerifyOtpRequestDto with additional clinic context
  * @extends VerifyOtpRequestDto
  */
-export class VerifyOtpRequestDtoWithClinic extends VerifyOtpRequestDto {
-  @ApiProperty({
-    description: 'Clinic ID for multi-tenant context',
-    example: 'clinic-uuid-123',
-    required: false,
-  })
-  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
-  @IsOptional()
-  clinicId?: string;
-}
+export class VerifyOtpRequestDtoWithClinic extends VerifyOtpRequestDto {}
 
 /**
  * Data Transfer Object for Google OAuth authentication

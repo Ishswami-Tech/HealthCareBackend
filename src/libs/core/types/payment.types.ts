@@ -162,6 +162,12 @@ export interface PaymentProviderAdapter {
    * Get provider name
    */
   getProviderName(): string;
+
+  /**
+   * Declare what identifier types this provider's verification endpoint accepts.
+   * Used by the callback layer to avoid passing the wrong ID type to the gateway.
+   */
+  getVerificationCapability(): PaymentVerificationCapability;
 }
 
 /**
@@ -173,6 +179,29 @@ export interface PaymentProviderConfig {
   credentials: Record<string, string> | { encrypted: string }; // Encrypted or plain
   settings?: Record<string, unknown>;
   priority?: number; // Lower number = higher priority
+}
+
+/**
+ * Payment ID type used by a provider's verification endpoint.
+ *
+ * - `order_id`:     Gateway's order/session endpoint accepts order IDs (e.g., Cashfree, PhonePe)
+ * - `payment_id`:   Gateway's payment endpoint accepts payment transaction IDs (e.g., Razorpay)
+ * - `either`:       Gateway can resolve by either order or payment ID (e.g., Zoho)
+ */
+export type PaymentIdType = 'order_id' | 'payment_id' | 'either';
+
+/**
+ * Declares what identifier types a provider's `verifyPayment` endpoint accepts.
+ */
+export interface PaymentVerificationCapability {
+  /** The primary ID type the gateway expects */
+  readonly idType: PaymentIdType;
+  /** Whether the gateway can verify using an order/session ID */
+  canVerifyByOrderId(): boolean;
+  /** Whether the gateway can verify using a payment/transaction ID */
+  canVerifyByPaymentId(): boolean;
+  /** Whether the gateway requires the payment to be captured before verification succeeds */
+  requiresCapturedPayment(): boolean;
 }
 
 /**

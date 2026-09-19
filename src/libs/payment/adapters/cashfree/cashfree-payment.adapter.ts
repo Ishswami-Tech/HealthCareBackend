@@ -13,7 +13,7 @@
 import { Injectable } from '@nestjs/common';
 import { HttpService } from '@infrastructure/http';
 import { LoggingService } from '@logging';
-import { LogType, LogLevel } from '@core/types';
+import { LogType, LogLevel, PaymentVerificationCapability } from '@core/types';
 import { BasePaymentAdapter } from '../base/base-payment-adapter';
 import type {
   PaymentIntentOptions,
@@ -73,6 +73,7 @@ interface CashfreeOrderStatusResponse {
   order_expiry_time: string;
   created_at: string;
   payment_session_id?: string;
+  payment_link?: string;
   order_meta?: {
     payment_link?: string;
   };
@@ -153,6 +154,19 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
 
   getProviderName(): string {
     return 'cashfree';
+  }
+
+  /**
+   * Cashfree's `/orders/{orderId}` endpoint accepts order IDs.
+   * The `orderId` used in `createPaymentIntent()` maps directly to their order API.
+   */
+  getVerificationCapability(): PaymentVerificationCapability {
+    return {
+      idType: 'order_id',
+      canVerifyByOrderId: () => true,
+      canVerifyByPaymentId: () => false,
+      requiresCapturedPayment: () => false,
+    };
   }
 
   /**
@@ -303,8 +317,38 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
           return `${baseUrl}/api/v1/payments/cashfree/webhook`;
         })();
 
-      if (!options.customerPhone) {
-        throw new Error('customerPhone is required to create a Cashfree order');
+      // Cashfree requires customerPhone. Try to derive from available data.
+      const customerPhone =
+        options.customerPhone ||
+        (() => {
+          // Only derive from customerId if it looks like a phone number (no letters/prefixes)
+          const raw = options.customerId || '';
+          if (/^\+?\d[\d\s-]{8,}$/.test(raw)) {
+            const digits = raw.replace(/\D/g, '');
+            if (digits.length >= 10) {
+              return `+${digits}`;
+            }
+          }
+          return undefined;
+        })();
+
+      if (!customerPhone) {
+        const err = new Error(
+          'customerPhone is required to create a Cashfree order. Ensure the user has registered via WhatsApp OTP and has a phone number.'
+        );
+        await this.logger.log(
+          LogType.PAYMENT,
+          LogLevel.ERROR,
+          'Cashfree payment intent failed: missing customerPhone',
+          'CashfreePaymentAdapter',
+          {
+            clinicId: options.clinicId,
+            appointmentId: options.appointmentId,
+            customerId: options.customerId,
+            orderId: options.orderId || orderId,
+          }
+        );
+        return this.createErrorResult(err);
       }
 
       const body: CashfreeOrderRequest = {
@@ -313,7 +357,7 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         order_id: orderId,
         customer_details: {
           customer_id: options.customerId || `cust_${Date.now()}`,
-          customer_phone: options.customerPhone,
+          customer_phone: customerPhone,
           ...(options.customerEmail && { customer_email: options.customerEmail }),
           ...(options.customerName && { customer_name: options.customerName }),
         },
@@ -411,11 +455,10 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         options.currency,
         data.order_id
       );
-      const orderRecord = data as unknown as Record<string, unknown>;
-      const orderMeta = (orderRecord['order_meta'] as Record<string, unknown> | undefined) || {};
+      const orderMeta = data.order_meta || {};
       const redirectUrl =
-        (typeof orderMeta['payment_link'] === 'string' ? orderMeta['payment_link'] : undefined) ||
-        (typeof orderRecord['payment_link'] === 'string' ? orderRecord['payment_link'] : undefined);
+        (typeof orderMeta.payment_link === 'string' ? orderMeta.payment_link : undefined) ||
+        (typeof data.payment_link === 'string' ? data.payment_link : undefined);
       pendingResult.metadata = {
         environment: this.environment,
         ...(data.payment_session_id ? { paymentSessionId: data.payment_session_id } : {}),
@@ -477,6 +520,8 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         orderStatus === 'CANCELLED'
       ) {
         status = orderStatus === 'EXPIRED' ? 'cancelled' : 'failed';
+      } else if (orderStatus === 'ACTIVE' || orderStatus === 'PROCESSING') {
+        status = 'processing';
       } else {
         status = 'pending';
       }
@@ -625,6 +670,30 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         typeof options.payload === 'string' ? options.payload : JSON.stringify(options.payload);
       if (!options.timestamp) {
         throw new Error('Cashfree webhook timestamp is required');
+      }
+
+      // Replay protection: reject webhooks with stale timestamps (>5 min old)
+      const webhookTimestamp = parseInt(options.timestamp, 10);
+      if (Number.isNaN(webhookTimestamp)) {
+        await this.logger.log(
+          LogType.PAYMENT,
+          LogLevel.WARN,
+          'Cashfree webhook rejected — invalid timestamp format',
+          'CashfreePaymentAdapter',
+          {}
+        );
+        return false;
+      }
+      const now = Math.floor(Date.now() / 1000);
+      if (Math.abs(now - webhookTimestamp) > 300) {
+        await this.logger.log(
+          LogType.PAYMENT,
+          LogLevel.WARN,
+          'Cashfree webhook rejected — timestamp outside 5-minute window',
+          'CashfreePaymentAdapter',
+          { webhookTimestamp, now, drift: now - webhookTimestamp }
+        );
+        return false;
       }
 
       const expectedSignature = crypto

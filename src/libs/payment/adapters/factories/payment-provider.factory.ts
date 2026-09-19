@@ -32,79 +32,9 @@ export class PaymentProviderFactory {
   }
 
   /**
-   * Create payment provider adapter based on configuration
-   */
-  async createAdapter(config: PaymentProviderConfig): Promise<PaymentProviderAdapter> {
-    this.assertProviderSupported(config.provider);
-    let adapter: PaymentProviderAdapter;
-
-    switch (config.provider) {
-      case PaymentProvider.RAZORPAY: {
-        const { RazorpayPaymentAdapter } =
-          await import('@payment/adapters/razorpay/razorpay-payment.adapter');
-        adapter = new RazorpayPaymentAdapter(this.loggingService);
-        break;
-      }
-
-      case PaymentProvider.CASHFREE: {
-        await import('@payment/adapters/cashfree/cashfree-payment.adapter');
-        throw new Error(
-          'Cashfree adapter requires HttpService. Use createAdapterWithHttpService() method instead.'
-        );
-      }
-
-      case PaymentProvider.PHONEPE: {
-        await import('@nestjs/axios');
-        await import('@payment/adapters/phonepe/phonepe-payment.adapter');
-        throw new Error(
-          'PhonePe adapter requires HttpService. Use createAdapterWithHttpService() method instead.'
-        );
-      }
-
-      case PaymentProvider.ZOHO: {
-        await import('@nestjs/axios');
-        await import('@payment/adapters/zoho/zoho-payment.adapter');
-        throw new Error(
-          'Zoho adapter requires HttpService. Use createAdapterWithHttpService() method instead.'
-        );
-      }
-
-      case PaymentProvider.EASEBUZZ: {
-        await import('@nestjs/axios');
-        await import('@payment/adapters/easebuzz/easebuzz-payment.adapter');
-        throw new Error(
-          'Easebuzz adapter requires HttpService. Use createAdapterWithHttpService() method instead.'
-        );
-      }
-
-      case PaymentProvider.PAYTM: {
-        await import('@nestjs/axios');
-        await import('@payment/adapters/paytm/paytm-payment.adapter');
-        throw new Error(
-          'Paytm adapter requires HttpService. Use createAdapterWithHttpService() method instead.'
-        );
-      }
-
-      case PaymentProvider.PAYU: {
-        await import('@nestjs/axios');
-        await import('@payment/adapters/payu/payu-payment.adapter');
-        throw new Error(
-          'PayU adapter requires HttpService. Use createAdapterWithHttpService() method instead.'
-        );
-      }
-
-      default:
-        throw new Error(`Unsupported payment provider: ${config.provider}`);
-    }
-
-    // Initialize adapter with configuration
-    adapter.initialize(config);
-
-    return adapter;
-  }
-
-  /**
-   * Create payment provider adapter with HttpService (for Cashfree, PhonePe, Easebuzz, Paytm)
+   * Create payment provider adapter with HttpService (for all HTTP-requiring providers)
+   * Razorpay is also routed here for consistency — it doesn't require HttpService but
+   * accepts it without error, so a single factory method covers every provider.
    */
   async createAdapterWithHttpService(
     config: PaymentProviderConfig,

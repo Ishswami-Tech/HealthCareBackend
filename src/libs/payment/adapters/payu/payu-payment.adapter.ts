@@ -22,6 +22,7 @@ import type {
   RefundResult,
   WebhookVerificationOptions,
   PaymentProviderConfig,
+  PaymentVerificationCapability,
 } from '@core/types/payment.types';
 import * as crypto from 'crypto';
 
@@ -118,6 +119,19 @@ export class PayUPaymentAdapter extends BasePaymentAdapter {
    */
   getProviderName(): string {
     return 'payu';
+  }
+
+  /**
+   * PayU uses order IDs (transaction IDs / `txnid`) for status verification.
+   * The order ID from `createPaymentIntent()` maps to the PayU transaction ID.
+   */
+  getVerificationCapability(): PaymentVerificationCapability {
+    return {
+      idType: 'order_id',
+      canVerifyByOrderId: () => true,
+      canVerifyByPaymentId: () => false,
+      requiresCapturedPayment: () => false,
+    };
   }
 
   /**

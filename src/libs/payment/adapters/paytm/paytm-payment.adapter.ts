@@ -22,6 +22,7 @@ import type {
   RefundResult,
   WebhookVerificationOptions,
   PaymentProviderConfig,
+  PaymentVerificationCapability,
 } from '@core/types/payment.types';
 import * as crypto from 'crypto';
 
@@ -172,6 +173,19 @@ export class PaytmBusinessPaymentAdapter extends BasePaymentAdapter {
    */
   getProviderName(): string {
     return 'paytm';
+  }
+
+  /**
+   * Paytm uses order IDs (the `orderId` from `createPaymentIntent()`) for status lookups.
+   * Their `/v3/order/status` endpoint accepts the order ID.
+   */
+  getVerificationCapability(): PaymentVerificationCapability {
+    return {
+      idType: 'order_id',
+      canVerifyByOrderId: () => true,
+      canVerifyByPaymentId: () => false,
+      requiresCapturedPayment: () => false,
+    };
   }
 
   /**
