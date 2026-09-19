@@ -51,5 +51,15 @@
     ],
     "deny": [],
     "ask": []
-  }
+  },
+  "enabledMcpjsonServers": [
+    "shadcn",
+    "context7",
+    "postgres",
+    "backend-logger",
+    "contabo-healthcare",
+    "contabo-healthcare-preprod",
+    "contabo-dataspace",
+    "chrome-devtools"
+  ]
 }

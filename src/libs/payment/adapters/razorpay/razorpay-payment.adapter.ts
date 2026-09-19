@@ -389,7 +389,12 @@ export class RazorpayPaymentAdapter extends BasePaymentAdapter {
           paymentId: options.paymentId,
         }
       );
-      throw new Error(`Razorpay payment verification failed: ${errorMessage}`);
+      const causeMessage = error instanceof Error ? error.message : JSON.stringify(error);
+      const errorToThrow = new Error(`Razorpay payment verification failed: ${errorMessage} (cause: ${causeMessage})`);
+      if (error instanceof Error) {
+        errorToThrow.stack = error.stack ?? '';
+      }
+      throw errorToThrow;
     }
   }
 
