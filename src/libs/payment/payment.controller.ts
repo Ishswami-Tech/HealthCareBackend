@@ -576,8 +576,14 @@ export class PaymentController {
       ]);
       const appointmentId = this.getFirstStringAtPath(dataObj, [
         ['order', 'order_tags', 'appointmentId'],
+        ['order', 'order_meta', 'appointmentId'],
         ['appointmentId'],
         ['appointment_id'],
+      ]);
+      const clinicIdFromTags = this.getFirstStringAtPath(dataObj, [
+        ['order', 'order_tags', 'clinicId'],
+        ['order', 'order_meta', 'clinicId'],
+        ['clinicId'],
       ]);
       const paymentId =
         this.getFirstStringAtPath(dataObj, [
@@ -594,6 +600,7 @@ export class PaymentController {
       ]).toUpperCase();
       const resolvedClinicId =
         clinicId ||
+        clinicIdFromTags ||
         (await this.resolveClinicIdFromPaymentReferences(paymentId, orderId)) ||
         (await this.resolveClinicIdFromAppointment(appointmentId));
 

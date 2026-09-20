@@ -37,10 +37,11 @@ export interface PaymentHandoffTokenResult {
 }
 
 /**
- * Token lifetime in seconds (5 minutes)
- * Enough for user to complete payment, short enough to prevent replay
+ * Token lifetime in seconds (10 minutes)
+ * Gives users enough time to complete payment across redirect + frontend render,
+ * while still short enough to prevent replay attacks.
  */
-const HANDOFF_TOKEN_TTL_SECONDS = 300;
+const HANDOFF_TOKEN_TTL_SECONDS = 600;
 
 @Injectable()
 export class PaymentHandoffTokenService {
@@ -154,7 +155,12 @@ export class PaymentHandoffTokenService {
           LogLevel.WARN,
           'Payment handoff token missing required fields',
           'PaymentHandoffTokenService',
-          { payloadKeys: Object.keys(payload) }
+          {
+            payloadKeys: Object.keys(payload),
+            orderId: payload.orderId,
+            clinicId: payload.clinicId,
+            jti: payload.jti,
+          }
         );
         return null;
       }
@@ -167,7 +173,12 @@ export class PaymentHandoffTokenService {
           LogLevel.WARN,
           'Payment handoff token expired',
           'PaymentHandoffTokenService',
-          { orderId: payload.orderId, expiredAt: new Date(payload.exp * 1000).toISOString() }
+          {
+            orderId: payload.orderId,
+            expiredAt: new Date(payload.exp * 1000).toISOString(),
+            now: new Date(now * 1000).toISOString(),
+            expiredSecondsAgo: now - payload.exp,
+          }
         );
         return null;
       }
@@ -179,7 +190,7 @@ export class PaymentHandoffTokenService {
           LogLevel.WARN,
           'Payment handoff token version not supported',
           'PaymentHandoffTokenService',
-          { version: payload.version }
+          { orderId: payload.orderId, version: payload.version }
         );
         return null;
       }
@@ -203,7 +214,11 @@ export class PaymentHandoffTokenService {
           LogLevel.WARN,
           'Payment handoff token integrity check failed',
           'PaymentHandoffTokenService',
-          { orderId: payload.orderId }
+          {
+            orderId: payload.orderId,
+            storedIntegrityPrefix: payload.integrity.slice(0, 16),
+            calculatedIntegrityPrefix: calculatedHash.slice(0, 16),
+          }
         );
         return null;
       }
@@ -224,12 +239,24 @@ export class PaymentHandoffTokenService {
 
       return payload;
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      // Distinguish JWT decode/verify failures from other errors
+      const isJwtError =
+        errorMessage.includes('jwt') ||
+        errorMessage.includes('jose') ||
+        errorMessage.includes('signature') ||
+        errorMessage.includes('expired') ||
+        errorMessage.includes('JsonWebTokenError') ||
+        errorMessage.includes('TokenExpiredError');
+
       void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.WARN,
-        'Payment handoff token verification failed',
+        isJwtError
+          ? 'Payment handoff token JWT verification failed'
+          : 'Payment handoff token verification failed',
         'PaymentHandoffTokenService',
-        { error: error instanceof Error ? error.message : 'Unknown error' }
+        { error: errorMessage, isJwtError }
       );
       return null;
     }

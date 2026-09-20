@@ -39,10 +39,17 @@ interface CashfreeOrderRequest {
     customer_email?: string;
     customer_name?: string;
   };
+  // Cashfree only recognizes a fixed set of keys here (return_url, notify_url,
+  // payment_methods). Arbitrary keys are dropped, so custom identifiers must go
+  // in order_tags instead.
   order_meta?: {
     return_url?: string;
     notify_url?: string;
+    payment_methods?: string;
+    payment_link?: string;
   };
+  // Custom key/value pairs echoed back on the order and in webhooks (max 10).
+  order_tags?: Record<string, string>;
   order_note?: string;
 }
 
@@ -362,6 +369,20 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         return this.createErrorResult(err);
       }
 
+      // order_meta carries ONLY Cashfree's recognized keys.
+      const orderMeta: NonNullable<CashfreeOrderRequest['order_meta']> = {};
+      if (returnUrl) orderMeta.return_url = returnUrl;
+      if (notifyUrl) orderMeta.notify_url = notifyUrl;
+
+      // Custom identifiers go in order_tags, which Cashfree persists and echoes
+      // back in the webhook payload. This is what lets the webhook resolve the
+      // clinic without a query param (see PaymentController.handleCashfreeWebhook).
+      const orderTags: Record<string, string> = {};
+      if (options.clinicId) orderTags['clinicId'] = options.clinicId;
+      if (options.appointmentId) orderTags['appointmentId'] = options.appointmentId;
+      if (options.subscriptionId) orderTags['subscriptionId'] = options.subscriptionId;
+      if (options.orderId) orderTags['orderId'] = options.orderId;
+
       const body: CashfreeOrderRequest = {
         order_amount: amountInUnits,
         order_currency: options.currency.toUpperCase(),
@@ -372,12 +393,8 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
           ...(options.customerEmail && { customer_email: options.customerEmail }),
           ...(options.customerName && { customer_name: options.customerName }),
         },
-        ...(returnUrl && {
-          order_meta: {
-            return_url: returnUrl,
-            ...(notifyUrl && { notify_url: notifyUrl }),
-          },
-        }),
+        ...(Object.keys(orderMeta).length > 0 ? { order_meta: orderMeta } : {}),
+        ...(Object.keys(orderTags).length > 0 ? { order_tags: orderTags } : {}),
         ...(options.description && { order_note: options.description }),
       };
 
@@ -466,10 +483,11 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         options.currency,
         data.order_id
       );
-      const orderMeta = data.order_meta || {};
+      const responseOrderMeta = data.order_meta || {};
       const redirectUrl =
-        (typeof orderMeta.payment_link === 'string' ? orderMeta.payment_link : undefined) ||
-        (typeof data.payment_link === 'string' ? data.payment_link : undefined);
+        (typeof responseOrderMeta.payment_link === 'string'
+          ? responseOrderMeta.payment_link
+          : undefined) || (typeof data.payment_link === 'string' ? data.payment_link : undefined);
       pendingResult.metadata = {
         environment: this.environment,
         ...(data.payment_session_id ? { paymentSessionId: data.payment_session_id } : {}),
