@@ -23,6 +23,7 @@ import type {
   PaymentVerificationCapability,
 } from '@core/types/payment.types';
 import type { ProviderHealthStatus } from '@communication/adapters/interfaces/provider-health-status.types';
+import { toError } from '@core/errors/error-message.util';
 
 /**
  * Base Payment Adapter
@@ -63,6 +64,14 @@ export abstract class BasePaymentAdapter implements PaymentProviderAdapter {
       canVerifyByPaymentId: () => true,
       requiresCapturedPayment: () => false,
     };
+  }
+
+  /**
+   * Whether this gateway requires a customer phone number to create an order.
+   * Override in subclasses that make it mandatory.
+   */
+  requiresCustomerPhone(): boolean {
+    return false;
   }
 
   /**
@@ -154,7 +163,11 @@ export abstract class BasePaymentAdapter implements PaymentProviderAdapter {
       try {
         return await operation();
       } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
+        // Payment SDKs reject with plain objects, not Errors. `String(error)` on
+        // those produced the literal message "[object Object]", which then
+        // propagated through every downstream log. Normalize instead so the
+        // gateway's own description survives.
+        lastError = toError(error);
 
         if (attempt === maxRetries - 1) {
           // Last attempt failed

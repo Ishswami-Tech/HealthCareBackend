@@ -14,6 +14,9 @@ import * as crypto from 'crypto';
 import { LoggingService } from '@logging';
 import { LogType, LogLevel } from '@core/types';
 import { BasePaymentAdapter } from '../base/base-payment-adapter';
+import { HealthcareError } from '@core/errors/healthcare-error.class';
+import { ErrorCode } from '@core/errors/error-codes.enum';
+import { toError } from '@core/errors/error-message.util';
 import type {
   PaymentIntentOptions,
   PaymentResult,
@@ -31,6 +34,13 @@ interface RazorpayInstance {
   orders: {
     create(options: RazorpayOrderOptions): Promise<RazorpayOrder>;
     fetch(orderId: string): Promise<RazorpayOrder>;
+    /**
+     * List every payment attempt made against an order.
+     * This is the only way to verify a Razorpay payment when the caller holds an
+     * order ID rather than a `pay_*` payment ID (e.g. the handoff callback).
+     * @see https://razorpay.com/docs/api/orders/fetch-payments
+     */
+    fetchPayments(orderId: string): Promise<RazorpayOrderPayments>;
   };
   payments: {
     fetch(paymentId: string): Promise<RazorpayPayment>;
@@ -73,6 +83,12 @@ interface RazorpayPayment {
   description: string;
   created_at: number;
   captured: boolean;
+}
+
+interface RazorpayOrderPayments {
+  entity: string;
+  count: number;
+  items: RazorpayPayment[];
 }
 
 interface RazorpayRefundOptions {
@@ -211,16 +227,33 @@ export class RazorpayPaymentAdapter extends BasePaymentAdapter {
   }
 
   /**
-   * Razorpay's `payments.fetch()` requires a payment ID (`pay_*`).
-   * Order IDs (`order_*`) cannot be used to verify payment completion.
+   * Razorpay's `payments.fetch()` requires a payment ID (`pay_*`); an order ID
+   * (`order_*`) passed to it fails with `BAD_REQUEST_ERROR`.
+   *
+   * Order IDs ARE verifiable, just via a different endpoint
+   * (`orders.fetchPayments()`), which `verifyPayment()` routes to automatically.
+   * `isVerifiablePaymentId` lets the callback layer detect the common case where
+   * an order ID has been carried in a `paymentId` field so it does not get sent
+   * to the payment endpoint.
    */
   getVerificationCapability(): PaymentVerificationCapability {
     return {
-      idType: 'payment_id',
-      canVerifyByOrderId: () => false,
+      idType: 'either',
+      canVerifyByOrderId: () => true,
       canVerifyByPaymentId: () => true,
       requiresCapturedPayment: () => true,
+      isVerifiablePaymentId: (id: string) => RazorpayPaymentAdapter.isPaymentId(id),
     };
+  }
+
+  /** Razorpay payment IDs are prefixed `pay_`. */
+  private static isPaymentId(id: string | undefined): boolean {
+    return typeof id === 'string' && id.startsWith('pay_');
+  }
+
+  /** Razorpay order IDs are prefixed `order_`. */
+  private static isOrderId(id: string | undefined): boolean {
+    return typeof id === 'string' && id.startsWith('order_');
   }
 
   /**
@@ -329,21 +362,119 @@ export class RazorpayPaymentAdapter extends BasePaymentAdapter {
   }
 
   /**
-   * Verify payment status via Razorpay
+   * Fetch a single payment by its `pay_*` identifier.
+   */
+  private async fetchPaymentById(paymentId: string): Promise<RazorpayPayment> {
+    return await this.executeWithRetry(async () => {
+      if (!this.razorpay) {
+        throw new Error('Razorpay instance not initialized');
+      }
+      return await this.razorpay.payments.fetch(paymentId);
+    });
+  }
+
+  /**
+   * Resolve the most relevant payment attempt made against an order.
+   *
+   * Returns `null` when the order exists but has no payment attempt yet, which is
+   * a legitimate state (customer opened checkout and abandoned it).
+   */
+  private async fetchPaymentForOrder(orderId: string): Promise<RazorpayPayment | null> {
+    const orderPayments = await this.executeWithRetry(async () => {
+      if (!this.razorpay) {
+        throw new Error('Razorpay instance not initialized');
+      }
+      return await this.razorpay.orders.fetchPayments(orderId);
+    });
+
+    const items = Array.isArray(orderPayments.items) ? orderPayments.items : [];
+    if (items.length === 0) {
+      return null;
+    }
+
+    // An order can hold several attempts (failed retries then a success).
+    // Rank settled outcomes ahead of failures, then prefer the newest attempt.
+    const rank = (payment: RazorpayPayment): number => {
+      if (payment.status === 'captured' || payment.captured) return 0;
+      if (payment.status === 'authorized') return 1;
+      if (payment.status === 'refunded') return 2;
+      return 3;
+    };
+
+    return (
+      [...items].sort(
+        (left, right) => rank(left) - rank(right) || right.created_at - left.created_at
+      )[0] ?? null
+    );
+  }
+
+  /**
+   * Verify payment status via Razorpay.
+   *
+   * The handoff callback only ever holds the ORDER id, because a `pay_*` payment
+   * id does not exist until the customer finishes checkout. Passing an `order_*`
+   * id to `payments.fetch()` fails with `BAD_REQUEST_ERROR`, so this routes by ID
+   * shape and uses the order's payment list when only an order id is available.
    */
   async verifyPayment(options: PaymentStatusOptions): Promise<PaymentStatusResult> {
     if (!this.razorpay) {
       throw new Error('Razorpay adapter not initialized');
     }
 
+    const suppliedId = options.paymentId;
+    const paymentId = RazorpayPaymentAdapter.isPaymentId(suppliedId) ? suppliedId : undefined;
+    const orderId = RazorpayPaymentAdapter.isOrderId(suppliedId)
+      ? suppliedId
+      : options.orderId && RazorpayPaymentAdapter.isOrderId(options.orderId)
+        ? options.orderId
+        : undefined;
+
+    if (!paymentId && !orderId) {
+      // Log the offending ids; keep them out of the thrown error (see note below
+      // on HttpExceptionFilter leaking metadata into responses).
+      await this.logger.log(
+        LogType.PAYMENT,
+        LogLevel.ERROR,
+        'Razorpay verification called with neither a payment id (pay_*) nor an order id (order_*)',
+        'RazorpayPaymentAdapter',
+        { suppliedId, suppliedOrderId: options.orderId }
+      );
+
+      throw new HealthcareError(
+        ErrorCode.VALIDATION_INVALID_FORMAT,
+        'Razorpay verification requires a valid payment or order identifier',
+        undefined,
+        undefined,
+        'RazorpayPaymentAdapter.verifyPayment'
+      );
+    }
+
     try {
-      // Fetch payment details from Razorpay
-      const payment = await this.executeWithRetry(async () => {
-        if (!this.razorpay) {
-          throw new Error('Razorpay instance not initialized');
-        }
-        return await this.razorpay.payments.fetch(options.paymentId);
-      });
+      const payment = paymentId
+        ? await this.fetchPaymentById(paymentId)
+        : await this.fetchPaymentForOrder(orderId!);
+
+      if (!payment) {
+        // Order created but not paid yet. Report pending rather than throwing so
+        // the callback completes and the webhook remains the source of truth.
+        await this.logger.log(
+          LogType.PAYMENT,
+          LogLevel.INFO,
+          'Razorpay order has no payment attempt yet; reporting pending',
+          'RazorpayPaymentAdapter',
+          { orderId }
+        );
+
+        return {
+          paymentId: suppliedId,
+          status: 'pending',
+          amount: 0,
+          currency: 'INR',
+          provider: this.getProviderName(),
+          timestamp: new Date(),
+          metadata: { orderId, noPaymentAttempt: true },
+        };
+      }
 
       // Map Razorpay status to our status
       let status: PaymentStatusResult['status'];
@@ -378,23 +509,39 @@ export class RazorpayPaymentAdapter extends BasePaymentAdapter {
         },
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+      // A HealthcareError from a nested call is already structured — do not re-wrap.
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      const normalized = toError(error);
+
+      // Full detail goes to the log only. It is deliberately NOT attached to the
+      // thrown HealthcareError: the global HttpExceptionFilter copies error
+      // metadata straight into the client response body without sanitization, so
+      // gateway codes and internal ids would otherwise leak to the caller.
       await this.logger.log(
         LogType.PAYMENT,
         LogLevel.ERROR,
         'Failed to verify Razorpay payment',
         'RazorpayPaymentAdapter',
         {
-          error: errorMessage,
-          paymentId: options.paymentId,
+          error: normalized.message,
+          ...(normalized.code && { gatewayCode: normalized.code }),
+          ...(normalized.statusCode !== undefined && { gatewayStatusCode: normalized.statusCode }),
+          suppliedId,
+          resolvedBy: paymentId ? 'payment_id' : 'order_id',
+          ...(orderId && { orderId }),
         }
       );
-      const causeMessage = error instanceof Error ? error.message : JSON.stringify(error);
-      const errorToThrow = new Error(`Razorpay payment verification failed: ${errorMessage} (cause: ${causeMessage})`);
-      if (error instanceof Error) {
-        errorToThrow.stack = error.stack ?? '';
-      }
-      throw errorToThrow;
+
+      throw new HealthcareError(
+        ErrorCode.PAYMENT_SERVICE_FAILED,
+        'Razorpay payment verification failed',
+        undefined,
+        undefined,
+        'RazorpayPaymentAdapter.verifyPayment'
+      );
     }
   }
 

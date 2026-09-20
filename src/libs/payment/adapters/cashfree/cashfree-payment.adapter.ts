@@ -15,6 +15,7 @@ import { HttpService } from '@infrastructure/http';
 import { LoggingService } from '@logging';
 import { LogType, LogLevel, PaymentVerificationCapability } from '@core/types';
 import { BasePaymentAdapter } from '../base/base-payment-adapter';
+import { extractErrorMessage, toError } from '@core/errors/error-message.util';
 import type {
   PaymentIntentOptions,
   PaymentResult,
@@ -167,6 +168,16 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
       canVerifyByPaymentId: () => false,
       requiresCapturedPayment: () => false,
     };
+  }
+
+  /**
+   * Cashfree makes `customer_details.customer_phone` mandatory on order creation,
+   * so an order can never be created for a customer with no phone on file.
+   * Declaring it lets `PaymentService` route such requests to another provider
+   * instead of attempting a guaranteed rejection.
+   */
+  override requiresCustomerPhone(): boolean {
+    return true;
   }
 
   /**
@@ -424,16 +435,16 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
             {
               attempt: attempt + 1,
               maxRetries: this.maxRetries,
-              error: error instanceof Error ? error.message : String(error),
+              // Cashfree rejects with an axios-shaped object; String(error) would
+              // log "[object Object]" and hide the gateway's own description.
+              error: extractErrorMessage(error) ?? 'Unknown Cashfree error',
             }
           );
         }
       }
 
       if (!data?.order_id) {
-        throw lastError instanceof Error
-          ? lastError
-          : new Error('Invalid response from Cashfree create order');
+        throw toError(lastError, 'Invalid response from Cashfree create order');
       }
 
       await this.logger.log(

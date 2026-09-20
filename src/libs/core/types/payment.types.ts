@@ -168,6 +168,18 @@ export interface PaymentProviderAdapter {
    * Used by the callback layer to avoid passing the wrong ID type to the gateway.
    */
   getVerificationCapability(): PaymentVerificationCapability;
+
+  /**
+   * Whether this gateway refuses to create an order without a customer phone
+   * number (Cashfree, for example, makes `customer_phone` mandatory).
+   *
+   * `PaymentService` consults this before attempting a provider so a request with
+   * no phone on file is routed to a provider that can actually serve it, instead
+   * of spending a failed attempt and a failure cooldown on a guaranteed rejection.
+   *
+   * Defaults to `false` when not implemented.
+   */
+  requiresCustomerPhone?(): boolean;
 }
 
 /**
@@ -202,6 +214,17 @@ export interface PaymentVerificationCapability {
   canVerifyByPaymentId(): boolean;
   /** Whether the gateway requires the payment to be captured before verification succeeds */
   requiresCapturedPayment(): boolean;
+  /**
+   * Whether a given ID is actually usable against the gateway's payment endpoint.
+   *
+   * `canVerifyByPaymentId()` only states that the endpoint EXISTS; it cannot tell
+   * whether the caller's ID is really a payment ID. Providers with distinguishable
+   * ID formats (e.g. Razorpay's `pay_` vs `order_` prefixes) implement this so the
+   * callback layer does not send an order ID to a payment-only endpoint.
+   *
+   * When not implemented, callers should assume any non-empty ID is acceptable.
+   */
+  isVerifiablePaymentId?(id: string): boolean;
 }
 
 /**

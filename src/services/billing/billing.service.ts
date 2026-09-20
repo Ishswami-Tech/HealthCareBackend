@@ -2802,11 +2802,37 @@ export class BillingService implements OnModuleInit {
         (left, right) => right.createdAt.getTime() - left.createdAt.getTime()
       )[0] || null;
 
-    // Get user details — phone is guaranteed from WhatsApp OTP registration
+    // Phone is guaranteed only when the PATIENT pays for their own appointment:
+    // BillingController carries @RequiresProfileCompletion(), and ProfileCompletionGuard
+    // demands a verified phone for the PATIENT role. It is NOT guaranteed here, because
+    // this endpoint is also open to SUPER_ADMIN / CLINIC_ADMIN / FINANCE_BILLING, and
+    // those roles are in STAFF_ROLES, which bypass that guard entirely. In that case the
+    // phone below belongs to the patient being billed, who may never have completed
+    // profile completion themselves (staff-created or legacy patient records).
     const user = billingUserId ? await this.databaseService.findUserByIdSafe(billingUserId) : null;
 
-    // Fallback: if user record somehow lacks a phone (legacy data), derive from patient record
-    const customerPhone = user?.phone?.trim() || '';
+    // NOTE: there is no secondary source to fall back to — Patient has no phone column;
+    // the number lives only on User. A phone is deliberately NOT substituted from the
+    // requester or the clinic, since that would write someone else's contact details into
+    // the patient's payment record. Providers that require a phone are skipped instead
+    // (see PaymentService.createPaymentIntent).
+    const customerPhone = user?.phone?.trim() || undefined;
+
+    if (!customerPhone) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        'No phone number on file for the patient being billed; phone-dependent payment providers will be skipped',
+        'BillingService.processAppointmentPayment',
+        {
+          appointmentId: appointment.id,
+          clinicId: appointment.clinicId,
+          billingUserId,
+          requesterUserId: requester?.userId,
+          requesterRole: requester?.role,
+        }
+      );
+    }
 
     if (existingPayment && String(existingPayment.status) === String(PaymentStatus.COMPLETED)) {
       throw new BadRequestException('Payment is already completed for this appointment');
@@ -2888,7 +2914,7 @@ export class BillingService implements OnModuleInit {
       currency: 'INR',
       orderId: gatewayOrderId,
       customerId: billingUserId || appointment.patientId,
-      customerPhone,
+      ...(customerPhone && { customerPhone }),
       ...(user?.email && { customerEmail: user.email }),
       ...(user?.name && { customerName: user.name }),
       description: `Payment for ${serviceMetadata.label} appointment`,
