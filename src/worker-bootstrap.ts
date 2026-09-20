@@ -10,6 +10,10 @@
  * - Optimized queue processing
  */
 
+// Initialize Sentry first so background-job errors in this worker process are
+// captured too. Relative path avoids depending on path-alias registration
+// timing. No-ops when no DSN is configured.
+import './instrument/sentry';
 import type { INestApplication } from '@nestjs/common';
 import { Module, forwardRef, type DynamicModule, Logger } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';

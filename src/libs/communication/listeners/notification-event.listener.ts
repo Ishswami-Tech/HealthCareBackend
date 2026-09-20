@@ -1735,8 +1735,20 @@ export class NotificationEventListener implements OnModuleInit {
     payload: EnterpriseEventPayload
   ): NotificationData | null {
     const eventPayload = payload as unknown as Record<string, unknown>;
-    const appointment = (eventPayload['appointment'] as Record<string, unknown> | undefined) || {};
-    const nestedPayload = (eventPayload['payload'] as Record<string, unknown> | undefined) || {};
+    // normalizePayload wraps enterprise events: appointment data can be at
+    // eventPayload.payload.appointment (enterprise) or eventPayload.metadata.appointment (plain).
+    // Check all paths before falling back to empty object.
+    const appointmentFromPayload = asRecord(
+      (eventPayload['payload'] as Record<string, unknown> | undefined)?.['appointment']
+    );
+    const appointmentFromMetadata = asRecord(
+      (eventPayload['metadata'] as Record<string, unknown> | undefined)?.['appointment']
+    );
+    const appointment = appointmentFromPayload || appointmentFromMetadata || {};
+    const nestedPayload =
+      asRecord((eventPayload['payload'] as Record<string, unknown> | undefined)?.['payload']) ||
+      asRecord(eventPayload['payload'] as Record<string, unknown> | undefined) ||
+      {};
     const asString = (value: unknown): string | undefined =>
       typeof value === 'string' && value.trim() ? value.trim() : undefined;
     const patientRecord = asRecord(appointment['patient']);

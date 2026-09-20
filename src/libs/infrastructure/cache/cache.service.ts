@@ -96,7 +96,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     // ConfigService might not be fully initialized yet
     // L1 cache configuration will be loaded in onModuleInit
     this.enableL1 = false; // Will be set in onModuleInit
-    this.l1TTL = 30; // Default, will be overridden in onModuleInit
+    this.l1TTL = 300; // Will be overridden in onModuleInit
   }
 
   async onModuleInit(): Promise<void> {
@@ -106,7 +106,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
     // Load L1 cache configuration
     this.enableL1 = this.configService.getEnvBoolean('L1_CACHE_ENABLED', true);
-    this.l1TTL = this.configService.getEnvNumber('L1_CACHE_DEFAULT_TTL', 30);
+    this.l1TTL = this.configService.getEnvNumber('L1_CACHE_DEFAULT_TTL', 300);
 
     await this.loggingService.log(
       LogType.SYSTEM,

@@ -146,6 +146,7 @@
     "@phonepe-pg/pg-sdk-node": "^2.0.6",
     "@prisma/adapter-pg": "7.10.0",
     "@prisma/client": "7.10.0",
+    "@sentry/nestjs": "^10.75.0",
     "@socket.io/redis-adapter": "^8.3.0",
     "@types/bcrypt": "^6.0.0",
     "@types/nodemailer": "8.0.2",

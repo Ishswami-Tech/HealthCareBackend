@@ -529,6 +529,59 @@ export class BaseSocket
     }
   }
 
+  @SubscribeMessage('token_refresh')
+  async handleTokenRefresh(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { token: string }
+  ): Promise<
+    WsResponse<{
+      success: boolean;
+      authenticated?: boolean;
+      user?: AuthenticatedUser;
+      error?: string;
+    }>
+  > {
+    try {
+      if (!this.authMiddleware || !data.token) {
+        return {
+          event: 'token_refresh',
+          data: { success: false, error: 'Invalid token or auth middleware unavailable' },
+        };
+      }
+
+      // Re-authenticate with the new token
+      const user = await this.authMiddleware.validateConnection(client);
+      this.clientMetadata.set(client.id, user);
+
+      // Re-join rooms with updated user context
+      await this.autoJoinRooms(client, user);
+
+      safeLog(
+        this.loggingService,
+        LogType.AUTH,
+        LogLevel.INFO,
+        `Token refreshed for client ${client.id} (User: ${user.userId})`,
+        this.serviceName
+      );
+
+      return {
+        event: 'token_refresh',
+        data: { success: true, authenticated: true, user },
+      };
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Token refresh failed';
+      safeLogError(this.loggingService, error, this.serviceName, {
+        operation: 'handleTokenRefresh',
+        clientId: client.id,
+      });
+
+      return {
+        event: 'token_refresh',
+        data: { success: false, error: errorMessage },
+      };
+    }
+  }
+
   protected async joinRoom(client: Socket, room: string): Promise<{ success: boolean }> {
     try {
       // Add client to room

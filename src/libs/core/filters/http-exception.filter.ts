@@ -13,6 +13,7 @@ import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
+import { captureError } from '../../../instrument/sentry';
 import type {
   RequestHeaders,
   ErrorLog,
@@ -187,7 +188,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
    *
    * @param exception - The exception that was thrown
    * @param host - The arguments host containing request/response context
-   * @description Handles all exceptions, provides structured logging, and sends appropriate responses
+   * @description Handles all exceptions, provides structured logging, and sends appropriate responses.
+   * Sentry reporting is handled centrally in HealthcareErrorsService.handleError
+   * (only critical/5xx errors are forwarded), so it is intentionally not wired here.
    */
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
@@ -263,6 +266,25 @@ export class HttpExceptionFilter implements ExceptionFilter {
         'HttpExceptionFilter',
         errorLog as unknown as Record<string, unknown>
       );
+      // Forward server errors (5xx) to Sentry with already-sanitized request
+      // context. This is the single capture point for HTTP-surfaced errors, so
+      // 4xx (validation, auth, not-found) are never sent — keeping Sentry a
+      // signal of real incidents. No-op when Sentry is not configured.
+      captureError(exception, {
+        level: 'error',
+        tags: {
+          method: request.method,
+          statusCode: String(status),
+          ...(exception instanceof HealthcareError ? { errorCode: String(exception.code) } : {}),
+          ...(typeof errorLog.clinicId === 'string' ? { clinicId: errorLog.clinicId } : {}),
+        },
+        extra: {
+          path: errorLog.path,
+          ...(errorLog.query ? { query: errorLog.query } : {}),
+          ...(errorLog.params ? { params: errorLog.params } : {}),
+          ...(errorLog.body ? { body: errorLog.body } : {}),
+        },
+      });
     } else if (
       status === 404 &&
       (this.isIgnored404(request.url, status) ||

@@ -1,3 +1,9 @@
+// Register tsconfig-paths for path alias resolution at runtime.
+// MUST be the very first import so subsequent alias imports resolve.
+import 'tsconfig-paths/register';
+// Initialize Sentry as early as possible so its auto-instrumentation can patch
+// NestJS/HTTP before those modules load. No-ops when SENTRY_DSN is unset.
+import './instrument/sentry';
 import { nowIso } from '@utils/date-time.util';
 /**
  * Main Bootstrap File
@@ -7,8 +13,6 @@ import { nowIso } from '@utils/date-time.util';
  * - Critical error handling (when LoggingService fails)
  * - All other logging uses LoggingService
  */
-// Register tsconfig-paths for path alias resolution at runtime
-import 'tsconfig-paths/register';
 import { ensurePhonePeClassTransformerCompatibility } from './libs/payment/phonepe-class-transformer.compat';
 import { SwaggerModule } from '@nestjs/swagger';
 import { Logger, INestApplication, ValidationPipeOptions } from '@nestjs/common';

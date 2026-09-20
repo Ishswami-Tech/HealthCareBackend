@@ -35,10 +35,16 @@ import { AnalyticsModule } from './services/analytics/analytics.module';
 import { ProfileCompletionModule } from './services/profile-completion/profile-completion.module';
 import { BusinessRulesModule } from '@core/business-rules';
 import { ScheduleModule } from '@nestjs/schedule';
+import { SentryModule } from '@sentry/nestjs/setup';
 // import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.middleware';
 
 @Module({
   imports: [
+    // Sentry root module — enables NestJS-aware error/performance instrumentation.
+    // The SDK itself is initialized earlier in src/instrument/sentry.ts (imported
+    // at the top of main.ts); this module wires Sentry into Nest's lifecycle.
+    // Inert when no DSN is configured.
+    SentryModule.forRoot(),
     // ConfigModule is @Global() and already configured in config.module.ts
     ConfigModule,
     EventEmitterModule.forRoot({
