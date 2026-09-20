@@ -310,6 +310,10 @@ export class RazorpayPaymentAdapter extends BasePaymentAdapter {
           ...(options.isSubscription && { isSubscription: 'true' }),
           ...(options.subscriptionId && { subscriptionId: options.subscriptionId }),
           ...(options.description && { description: options.description }),
+          // Persist the customer's contact on the order so it is recoverable and
+          // so the frontend checkout can prefill it (see prefill note below).
+          ...(options.customerPhone && { customerPhone: options.customerPhone }),
+          ...(options.customerEmail && { customerEmail: options.customerEmail }),
           ...(options.metadata &&
             Object.entries(options.metadata).reduce(
               (acc, [key, value]) => {
@@ -342,8 +346,26 @@ export class RazorpayPaymentAdapter extends BasePaymentAdapter {
         }
       );
 
-      // Return pending result (payment needs to be completed on frontend)
-      return this.createPendingResult(order.id, options.amount, options.currency, order.id);
+      // Return pending result (payment needs to be completed on frontend).
+      // Echo the customer contact back in metadata so the frontend Razorpay
+      // Checkout can set `prefill.contact`/`prefill.email` — Razorpay does not
+      // read contact from the order, so without this the checkout asks the
+      // customer to type their mobile number even though we already have it.
+      const pending = this.createPendingResult(
+        order.id,
+        options.amount,
+        options.currency,
+        order.id
+      );
+      const prefill: Record<string, string> = {
+        ...(options.customerPhone && { contact: options.customerPhone }),
+        ...(options.customerEmail && { email: options.customerEmail }),
+        ...(options.customerName && { name: options.customerName }),
+      };
+      if (Object.keys(prefill).length > 0) {
+        pending.metadata = { ...(pending.metadata || {}), prefill };
+      }
+      return pending;
     } catch (error) {
       await this.logger.log(
         LogType.PAYMENT,
