@@ -6,7 +6,7 @@ import { EventService } from '@infrastructure/events/event.service';
 import { LoggingService } from '@infrastructure/logging';
 import { EmailService } from '@communication/channels/email/email.service';
 import { EmailTemplatesService } from '@communication/channels/email/email-templates.service';
-import { LogType, LogLevel, AppointmentStatus } from '@core/types';
+import { LogType, LogLevel, AppointmentStatus, PaymentStatus } from '@core/types';
 import { formatCurrencyFromMinorUnits } from '@utils/currency.util';
 
 /**
@@ -806,6 +806,89 @@ export class BillingEventsListener {
           clinicId: payload?.clinicId,
           error: error instanceof Error ? error.stack : undefined,
         }
+      );
+    }
+  }
+
+  /**
+   * An appointment moving to EXPIRED (payment window lapsed, video slot never
+   * confirmed, or a stale video call auto-closed) never touches its Payment
+   * record on its own — without this, a Payment left PENDING stays PENDING
+   * forever since nothing else can pay for an appointment that no longer exists.
+   */
+  @OnEvent('appointment.updated')
+  async handleAppointmentUpdatedForBilling(payload: {
+    status?: string;
+    appointmentId?: string;
+    payload?: { status?: string; appointmentId?: string };
+  }) {
+    const status = payload?.status ?? payload?.payload?.status;
+    if (status !== AppointmentStatus.EXPIRED) {
+      return;
+    }
+
+    const appointmentId = payload?.appointmentId ?? payload?.payload?.appointmentId;
+    if (!appointmentId) {
+      return;
+    }
+
+    await this.expirePendingPaymentsForAppointment(appointmentId, PaymentStatus.EXPIRED);
+  }
+
+  /**
+   * Mirror of the above for explicit cancellations. triggerAppointmentRefund
+   * only refunds payments already COMPLETED — a payment still PENDING on a
+   * cancelled appointment was never charged, so it needs its own transition
+   * to CANCELLED instead of being left PENDING.
+   */
+  @OnEvent('appointment.cancelled')
+  async handleAppointmentCancelledForBilling(payload: {
+    appointmentId?: string;
+    payload?: { appointmentId?: string };
+  }) {
+    const appointmentId = payload?.appointmentId ?? payload?.payload?.appointmentId;
+    if (!appointmentId) {
+      return;
+    }
+
+    await this.expirePendingPaymentsForAppointment(appointmentId, PaymentStatus.CANCELLED);
+  }
+
+  private async expirePendingPaymentsForAppointment(
+    appointmentId: string,
+    terminalStatus: PaymentStatus.EXPIRED | PaymentStatus.CANCELLED
+  ): Promise<void> {
+    try {
+      const pendingPayments = await this.databaseService.findPaymentsSafe({
+        appointmentId,
+        status: PaymentStatus.PENDING,
+      });
+
+      for (const payment of pendingPayments) {
+        try {
+          await this.billingService.updatePayment(payment.id, { status: terminalStatus });
+        } catch (error) {
+          await this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.ERROR,
+            `Failed to move pending payment ${payment.id} to ${terminalStatus}: ${error instanceof Error ? error.message : String(error)}`,
+            'BillingEventsListener',
+            {
+              appointmentId,
+              paymentId: payment.id,
+              terminalStatus,
+              error: error instanceof Error ? error.stack : undefined,
+            }
+          );
+        }
+      }
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to look up pending payments for appointment ${appointmentId}: ${error instanceof Error ? error.message : String(error)}`,
+        'BillingEventsListener',
+        { appointmentId, terminalStatus, error: error instanceof Error ? error.stack : undefined }
       );
     }
   }
