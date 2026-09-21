@@ -11,6 +11,7 @@ import { LoggingModule } from '@infrastructure/logging';
 import { ErrorsModule } from '@core/errors/errors.module';
 import { CacheModule } from '@infrastructure/cache/cache.module';
 import { QueueModule } from '@queue/src/queue.module';
+import { StorageModule } from '@infrastructure/storage/storage.module';
 
 @Module({
   imports: [
@@ -22,7 +23,8 @@ import { QueueModule } from '@queue/src/queue.module';
     LoggingModule,
     ErrorsModule,
     CacheModule,
-    QueueModule, // Queue processing for lab reports, imaging, bulk imports
+    QueueModule,
+    StorageModule,
   ],
   controllers: [EHRController, EHRClinicController],
   providers: [EHRService],
