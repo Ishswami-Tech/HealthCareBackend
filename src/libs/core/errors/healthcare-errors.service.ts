@@ -103,9 +103,9 @@ export class HealthcareErrorsService {
     );
   }
 
-  otpSendFailed(message?: string, context?: string): HealthcareError {
+  otpDeliveryFailed(message?: string, context?: string): HealthcareError {
     return new HealthcareError(
-      ErrorCode.SMS_SERVICE_FAILED,
+      ErrorCode.WHATSAPP_SERVICE_FAILED,
       message || 'Failed to send OTP. Please try again later.',
       HttpStatus.SERVICE_UNAVAILABLE,
       undefined,

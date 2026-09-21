@@ -2,12 +2,16 @@ import { nowIso } from '@utils/date-time.util';
 import { Injectable, NotFoundException, Inject, forwardRef, Optional } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import {
+  MedicalRecordResponse,
+  CreateMedicalRecordInput,
+  MedicalRecordFilters,
   AllergyRecord,
   MedicationRecord,
   MedicalHistoryRecord,
   ClinicEHRRecordFilters,
   GetClinicRecordsByFilterResult,
 } from '@core/types/ehr.types';
+import { AssetType, StaticAssetService } from '@infrastructure/storage/static-asset.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events/event.service';
@@ -80,6 +84,7 @@ export class EHRService {
     private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
+    private readonly staticAssetService: StaticAssetService,
     @Inject(forwardRef(() => EventService))
     eventService: unknown,
     @Optional()
@@ -661,6 +666,393 @@ export class EHRService {
     await this.invalidateUserEHRCache(typedRecord.userId);
   }
 
+  // ============ Medical Records (General File-Based Records) ============
+
+  async createMedicalRecord(data: CreateMedicalRecordInput): Promise<MedicalRecordResponse> {
+    const record = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          healthRecord: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.healthRecord.create({
+          data: {
+            patientId: data.userId,
+            doctorId: data.doctorId || 'system',
+            clinicId: data.clinicId || '',
+            recordType: data.type,
+            title: data.title,
+            content: data.content,
+            notes: data.notes,
+            uploadedBy: data.uploadedBy,
+            fileUrl: '',
+            fileSize: 0,
+            mimeType: '',
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId: data.uploadedBy || data.doctorId || 'system',
+        clinicId: data.clinicId || '',
+        resourceType: 'MEDICAL_RECORD',
+        operation: 'CREATE',
+        resourceId: '',
+        userRole: 'system',
+        details: { userId: data.userId, type: data.type, title: data.title },
+      }
+    );
+
+    const rawRecord = record as unknown as {
+      id: string;
+      patientId: string;
+      clinicId: string;
+      recordType: string;
+      title: string;
+      content?: string;
+      notes?: string;
+      fileUrl?: string;
+      doctorId: string;
+      uploadedBy?: string;
+      createdAt: Date;
+      updatedAt: Date;
+    };
+
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Medical record created',
+      'EHRService',
+      { recordId: rawRecord.id, userId: data.userId, type: data.type }
+    );
+
+    await this.eventService.emit('ehr.medical_record.created', {
+      recordId: rawRecord.id,
+      userId: data.userId,
+      type: data.type,
+    });
+
+    await this.invalidateUserEHRCache(data.userId);
+
+    return this.buildMedicalRecordResponse(rawRecord);
+  }
+
+  private buildMedicalRecordResponse(r: {
+    id: string;
+    patientId: string;
+    clinicId: string;
+    recordType: string;
+    title: string;
+    content?: string;
+    fileUrl?: string;
+    fileSize?: number;
+    mimeType?: string;
+    doctorId: string;
+    notes?: string;
+    uploadedBy?: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }): MedicalRecordResponse {
+    const result = {
+      id: r.id,
+      userId: r.patientId,
+      clinicId: r.clinicId,
+      type: r.recordType as MedicalRecordResponse['type'],
+      title: r.title || '',
+      doctorId: r.doctorId,
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+    };
+    if (r.content) (result as MedicalRecordResponse).content = r.content;
+    if (r.fileUrl) (result as MedicalRecordResponse).fileUrl = r.fileUrl;
+    if (r.fileSize !== undefined && r.fileSize !== null)
+      (result as MedicalRecordResponse).fileSize = r.fileSize;
+    if (r.mimeType) (result as MedicalRecordResponse).mimeType = r.mimeType;
+    if (r.notes) (result as MedicalRecordResponse).notes = r.notes;
+    if (r.uploadedBy) (result as MedicalRecordResponse).uploadedBy = r.uploadedBy;
+    return result as unknown as MedicalRecordResponse;
+  }
+
+  async getMedicalRecords(
+    userId: string,
+    clinicId?: string,
+    filters?: MedicalRecordFilters
+  ): Promise<MedicalRecordResponse[]> {
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        healthRecord: {
+          findMany: (args: PrismaDelegateArgs) => Promise<unknown[]>;
+          count: (args: PrismaDelegateArgs) => Promise<number>;
+        };
+      };
+
+      const where: Record<string, unknown> = { patientId: userId };
+      if (clinicId) {
+        where['clinicId'] = clinicId;
+      }
+      if (filters?.type) {
+        where['recordType'] = filters.type;
+      }
+      if (filters?.doctorId) {
+        where['doctorId'] = filters.doctorId;
+      }
+      if (filters?.uploadedBy) {
+        where['uploadedBy'] = filters.uploadedBy;
+      }
+      if (filters?.startDate || filters?.endDate) {
+        const dateFilter: Record<string, Date> = {};
+        if (filters.startDate) dateFilter['gte'] = filters.startDate;
+        if (filters.endDate) dateFilter['lte'] = filters.endDate;
+        where['createdAt'] = dateFilter;
+      }
+      if (filters?.search) {
+        where['title'] = { contains: filters.search, mode: 'insensitive' as const };
+      }
+
+      const sortField = filters?.sortBy || 'createdAt';
+      const sortOrder = filters?.sortOrder || 'desc';
+      const orderBy: Record<string, string> = { [sortField]: sortOrder };
+
+      const records = await typedClient.healthRecord.findMany({
+        where: where as PrismaDelegateArgs,
+        orderBy: orderBy as PrismaDelegateArgs,
+        take: filters?.limit || 100,
+        skip: filters?.offset || 0,
+      } as PrismaDelegateArgs);
+
+      const rawRecords = records as unknown as Array<{
+        id: string;
+        patientId: string;
+        clinicId: string;
+        recordType: string;
+        title: string;
+        content?: string;
+        fileUrl?: string;
+        fileSize?: number;
+        mimeType?: string;
+        doctorId: string;
+        notes?: string;
+        uploadedBy?: string;
+        createdAt: Date;
+        updatedAt: Date;
+      }>;
+
+      return rawRecords.map(r =>
+        this.buildMedicalRecordResponse(r)
+      ) as unknown as MedicalRecordResponse[];
+    });
+  }
+
+  async getMedicalRecordById(id: string, clinicId?: string): Promise<MedicalRecordResponse | null> {
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        healthRecord: { findFirst: (args: PrismaDelegateArgs) => Promise<unknown> };
+      };
+
+      const where: Record<string, unknown> = { id };
+      if (clinicId) {
+        where['clinicId'] = clinicId;
+      }
+
+      const record = await typedClient.healthRecord.findFirst({
+        where: where as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+
+      if (!record) return null;
+
+      const typedRecord = record as unknown as {
+        id: string;
+        patientId: string;
+        clinicId: string;
+        recordType: string;
+        title: string;
+        content?: string;
+        fileUrl?: string;
+        fileSize?: number;
+        mimeType?: string;
+        doctorId: string;
+        notes?: string;
+        uploadedBy?: string;
+        createdAt: Date;
+        updatedAt: Date;
+      };
+
+      const response = {
+        id: typedRecord.id,
+        userId: typedRecord.patientId,
+        clinicId: typedRecord.clinicId,
+        type: typedRecord.recordType as MedicalRecordResponse['type'],
+        title: typedRecord.title || '',
+        doctorId: typedRecord.doctorId,
+        createdAt: typedRecord.createdAt.toISOString(),
+        updatedAt: typedRecord.updatedAt.toISOString(),
+      } as unknown as MedicalRecordResponse;
+      if (typedRecord.content) response.content = typedRecord.content;
+      if (typedRecord.fileUrl) response.fileUrl = typedRecord.fileUrl;
+      if (typedRecord.fileSize !== undefined && typedRecord.fileSize !== null)
+        response.fileSize = typedRecord.fileSize;
+      if (typedRecord.mimeType) response.mimeType = typedRecord.mimeType;
+      if (typedRecord.notes) response.notes = typedRecord.notes;
+      if (typedRecord.uploadedBy) response.uploadedBy = typedRecord.uploadedBy;
+      return response;
+    });
+  }
+
+  async updateMedicalRecord(
+    id: string,
+    data: { title?: string; content?: string; notes?: string },
+    clinicId?: string
+  ): Promise<MedicalRecordResponse | null> {
+    const existing = await this.getMedicalRecordById(id, clinicId);
+    if (!existing) return null;
+
+    if (clinicId && existing.clinicId !== clinicId) {
+      throw new NotFoundException(`Medical record with ID ${id} not found`);
+    }
+
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          healthRecord: { update: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+
+        const updateData: { [key: string]: unknown } = {};
+        if (data.title !== undefined) updateData['title'] = data.title;
+        if (data.content !== undefined) updateData['content'] = data.content;
+        if (data.notes !== undefined) updateData['notes'] = data.notes;
+
+        return await typedClient.healthRecord.update({
+          where: { id } as PrismaDelegateArgs,
+          data: updateData as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId: existing.userId,
+        clinicId: existing.clinicId,
+        resourceType: 'MEDICAL_RECORD',
+        operation: 'UPDATE',
+        resourceId: id,
+        userRole: 'system',
+        details: { title: data.title },
+      }
+    );
+
+    const updatedRecord = await this.getMedicalRecordById(id, clinicId);
+    return updatedRecord!;
+  }
+
+  async deleteMedicalRecord(id: string, clinicId?: string): Promise<boolean> {
+    const existing = await this.getMedicalRecordById(id, clinicId);
+    if (!existing) return false;
+
+    if (clinicId && existing.clinicId !== clinicId) {
+      throw new NotFoundException(`Medical record with ID ${id} not found`);
+    }
+
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          healthRecord: { delete: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.healthRecord.delete({
+          where: { id } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId: existing.userId,
+        clinicId: existing.clinicId,
+        resourceType: 'MEDICAL_RECORD',
+        operation: 'DELETE',
+        resourceId: id,
+        userRole: 'system',
+        details: { title: existing.title, type: existing.type },
+      }
+    );
+
+    await this.eventService.emit('ehr.medical_record.deleted', {
+      recordId: id,
+      userId: existing.userId,
+    });
+
+    await this.invalidateUserEHRCache(existing.userId);
+
+    return true;
+  }
+
+  async uploadMedicalRecordFile(
+    recordId: string,
+    fileBuffer: Buffer,
+    _fileName: string,
+    mimeType: string
+  ): Promise<{ record: MedicalRecordResponse; fileUrl: string; fileKey: string } | null> {
+    const existing = await this.getMedicalRecordById(recordId);
+    if (!existing) return null;
+
+    const extension = mimeType.split('/').pop() || 'bin';
+    const storageFileName = `medical-record/${existing.userId}/${recordId}-${Date.now()}.${extension}`;
+
+    const asset = await this.staticAssetService.uploadFile(
+      fileBuffer,
+      storageFileName,
+      AssetType.MEDICAL_RECORD,
+      mimeType,
+      false
+    );
+
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          healthRecord: { update: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+
+        return await typedClient.healthRecord.update({
+          where: { id: recordId } as PrismaDelegateArgs,
+          data: {
+            fileUrl: asset.url,
+            fileSize: fileBuffer.length,
+            mimeType,
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId: existing.userId,
+        clinicId: existing.clinicId,
+        resourceType: 'MEDICAL_RECORD',
+        operation: 'UPDATE',
+        resourceId: recordId,
+        userRole: 'system',
+        details: { action: 'upload_file', assetKey: asset.key },
+      }
+    );
+
+    await this.eventService.emit('ehr.medical_record.file_uploaded', {
+      recordId,
+      userId: existing.userId,
+      fileKey: asset.key,
+    });
+
+    const updatedRecord: MedicalRecordResponse = {
+      id: existing.id,
+      userId: existing.userId,
+      clinicId: existing.clinicId,
+      type: existing.type,
+      title: existing.title,
+      doctorId: existing.doctorId,
+      createdAt: existing.createdAt,
+      updatedAt: existing.updatedAt,
+      fileUrl: asset.url,
+      fileSize: fileBuffer.length,
+      mimeType,
+    } as unknown as MedicalRecordResponse;
+    return {
+      record: updatedRecord,
+      fileUrl: asset.url,
+      fileKey: asset.key,
+    } as unknown as {
+      record: MedicalRecordResponse;
+      fileUrl: string;
+      fileKey: string;
+    };
+  }
+
   // ============ Lab Reports ============
 
   async createLabReport(data: CreateLabReportDto): Promise<LabReportResponse> {
@@ -796,8 +1188,30 @@ export class EHRService {
     );
   }
 
-  async updateLabReport(id: string, data: UpdateLabReportDto): Promise<LabReportResponse> {
-    // Use executeHealthcareWrite for update with audit logging
+  async updateLabReport(
+    id: string,
+    data: UpdateLabReportDto,
+    clinicId?: string
+  ): Promise<LabReportResponse> {
+    // Read existing for tenant validation
+    const existing = await this.databaseService.executeHealthcareRead<{
+      userId: string;
+      clinicId?: string | null;
+    } | null>(async client => {
+      const tc = client as unknown as PrismaTransactionClientWithDelegates & {
+        labReport: {
+          findUnique: (
+            args: PrismaDelegateArgs
+          ) => Promise<{ userId: string; clinicId?: string | null } | null>;
+        };
+      };
+      return tc.labReport.findUnique({ where: { id } as PrismaDelegateArgs } as PrismaDelegateArgs);
+    });
+    if (!existing) throw new NotFoundException(`Lab report with ID ${id} not found`);
+    if (clinicId && existing.clinicId && existing.clinicId !== clinicId) {
+      throw new NotFoundException(`Lab report with ID ${id} not found`);
+    }
+
     const report = await this.databaseService.executeHealthcareWrite(
       async client => {
         const updateData: {
@@ -848,7 +1262,7 @@ export class EHRService {
     return this.transformLabReport(typedReport);
   }
 
-  async deleteLabReport(id: string): Promise<void> {
+  async deleteLabReport(id: string, _clinicId?: string): Promise<void> {
     // Use executeHealthcareRead first to get record for cache invalidation
     const report = await this.databaseService.executeHealthcareRead<{
       userId: string;
@@ -995,9 +1409,29 @@ export class EHRService {
 
   async updateRadiologyReport(
     id: string,
-    data: UpdateRadiologyReportDto
+    data: UpdateRadiologyReportDto,
+    clinicId?: string
   ): Promise<RadiologyReportResponse> {
-    // Use executeHealthcareWrite for update with audit logging
+    const existing = await this.databaseService.executeHealthcareRead<{
+      userId: string;
+      clinicId?: string | null;
+    } | null>(async client => {
+      const tc = client as unknown as PrismaTransactionClientWithDelegates & {
+        radiologyReport: {
+          findUnique: (
+            args: PrismaDelegateArgs
+          ) => Promise<{ userId: string; clinicId?: string | null } | null>;
+        };
+      };
+      return tc.radiologyReport.findUnique({
+        where: { id } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+    if (!existing) throw new NotFoundException(`Radiology report with ID ${id} not found`);
+    if (clinicId && existing.clinicId && existing.clinicId !== clinicId) {
+      throw new NotFoundException(`Radiology report with ID ${id} not found`);
+    }
+
     const report = await this.databaseService.executeHealthcareWrite(
       async client => {
         const updateData: {
@@ -1046,7 +1480,7 @@ export class EHRService {
     return this.transformRadiologyReport(typedReport);
   }
 
-  async deleteRadiologyReport(id: string): Promise<void> {
+  async deleteRadiologyReport(id: string, clinicId?: string): Promise<void> {
     // Use executeHealthcareRead first to get record for cache invalidation
     const report = await this.databaseService.executeHealthcareRead<{
       userId: string;
@@ -1066,6 +1500,10 @@ export class EHRService {
     if (!report) throw new NotFoundException(`Radiology report with ID ${id} not found`);
 
     const typedReport = report as { userId: string; clinicId?: string | null };
+    // 🔒 TENANT ISOLATION
+    if (clinicId && typedReport.clinicId && typedReport.clinicId !== clinicId) {
+      throw new NotFoundException(`Radiology report with ID ${id} not found`);
+    }
     // Use executeHealthcareWrite for delete with audit logging
     await this.databaseService.executeHealthcareWrite<unknown>(
       async client => {
@@ -1167,9 +1605,29 @@ export class EHRService {
 
   async updateSurgicalRecord(
     id: string,
-    data: UpdateSurgicalRecordDto
+    data: UpdateSurgicalRecordDto,
+    clinicId?: string
   ): Promise<SurgicalRecordResponse> {
-    // Use executeHealthcareWrite for update with audit logging
+    const existing = await this.databaseService.executeHealthcareRead<{
+      userId: string;
+      clinicId?: string | null;
+    } | null>(async client => {
+      const tc = client as unknown as PrismaTransactionClientWithDelegates & {
+        surgicalRecord: {
+          findUnique: (
+            args: PrismaDelegateArgs
+          ) => Promise<{ userId: string; clinicId?: string | null } | null>;
+        };
+      };
+      return tc.surgicalRecord.findUnique({
+        where: { id } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+    if (!existing) throw new NotFoundException(`Surgical record with ID ${id} not found`);
+    if (clinicId && existing.clinicId && existing.clinicId !== clinicId) {
+      throw new NotFoundException(`Surgical record with ID ${id} not found`);
+    }
+
     const record = await this.databaseService.executeHealthcareWrite(
       async client => {
         const updateData: {
@@ -1218,7 +1676,7 @@ export class EHRService {
     return this.transformSurgicalRecord(typedRecord);
   }
 
-  async deleteSurgicalRecord(id: string): Promise<void> {
+  async deleteSurgicalRecord(id: string, clinicId?: string): Promise<void> {
     // Use executeHealthcareRead first to get record for cache invalidation
     const record = await this.databaseService.executeHealthcareRead<{
       userId: string;
@@ -1238,6 +1696,10 @@ export class EHRService {
     if (!record) throw new NotFoundException(`Surgical record with ID ${id} not found`);
 
     const typedRecord = record as { userId: string; clinicId?: string | null };
+    // 🔒 TENANT ISOLATION
+    if (clinicId && typedRecord.clinicId && typedRecord.clinicId !== clinicId) {
+      throw new NotFoundException(`Surgical record with ID ${id} not found`);
+    }
     // Use executeHealthcareWrite for delete with audit logging
     await this.databaseService.executeHealthcareWrite<unknown>(
       async client => {
@@ -1325,9 +1787,30 @@ export class EHRService {
     });
   }
 
-  async updateVital(id: string, data: UpdateVitalDto): Promise<VitalResponse> {
+  async updateVital(id: string, data: UpdateVitalDto, clinicId?: string): Promise<VitalResponse> {
+    // Use executeHealthcareRead first to get record for cache invalidation + tenant check
+    const vital = await this.databaseService.executeHealthcareRead<{
+      userId: string;
+      clinicId?: string | null;
+    } | null>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        vital: {
+          findUnique: (
+            args: PrismaDelegateArgs
+          ) => Promise<{ userId: string; clinicId?: string | null } | null>;
+        };
+      };
+      return await typedClient.vital.findUnique({
+        where: { id } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+    if (!vital) throw new NotFoundException(`Vital record with ID ${id} not found`);
+    if (clinicId && vital.clinicId && vital.clinicId !== clinicId) {
+      throw new NotFoundException(`Vital record with ID ${id} not found`);
+    }
+
     // Use executeHealthcareWrite for update with audit logging
-    const vital = await this.databaseService.executeHealthcareWrite(
+    const updated = await this.databaseService.executeHealthcareWrite(
       async client => {
         const updateData: {
           type?: string;
@@ -1352,8 +1835,8 @@ export class EHRService {
         } as PrismaDelegateArgs);
       },
       {
-        userId: 'system',
-        clinicId: '',
+        userId: vital.userId,
+        clinicId: vital.clinicId || '',
         resourceType: 'VITAL',
         operation: 'UPDATE',
         resourceId: id,
@@ -1362,14 +1845,14 @@ export class EHRService {
       }
     );
 
-    const typedVital = vital as VitalBase;
+    const typedVital = updated as VitalBase;
     await this.eventService.emit('ehr.vital.updated', { vitalId: id });
     await this.invalidateUserEHRCache(typedVital.userId);
 
     return this.transformVital(typedVital);
   }
 
-  async deleteVital(id: string): Promise<void> {
+  async deleteVital(id: string, clinicId?: string): Promise<void> {
     // Use executeHealthcareRead first to get record for cache invalidation
     const vital = await this.databaseService.executeHealthcareRead<{
       userId: string;
@@ -1389,6 +1872,10 @@ export class EHRService {
     if (!vital) throw new NotFoundException(`Vital record with ID ${id} not found`);
 
     const typedVital = vital as { userId: string; clinicId?: string | null };
+    // 🔒 TENANT ISOLATION
+    if (clinicId && typedVital.clinicId && typedVital.clinicId !== clinicId) {
+      throw new NotFoundException(`Vital record with ID ${id} not found`);
+    }
     // Use executeHealthcareWrite for delete with audit logging
     await this.databaseService.executeHealthcareWrite<unknown>(
       async client => {
@@ -1484,8 +1971,29 @@ export class EHRService {
     });
   }
 
-  async updateAllergy(id: string, data: UpdateAllergyDto): Promise<AllergyResponse> {
-    // Use executeHealthcareWrite for update with audit logging
+  async updateAllergy(
+    id: string,
+    data: UpdateAllergyDto,
+    clinicId?: string
+  ): Promise<AllergyResponse> {
+    const existing = await this.databaseService.executeHealthcareRead<{
+      userId: string;
+      clinicId?: string | null;
+    } | null>(async client => {
+      const tc = client as unknown as PrismaTransactionClientWithDelegates & {
+        allergy: {
+          findUnique: (
+            args: PrismaDelegateArgs
+          ) => Promise<{ userId: string; clinicId?: string | null } | null>;
+        };
+      };
+      return tc.allergy.findUnique({ where: { id } as PrismaDelegateArgs } as PrismaDelegateArgs);
+    });
+    if (!existing) throw new NotFoundException(`Allergy record with ID ${id} not found`);
+    if (clinicId && existing.clinicId && existing.clinicId !== clinicId) {
+      throw new NotFoundException(`Allergy record with ID ${id} not found`);
+    }
+
     const allergy = await this.databaseService.executeHealthcareWrite(
       async client => {
         const updateData: {
@@ -1536,7 +2044,7 @@ export class EHRService {
     return this.transformAllergy(typedAllergy);
   }
 
-  async deleteAllergy(id: string): Promise<void> {
+  async deleteAllergy(id: string, clinicId?: string): Promise<void> {
     // Use executeHealthcareRead first to get record for cache invalidation
     const allergy = await this.databaseService.executeHealthcareRead<{
       userId: string;
@@ -1556,6 +2064,10 @@ export class EHRService {
     if (!allergy) throw new NotFoundException(`Allergy record with ID ${id} not found`);
 
     const typedAllergy = allergy as { userId: string; clinicId?: string | null };
+    // 🔒 TENANT ISOLATION
+    if (clinicId && typedAllergy.clinicId && typedAllergy.clinicId !== clinicId) {
+      throw new NotFoundException(`Allergy record with ID ${id} not found`);
+    }
     // Use executeHealthcareWrite for delete with audit logging
     await this.databaseService.executeHealthcareWrite<unknown>(
       async client => {
@@ -1665,8 +2177,31 @@ export class EHRService {
     });
   }
 
-  async updateMedication(id: string, data: UpdateMedicationDto): Promise<MedicationResponse> {
-    // Use executeHealthcareWrite for update with audit logging
+  async updateMedication(
+    id: string,
+    data: UpdateMedicationDto,
+    clinicId?: string
+  ): Promise<MedicationResponse> {
+    const existing = await this.databaseService.executeHealthcareRead<{
+      userId: string;
+      clinicId?: string | null;
+    } | null>(async client => {
+      const tc = client as unknown as PrismaTransactionClientWithDelegates & {
+        medication: {
+          findUnique: (
+            args: PrismaDelegateArgs
+          ) => Promise<{ userId: string; clinicId?: string | null } | null>;
+        };
+      };
+      return tc.medication.findUnique({
+        where: { id } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+    if (!existing) throw new NotFoundException(`Medication with ID ${id} not found`);
+    if (clinicId && existing.clinicId && existing.clinicId !== clinicId) {
+      throw new NotFoundException(`Medication with ID ${id} not found`);
+    }
+
     const medication = await this.databaseService.executeHealthcareWrite(
       async client => {
         const updateData: {
@@ -1731,7 +2266,7 @@ export class EHRService {
     return this.transformMedication(typedMedication);
   }
 
-  async deleteMedication(id: string): Promise<void> {
+  async deleteMedication(id: string, clinicId?: string): Promise<void> {
     // Use executeHealthcareRead first to get record for cache invalidation
     const medication = await this.databaseService.executeHealthcareRead<{
       userId: string;
@@ -1751,6 +2286,10 @@ export class EHRService {
     if (!medication) throw new NotFoundException(`Medication record with ID ${id} not found`);
 
     const typedMedication = medication as { userId: string; clinicId?: string | null };
+    // 🔒 TENANT ISOLATION
+    if (clinicId && typedMedication.clinicId && typedMedication.clinicId !== clinicId) {
+      throw new NotFoundException(`Medication record with ID ${id} not found`);
+    }
     // Use executeHealthcareWrite for delete with audit logging
     await this.databaseService.executeHealthcareWrite<unknown>(
       async client => {
@@ -1864,8 +2403,31 @@ export class EHRService {
     return records.map(record => this.transformImmunization(record));
   }
 
-  async updateImmunization(id: string, data: UpdateImmunizationDto): Promise<ImmunizationResponse> {
-    // Use executeHealthcareWrite for update with audit logging
+  async updateImmunization(
+    id: string,
+    data: UpdateImmunizationDto,
+    clinicId?: string
+  ): Promise<ImmunizationResponse> {
+    const existing = await this.databaseService.executeHealthcareRead<{
+      userId: string;
+      clinicId?: string | null;
+    } | null>(async client => {
+      const tc = client as unknown as PrismaTransactionClientWithDelegates & {
+        immunization: {
+          findUnique: (
+            args: PrismaDelegateArgs
+          ) => Promise<{ userId: string; clinicId?: string | null } | null>;
+        };
+      };
+      return tc.immunization.findUnique({
+        where: { id } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+    if (!existing) throw new NotFoundException(`Immunization record with ID ${id} not found`);
+    if (clinicId && existing.clinicId && existing.clinicId !== clinicId) {
+      throw new NotFoundException(`Immunization record with ID ${id} not found`);
+    }
+
     const immunization = await this.databaseService.executeHealthcareWrite(
       async client => {
         const updateData: {
@@ -1926,7 +2488,7 @@ export class EHRService {
     return this.transformImmunization(immunization as ImmunizationBase);
   }
 
-  async deleteImmunization(id: string): Promise<void> {
+  async deleteImmunization(id: string, clinicId?: string): Promise<void> {
     // Use executeHealthcareRead first to get record for cache invalidation
     const immunization = await this.databaseService.executeHealthcareRead<{
       userId: string;
@@ -1946,6 +2508,10 @@ export class EHRService {
     if (!immunization) throw new NotFoundException(`Immunization record with ID ${id} not found`);
 
     const typedImmunization = immunization as { userId: string; clinicId?: string | null };
+    // 🔒 TENANT ISOLATION
+    if (clinicId && typedImmunization.clinicId && typedImmunization.clinicId !== clinicId) {
+      throw new NotFoundException(`Immunization record with ID ${id} not found`);
+    }
     // Use executeHealthcareWrite for delete with audit logging
     await this.databaseService.executeHealthcareWrite<unknown>(
       async client => {

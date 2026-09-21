@@ -852,6 +852,75 @@ export class BillingEventsListener {
     }
 
     await this.expirePendingPaymentsForAppointment(appointmentId, PaymentStatus.CANCELLED);
+    await this.voidDraftInvoicesForAppointment(appointmentId);
+  }
+
+  @OnEvent('appointment.expired')
+  async handleAppointmentExpiredForBilling(payload: {
+    appointmentId?: string;
+    payload?: { appointmentId?: string };
+  }) {
+    const appointmentId = payload?.appointmentId ?? payload?.payload?.appointmentId;
+    if (!appointmentId) {
+      return;
+    }
+
+    // Expire PENDING payments — user didn't complete payment in time
+    await this.expirePendingPaymentsForAppointment(appointmentId, PaymentStatus.EXPIRED);
+    // VOID DRAFT invoices — appointment expired, invoice is no longer valid
+    await this.voidDraftInvoicesForAppointment(appointmentId);
+  }
+
+  private async voidDraftInvoicesForAppointment(appointmentId: string): Promise<void> {
+    try {
+      // Find DRAFT invoices linked to this appointment via metadata
+      const draftInvoices = await this.databaseService.executeHealthcareRead<Array<{ id: string }>>(
+        async client => {
+          return (
+            client as unknown as {
+              invoice: {
+                findMany: (args: {
+                  where: { status: string; metadata: Record<string, unknown> };
+                  select: { id: true };
+                }) => Promise<Array<{ id: string }>>;
+              };
+            }
+          ).invoice.findMany({
+            where: {
+              status: 'DRAFT',
+              metadata: { appointmentId },
+            },
+            select: { id: true },
+          });
+        }
+      );
+
+      for (const invoice of draftInvoices) {
+        try {
+          await this.billingService.updateInvoice(invoice.id, { status: 'VOID' } as never);
+        } catch (error) {
+          await this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.ERROR,
+            `Failed to void invoice ${invoice.id} for expired appointment ${appointmentId}: ${error instanceof Error ? error.message : String(error)}`,
+            'BillingEventsListener',
+            {
+              appointmentId,
+              invoiceId: invoice.id,
+              error: error instanceof Error ? error.stack : undefined,
+            }
+          );
+        }
+      }
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to find draft invoices for appointment ${appointmentId}: ${error instanceof Error ? error.message : String(error)}`,
+        'BillingEventsListener',
+        { appointmentId, error: error instanceof Error ? error.stack : undefined }
+      );
+    }
   }
 
   private async expirePendingPaymentsForAppointment(

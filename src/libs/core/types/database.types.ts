@@ -804,7 +804,16 @@ export interface InvoiceWithRelations extends InvoiceBase {
 }
 
 export interface PaymentWithRelations extends PaymentBase {
-  appointment?: Appointment;
+  appointment?: AppointmentBase & {
+    patient?: {
+      userId: string;
+      user?: {
+        name: string;
+        phone?: string;
+        email?: string;
+      };
+    };
+  };
   invoice?: Invoice;
   subscription?: Subscription;
 }

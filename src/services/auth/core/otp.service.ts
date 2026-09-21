@@ -390,9 +390,9 @@ export class OtpService {
   }
 
   /**
-   * Send OTP via WhatsApp (Primary)
+   * Send OTP via phone (WhatsApp) for login/registration
    */
-  async sendOtpSms(
+  async sendOtpPhone(
     phone: string,
     purpose: string = 'verification',
     clinicId?: string,
