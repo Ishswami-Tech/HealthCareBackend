@@ -2749,8 +2749,15 @@ export class BillingService implements OnModuleInit {
       );
     }
 
-    const paymentExpiresAt = (appointment as { paymentExpiresAt?: Date | null }).paymentExpiresAt;
-    if (paymentExpiresAt && paymentExpiresAt.getTime() <= Date.now()) {
+    const paymentExpiresAt = (appointment as { paymentExpiresAt?: Date | string | null })
+      .paymentExpiresAt;
+    const expiresAt =
+      paymentExpiresAt instanceof Date
+        ? paymentExpiresAt.getTime()
+        : typeof paymentExpiresAt === 'string'
+          ? new Date(paymentExpiresAt).getTime()
+          : null;
+    if (expiresAt && expiresAt <= Date.now()) {
       throw new BadRequestException(
         'The payment window for this appointment has expired. Please book a new appointment.'
       );
@@ -3531,9 +3538,16 @@ export class BillingService implements OnModuleInit {
 
       if (incomingStatusLower === 'completed' && payment.appointmentId && completedAppointment) {
         if (String(completedAppointment.status) !== String(AppointmentStatus.CONFIRMED)) {
-          const paymentExpiresAt = (completedAppointment as { paymentExpiresAt?: Date | null })
-            .paymentExpiresAt;
-          const canConfirm = !paymentExpiresAt || paymentExpiresAt.getTime() > Date.now();
+          const paymentExpiresAt = (
+            completedAppointment as { paymentExpiresAt?: Date | string | null }
+          ).paymentExpiresAt;
+          const expiresAt =
+            paymentExpiresAt instanceof Date
+              ? paymentExpiresAt.getTime()
+              : typeof paymentExpiresAt === 'string'
+                ? new Date(paymentExpiresAt).getTime()
+                : null;
+          const canConfirm = !expiresAt || expiresAt > Date.now();
 
           if (canConfirm) {
             const confirmationResult = await this.databaseService.executeHealthcareWrite(

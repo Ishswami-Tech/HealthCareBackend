@@ -424,7 +424,10 @@ export class CoreAppointmentService {
       // Frontend payment-retry flows can otherwise create multiple rows for the
       // same logical slot. For video appointments, this guards against the
       // payment-retry race; for in-person, it protects against rapid double-clicks.
-      const dedupWindowStart = new Date(Date.now() - 10 * 60 * 1000);
+      const dedupWindowMs = isVideoCallAppointmentType(createDto.type)
+        ? 24 * 60 * 60 * 1000 // 24 hours for video appointments (payment retries common)
+        : 10 * 60 * 1000; // 10 minutes for in-person (quick double-click guard)
+      const dedupWindowStart = new Date(Date.now() - dedupWindowMs);
       const existingRecent = (await this.databaseService.executeRead(async prisma => {
         const tx = prisma as unknown as PrismaTransactionClientWithDelegates;
         return tx.appointment.findFirst({
@@ -438,7 +441,6 @@ export class CoreAppointmentService {
             time: timeStr,
             type: createDto.type,
             createdAt: { gte: dedupWindowStart },
-            status: { notIn: ['CANCELLED', 'NO_SHOW', 'EXPIRED'] },
           },
           orderBy: { createdAt: 'desc' },
         });

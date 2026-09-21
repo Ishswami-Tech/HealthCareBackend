@@ -714,7 +714,7 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         return false;
       }
       const now = Math.floor(Date.now() / 1000);
-      if (Math.abs(now - webhookTimestamp) > 300) {
+      if (Math.abs(now - webhookTimestamp) > 1800) {
         await this.logger.log(
           LogType.PAYMENT,
           LogLevel.WARN,
