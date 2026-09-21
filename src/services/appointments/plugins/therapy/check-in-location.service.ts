@@ -7,6 +7,7 @@ import {
   Inject,
   forwardRef,
 } from '@nestjs/common';
+import { startOfIstDay, endOfIstDay } from '@utils/clock.util';
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LocationCacheService } from '@infrastructure/cache/services/location-cache.service';
@@ -1225,10 +1226,8 @@ export class CheckInLocationService {
       const whereClause: StatsWhereClause = { locationId };
 
       if (date) {
-        const startOfDay = new Date(date);
-        startOfDay.setHours(0, 0, 0, 0);
-        const endOfDay = new Date(date);
-        endOfDay.setHours(23, 59, 59, 999);
+        const startOfDay = startOfIstDay(date) ?? new Date(date);
+        const endOfDay = endOfIstDay(date) ?? new Date(date);
 
         whereClause.checkedInAt = {
           gte: startOfDay,

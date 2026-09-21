@@ -116,3 +116,5 @@ run-seed.js
 .env.local-prod
 graphify-out/
 
+
+.claude/settings.local.json

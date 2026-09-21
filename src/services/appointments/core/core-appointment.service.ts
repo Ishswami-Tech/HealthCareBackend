@@ -40,11 +40,12 @@ import type {
   AppointmentMetricsData,
 } from '@core/types/appointment.types';
 import {
-  parseIstDateTime,
-  nowIso,
   formatDateKeyInIST,
   IST_TIMEZONE,
+  parseIstDateTime,
+  nowIso,
 } from '../../../libs/utils/date-time.util';
+import { startOfIstDay, endOfIstDay } from '@utils/clock.util';
 
 // CoreAppointmentMetrics is an alias for AppointmentMetricsData
 export type CoreAppointmentMetrics = AppointmentMetricsData;
@@ -1385,17 +1386,18 @@ export class CoreAppointmentService {
       where['date'] = {};
 
       if (filters.date) {
-        const date = new Date(filters.date);
-        const startOfDay = new Date(date.setUTCHours(0, 0, 0, 0));
-        const endOfDay = new Date(date.setUTCHours(23, 59, 59, 999));
-        (where['date'] as Record<string, unknown>)['gte'] = startOfDay;
-        (where['date'] as Record<string, unknown>)['lte'] = endOfDay;
+        const startOfDay = startOfIstDay(new Date(filters.date));
+        const endOfDay = endOfIstDay(new Date(filters.date));
+        (where['date'] as Record<string, unknown>)['gte'] = startOfDay ?? new Date(filters.date);
+        (where['date'] as Record<string, unknown>)['lte'] = endOfDay ?? new Date(filters.date);
       } else {
         if (filters.startDate) {
-          (where['date'] as Record<string, unknown>)['gte'] = new Date(filters.startDate);
+          const start = startOfIstDay(new Date(filters.startDate));
+          (where['date'] as Record<string, unknown>)['gte'] = start ?? new Date(filters.startDate);
         }
         if (filters.endDate) {
-          (where['date'] as Record<string, unknown>)['lte'] = new Date(filters.endDate);
+          const end = endOfIstDay(new Date(filters.endDate));
+          (where['date'] as Record<string, unknown>)['lte'] = end ?? new Date(filters.endDate);
         }
       }
     }

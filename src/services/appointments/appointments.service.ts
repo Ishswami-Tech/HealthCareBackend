@@ -86,6 +86,7 @@ import { BillingService } from '@services/billing/billing.service';
 import type { AppointmentWithRelations } from '@core/types/database.types';
 import type { PrismaDelegateArgs } from '@core/types/prisma.types';
 import { getVideoConsultationDelegate } from '@core/types/video-database.types';
+import { startOfIstDay } from '@utils/clock.util';
 
 type AssistantDoctorCoverageEntry = {
   assistantDoctorId: string;
@@ -1084,10 +1085,7 @@ export class AppointmentsService {
     appointmentDate: Date,
     clinicId?: string
   ): Promise<boolean> {
-    const startOfDay = new Date(appointmentDate);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(appointmentDate);
-    endOfDay.setHours(23, 59, 59, 999);
+    const startOfDay = startOfIstDay(appointmentDate) ?? appointmentDate;
 
     return (
       (await this.databaseService.executeHealthcareRead<number>(async client => {

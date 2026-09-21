@@ -13,6 +13,7 @@ import type {
   UpdateTherapySessionDto,
 } from '@core/types/appointment.types';
 import { formatDateKeyInIST } from '../../../../libs/utils/date-time.util';
+import { startOfIstDay, endOfIstDay } from '@utils/clock.util';
 
 @Injectable()
 export class AyurvedicTherapyService {
@@ -670,10 +671,8 @@ export class AyurvedicTherapyService {
       };
 
       if (date) {
-        const startOfDay = new Date(date);
-        startOfDay.setHours(0, 0, 0, 0);
-        const endOfDay = new Date(date);
-        endOfDay.setHours(23, 59, 59, 999);
+        const startOfDay = startOfIstDay(date) ?? new Date(date);
+        const endOfDay = endOfIstDay(date) ?? new Date(date);
 
         whereClause.sessionDate = {
           gte: startOfDay,
