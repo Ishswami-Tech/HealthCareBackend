@@ -313,6 +313,83 @@ export class PaymentController {
   }
 
   /**
+   * Resolve the paying customer's contact details from the payment target.
+   *
+   * Runs server-side for the @Public() payment bridge, which has no authenticated
+   * user context. Each target (appointment/subscription/invoice/prescription)
+   * dereferences to the owning User, whose phone was captured during WhatsApp OTP
+   * registration. Returning the phone lets PaymentService avoid skipping
+   * phone-required providers (Cashfree) and lets adapters prefill the gateway
+   * checkout so the customer is not asked to re-enter their number.
+   *
+   * All fields are best-effort: a missing target or user simply yields undefined
+   * fields rather than throwing, so payment creation can still proceed.
+   */
+  private async resolvePaymentCustomer(target: {
+    appointmentId?: string;
+    subscriptionId?: string;
+    invoiceId?: string;
+    prescriptionId?: string;
+  }): Promise<{
+    customerId?: string;
+    customerPhone?: string;
+    customerEmail?: string;
+    customerName?: string;
+  }> {
+    try {
+      let userId: string | undefined;
+
+      if (target.appointmentId) {
+        const appointment = await this.databaseService.findAppointmentByIdSafe(
+          target.appointmentId
+        );
+        const appt = appointment as { patient?: { userId?: string | null } | null } | null;
+        userId = appt?.patient?.userId ?? undefined;
+      } else if (target.subscriptionId) {
+        const subscription = await this.databaseService.findSubscriptionByIdSafe(
+          target.subscriptionId
+        );
+        userId = (subscription as { userId?: string | null } | null)?.userId ?? undefined;
+      } else if (target.invoiceId) {
+        const invoice = await this.databaseService.findInvoiceByIdSafe(target.invoiceId);
+        userId = (invoice as { userId?: string | null } | null)?.userId ?? undefined;
+      } else if (target.prescriptionId) {
+        // Prescriptions resolve their user via the patient relation, which is not
+        // exposed by a simple id lookup here; leave the customer unresolved so the
+        // internal pharmacy flow (which has the relation loaded) remains the owner
+        // of prescription payments.
+        userId = undefined;
+      }
+
+      if (!userId) {
+        return {};
+      }
+
+      const user = await this.databaseService.findUserByIdSafe(userId);
+      if (!user) {
+        return { customerId: userId };
+      }
+
+      const phone = typeof user.phone === 'string' ? user.phone.trim() : '';
+      return {
+        customerId: userId,
+        ...(phone ? { customerPhone: phone } : {}),
+        ...(user.email ? { customerEmail: user.email } : {}),
+        ...(user.name ? { customerName: user.name } : {}),
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        `Failed to resolve payment customer for target: ${error instanceof Error ? error.message : String(error)}`,
+        'PaymentController',
+        { ...target }
+      );
+      return {};
+    }
+  }
+
+  /**
    * Razorpay webhook handler
    *
    * @public
@@ -499,8 +576,14 @@ export class PaymentController {
       ]);
       const appointmentId = this.getFirstStringAtPath(dataObj, [
         ['order', 'order_tags', 'appointmentId'],
+        ['order', 'order_meta', 'appointmentId'],
         ['appointmentId'],
         ['appointment_id'],
+      ]);
+      const clinicIdFromTags = this.getFirstStringAtPath(dataObj, [
+        ['order', 'order_tags', 'clinicId'],
+        ['order', 'order_meta', 'clinicId'],
+        ['clinicId'],
       ]);
       const paymentId =
         this.getFirstStringAtPath(dataObj, [
@@ -517,6 +600,7 @@ export class PaymentController {
       ]).toUpperCase();
       const resolvedClinicId =
         clinicId ||
+        clinicIdFromTags ||
         (await this.resolveClinicIdFromPaymentReferences(paymentId, orderId)) ||
         (await this.resolveClinicIdFromAppointment(appointmentId));
 
@@ -1488,6 +1572,29 @@ export class PaymentController {
       };
     }
 
+    // Resolve the paying customer's details SERVER-SIDE from the target entity.
+    // The request body deliberately carries no phone/customer fields: this bridge
+    // is @Public(), so trusting a client-sent phone would let a caller put an
+    // arbitrary number on someone else's payment. Deriving it here also means
+    // Cashfree (which requires a phone) is not needlessly skipped, and the phone
+    // can be forwarded to the gateway so the checkout does not re-prompt for it.
+    const customer = await this.resolvePaymentCustomer({
+      ...(appointmentId ? { appointmentId } : {}),
+      ...(subscriptionId ? { subscriptionId } : {}),
+      ...(invoiceId ? { invoiceId } : {}),
+      ...(prescriptionId ? { prescriptionId } : {}),
+    });
+
+    if (!customer.customerPhone) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        'Public payment intent: no phone resolved for target; phone-dependent providers may be skipped',
+        'PaymentController',
+        { clinicId, appointmentId, subscriptionId, invoiceId, prescriptionId }
+      );
+    }
+
     try {
       // Use the clinic's payment config (primary provider from DB), not the
       // frontend-provided provider — this prevents clients from forcing
@@ -1504,6 +1611,11 @@ export class PaymentController {
           ...(invoiceId ? { invoiceId } : {}),
           ...(prescriptionId ? { prescriptionId } : {}),
           appointmentType: appointmentType || 'VIDEO_CALL',
+          ...(customer.customerId ? { customerId: customer.customerId } : {}),
+          ...(customer.customerPhone ? { customerPhone: customer.customerPhone } : {}),
+          ...(customer.customerEmail ? { customerEmail: customer.customerEmail } : {}),
+          ...(customer.customerName ? { customerName: customer.customerName } : {}),
+          clinicId,
         } as import('@core/types').PaymentIntentOptions
         // No provider override — use clinic config
       );

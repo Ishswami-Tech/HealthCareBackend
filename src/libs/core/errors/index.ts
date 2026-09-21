@@ -27,6 +27,10 @@ export { HealthcareError, ErrorMetadata, ApiErrorResponse } from './healthcare-e
 export { ErrorCode } from './error-codes.enum';
 export { ErrorMessages } from './error-messages.constant';
 
+// Message extraction helpers (pure functions, no DI — safe to export from the barrel)
+export { extractErrorMessage, toError } from './error-message.util';
+export type { NormalizedError } from './error-message.util';
+
 // Main error service
 export { HealthcareErrorsService } from './healthcare-errors.service';
 

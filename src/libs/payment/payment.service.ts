@@ -9,7 +9,10 @@ import { nowIso } from '@utils/date-time.util';
  * @description Centralized payment processing service
  */
 
-import { Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable } from '@nestjs/common';
+import { HealthcareError } from '@core/errors/healthcare-error.class';
+import { ErrorCode } from '@core/errors/error-codes.enum';
+import { toError } from '@core/errors/error-message.util';
 import { HttpService } from '@infrastructure/http';
 import { LoggingService } from '@logging';
 import { EventService } from '@infrastructure/events/event.service';
@@ -247,10 +250,36 @@ export class PaymentService {
     );
 
     let lastError: Error | null = null;
+    const skippedForMissingPhone: PaymentProvider[] = [];
 
     for (const p of providersToTry) {
       try {
         const adapter = await this.getProviderAdapter(clinicId, p);
+
+        // Some gateways (Cashfree) make customer_phone mandatory on order creation.
+        // Without a phone the order can never be created, so skip rather than spend a
+        // failed attempt plus a failure cooldown on a guaranteed rejection — that let
+        // a transient-looking "provider failed" line mask a pure data problem.
+        if (
+          adapter.requiresCustomerPhone?.() === true &&
+          !(paymentOptions.customerPhone && paymentOptions.customerPhone.trim().length > 0)
+        ) {
+          skippedForMissingPhone.push(p);
+          await this.loggingService.log(
+            LogType.PAYMENT,
+            LogLevel.WARN,
+            `Skipping provider ${p}: it requires a customer phone number and none is on file`,
+            'PaymentService',
+            {
+              clinicId,
+              provider: p,
+              customerId: options.customerId,
+              appointmentId: options.appointmentId,
+            }
+          );
+          continue;
+        }
+
         const result = await adapter.createPaymentIntent(paymentOptions);
         if (!result.success) {
           throw new Error(result.error || `Payment provider ${p} returned an unsuccessful result`);
@@ -299,7 +328,10 @@ export class PaymentService {
 
         return normalizedResult;
       } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
+        // Normalize here too: a provider SDK can reject with a plain object before
+        // the adapter's retry wrapper ever sees it, and `String(error)` would bake
+        // "[object Object]" into the message recorded against the failure cooldown.
+        lastError = toError(error);
         this.markProviderFailed(clinicId, p, lastError.message);
         await this.loggingService.log(
           LogType.PAYMENT,
@@ -309,6 +341,33 @@ export class PaymentService {
           { clinicId, provider: p }
         );
       }
+    }
+
+    // Every candidate was skipped for the same data problem: report that precisely
+    // instead of "All payment providers failed: undefined".
+    if (!lastError && skippedForMissingPhone.length > 0) {
+      const message =
+        `Cannot create payment intent: the configured provider(s) ${skippedForMissingPhone.join(', ')} ` +
+        `require a customer phone number, and no phone is on file for this customer.`;
+
+      await this.loggingService.log(LogType.PAYMENT, LogLevel.ERROR, message, 'PaymentService', {
+        clinicId,
+        skippedProviders: skippedForMissingPhone,
+        customerId: options.customerId,
+        appointmentId: options.appointmentId,
+      });
+
+      // Metadata is intentionally omitted from the thrown error: the global
+      // HttpExceptionFilter forwards HealthcareError.metadata into the response
+      // body unsanitized, and clinicId/customerId/appointmentId should not leak.
+      // The message itself is safe and actionable for the caller.
+      throw new HealthcareError(
+        ErrorCode.VALIDATION_REQUIRED_FIELD,
+        message,
+        HttpStatus.BAD_REQUEST,
+        undefined,
+        'PaymentService.createPaymentIntent'
+      );
     }
 
     await this.loggingService.log(
@@ -424,7 +483,16 @@ export class PaymentService {
 
     let verificationStrategy: 'order_id' | 'payment_id' | 'skipped';
 
-    if (capability.canVerifyByPaymentId() && paymentId) {
+    // `canVerifyByPaymentId()` only says the endpoint exists — it cannot tell that
+    // the supplied value IS a payment ID. Handoff tokens routinely carry the
+    // gateway ORDER id in the paymentId field (no pay_* id exists until checkout
+    // completes), so also ask the provider whether the ID shape is usable.
+    const canUsePaymentId =
+      capability.canVerifyByPaymentId() &&
+      Boolean(paymentId) &&
+      (capability.isVerifiablePaymentId?.(paymentId!) ?? true);
+
+    if (canUsePaymentId) {
       verificationStrategy = 'payment_id';
     } else if (capability.canVerifyByOrderId() && orderId) {
       verificationStrategy = 'order_id';
@@ -459,7 +527,9 @@ export class PaymentService {
       };
     }
 
-    const idToVerify = paymentId || orderId!;
+    // Must follow the chosen strategy: falling back to `paymentId || orderId` here
+    // would re-send a rejected payment ID even after routing picked order_id.
+    const idToVerify = verificationStrategy === 'payment_id' ? paymentId! : orderId!;
 
     const verifyOptions: PaymentStatusOptions = {
       paymentId: idToVerify,

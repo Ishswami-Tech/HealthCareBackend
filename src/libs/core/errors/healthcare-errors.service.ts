@@ -5,6 +5,9 @@ import { HealthcareError, ErrorMetadata } from './healthcare-error.class';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
+// Relative path (not @-alias) so this remains safe regardless of alias-registration
+// timing; the instrument module is dependency-free and self-gates when Sentry is off.
+import { captureError } from '../../../instrument/sentry';
 
 /**
  * Centralized Healthcare Error Service
@@ -884,6 +887,15 @@ export class HealthcareErrorsService {
   handleGenericError(error: Error, context?: string): void {
     const healthcareError = this.internalServerError(context);
     this.handleError(healthcareError, context);
+    // Non-HTTP paths (workers, background jobs, event handlers) surface here
+    // rather than through the global HTTP filter, so forward the ORIGINAL error
+    // to Sentry to preserve its real stack/message. HTTP 5xx are captured by the
+    // global exception filter instead, so the two paths do not overlap.
+    captureError(error, {
+      level: 'error',
+      ...(context ? { tags: { context } } : {}),
+      fingerprint: ['{{ default }}', context || 'generic-error'],
+    });
   }
 
   // Private helper methods
