@@ -1,3 +1,61 @@
+export interface MedicalRecordResponse {
+  id: string;
+  userId: string;
+  clinicId: string;
+  type:
+    | 'LAB_TEST'
+    | 'XRAY'
+    | 'MRI'
+    | 'PRESCRIPTION'
+    | 'DIAGNOSIS_REPORT'
+    | 'PULSE_DIAGNOSIS'
+    | 'GENERAL_DOCUMENT';
+  title: string;
+  content?: string;
+  fileUrl?: string;
+  fileKey?: string;
+  fileSize?: number;
+  mimeType?: string;
+  doctorId: string;
+  notes?: string;
+  uploadedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateMedicalRecordInput {
+  userId: string;
+  clinicId: string;
+  type:
+    | 'LAB_TEST'
+    | 'XRAY'
+    | 'MRI'
+    | 'PRESCRIPTION'
+    | 'DIAGNOSIS_REPORT'
+    | 'PULSE_DIAGNOSIS'
+    | 'GENERAL_DOCUMENT';
+  title: string;
+  content?: string;
+  doctorId?: string;
+  notes?: string;
+  uploadedBy: string;
+}
+
+export interface MedicalRecordFilters {
+  userId?: string;
+  clinicId?: string;
+  type?: string;
+  doctorId?: string;
+  uploadedBy?: string;
+  startDate?: Date;
+  endDate?: Date;
+  search?: string;
+  sortBy?: 'createdAt' | 'updatedAt' | 'title' | 'recordType' | 'uploadedAt';
+  sortOrder?: 'asc' | 'desc';
+  limit?: number;
+  offset?: number;
+}
+
 export interface MedicalHistoryRecord {
   id: string;
   userId: string;

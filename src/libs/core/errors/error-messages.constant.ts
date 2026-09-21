@@ -139,7 +139,7 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.EXTERNAL_SERVICE_TIMEOUT]: 'External service request timed out. Please try again.',
   [ErrorCode.EXTERNAL_SERVICE_INVALID_RESPONSE]: 'Invalid response from external service.',
   [ErrorCode.EMAIL_SERVICE_FAILED]: 'Failed to send email. Please try again later.',
-  [ErrorCode.SMS_SERVICE_FAILED]: 'Failed to send SMS. Please try again later.',
+  [ErrorCode.OTP_DELIVERY_FAILED]: 'Failed to send OTP. Please try again later.',
   [ErrorCode.WHATSAPP_SERVICE_FAILED]: 'Failed to send WhatsApp message. Please try again later.',
   [ErrorCode.PAYMENT_SERVICE_FAILED]: 'Payment processing failed. Please try again.',
 

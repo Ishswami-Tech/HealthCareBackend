@@ -1311,7 +1311,7 @@ export class AuthService {
           clinicId,
         });
 
-        result = await this.otpService.sendOtpSms(phoneTarget, 'login', clinicId, otpCode);
+        result = await this.otpService.sendOtpPhone(phoneTarget, 'login', clinicId, otpCode);
 
         this.logOtp('OTP request channel result', {
           identifier: requestDto.identifier,
@@ -1324,7 +1324,7 @@ export class AuthService {
         });
 
         if (!result.success) {
-          throw this.errors.otpSendFailed(
+          throw this.errors.otpDeliveryFailed(
             result.message || 'Failed to send WhatsApp message. Please try again later.',
             'AuthService.requestOtp'
           );

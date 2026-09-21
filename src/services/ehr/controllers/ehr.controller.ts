@@ -12,6 +12,7 @@ import {
   HttpStatus,
   Request,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { EHRService } from '@services/ehr/ehr.service';
 import {
@@ -33,6 +34,9 @@ import {
   UpdateImmunizationDto,
   CreatePrescriptionDto,
   EHRAISummaryDto,
+  CreateMedicalRecordDto,
+  UpdateMedicalRecordDto,
+  MedicalRecordFilterDto,
 } from '@dtos/ehr.dto';
 import type {
   MedicalHistoryResponse,
@@ -40,6 +44,8 @@ import type {
   RadiologyReportResponse,
   SurgicalRecordResponse,
   ImmunizationResponse,
+  MedicalRecordFilters,
+  CreateMedicalRecordInput,
 } from '@core/types/ehr.types';
 import { ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
@@ -54,6 +60,33 @@ import { RequiresProfileCompletion } from '@core/decorators/profile-completion.d
 import { PatientCache } from '@core/decorators';
 import { Role } from '@core/types/enums.types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
+
+// Fastify file upload decorator (matches patients.controller pattern)
+import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+
+export interface MulterFile {
+  filename: string;
+  buffer: Buffer;
+  mimetype: string;
+  originalname: string;
+  size: number;
+}
+
+export const FastifyFile = createParamDecorator(
+  (_data: unknown, ctx: ExecutionContext): MulterFile => {
+    const req = ctx.switchToHttp().getRequest<import('fastify').FastifyRequest>();
+    const items = req.files as unknown as unknown[];
+    if (!items || items.length === 0) return null as unknown as MulterFile;
+    const item = items[0] as Record<string, unknown>;
+    return {
+      filename: (item['filename'] as string) ?? 'upload',
+      buffer: (item['file'] as { buffer?: Buffer } | undefined)?.buffer ?? Buffer.from([]),
+      mimetype: (item['mimetype'] as string) ?? 'application/octet-stream',
+      originalname: (item['originalname'] as string) ?? 'upload',
+      size: (item['file'] as { buffer?: Buffer } | undefined)?.buffer?.length ?? 0,
+    };
+  }
+);
 
 @ApiTags('ehr')
 @Controller('ehr')
@@ -259,8 +292,13 @@ export class EHRController {
     Role.LAB_TECHNICIAN
   )
   @RequireResourcePermission('lab-reports', 'update')
-  async updateLabReport(@Param('id') id: string, @Body() updateDto: UpdateLabReportDto) {
-    return this.ehrService.updateLabReport(id, updateDto);
+  async updateLabReport(
+    @Param('id') id: string,
+    @Body() updateDto: UpdateLabReportDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    return this.ehrService.updateLabReport(id, updateDto, clinicId);
   }
 
   @Delete('lab-reports/:id')
@@ -273,8 +311,9 @@ export class EHRController {
   )
   @RequireResourcePermission('lab-reports', 'delete')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async deleteLabReport(@Param('id') id: string) {
-    await this.ehrService.deleteLabReport(id);
+  async deleteLabReport(@Param('id') id: string, @Request() req: ClinicAuthenticatedRequest) {
+    const clinicId = req.clinicContext?.clinicId;
+    await this.ehrService.deleteLabReport(id, clinicId);
   }
 
   // ============ Radiology Reports ============
@@ -317,20 +356,23 @@ export class EHRController {
 
   @Put('radiology-reports/:id')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
-  @RequireResourcePermission('ehr', 'update')
+  @RequireResourcePermission('radiology-reports', 'update')
   async updateRadiologyReport(
     @Param('id') id: string,
-    @Body() updateDto: UpdateRadiologyReportDto
+    @Body() updateDto: UpdateRadiologyReportDto,
+    @Request() req: ClinicAuthenticatedRequest
   ) {
-    return this.ehrService.updateRadiologyReport(id, updateDto);
+    const clinicId = req.clinicContext?.clinicId;
+    return this.ehrService.updateRadiologyReport(id, updateDto, clinicId);
   }
 
   @Delete('radiology-reports/:id')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
-  @RequireResourcePermission('ehr', 'delete')
+  @RequireResourcePermission('radiology-reports', 'delete')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async deleteRadiologyReport(@Param('id') id: string) {
-    await this.ehrService.deleteRadiologyReport(id);
+  async deleteRadiologyReport(@Param('id') id: string, @Request() req: ClinicAuthenticatedRequest) {
+    const clinicId = req.clinicContext?.clinicId;
+    await this.ehrService.deleteRadiologyReport(id, clinicId);
   }
 
   // ============ Surgical Records ============
@@ -373,17 +415,23 @@ export class EHRController {
 
   @Put('surgical-records/:id')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
-  @RequireResourcePermission('ehr', 'update')
-  async updateSurgicalRecord(@Param('id') id: string, @Body() updateDto: UpdateSurgicalRecordDto) {
-    return this.ehrService.updateSurgicalRecord(id, updateDto);
+  @RequireResourcePermission('surgical-records', 'update')
+  async updateSurgicalRecord(
+    @Param('id') id: string,
+    @Body() updateDto: UpdateSurgicalRecordDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    return this.ehrService.updateSurgicalRecord(id, updateDto, clinicId);
   }
 
   @Delete('surgical-records/:id')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
-  @RequireResourcePermission('ehr', 'delete')
+  @RequireResourcePermission('surgical-records', 'delete')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async deleteSurgicalRecord(@Param('id') id: string) {
-    await this.ehrService.deleteSurgicalRecord(id);
+  async deleteSurgicalRecord(@Param('id') id: string, @Request() req: ClinicAuthenticatedRequest) {
+    const clinicId = req.clinicContext?.clinicId;
+    await this.ehrService.deleteSurgicalRecord(id, clinicId);
   }
 
   // ============ Vitals ============
@@ -445,16 +493,22 @@ export class EHRController {
     Role.SUPER_ADMIN
   )
   @RequireResourcePermission('vitals', 'update')
-  async updateVital(@Param('id') id: string, @Body() updateDto: UpdateVitalDto) {
-    return this.ehrService.updateVital(id, updateDto);
+  async updateVital(
+    @Param('id') id: string,
+    @Body() updateDto: UpdateVitalDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    return this.ehrService.updateVital(id, updateDto, clinicId);
   }
 
   @Delete('vitals/:id')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('vitals', 'delete')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async deleteVital(@Param('id') id: string) {
-    await this.ehrService.deleteVital(id);
+  async deleteVital(@Param('id') id: string, @Request() req: ClinicAuthenticatedRequest) {
+    const clinicId = req.clinicContext?.clinicId;
+    await this.ehrService.deleteVital(id, clinicId);
   }
 
   // ============ Allergies ============
@@ -504,16 +558,22 @@ export class EHRController {
   @Put('allergies/:id')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.NURSE, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'update')
-  async updateAllergy(@Param('id') id: string, @Body() updateDto: UpdateAllergyDto) {
-    return this.ehrService.updateAllergy(id, updateDto);
+  async updateAllergy(
+    @Param('id') id: string,
+    @Body() updateDto: UpdateAllergyDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    return this.ehrService.updateAllergy(id, updateDto, clinicId);
   }
 
   @Delete('allergies/:id')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'delete')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async deleteAllergy(@Param('id') id: string) {
-    await this.ehrService.deleteAllergy(id);
+  async deleteAllergy(@Param('id') id: string, @Request() req: ClinicAuthenticatedRequest) {
+    const clinicId = req.clinicContext?.clinicId;
+    await this.ehrService.deleteAllergy(id, clinicId);
   }
 
   // ============ Medications ============
@@ -570,16 +630,22 @@ export class EHRController {
   @Put('medications/:id')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medications', 'update')
-  async updateMedication(@Param('id') id: string, @Body() updateDto: UpdateMedicationDto) {
-    return this.ehrService.updateMedication(id, updateDto);
+  async updateMedication(
+    @Param('id') id: string,
+    @Body() updateDto: UpdateMedicationDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    return this.ehrService.updateMedication(id, updateDto, clinicId);
   }
 
   @Delete('medications/:id')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medications', 'delete')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async deleteMedication(@Param('id') id: string) {
-    await this.ehrService.deleteMedication(id);
+  async deleteMedication(@Param('id') id: string, @Request() req: ClinicAuthenticatedRequest) {
+    const clinicId = req.clinicContext?.clinicId;
+    await this.ehrService.deleteMedication(id, clinicId);
   }
 
   // ============ Immunizations ============
@@ -684,5 +750,110 @@ export class EHRController {
     // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
     const clinicId = req.clinicContext?.clinicId;
     return this.ehrService.getMedicationAdherence(userId, clinicId);
+  }
+
+  // ============ Medical Records ============
+
+  @Post('medical-records')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.NURSE, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('medical-records', 'create')
+  async createMedicalRecord(
+    @Body() createDto: CreateMedicalRecordDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new ForbiddenException('Clinic context required for EHR writes');
+    const uploaderId = req.user?.id ?? createDto.uploadedBy;
+    if (!uploaderId) throw new BadRequestException('uploadedBy is required');
+    const recordData: CreateMedicalRecordInput = {
+      userId: createDto.userId,
+      clinicId,
+      type: createDto.type,
+      title: createDto.title,
+      uploadedBy: uploaderId,
+    };
+    if (createDto.doctorId) recordData.doctorId = createDto.doctorId;
+    if (createDto.content) recordData.content = createDto.content;
+    if (createDto.notes) recordData.notes = createDto.notes;
+    return this.ehrService.createMedicalRecord(recordData);
+  }
+
+  @Get('medical-records/patient/:patientId')
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.PATIENT,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN
+  )
+  @RequireResourcePermission('medical-records', 'read', { requireOwnership: true })
+  async getMedicalRecords(
+    @Param('patientId') patientId: string,
+    @Query() query: MedicalRecordFilterDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    const filters: MedicalRecordFilters = {};
+    if (query.type) filters.type = query.type;
+    if (query.startDate) filters.startDate = new Date(query.startDate);
+    if (query.endDate) filters.endDate = new Date(query.endDate);
+    if (query.search) filters.search = query.search;
+    if (query.doctorId) filters.doctorId = query.doctorId;
+    if (query.uploadedBy) filters.uploadedBy = query.uploadedBy;
+    return this.ehrService.getMedicalRecords(patientId, clinicId, filters);
+  }
+
+  @Get('medical-records/:id')
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.PATIENT,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN
+  )
+  @RequireResourcePermission('medical-records', 'read')
+  async getMedicalRecordById(@Param('id') id: string, @Request() req: ClinicAuthenticatedRequest) {
+    const clinicId = req.clinicContext?.clinicId;
+    return this.ehrService.getMedicalRecordById(id, clinicId);
+  }
+
+  @Put('medical-records/:id')
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.NURSE, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('medical-records', 'update')
+  async updateMedicalRecord(
+    @Param('id') id: string,
+    @Body() updateDto: UpdateMedicalRecordDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    return this.ehrService.updateMedicalRecord(id, updateDto, clinicId);
+  }
+
+  @Delete('medical-records/:id')
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.NURSE, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('medical-records', 'delete')
+  async deleteMedicalRecord(@Param('id') id: string, @Request() req: ClinicAuthenticatedRequest) {
+    const clinicId = req.clinicContext?.clinicId;
+    const result = await this.ehrService.deleteMedicalRecord(id, clinicId);
+    return { success: result };
+  }
+
+  @Post('medical-records/:id/upload')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.NURSE, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('medical-records', 'update')
+  async uploadMedicalRecordFile(@Param('id') id: string, @FastifyFile() file: MulterFile) {
+    if (!file) {
+      throw new BadRequestException('File is required for upload');
+    }
+    return this.ehrService.uploadMedicalRecordFile(
+      id,
+      file.buffer,
+      file.originalname,
+      file.mimetype
+    );
   }
 }

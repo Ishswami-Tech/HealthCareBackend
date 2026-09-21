@@ -400,6 +400,8 @@ export class PaymentResponseDto {
   metadata?: Record<string, unknown>;
   createdAt!: Date;
   updatedAt!: Date;
+  patientName?: string;
+  orderId?: string;
 }
 
 export class InvoiceResponseDto {

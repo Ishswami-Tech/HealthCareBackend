@@ -606,3 +606,83 @@ export class BulkEHRImportDto {
   @IsOptional()
   records?: unknown[];
 }
+
+// ===== MEDICAL RECORDS DTOs =====
+
+export class CreateMedicalRecordDto {
+  @IsString()
+  userId!: string;
+
+  @IsOptional()
+  @IsString()
+  clinicId?: string;
+
+  @IsString()
+  type!:
+    | 'LAB_TEST'
+    | 'XRAY'
+    | 'MRI'
+    | 'PRESCRIPTION'
+    | 'DIAGNOSIS_REPORT'
+    | 'PULSE_DIAGNOSIS'
+    | 'GENERAL_DOCUMENT';
+
+  @IsString()
+  title!: string;
+
+  @IsOptional()
+  @IsString()
+  content?: string;
+
+  @IsOptional()
+  @IsString()
+  doctorId?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+
+  @IsOptional()
+  @IsString()
+  uploadedBy?: string;
+}
+
+export class UpdateMedicalRecordDto {
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  content?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+export class MedicalRecordFilterDto {
+  @IsOptional()
+  @IsString()
+  type?: string;
+
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @IsOptional()
+  @IsString()
+  uploadedBy?: string;
+
+  @IsOptional()
+  @IsString()
+  doctorId?: string;
+}

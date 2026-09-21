@@ -385,6 +385,17 @@ export class BillingMethods extends DatabaseMethodsBase {
         where,
         include: {
           invoice: true,
+          appointment: {
+            include: {
+              patient: {
+                include: {
+                  user: {
+                    select: { id: true, name: true, phone: true, email: true },
+                  },
+                },
+              },
+            },
+          },
         },
       });
     }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());

@@ -1314,12 +1314,23 @@ model HealthRecord {
   recordType HealthRecordType
   report     String?
   fileUrl    String?
+  title      String?
+  content    String?
+  fileSize   Int?
+  mimeType   String?
+  uploadedBy String?
+  notes      String?
   clinicId   String
   createdAt  DateTime         @default(now())
   doctor     Doctor           @relation(fields: [doctorId], references: [id])
   patient    Patient          @relation(fields: [patientId], references: [id])
 
   @@index([clinicId])
+  @@index([patientId])
+  @@index([doctorId])
+  @@index([recordType])
+  @@index([createdAt])
+  @@index([clinicId, recordType])
 }
 
 model AuditLog {

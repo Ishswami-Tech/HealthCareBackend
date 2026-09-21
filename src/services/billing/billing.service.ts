@@ -1671,6 +1671,8 @@ export class BillingService implements OnModuleInit {
         if (resolvedClinicId) {
           whereClause['clinicId'] = resolvedClinicId;
         }
+        // Exclude VOID invoices (cancelled/expired appointments)
+        whereClause['status'] = { not: 'VOID' };
         return await this.databaseService.findInvoicesSafe(whereClause);
       },
       {
@@ -2031,11 +2033,35 @@ export class BillingService implements OnModuleInit {
       cacheKey,
       async () => {
         const resolvedClinicId = await this.resolveUserClinicId(userId, clinicId, role);
-        const whereClause: Record<string, unknown> = { userId };
-        if (resolvedClinicId) {
-          whereClause['clinicId'] = resolvedClinicId;
-        }
-        return await this.databaseService.findPaymentsSafe(whereClause);
+        const allPayments = await this.databaseService.findPaymentsSafe({
+          ...(resolvedClinicId ? { clinicId: resolvedClinicId } : {}),
+        });
+        // Filter to this user's payments and exclude payments from
+        // expired/cancelled/no-show appointments. Also enrich with
+        // patientName and orderId from metadata.
+        return allPayments
+          .filter(p => {
+            const apt = p.appointment;
+            if (!apt) return false;
+            const aptPatient = (apt as unknown as { patient?: { userId?: string } }).patient;
+            if (aptPatient?.userId !== userId) return false;
+            const aptStatus = String(apt.status || '').toUpperCase();
+            return !['EXPIRED', 'CANCELLED', 'NO_SHOW'].includes(aptStatus);
+          })
+          .map(p => {
+            const metadata = this.asRecord(p.metadata);
+            const patientName =
+              (p.appointment as unknown as { patient?: { user?: { name?: string } } })?.patient
+                ?.user?.name || 'Unknown';
+            return {
+              ...p,
+              patientName,
+              orderId:
+                this.asSafeString(metadata?.['orderId']) ||
+                this.asSafeString(metadata?.['paymentIntentId']) ||
+                p.id,
+            };
+          });
       },
       {
         ttl: 900,
