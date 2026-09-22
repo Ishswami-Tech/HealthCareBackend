@@ -153,6 +153,18 @@ export class ProfileCompletionGuard implements CanActivate {
         hasCompleteLoginProfileFields(dbUser as unknown as Record<string, unknown>);
 
       if (!isProfileComplete) {
+        // Determine which specific fields are missing for a better UI experience
+        const dbUserRecord = dbUser as unknown as Record<string, unknown>;
+        const missingFields: string[] = [];
+        const firstName = dbUserRecord['firstName'] ?? dbUserRecord['first_name'];
+        const lastName = dbUserRecord['lastName'] ?? dbUserRecord['last_name'];
+        const phone = dbUserRecord['phone'] ?? dbUserRecord['mobile'];
+
+        if (!isNonEmptyTrimmedString(firstName)) missingFields.push('firstName');
+        if (!isNonEmptyTrimmedString(lastName)) missingFields.push('lastName');
+        if (!isNonEmptyTrimmedString(phone)) missingFields.push('phone');
+        if (dbUserRecord['phoneVerified'] !== true) missingFields.push('phoneVerified');
+
         await this.logging.log(
           LogType.AUDIT,
           LogLevel.DEBUG,
@@ -164,6 +176,7 @@ export class ProfileCompletionGuard implements CanActivate {
             role: user.role,
             path: request.raw?.url,
             method: request.method,
+            missingFields,
           }
         );
 
@@ -172,6 +185,7 @@ export class ProfileCompletionGuard implements CanActivate {
           message: 'Please complete your profile to access this feature.',
           requiresProfileCompletion: true,
           redirectUrl: '/profile-completion',
+          missingFields,
         });
       }
 

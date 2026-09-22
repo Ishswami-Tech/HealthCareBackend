@@ -45,9 +45,7 @@ import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { Roles } from '@core/decorators/roles.decorator';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { ClinicGuard } from '@core/guards/clinic.guard';
-import { ProfileCompletionGuard } from '@core/guards/profile-completion.guard';
 import { ClinicRoute } from '@core/decorators/clinic-route.decorator';
-import { RequiresProfileCompletion } from '@core/decorators/profile-completion.decorator';
 import { HealthcareErrorsService, HealthcareError } from '@core/errors';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
@@ -144,8 +142,7 @@ import type { AppointmentWithRelations } from '@core/types/database.types';
   description: 'Clinic identifier',
   required: true,
 })
-@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard, ProfileCompletionGuard)
-@RequiresProfileCompletion()
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
 @UsePipes(
   new ValidationPipe({
     transform: true,
