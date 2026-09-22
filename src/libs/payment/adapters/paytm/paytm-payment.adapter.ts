@@ -419,7 +419,7 @@ export class PaytmBusinessPaymentAdapter extends BasePaymentAdapter {
       return {
         paymentId: orderId,
         status,
-        amount: paymentData.txnAmount ? parseFloat(paymentData.txnAmount) * 100 : 0, // Convert from INR to paise
+        amount: paymentData.txnAmount ? parseFloat(paymentData.txnAmount) : 0,
         currency: 'INR',
         transactionId: paymentData.txnId ?? '',
         provider: this.getProviderName(),

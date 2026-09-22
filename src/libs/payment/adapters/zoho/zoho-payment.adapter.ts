@@ -438,7 +438,7 @@ export class ZohoPaymentAdapter extends BasePaymentAdapter {
         options.paymentId ||
         sessionResponse.data.payments_session_id ||
         sessionIdUsed;
-      const amountMinor = this.toMinorUnits(session.amount || sessionResponse.data.amount || 0);
+      const amountRupees = Number(session.amount || sessionResponse.data.amount || 0);
       const currency = (session.currency || sessionResponse.data.currency || 'INR').toUpperCase();
 
       if (!statusText || /not_found|error/i.test(statusText)) {
@@ -475,13 +475,13 @@ export class ZohoPaymentAdapter extends BasePaymentAdapter {
         const payment = paymentResponse.data.payment || {};
         statusText = payment.status || paymentResponse.data.status || statusText;
         paymentId = payment.payment_id || paymentResponse.data.payment_id || paymentId;
-        const amountSource = payment.amount || paymentResponse.data.amount || amountMinor;
+        const amountSource = payment.amount || paymentResponse.data.amount || amountRupees;
         const currencySource = payment.currency || paymentResponse.data.currency || currency;
 
         return {
           paymentId,
           status: this.mapStatus(statusText),
-          amount: this.toMinorUnits(amountSource),
+          amount: Number(amountSource) || 0,
           currency: String(currencySource || 'INR').toUpperCase(),
           ...(payment.transaction_id ? { transactionId: payment.transaction_id } : {}),
           provider: this.getProviderName(),
@@ -498,7 +498,7 @@ export class ZohoPaymentAdapter extends BasePaymentAdapter {
       return {
         paymentId,
         status: this.mapStatus(statusText),
-        amount: amountMinor,
+        amount: amountRupees,
         currency,
         ...(session.payment_id ? { transactionId: session.payment_id } : {}),
         provider: this.getProviderName(),

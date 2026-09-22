@@ -555,12 +555,10 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         status = 'pending';
       }
 
-      const amountInPaise = Math.round((data.order_amount || 0) * 100);
-
       return {
         paymentId: data.order_id,
         status,
-        amount: amountInPaise,
+        amount: data.order_amount || 0,
         currency: data.order_currency || 'INR',
         transactionId: data.order_id,
         provider: this.getProviderName(),

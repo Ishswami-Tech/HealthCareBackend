@@ -326,7 +326,7 @@ export class PayUPaymentAdapter extends BasePaymentAdapter {
       return {
         paymentId: txnid,
         status: mappedStatus,
-        amount: paymentData.amount ? parseFloat(paymentData.amount) * 100 : 0,
+        amount: paymentData.amount ? parseFloat(paymentData.amount) : 0,
         currency: 'INR',
         transactionId: paymentData.mihpayid ?? '',
         provider: this.getProviderName(),

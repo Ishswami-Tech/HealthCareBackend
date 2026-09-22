@@ -384,7 +384,7 @@ export class EasebuzzPaymentAdapter extends BasePaymentAdapter {
       return {
         paymentId: merchantTxnId,
         status,
-        amount: (paymentData.amount ?? 0) * 100, // Convert from INR to paise
+        amount: paymentData.amount ?? 0,
         currency: 'INR',
         transactionId: paymentData.paymentid ?? '',
         provider: this.getProviderName(),
