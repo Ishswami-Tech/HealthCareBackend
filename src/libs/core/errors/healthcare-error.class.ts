@@ -70,7 +70,17 @@ export class HealthcareError extends HttpException {
     arg4?: ErrorMetadata | string,
     arg5?: string | HttpStatus
   ) {
-    const isLegacySignature = typeof arg1 === 'string' && typeof arg2 === 'string';
+    // Disambiguate the two overloads by checking which argument is a real
+    // ErrorCode member, not just by `typeof` — ErrorCode is a string enum,
+    // so a primary-signature call with a non-empty message has two string
+    // args too, and a naive typeof check misclassifies it as legacy.
+    // Note: a legacy-form call whose message literal happens to match an
+    // ErrorCode's own string value (e.g. 'RESOURCE_NOT_FOUND') would still
+    // be misclassified as primary. Keep legacy-form messages as human
+    // sentences, never SCREAMING_SNAKE_CASE, to avoid that collision.
+    const isErrorCode = (value: unknown): value is ErrorCode =>
+      typeof value === 'string' && Object.values(ErrorCode).includes(value as ErrorCode);
+    const isLegacySignature = !isErrorCode(arg1) && isErrorCode(arg2);
     const code = isLegacySignature ? (arg2 as ErrorCode) : (arg1 as ErrorCode);
     const message = isLegacySignature ? arg1 : (arg2 as string | undefined);
     const statusCode = isLegacySignature

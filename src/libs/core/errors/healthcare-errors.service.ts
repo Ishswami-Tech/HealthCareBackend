@@ -703,12 +703,13 @@ export class HealthcareErrorsService {
   }
 
   // Rate Limiting & Security
-  rateLimitExceeded(limit?: number, context?: string): HealthcareError {
+  rateLimitExceeded(message?: string, context?: string): HealthcareError {
     return this.createError(
       ErrorCode.RATE_LIMIT_EXCEEDED,
       HttpStatus.TOO_MANY_REQUESTS,
       context,
-      limit ? { limit } : undefined
+      undefined,
+      message
     );
   }
 

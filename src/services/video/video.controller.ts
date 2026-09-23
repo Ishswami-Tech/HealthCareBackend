@@ -322,66 +322,24 @@ export class VideoController {
     encryptionKey: string | undefined,
     expiresAt: Date | undefined
   ): VideoTokenResponseDto {
-    const dtoData: {
-      token: string;
-      roomName: string;
-      roomId: string;
-      meetingUrl: string;
-      roomPassword?: string;
-      meetingPassword?: string;
-      encryptionKey?: string;
-      expiresAt?: Date;
-    } = {
-      token,
-      roomName,
-      roomId,
-      meetingUrl,
-    };
+    const dto = new VideoTokenResponseDto();
+    dto.token = token;
+    dto.roomName = roomName;
+    dto.roomId = roomId;
+    dto.meetingUrl = meetingUrl;
     if (roomPassword !== undefined) {
-      dtoData.roomPassword = roomPassword;
+      dto.roomPassword = roomPassword;
     }
     if (meetingPassword !== undefined) {
-      dtoData.meetingPassword = meetingPassword;
+      dto.meetingPassword = meetingPassword;
     }
     if (encryptionKey !== undefined) {
-      dtoData.encryptionKey = encryptionKey;
+      dto.encryptionKey = encryptionKey;
     }
     if (expiresAt !== undefined) {
-      dtoData.expiresAt = expiresAt;
+      dto.expiresAt = expiresAt;
     }
-    const VideoTokenResponseDtoClassRef: typeof VideoTokenResponseDto = VideoTokenResponseDto;
-    const dtoInstanceRawUnknownValue: unknown = new VideoTokenResponseDtoClassRef();
-    if (
-      typeof dtoInstanceRawUnknownValue !== 'object' ||
-      dtoInstanceRawUnknownValue === null ||
-      !('token' in dtoInstanceRawUnknownValue)
-    ) {
-      throw this.errors.internalServerError('VideoController.createVideoTokenResponseDto');
-    }
-    const dtoInstanceRawValue: Record<string, unknown> = dtoInstanceRawUnknownValue as Record<
-      string,
-      unknown
-    >;
-    const dtoInstanceUnknownValue: unknown = Object.assign(dtoInstanceRawValue, dtoData);
-    if (
-      typeof dtoInstanceUnknownValue !== 'object' ||
-      dtoInstanceUnknownValue === null ||
-      !('token' in dtoInstanceUnknownValue) ||
-      typeof (dtoInstanceUnknownValue as { token: unknown }).token !== 'string' ||
-      !('roomName' in dtoInstanceUnknownValue) ||
-      typeof (dtoInstanceUnknownValue as { roomName: unknown }).roomName !== 'string' ||
-      !('roomId' in dtoInstanceUnknownValue) ||
-      typeof (dtoInstanceUnknownValue as { roomId: unknown }).roomId !== 'string' ||
-      !('meetingUrl' in dtoInstanceUnknownValue) ||
-      typeof (dtoInstanceUnknownValue as { meetingUrl: unknown }).meetingUrl !== 'string'
-    ) {
-      throw this.errors.internalServerError('VideoController.createVideoTokenResponseDto');
-    }
-    const validatedDtoUnknownValue: unknown = dtoInstanceUnknownValue;
-    const validatedDtoValue: VideoTokenResponseDto =
-      validatedDtoUnknownValue as VideoTokenResponseDto;
-    const returnValueResult: VideoTokenResponseDto = validatedDtoValue;
-    return returnValueResult;
+    return dto;
   }
 
   private createVideoConsultationSessionDto(

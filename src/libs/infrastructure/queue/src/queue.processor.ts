@@ -17,6 +17,7 @@ import { DoctorSummaryService } from '@communication/services/doctor-summary.ser
 
 // Internal imports - Core
 import { LogType, LogLevel } from '@core/types';
+import { AppointmentStatus, AppointmentType } from '@core/types/enums.types';
 import {
   JobType,
   type CanonicalJobEnvelope,
@@ -920,6 +921,27 @@ export class QueueProcessor {
       notificationData.scheduledFor = scheduledFor;
     }
 
+    // Video appointments only get reminders once the appointment is actually
+    // confirmed (payment/doctor-confirmation) — an unconfirmed video call may
+    // still be awaiting payment or get auto-cancelled, so reminding about it
+    // is misleading. In-person and home-visit appointments have no such
+    // payment gate and keep the previous unconditional behavior.
+    const appointment = await this.prisma.findAppointmentByIdSafe(notificationData.appointmentId);
+    if (
+      appointment &&
+      String(appointment.type) === String(AppointmentType.VIDEO_CALL) &&
+      String(appointment.status) !== String(AppointmentStatus.CONFIRMED)
+    ) {
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        `Skipping reminder for unconfirmed video appointment ${notificationData.appointmentId}`,
+        'QueueProcessor',
+        { appointmentId: notificationData.appointmentId, status: appointment.status }
+      );
+      return { success: true };
+    }
+
     void this.loggingService.log(
       LogType.QUEUE,
       LogLevel.INFO,
@@ -1496,7 +1518,11 @@ export class QueueProcessor {
    */
   async processInvoicePDF(job: Job<JobData>): Promise<{ success: boolean; filePath?: string }> {
     try {
-      const { invoiceId, clinicId, userId, action, metadata: _metadata } = job.data;
+      const payload = this.extractCanonicalPayload(job.data);
+      const invoiceId = payload['invoiceId'];
+      const clinicId = payload['clinicId'];
+      const userId = payload['userId'];
+      const action = payload['action'];
 
       if (!invoiceId || typeof invoiceId !== 'string') {
         throw new Error('Invalid invoiceId in job data');

@@ -289,6 +289,7 @@ export class OtpService {
         return {
           success: false,
           message: `Please wait ${waitMinutes} minute(s) before requesting another OTP`,
+          rateLimited: true,
         };
       }
 
@@ -441,6 +442,7 @@ export class OtpService {
         return {
           success: false,
           message: `Please wait ${waitMinutes} minute(s) before requesting another OTP`,
+          rateLimited: true,
         };
       }
 

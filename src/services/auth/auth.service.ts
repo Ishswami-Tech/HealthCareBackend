@@ -1324,6 +1324,9 @@ export class AuthService {
         });
 
         if (!result.success) {
+          if (result.rateLimited) {
+            throw this.errors.rateLimitExceeded(result.message, 'AuthService.requestOtp');
+          }
           throw this.errors.otpDeliveryFailed(
             result.message || 'Failed to send WhatsApp message. Please try again later.',
             'AuthService.requestOtp'
@@ -1342,6 +1345,9 @@ export class AuthService {
       }
 
       if (!result.success) {
+        if (result.rateLimited) {
+          throw this.errors.rateLimitExceeded(result.message, 'AuthService.requestOtp');
+        }
         throw new Error(result.message ?? 'Failed to send OTP');
       }
 
@@ -2514,7 +2520,18 @@ export class AuthService {
       return true;
     }
 
-    await this.otpService.sendOtpEmail(email, user.firstName || 'User', 'verification', clinicId);
+    const result = await this.otpService.sendOtpEmail(
+      email,
+      user.firstName || 'User',
+      'verification',
+      clinicId
+    );
+    if (!result.success) {
+      if (result.rateLimited) {
+        throw this.errors.rateLimitExceeded(result.message, 'AuthService.resendVerification');
+      }
+      throw this.errors.otpDeliveryFailed(result.message, 'AuthService.resendVerification');
+    }
     return true;
   }
 

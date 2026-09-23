@@ -880,7 +880,10 @@ export class BillingEventsListener {
             client as unknown as {
               invoice: {
                 findMany: (args: {
-                  where: { status: string; metadata: Record<string, unknown> };
+                  where: {
+                    status: string;
+                    metadata: { path: string[]; equals: string };
+                  };
                   select: { id: true };
                 }) => Promise<Array<{ id: string }>>;
               };
@@ -888,7 +891,7 @@ export class BillingEventsListener {
           ).invoice.findMany({
             where: {
               status: 'PENDING',
-              metadata: { appointmentId },
+              metadata: { path: ['appointmentId'], equals: appointmentId },
             },
             select: { id: true },
           });

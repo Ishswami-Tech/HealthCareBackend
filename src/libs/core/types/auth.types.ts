@@ -285,4 +285,6 @@ export interface OtpResult {
   readonly expiresIn?: number;
   /** Optional remaining attempts */
   readonly attemptsRemaining?: number;
+  /** True when the failure is a rate-limit cooldown rejection, not a delivery failure */
+  readonly rateLimited?: boolean;
 }
