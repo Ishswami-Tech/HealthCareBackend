@@ -186,7 +186,8 @@ export default [
     rules: {
       // These rules are disabled because TypeScript correctly resolves the types
       // and the code is type-safe. ESLint's type-aware rules can't resolve
-      // incomplete type definitions from @types/nodemailer.
+      // nodemailer's own bundled type declarations (nodemailer ships its own
+      // types since v10; @types/nodemailer is no longer used).
       '@typescript-eslint/no-unsafe-assignment': 'off',
       '@typescript-eslint/no-unsafe-member-access': 'off',
       '@typescript-eslint/no-unsafe-call': 'off',

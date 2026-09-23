@@ -99,7 +99,7 @@ export class SMTPEmailAdapter extends BaseEmailAdapter {
           ciphers: 'SSLv3',
           rejectUnauthorized: false,
         },
-      } as nodemailer.TransportOptions);
+      });
     } catch (error) {
       // Log error synchronously (can't use await in non-async function)
       void this.logger.log(
