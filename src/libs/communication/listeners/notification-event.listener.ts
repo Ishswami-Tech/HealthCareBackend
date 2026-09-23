@@ -1827,6 +1827,12 @@ export class NotificationEventListener implements OnModuleInit {
       );
     };
 
+    // Flat payload/metadata fields are checked first since they're the fast
+    // path most emitters use, but several call sites (e.g. appointment.confirmed/
+    // completed/updated/cancelled) only attach a full nested `appointment` object
+    // without also duplicating flat ids at the top level. Falling back to the
+    // patient/doctor/clinic records already parsed above (instead of giving up
+    // and skipping the notification) is what those callers actually need.
     const patientId =
       payload.userId ||
       (payload.metadata?.['patientId'] as string | undefined) ||
@@ -1834,16 +1840,23 @@ export class NotificationEventListener implements OnModuleInit {
       (eventPayload['patientId'] as string | undefined) ||
       (eventPayload['userId'] as string | undefined) ||
       (nestedPayload['patientId'] as string | undefined) ||
-      (nestedPayload['userId'] as string | undefined);
+      (nestedPayload['userId'] as string | undefined) ||
+      (patientRecord?.['userId'] as string | undefined) ||
+      (patientUserRecord?.['id'] as string | undefined) ||
+      (patientRecord?.['id'] as string | undefined);
     const doctorId =
       (payload.metadata?.['doctorId'] as string | undefined) ||
       (eventPayload['doctorId'] as string | undefined) ||
-      (nestedPayload['doctorId'] as string | undefined);
+      (nestedPayload['doctorId'] as string | undefined) ||
+      (doctorRecord?.['id'] as string | undefined) ||
+      (doctorRecord?.['userId'] as string | undefined) ||
+      (doctorUserRecord?.['id'] as string | undefined);
     const clinicId =
       payload.clinicId ||
       (payload.metadata?.['clinicId'] as string | undefined) ||
       (eventPayload['clinicId'] as string | undefined) ||
-      (nestedPayload['clinicId'] as string | undefined);
+      (nestedPayload['clinicId'] as string | undefined) ||
+      (clinicRecord?.['id'] as string | undefined);
     const appointmentId =
       (payload.metadata?.['appointmentId'] as string | undefined) ||
       (eventPayload['appointmentId'] as string | undefined) ||
