@@ -80,12 +80,9 @@ export enum SubscriptionStatus {
  * Invoice status enumeration
  */
 export enum InvoiceStatus {
-  DRAFT = 'DRAFT',
-  OPEN = 'OPEN',
+  PENDING = 'PENDING',
   PAID = 'PAID',
   VOID = 'VOID',
-  UNCOLLECTIBLE = 'UNCOLLECTIBLE',
-  OVERDUE = 'OVERDUE',
 }
 
 /**

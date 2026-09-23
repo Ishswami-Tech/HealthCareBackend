@@ -1529,7 +1529,7 @@ export class BillingService implements OnModuleInit {
             tax: data.tax || 0,
             discount: data.discount || 0,
             totalAmount,
-            status: InvoiceStatus.DRAFT,
+            status: InvoiceStatus.PENDING,
             dueDate: new Date(data.dueDate),
             ...(data.subscriptionId && { subscriptionId: data.subscriptionId }),
             ...(data.description && { description: data.description }),
@@ -1672,7 +1672,7 @@ export class BillingService implements OnModuleInit {
           whereClause['clinicId'] = resolvedClinicId;
         }
         // Exclude VOID invoices (cancelled/expired appointments)
-        whereClause['status'] = { not: 'VOID' };
+        whereClause['status'] = { not: InvoiceStatus.VOID };
         return await this.databaseService.findInvoicesSafe(whereClause);
       },
       {
@@ -5115,7 +5115,7 @@ export class BillingService implements OnModuleInit {
       ),
       invoiceDate: new Date(invoice.createdAt),
       dueDate: new Date(invoice.dueDate),
-      status: String(invoice.status ?? 'OPEN'),
+      status: String(invoice.status ?? 'PENDING'),
 
       clinicName: String(clinic.name ?? 'Clinic'),
       ...(clinic.address ? { clinicAddress: clinic.address } : {}),

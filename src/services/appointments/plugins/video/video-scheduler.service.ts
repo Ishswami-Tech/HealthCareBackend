@@ -4,7 +4,9 @@ import { DatabaseService } from '@infrastructure/database/database.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { ConfigService } from '@config/config.service';
 import { getVideoActiveWindowMinutes } from '@config/video.config';
-import { LogType, LogLevel } from '@core/types';
+import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
+import type { EnterpriseEventPayload } from '@core/types/event.types';
+import { EventService } from '@infrastructure/events/event.service';
 import { AppointmentStatus, UpdateAppointmentStatusDto } from '@dtos/appointment.dto';
 import { PaymentStatus } from '@core/types/enums.types';
 import {
@@ -70,7 +72,8 @@ export class VideoAppointmentSchedulerService {
     @Inject(forwardRef(() => AppointmentsService))
     private readonly appointmentsService: AppointmentsService,
     @Inject(forwardRef(() => CacheService))
-    private readonly cacheService: CacheService
+    private readonly cacheService: CacheService,
+    private readonly eventService: EventService
   ) {}
 
   // ─────────────────────────────────────────────────────────────
@@ -525,6 +528,23 @@ export class VideoAppointmentSchedulerService {
             row.clinicId,
             'SYSTEM'
           );
+
+          // BillingEventsListener.handleAppointmentExpiredForBilling listens for
+          // this exact event to void the appointment's still-PENDING invoice.
+          // Without emitting it here, that listener never fires for this path,
+          // which is why invoices stayed stuck long after their Payment (above)
+          // and Appointment were already correctly marked EXPIRED.
+          await this.eventService.emitEnterprise('appointment.expired', {
+            eventId: `payment-window-expired-${row.id}-${Date.now()}`,
+            eventType: 'appointment.expired',
+            category: EventCategory.APPOINTMENT,
+            priority: EventPriority.HIGH,
+            timestamp: new Date().toISOString(),
+            source: 'VideoAppointmentSchedulerService',
+            version: '1.0.0',
+            clinicId: row.clinicId,
+            payload: { appointmentId: row.id },
+          } as EnterpriseEventPayload);
 
           await this.loggingService.log(
             LogType.BUSINESS,

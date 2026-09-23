@@ -852,7 +852,7 @@ export class BillingEventsListener {
     }
 
     await this.expirePendingPaymentsForAppointment(appointmentId, PaymentStatus.CANCELLED);
-    await this.voidDraftInvoicesForAppointment(appointmentId);
+    await this.voidPendingInvoicesForAppointment(appointmentId);
   }
 
   @OnEvent('appointment.expired')
@@ -867,13 +867,13 @@ export class BillingEventsListener {
 
     // Expire PENDING payments — user didn't complete payment in time
     await this.expirePendingPaymentsForAppointment(appointmentId, PaymentStatus.EXPIRED);
-    // VOID DRAFT invoices — appointment expired, invoice is no longer valid
-    await this.voidDraftInvoicesForAppointment(appointmentId);
+    // VOID PENDING invoices — appointment expired, invoice is no longer valid
+    await this.voidPendingInvoicesForAppointment(appointmentId);
   }
 
-  private async voidDraftInvoicesForAppointment(appointmentId: string): Promise<void> {
+  private async voidPendingInvoicesForAppointment(appointmentId: string): Promise<void> {
     try {
-      // Find DRAFT invoices linked to this appointment via metadata
+      // Find PENDING invoices linked to this appointment via metadata
       const draftInvoices = await this.databaseService.executeHealthcareRead<Array<{ id: string }>>(
         async client => {
           return (
@@ -887,7 +887,7 @@ export class BillingEventsListener {
             }
           ).invoice.findMany({
             where: {
-              status: 'DRAFT',
+              status: 'PENDING',
               metadata: { appointmentId },
             },
             select: { id: true },

@@ -1078,7 +1078,7 @@ model Invoice {
   tax             Float?           @default(0)
   discount        Float?           @default(0)
   totalAmount     Float
-  status          InvoiceStatus    @default(DRAFT)
+  status          InvoiceStatus    @default(PENDING)
   dueDate         DateTime
   paidAt          DateTime?
   description     String?
@@ -2931,12 +2931,9 @@ enum BillingInterval {
 }
 
 enum InvoiceStatus {
-  DRAFT
-  OPEN
+  PENDING
   PAID
   VOID
-  UNCOLLECTIBLE
-  OVERDUE
 }
 
 enum SuppressionReason {

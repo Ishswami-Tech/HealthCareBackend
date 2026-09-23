@@ -776,23 +776,10 @@ export class InvoicePDFService {
   private getStatusInfo(status: string) {
     switch (status.toUpperCase()) {
       case 'PAID':
-      case 'COMPLETED':
         return { label: 'PAID', bg: this.c.paidBg, text: this.c.paidText, dot: this.c.paidDot };
-      case 'PENDING':
-      case 'OPEN':
-      case 'DRAFT':
-        return { label: 'UNPAID', bg: this.c.pendBg, text: this.c.pendText, dot: this.c.pendDot };
-      case 'OVERDUE':
-        return { label: 'OVERDUE', bg: this.c.overBg, text: this.c.overText, dot: this.c.overDot };
-      case 'CANCELLED':
       case 'VOID':
-      case 'UNCOLLECTIBLE':
-        return {
-          label: status.toUpperCase() === 'UNCOLLECTIBLE' ? 'UNCOLLECTIBLE' : 'CANCELLED',
-          bg: this.c.overBg,
-          text: this.c.overText,
-          dot: this.c.overDot,
-        };
+        return { label: 'VOID', bg: this.c.overBg, text: this.c.overText, dot: this.c.overDot };
+      case 'PENDING':
       default:
         return { label: 'UNPAID', bg: this.c.pendBg, text: this.c.pendText, dot: this.c.pendDot };
     }
