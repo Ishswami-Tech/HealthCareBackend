@@ -656,7 +656,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
         },
         removeOnComplete: options.removeOnComplete ?? 100,
         removeOnFail: options.removeOnFail ?? 50,
-        // timeout: options.timeout || 30000, // BullMQ doesn't support timeout in JobsOptions
+        timestamp: Date.now(), // Track creation time — jobs older than 24h get flagged
         ...(options.correlationId && { jobId: options.correlationId }),
         // Enhanced metadata for 1M users - stored in job data instead
       };

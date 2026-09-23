@@ -159,7 +159,7 @@ export class QueueModule {
                 delay: 0,
                 priority: 0,
                 lifo: false,
-                timeout: 60000, // 60 second timeout for complex jobs
+                timestamp: Date.now(),
               },
             };
           },
@@ -180,6 +180,7 @@ export class QueueModule {
               },
               priority: 0, // Default priority
               lifo: false, // FIFO for better fairness
+              timestamp: Date.now(),
             },
           })
         ),
@@ -267,11 +268,12 @@ export class QueueModule {
                           keepAlive: 30000,
                         },
                         concurrency: concurrency, // Enhanced concurrency for 1M users
-                        // Enhanced worker settings - using only valid BullMQ options
-                        settings: {
-                          // Note: BullMQ Worker doesn't support these settings directly
-                          // They are handled internally by BullMQ
-                        },
+                        // Stalled job detection — prevents jobs from sitting forever
+                        // after a worker restart/crash. A job is marked stalled if its
+                        // lock hasn't been renewed within stalledInterval, and after
+                        // maxStalledCount checks it's moved to failed → DLQ.
+                        stalledInterval: 60000, // Check for stalled jobs every 60s
+                        maxStalledCount: 3, // After 3 checks, mark job as failed
                         // Rate limiting for worker
                         limiter: {
                           max: 1000, // Max jobs per time window

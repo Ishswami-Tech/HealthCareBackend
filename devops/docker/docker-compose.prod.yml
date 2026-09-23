@@ -260,6 +260,8 @@ services:
       DRAGONFLY_KEY_PREFIX: "healthcare:"
       BULL_WORKER_CONCURRENCY: "10"
       BULL_MAX_JOBS_PER_WORKER: "100"
+      BULL_STALLED_INTERVAL: "60000"
+      BULL_MAX_STALLED_COUNT: "3"
       LOG_LEVEL: info
       ENABLE_AUDIT_LOGS: "true"
       ENABLE_BULL_BOARD: "true"

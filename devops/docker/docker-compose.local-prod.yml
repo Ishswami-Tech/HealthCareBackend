@@ -267,6 +267,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:-your-super-secret-key-change-in-production}
       BULL_WORKER_CONCURRENCY: "10"
       BULL_MAX_JOBS_PER_WORKER: "100"
+      BULL_STALLED_INTERVAL: "60000"
+      BULL_MAX_STALLED_COUNT: "3"
       LOG_LEVEL: info
       ENABLE_AUDIT_LOGS: "true"
       AWS_REGION: ${AWS_REGION:-}

@@ -285,6 +285,8 @@ services:
       # BullMQ Worker Configuration - Local-Prod: Reduced concurrency
       BULL_WORKER_CONCURRENCY: "5"
       BULL_MAX_JOBS_PER_WORKER: "50"
+      BULL_STALLED_INTERVAL: "60000"
+      BULL_MAX_STALLED_COUNT: "3"
       # Logging Configuration
       LOG_LEVEL: info
       ENABLE_AUDIT_LOGS: "true"
