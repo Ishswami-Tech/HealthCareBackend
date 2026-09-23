@@ -4057,6 +4057,180 @@ export class BillingService implements OnModuleInit {
   }
 
   /**
+   * Manual admin recovery path for a single appointment's payment.
+   *
+   * `reconcilePaymentForClinic`/`handlePaymentCallback` only work when (a) a
+   * local Payment record already exists and (b) the appointment's
+   * `paymentExpiresAt` window hasn't lapsed yet. Both assumptions break when a
+   * provider webhook is missed or rejected (e.g. a signature/timestamp bug) —
+   * the payment can succeed at the gateway while our system never learns
+   * about it, and the appointment auto-expires in the meantime. This method
+   * is the clinic-admin-triggered recovery for exactly that situation: it
+   * independently re-verifies with the payment provider (never trusts the
+   * caller's claim alone), creates the local Payment record if one was never
+   * written, and confirms the appointment without requiring the payment
+   * window to still be open — an admin has already confirmed payment was
+   * received, so the automatic expiry guard is the wrong check here.
+   */
+  async manualReconcileAppointmentPayment(
+    clinicId: string,
+    appointmentId: string,
+    actorUserId: string,
+    options: { provider?: PaymentProvider; orderId?: string; transactionId?: string } = {}
+  ): Promise<{ payment: unknown; appointment: unknown }> {
+    const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+    if (!appointment || String(appointment.clinicId) !== String(clinicId)) {
+      throw new NotFoundException('Appointment not found for this clinic');
+    }
+    if (
+      String(appointment.status) === String(AppointmentStatus.CANCELLED) ||
+      String(appointment.status) === String(AppointmentStatus.COMPLETED)
+    ) {
+      throw new BadRequestException(
+        `Cannot reconcile payment for an appointment that is already ${appointment.status}`
+      );
+    }
+
+    let payment = (await this.databaseService.findPaymentsSafe({ appointmentId }))[0] ?? null;
+    if (payment && String(payment.status) === String(PaymentStatus.COMPLETED)) {
+      throw new BadRequestException('This appointment payment is already marked completed');
+    }
+
+    const normalizedProvider =
+      this.normalizePaymentProvider(options.provider) ??
+      this.normalizePaymentProvider((this.asRecord(payment?.metadata) ?? {})['provider']) ??
+      PaymentProvider.CASHFREE;
+    const orderId =
+      options.orderId ||
+      (this.asRecord(payment?.metadata)?.['orderId'] as string | undefined) ||
+      payment?.transactionId ||
+      appointmentId;
+    const gatewayPaymentId = options.transactionId || payment?.transactionId || orderId;
+
+    // Independently verify with the provider — never trust the caller's claim alone.
+    const paymentStatus: PaymentStatusResult = await this.paymentService.verifyPaymentStatus(
+      clinicId,
+      { orderId, paymentId: gatewayPaymentId, provider: normalizedProvider }
+    );
+    const normalizedIncomingStatus = this.normalizeGatewayPaymentStatus(paymentStatus.status);
+    if (String(normalizedIncomingStatus).toLowerCase() !== 'completed') {
+      throw new BadRequestException(
+        `${normalizedProvider} reports this payment as "${paymentStatus.status}", not completed — refusing to reconcile`
+      );
+    }
+    if (
+      paymentStatus.amount &&
+      payment?.amount &&
+      Math.abs(payment.amount - paymentStatus.amount) > 0.01
+    ) {
+      throw new BadRequestException(
+        `Payment amount mismatch: local record has ${payment.amount}, gateway returned ${paymentStatus.amount}`
+      );
+    }
+
+    if (!payment) {
+      payment = await this.createPayment({
+        amount: paymentStatus.amount || 0,
+        clinicId,
+        appointmentId,
+        ...(appointment.userId ? { userId: appointment.userId } : {}),
+        transactionId: paymentStatus.transactionId || gatewayPaymentId,
+        description: 'Manually reconciled: provider payment succeeded but no webhook was recorded',
+        metadata: { orderId, provider: normalizedProvider },
+      });
+    }
+
+    const updatedPayment = await this.updatePayment(payment.id, {
+      status: PaymentStatus.COMPLETED,
+      transactionId: paymentStatus.transactionId || gatewayPaymentId,
+      metadata: {
+        ...(this.asRecord(payment.metadata) ?? {}),
+        orderId,
+        provider: normalizedProvider,
+        manualReconciliation: {
+          reconciledBy: actorUserId,
+          reconciledAt: nowIso(),
+          reason: 'Admin-confirmed payment receipt; automated webhook did not process it in time',
+          verifiedGatewayStatus: paymentStatus.status,
+        },
+      },
+    });
+
+    let updatedAppointment: unknown = appointment;
+    if (String(appointment.status) !== String(AppointmentStatus.CONFIRMED)) {
+      const confirmationResult = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          const appointmentClient = client as unknown as {
+            appointment: {
+              updateMany: (args: {
+                where: { id: string; status: { notIn: string[] } };
+                data: { status: string };
+              }) => Promise<{ count: number }>;
+            };
+          };
+          return appointmentClient.appointment.updateMany({
+            where: {
+              id: appointmentId,
+              status: { notIn: [AppointmentStatus.CANCELLED, AppointmentStatus.COMPLETED] },
+            },
+            data: { status: AppointmentStatus.CONFIRMED },
+          });
+        },
+        {
+          userId: actorUserId,
+          clinicId,
+          resourceType: 'APPOINTMENT',
+          operation: 'UPDATE',
+          resourceId: appointmentId,
+          userRole: 'system',
+          details: { reason: 'Manual payment reconciliation', paymentId: payment.id, orderId },
+        }
+      );
+
+      if (confirmationResult.count) {
+        updatedAppointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+        void this.syncAppointmentAfterPayment({
+          appointmentId,
+          clinicId,
+          paymentId: payment.id,
+          paymentStatus: PaymentStatus.COMPLETED,
+          amount: paymentStatus.amount,
+          appointment: updatedAppointment as AppointmentWithRelations | null,
+          userId: appointment.userId ?? null,
+          emitAppointmentUpdated: true,
+        }).catch((error: unknown) => {
+          void this.loggingService.log(
+            LogType.PAYMENT,
+            LogLevel.WARN,
+            `Failed to sync appointment after manual reconciliation: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            'BillingService.manualReconcileAppointmentPayment',
+            { clinicId, paymentId: payment.id, appointmentId }
+          );
+        });
+      }
+    }
+
+    await this.loggingService.log(
+      LogType.PAYMENT,
+      LogLevel.INFO,
+      'Payment manually reconciled by clinic admin',
+      'BillingService.manualReconcileAppointmentPayment',
+      {
+        clinicId,
+        appointmentId,
+        paymentId: payment.id,
+        actorUserId,
+        orderId,
+        provider: normalizedProvider,
+      }
+    );
+
+    return { payment: updatedPayment, appointment: updatedAppointment };
+  }
+
+  /**
    * Renew subscription after successful payment (internal method)
    */
   private async renewSubscriptionAfterPayment(subscriptionId: string): Promise<void> {

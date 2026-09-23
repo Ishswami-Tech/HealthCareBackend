@@ -620,28 +620,34 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   async invalidateAppointmentCache(
     appointmentId: string,
     patientId?: string,
-    _doctorId?: string,
+    doctorId?: string,
     clinicId?: string
   ): Promise<number> {
     const patterns = [this.keyFactory.appointment(appointmentId, '*')];
+    // Core tags every appointment write tags its cache entries with (see
+    // appointments.controller.ts) — invalidating only `appointment:${id}` and
+    // `clinic:${id}` left list/detail/upcoming views stale until TTL expiry.
     const tags = [
       `appointment:${appointmentId}`,
       'appointments',
       'appointment_data',
-      'upcoming_appointments',
+      'appointment_details',
       'patient_appointments',
-      'clinic_appointments',
+      'upcoming_appointments',
     ];
 
     if (clinicId) {
       patterns.push(this.keyFactory.clinic(clinicId, 'appointments:list:*'));
       patterns.push(this.keyFactory.clinic(clinicId, 'appointments:*'));
-      tags.push(`clinic:${clinicId}`);
+      tags.push(`clinic:${clinicId}`, 'clinic_appointments');
     }
 
     if (patientId) {
       patterns.push(this.keyFactory.patient(patientId, clinicId, '*'));
-      tags.push(`user:${patientId}`);
+    }
+
+    if (doctorId) {
+      tags.push(`doctor:${doctorId}`, 'doctor_availability');
     }
 
     let invalidated = 0;
@@ -658,15 +664,11 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
   async invalidateUpcomingAppointmentsCache(userId: string): Promise<number> {
     const key = this.keyFactory.fromTemplate('appointments:upcoming:{userId}', { userId });
-    let count = await this.invalidateCacheByPattern(key);
-    count += await this.invalidateCacheByTag('upcoming_appointments');
-    count += await this.invalidateCacheByTag('appointments');
-    count += await this.invalidateCacheByTag(`user:${userId}`);
+    const count = await this.invalidateCacheByPattern(key);
     return count;
   }
 
   /**
-   * Invalidate video consultation status and details caches for an appointment
    * This method removes all video-specific cache entries associated with a given appointmentId
    *
    * Cache patterns invalidated:

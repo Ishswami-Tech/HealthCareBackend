@@ -684,6 +684,21 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
         },
       };
 
+      // Validate critical job data before enqueueing to prevent poison jobs
+      if (jobType === JobType.INVOICE_PDF) {
+        const payload = data as Record<string, unknown>;
+        const invoiceId = payload['invoiceId'];
+        if (!invoiceId || typeof invoiceId !== 'string' || invoiceId.trim() === '') {
+          throw new HealthcareError(
+            ErrorCode.VALIDATION_REQUIRED_FIELD,
+            `Refusing to enqueue INVOICE_PDF job: invoiceId is required and must be a non-empty string`,
+            undefined,
+            { jobType, action, invoiceId: invoiceId ?? null },
+            'QueueService.addJob'
+          );
+        }
+      }
+
       // Note: passing jobType explicitly here is important for the Generic Worker Router
       const job = await queue.add(jobType, canonicalPayload, enhancedOptions);
 

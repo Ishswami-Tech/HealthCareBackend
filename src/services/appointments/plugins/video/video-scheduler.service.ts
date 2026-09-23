@@ -22,6 +22,7 @@ import {
   ParticipantStatus,
 } from '@services/video/video-consultation-tracker.service';
 import { AppointmentsService } from '@services/appointments/appointments.service';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { parseIstDateTime } from '../../../../libs/utils/date-time.util';
 
 /** Represents the join-status of both parties for a single appointment */
@@ -66,7 +67,9 @@ export class VideoAppointmentSchedulerService {
     @Inject(forwardRef(() => VideoConsultationTracker))
     private readonly consultationTracker: VideoConsultationTracker,
     @Inject(forwardRef(() => AppointmentsService))
-    private readonly appointmentsService: AppointmentsService
+    private readonly appointmentsService: AppointmentsService,
+    @Inject(forwardRef(() => CacheService))
+    private readonly cacheService: CacheService
   ) {}
 
   // ─────────────────────────────────────────────────────────────
@@ -81,11 +84,10 @@ export class VideoAppointmentSchedulerService {
         return;
       }
       const graceTime = this.getGraceTime();
-      const audit = this.buildSystemAudit();
 
-      await this.databaseService.executeHealthcareWrite(async client => {
+      const potentialNoShows = await this.databaseService.executeHealthcareRead(async client => {
         const delegate = getVideoConsultationDelegate(client);
-        const potentialNoShows = (await delegate.findMany({
+        const results = (await delegate.findMany({
           where: {
             status: VideoCallStatus.SCHEDULED,
             startTime: { lt: graceTime },
@@ -95,35 +97,36 @@ export class VideoAppointmentSchedulerService {
           },
           include: { appointment: true },
         })) as unknown as VideoConsultationWithAppointment[];
+        return results.filter(c => c.appointment != null);
+      });
 
-        for (const consultation of potentialNoShows) {
-          if (!consultation.appointment) continue;
+      for (const consultation of potentialNoShows) {
+        if (!consultation.appointment) continue;
 
-          const participation = await this.resolveParticipation(
+        const participation = await this.resolveParticipation(
+          consultation.appointmentId,
+          consultation.appointment.clinicId
+        );
+
+        if (participation === null) continue;
+
+        if (!participation.doctorJoined) {
+          await this.markNoShow(
             consultation.appointmentId,
-            consultation.appointment.clinicId
+            consultation.appointment.clinicId,
+            'Doctor failed to join within grace period.',
+            'Marked as Doctor No-Show (Session not started)'
           );
 
-          if (participation === null) continue;
-
-          if (!participation.doctorJoined) {
-            await this.markNoShow(
-              consultation.appointmentId,
-              consultation.appointment.clinicId,
-              'Doctor failed to join within grace period.',
-              'Marked as Doctor No-Show (Session not started)'
-            );
-
-            await this.loggingService.log(
-              LogType.BUSINESS,
-              LogLevel.WARN,
-              `Marked appointment ${consultation.appointmentId} as Doctor No-Show`,
-              'VideoAppointmentSchedulerService.handleDoctorNoShows',
-              { consultationId: consultation.id }
-            );
-          }
+          await this.loggingService.log(
+            LogType.BUSINESS,
+            LogLevel.WARN,
+            `Marked appointment ${consultation.appointmentId} as Doctor No-Show`,
+            'VideoAppointmentSchedulerService.handleDoctorNoShows',
+            { consultationId: consultation.id }
+          );
         }
-      }, audit);
+      }
     } catch (error) {
       this.logger.error('Error handling doctor no-shows', error);
     }
@@ -137,11 +140,10 @@ export class VideoAppointmentSchedulerService {
         return;
       }
       const graceTime = this.getGraceTime();
-      const audit = this.buildSystemAudit();
 
-      await this.databaseService.executeHealthcareWrite(async client => {
+      const activeConsultations = await this.databaseService.executeHealthcareRead(async client => {
         const delegate = getVideoConsultationDelegate(client);
-        const activeConsultations = (await delegate.findMany({
+        const results = (await delegate.findMany({
           where: {
             status: VideoCallStatus.ACTIVE,
             startTime: { lt: graceTime },
@@ -157,42 +159,43 @@ export class VideoAppointmentSchedulerService {
           },
           include: { participants: true, appointment: true },
         })) as unknown as VideoConsultationWithAppointment[];
+        return results.filter(c => c.appointment != null);
+      });
 
-        for (const consultation of activeConsultations) {
-          if (!consultation.appointment) continue;
+      for (const consultation of activeConsultations) {
+        if (!consultation.appointment) continue;
 
-          const participation = await this.resolveParticipation(
+        const participation = await this.resolveParticipation(
+          consultation.appointmentId,
+          consultation.appointment.clinicId
+        );
+
+        if (participation === null) continue;
+
+        if (participation.doctorJoined && !participation.patientJoined) {
+          await this.markNoShow(
             consultation.appointmentId,
-            consultation.appointment.clinicId
+            consultation.appointment.clinicId,
+            'Patient failed to join within grace period.',
+            'Marked as Patient No-Show'
           );
 
-          if (participation === null) continue;
-
-          if (participation.doctorJoined && !participation.patientJoined) {
-            await this.markNoShow(
-              consultation.appointmentId,
-              consultation.appointment.clinicId,
-              'Patient failed to join within grace period.',
-              'Marked as Patient No-Show'
-            );
-
-            await this.loggingService.log(
-              LogType.BUSINESS,
-              LogLevel.WARN,
-              `Marked appointment ${consultation.appointmentId} as Patient No-Show`,
-              'VideoAppointmentSchedulerService.handlePatientNoShows',
-              { consultationId: consultation.id }
-            );
-          } else if (!participation.doctorJoined && !participation.patientJoined) {
-            await this.markNoShow(
-              consultation.appointmentId,
-              consultation.appointment.clinicId,
-              'Neither participant joined within grace period.',
-              'No-Show (Both parties)'
-            );
-          }
+          await this.loggingService.log(
+            LogType.BUSINESS,
+            LogLevel.WARN,
+            `Marked appointment ${consultation.appointmentId} as Patient No-Show`,
+            'VideoAppointmentSchedulerService.handlePatientNoShows',
+            { consultationId: consultation.id }
+          );
+        } else if (!participation.doctorJoined && !participation.patientJoined) {
+          await this.markNoShow(
+            consultation.appointmentId,
+            consultation.appointment.clinicId,
+            'Neither participant joined within grace period.',
+            'No-Show (Both parties)'
+          );
         }
-      }, audit);
+      }
     } catch (error) {
       this.logger.error('Error handling patient no-shows', error);
     }
@@ -226,7 +229,6 @@ export class VideoAppointmentSchedulerService {
   async handleExpiredConfirmedVideoAppointments(): Promise<void> {
     try {
       const now = new Date();
-
       const candidates = await this.databaseService.executeHealthcareRead<
         Array<{
           id: string;
@@ -247,8 +249,6 @@ export class VideoAppointmentSchedulerService {
             },
           },
           include: { appointment: true },
-          // Index hint via take — pagination keeps each call O(BATCH_SIZE)
-          // regardless of total queue size.
           take: VideoAppointmentSchedulerService.EXPIRY_BATCH_SIZE,
         })) as unknown as Array<{
           appointment?: {
@@ -276,10 +276,6 @@ export class VideoAppointmentSchedulerService {
             } => appointment != null && appointment.type === 'VIDEO_CALL'
           );
       });
-
-      if (!candidates.length) {
-        return;
-      }
 
       // The expiry decision is split per-row because participation
       // (doctorJoined / patientJoined) requires a follow-up read that
@@ -442,6 +438,7 @@ export class VideoAppointmentSchedulerService {
   async handleExpiredPaymentWindows(): Promise<void> {
     try {
       const now = new Date();
+
       const expired = await this.databaseService.executeHealthcareRead<
         Array<{ id: string; clinicId: string; paymentExpiresAt: Date | null }>
       >(async client => {
@@ -472,17 +469,13 @@ export class VideoAppointmentSchedulerService {
             clinicId: true,
             paymentExpiresAt: true,
           },
-          take: 100, // batch — anything still left next minute is picked up too
+          take: 100,
         });
       });
 
       if (!expired || expired.length === 0) return;
 
-      for (const row of expired as Array<{
-        id: string;
-        clinicId: string;
-        paymentExpiresAt: Date | null;
-      }>) {
+      for (const row of expired) {
         try {
           await this.appointmentsService.updateStatus(
             row.id,

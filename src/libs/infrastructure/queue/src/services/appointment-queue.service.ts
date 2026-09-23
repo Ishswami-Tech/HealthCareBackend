@@ -202,6 +202,14 @@ export class AppointmentQueueService {
   ): Promise<OperationResponse> {
     const queueKey = this.buildQueueKey(domain, queueData.clinicId, queueData.queueOwnerId);
 
+    // Reject enqueues while queue is paused
+    const pauseStatus = await this.cacheService.get<string>(
+      `queue:status:${domain}:${queueData.clinicId}:${queueData.queueOwnerId}:${this.getQueueDate()}`
+    );
+    if (pauseStatus === 'PAUSED') {
+      return { success: false, message: 'Queue is currently paused. Please try again later.' };
+    }
+
     try {
       const existingEntries = await this.cacheService.lRange(queueKey, 0, -1);
       const exists = existingEntries.some(entry => {
@@ -1599,10 +1607,17 @@ export class AppointmentQueueService {
 
   async pauseQueue(doctorId: string, clinicId: string, domain: string): Promise<OperationResponse> {
     const date = formatDateKeyInIST(new Date());
+    const now = Date.now();
     await this.cacheService.set(
       `queue:status:${domain}:${clinicId}:${doctorId}:${date}`,
       'PAUSED',
-      3600
+      86400 // 24h TTL — auto-resumes if the process crashes
+    );
+    // Record when the pause started so stale jobs can be filtered on resume
+    await this.cacheService.set(
+      `queue:pause:ts:${domain}:${clinicId}:${doctorId}:${date}`,
+      String(now),
+      86400
     );
     await this.invalidateQueueReadCaches({
       clinicId,
@@ -1633,6 +1648,17 @@ export class AppointmentQueueService {
   ): Promise<OperationResponse> {
     const date = formatDateKeyInIST(new Date());
     await this.cacheService.del(`queue:status:${domain}:${clinicId}:${doctorId}:${date}`);
+    // Clean up the pause timestamp — stale-job filter (in the BullMQ job
+    // processor) no longer needs it once resumed.
+    //
+    // Deliberately NOT touching the queue list itself here: an earlier
+    // version rebuilt it by filtering entries against the resume timestamp,
+    // but `checkedInAt` is always earlier than resume time by construction,
+    // so that filter discarded every currently-waiting patient on every
+    // pause/resume cycle. Resuming should only clear the paused status, not
+    // mutate who's actually in the queue.
+    await this.cacheService.del(`queue:pause:ts:${domain}:${clinicId}:${doctorId}:${date}`);
+
     await this.invalidateQueueReadCaches({
       clinicId,
       domain,

@@ -699,9 +699,13 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         throw new Error('Cashfree webhook timestamp is required');
       }
 
-      // Replay protection: reject webhooks with stale timestamps (>5 min old)
-      const webhookTimestamp = parseInt(options.timestamp, 10);
-      if (Number.isNaN(webhookTimestamp)) {
+      // Replay protection: reject webhooks with stale timestamps (>5 min old).
+      // Cashfree's `x-webhook-timestamp` header is epoch MILLISECONDS (per their
+      // docs example: 1617695238078 — 13 digits), so this must stay in
+      // milliseconds throughout; comparing it against a seconds-based `now`
+      // made every real webhook look ~1000x too old and rejected all of them.
+      const webhookTimestampMs = parseInt(options.timestamp, 10);
+      if (Number.isNaN(webhookTimestampMs)) {
         await this.logger.log(
           LogType.PAYMENT,
           LogLevel.WARN,
@@ -711,14 +715,15 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         );
         return false;
       }
-      const now = Math.floor(Date.now() / 1000);
-      if (Math.abs(now - webhookTimestamp) > 1800) {
+      const nowMs = Date.now();
+      const driftMs = Math.abs(nowMs - webhookTimestampMs);
+      if (driftMs > 5 * 60 * 1000) {
         await this.logger.log(
           LogType.PAYMENT,
           LogLevel.WARN,
           'Cashfree webhook rejected — timestamp outside 5-minute window',
           'CashfreePaymentAdapter',
-          { webhookTimestamp, now, drift: now - webhookTimestamp }
+          { webhookTimestampMs, nowMs, driftMs }
         );
         return false;
       }

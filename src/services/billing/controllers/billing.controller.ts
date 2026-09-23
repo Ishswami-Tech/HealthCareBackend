@@ -746,6 +746,43 @@ export class BillingController {
     return this.billingService.reconcilePaymentForClinic(clinicId, paymentId, paymentProvider);
   }
 
+  /**
+   * Manual recovery reconciliation for a single appointment, used when a
+   * provider payment succeeded but the automated webhook was missed or
+   * rejected and the appointment has since auto-expired. Unlike
+   * `payments/:id/reconcile`, this works even when no local Payment record
+   * exists yet and does not require the appointment's payment window to
+   * still be open — it independently re-verifies with the payment provider
+   * before changing anything.
+   */
+  @Post('appointments/:appointmentId/manual-reconcile')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
+  @RequireResourcePermission('payments', 'update')
+  async manualReconcileAppointmentPayment(
+    @Param('appointmentId') appointmentId: string,
+    @Body() body?: { provider?: string; orderId?: string; transactionId?: string },
+    @Request() req?: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req?.clinicContext?.clinicId;
+    if (!clinicId) {
+      throw new NotFoundException('Clinic context is required for payment reconciliation');
+    }
+    const actorUserId = (req?.user?.['sub'] as string | undefined) || 'unknown';
+
+    const paymentProvider = this.parsePaymentProvider(body?.provider);
+
+    return this.billingService.manualReconcileAppointmentPayment(
+      clinicId,
+      appointmentId,
+      actorUserId,
+      {
+        ...(paymentProvider ? { provider: paymentProvider } : {}),
+        ...(body?.orderId ? { orderId: body.orderId } : {}),
+        ...(body?.transactionId ? { transactionId: body.transactionId } : {}),
+      }
+    );
+  }
+
   // ============ Analytics ============
 
   @Get('analytics/revenue')

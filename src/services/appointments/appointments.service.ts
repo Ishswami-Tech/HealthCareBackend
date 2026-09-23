@@ -632,27 +632,34 @@ export class AppointmentsService {
     const now = new Date();
     const expiryCutoff = new Date(now.getTime() - mergedSettings.graceMinutes * 60 * 1000);
 
-    const candidates = await this.databaseService.executeHealthcareRead(async client => {
-      const prismaClient = client as unknown as Prisma.TransactionClient;
-      return await prismaClient.appointment.findMany({
-        where: {
-          type: AppointmentType.VIDEO_CALL,
-          status: { in: mergedSettings.checkStatuses as unknown as $Enums.AppointmentStatus[] },
-          confirmedSlotIndex: null,
-          ...(mergedSettings.clinicId ? { clinicId: mergedSettings.clinicId } : {}),
-        },
-        select: {
-          id: true,
-          patientId: true,
-          doctorId: true,
-          clinicId: true,
-          date: true,
-          time: true,
-          proposedSlots: true,
-          status: true,
-        },
-      });
-    });
+    const cacheKey = `cron:appointments:expired-slot:${Math.floor(now.getTime() / 60000)}`;
+    const candidates = await this.cacheService.cache(
+      cacheKey,
+      async () => {
+        return await this.databaseService.executeHealthcareRead(async client => {
+          const prismaClient = client as unknown as Prisma.TransactionClient;
+          return await prismaClient.appointment.findMany({
+            where: {
+              type: AppointmentType.VIDEO_CALL,
+              status: { in: mergedSettings.checkStatuses as unknown as $Enums.AppointmentStatus[] },
+              confirmedSlotIndex: null,
+              ...(mergedSettings.clinicId ? { clinicId: mergedSettings.clinicId } : {}),
+            },
+            select: {
+              id: true,
+              patientId: true,
+              doctorId: true,
+              clinicId: true,
+              date: true,
+              time: true,
+              proposedSlots: true,
+              status: true,
+            },
+          });
+        });
+      },
+      { ttl: 60, compress: false }
+    );
 
     const details: Array<{
       appointmentId: string;
@@ -810,26 +817,33 @@ export class AppointmentsService {
     const nowIST = new Date(now.getTime() + istOffset);
     const cutoff = new Date(nowIST.getTime() - mergedSettings.graceHours * 60 * 60 * 1000);
 
-    const candidates = await this.databaseService.executeHealthcareRead(async client => {
-      const prismaClient = client as unknown as Prisma.TransactionClient;
-      return await prismaClient.appointment.findMany({
-        where: {
-          type: AppointmentType.VIDEO_CALL,
-          status: { in: mergedSettings.checkStatuses as unknown as $Enums.AppointmentStatus[] },
-          ...(mergedSettings.clinicId ? { clinicId: mergedSettings.clinicId } : {}),
-        },
-        select: {
-          id: true,
-          patientId: true,
-          doctorId: true,
-          clinicId: true,
-          date: true,
-          time: true,
-          status: true,
-          type: true,
-        },
-      });
-    });
+    const cacheKey = `cron:appointments:past-closure:${Math.floor(now.getTime() / 60000)}`;
+    const candidates = await this.cacheService.cache(
+      cacheKey,
+      async () => {
+        return await this.databaseService.executeHealthcareRead(async client => {
+          const prismaClient = client as unknown as Prisma.TransactionClient;
+          return await prismaClient.appointment.findMany({
+            where: {
+              type: AppointmentType.VIDEO_CALL,
+              status: { in: mergedSettings.checkStatuses as unknown as $Enums.AppointmentStatus[] },
+              ...(mergedSettings.clinicId ? { clinicId: mergedSettings.clinicId } : {}),
+            },
+            select: {
+              id: true,
+              patientId: true,
+              doctorId: true,
+              clinicId: true,
+              date: true,
+              time: true,
+              status: true,
+              type: true,
+            },
+          });
+        });
+      },
+      { ttl: 60, compress: false }
+    );
 
     const details: Array<{
       appointmentId: string;
@@ -983,27 +997,34 @@ export class AppointmentsService {
     cutoffDate.setDate(todayIST.getDate() - mergedSettings.checkDaysBefore);
     cutoffDate.setHours(0, 0, 0, 0);
 
-    const appointmentsToCheck = await this.databaseService.executeHealthcareRead(async client => {
-      const prismaClient = client as unknown as Prisma.TransactionClient;
-      return await prismaClient.appointment.findMany({
-        where: {
-          type: { not: AppointmentType.VIDEO_CALL },
-          date: { lt: cutoffDate },
-          status: { in: mergedSettings.checkStatuses as unknown as $Enums.AppointmentStatus[] },
-          ...(mergedSettings.clinicId ? { clinicId: mergedSettings.clinicId } : {}),
-        },
-        select: {
-          id: true,
-          patientId: true,
-          doctorId: true,
-          date: true,
-          time: true,
-          status: true,
-          clinicId: true,
-        },
-        orderBy: { date: 'asc' },
-      });
-    });
+    const cacheKey = `cron:appointments:no-show:${formatDateKeyInIST(cutoffDate)}`;
+    const appointmentsToCheck = await this.cacheService.cache(
+      cacheKey,
+      async () => {
+        return await this.databaseService.executeHealthcareRead(async client => {
+          const prismaClient = client as unknown as Prisma.TransactionClient;
+          return await prismaClient.appointment.findMany({
+            where: {
+              type: { not: AppointmentType.VIDEO_CALL },
+              date: { lt: cutoffDate },
+              status: { in: mergedSettings.checkStatuses as unknown as $Enums.AppointmentStatus[] },
+              ...(mergedSettings.clinicId ? { clinicId: mergedSettings.clinicId } : {}),
+            },
+            select: {
+              id: true,
+              patientId: true,
+              doctorId: true,
+              date: true,
+              time: true,
+              status: true,
+              clinicId: true,
+            },
+            orderBy: { date: 'asc' },
+          });
+        });
+      },
+      { ttl: 3600, compress: false }
+    );
 
     const results: Array<{
       appointmentId: string;

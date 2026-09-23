@@ -762,8 +762,24 @@ export class CoreAppointmentService {
       // remains consistent with the response payload.
       const dedupedTotal = total - (sortedAppointments.length - dedupedAppointments.length);
 
+      // Flatten doctor/patient display names onto each appointment. Callers
+      // (mobile, web) read `doctorName`/`patientName` directly rather than
+      // the nested `doctor.user`/`patient.user` relations this list returns.
+      const appointmentsWithNames = dedupedAppointments.map(apt => {
+        const record = apt as unknown as Record<string, unknown>;
+        const doctorRecord = record['doctor'] as Record<string, unknown> | undefined;
+        const patientRecord = record['patient'] as Record<string, unknown> | undefined;
+        const doctorUserRecord = doctorRecord?.['user'] as Record<string, unknown> | undefined;
+        const patientUserRecord = patientRecord?.['user'] as Record<string, unknown> | undefined;
+        return {
+          ...apt,
+          doctorName: this.resolvePersonName(doctorUserRecord ?? doctorRecord, 'Doctor'),
+          patientName: this.resolvePersonName(patientUserRecord ?? patientRecord, 'Patient'),
+        };
+      });
+
       const result = {
-        appointments: dedupedAppointments,
+        appointments: appointmentsWithNames,
         pagination: {
           page,
           limit,
@@ -1084,27 +1100,6 @@ export class CoreAppointmentService {
 
       // 7. Emit events
       const appointmentRecord = existingAppointment as unknown as Record<string, unknown>;
-      const resolvePersonName = (value: unknown, fallback: string): string => {
-        if (!value || typeof value !== 'object' || Array.isArray(value)) {
-          return fallback;
-        }
-
-        const record = value as Record<string, unknown>;
-        const name = typeof record['name'] === 'string' ? record['name'].trim() : '';
-        if (name) {
-          return name;
-        }
-
-        const firstName = typeof record['firstName'] === 'string' ? record['firstName'].trim() : '';
-        const lastName = typeof record['lastName'] === 'string' ? record['lastName'].trim() : '';
-        const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
-        if (fullName) {
-          return fullName;
-        }
-
-        const email = typeof record['email'] === 'string' ? record['email'].trim() : '';
-        return email || fallback;
-      };
       const patientRecord =
         (appointmentRecord['patient'] as Record<string, unknown> | undefined) || undefined;
       const doctorRecord =
@@ -1126,8 +1121,8 @@ export class CoreAppointmentService {
         clinicDisplayName: clinicName,
         doctorId: cancelledAppointment.doctorId,
         patientId: cancelledAppointment.patientId,
-        patientName: resolvePersonName(patientUserRecord ?? patientRecord, 'Patient'),
-        doctorName: resolvePersonName(doctorUserRecord ?? doctorRecord, 'Doctor'),
+        patientName: this.resolvePersonName(patientUserRecord ?? patientRecord, 'Patient'),
+        doctorName: this.resolvePersonName(doctorUserRecord ?? doctorRecord, 'Doctor'),
         appointmentType: existingAppointment.type,
         appointmentDate: existingAppointment.date,
         appointmentTime: existingAppointment.time,
@@ -1249,6 +1244,32 @@ export class CoreAppointmentService {
   // =============================================
   // PRIVATE HELPER METHODS
   // =============================================
+
+  /**
+   * Resolve a display name off a user-shaped record (name, firstName+lastName,
+   * or email), falling back to a generic label when none is present.
+   */
+  private resolvePersonName(value: unknown, fallback: string): string {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return fallback;
+    }
+
+    const record = value as Record<string, unknown>;
+    const name = typeof record['name'] === 'string' ? record['name'].trim() : '';
+    if (name) {
+      return name;
+    }
+
+    const firstName = typeof record['firstName'] === 'string' ? record['firstName'].trim() : '';
+    const lastName = typeof record['lastName'] === 'string' ? record['lastName'].trim() : '';
+    const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
+    if (fullName) {
+      return fullName;
+    }
+
+    const email = typeof record['email'] === 'string' ? record['email'].trim() : '';
+    return email || fallback;
+  }
 
   /**
    * Convert appointment time slots to conflict resolution TimeSlot format

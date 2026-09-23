@@ -8,6 +8,7 @@ import { EmailService } from '@communication/channels/email/email.service';
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
 import { S3StorageService } from '@infrastructure/storage';
+import { CacheService } from '@infrastructure/cache/cache.service';
 // Use direct import to avoid circular dependency with barrel exports
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { AppointmentNotificationService } from '@services/appointments/plugins/notifications/appointment-notification.service';
@@ -28,7 +29,7 @@ import type { NotificationData } from '@core/types/appointment.types';
 import type { InvoicePDFData } from '@core/types/billing.types';
 import type { EmailContext } from '@core/types';
 import { getVideoConsultationDelegate } from '@core/types/video-database.types';
-import { formatDateInIST, nowIso } from '../../../utils/date-time.util';
+import { formatDateInIST, formatDateKeyInIST, nowIso } from '../../../utils/date-time.util';
 
 // Import InvoicePDFService type (using forwardRef to avoid circular dependency)
 // Note: We use a type-only import to avoid runtime circular dependency issues
@@ -89,6 +90,9 @@ export class QueueProcessor {
     @Optional()
     @Inject('InvoicePDFService')
     private readonly invoicePDFService?: InvoicePDFServiceType,
+    @Optional()
+    @Inject(CacheService)
+    private readonly cacheService?: CacheService,
     private readonly moduleRef?: ModuleRef
   ) {}
 
@@ -130,6 +134,71 @@ export class QueueProcessor {
   async processJob(job: Job<CanonicalJobEnvelope>): Promise<unknown> {
     const { name, data } = job;
     const jobType = data?.jobType || (job.name as JobType);
+
+    // ── Stale-job guard ─────────────────────────────────────────
+    // When a queue is paused then resumed, any BullMQ job that was
+    // enqueued before the pause fires immediately after resume. This
+    // guard discards those stale jobs.  The timestamp we store on
+    // pause is the epoch-ms of pause start; any job whose
+    // BullMQ-internal timestamp predates it is silently dropped.
+    const action = data?.action as string | undefined;
+    const isPauseControlJob =
+      name === 'queue.pause' ||
+      name === 'queue.resume' ||
+      action === 'queue.pause' ||
+      action === 'queue.resume';
+
+    if (!isPauseControlJob && job.timestamp) {
+      // CanonicalJobEnvelope stores fields in .data and .context
+      const payload = data?.data as Record<string, unknown> | undefined;
+      const ctx = data?.context as Record<string, unknown> | undefined;
+      // These fields are always strings in practice, but the payload is typed
+      // as unknown — narrow explicitly rather than `String(...)` an object,
+      // which would silently coerce to "[object Object]" instead of failing.
+      const firstString = (...values: unknown[]): string => {
+        for (const value of values) {
+          if (typeof value === 'string' && value) return value;
+        }
+        return '';
+      };
+      const doctorId = firstString(
+        payload?.['doctorId'],
+        payload?.['queueOwnerId'],
+        ctx?.['doctorId']
+      );
+      const clinicId = firstString(payload?.['clinicId'], data?.['clinicId']);
+      const domain = firstString(payload?.['domain'], data?.['domain']) || 'clinic';
+      // Derive date key from the BullMQ job timestamp (always available)
+      const dateKey = formatDateKeyInIST(new Date(job.timestamp));
+
+      if (doctorId && clinicId && dateKey) {
+        const pauseTsKey = `queue:pause:ts:${domain}:${clinicId}:${doctorId}:${dateKey}`;
+        try {
+          const pauseStart = this.cacheService
+            ? await this.cacheService.get<string>(pauseTsKey)
+            : null;
+          if (pauseStart && job.timestamp < Number(pauseStart)) {
+            void this.loggingService.log(
+              LogType.QUEUE,
+              LogLevel.WARN,
+              `Discarding stale job ${safeStringify(job.id)} (${name}) — created ${new Date(job.timestamp).toISOString()}, before pause at ${new Date(Number(pauseStart)).toISOString()}`,
+              'QueueProcessor',
+              {
+                jobId: safeStringify(job.id),
+                jobName: name,
+                jobTimestamp: job.timestamp,
+                pauseTimestamp: Number(pauseStart),
+              }
+            );
+            return { success: true, discarded: true, reason: 'stale — created before queue pause' };
+          }
+        } catch {
+          // Cache miss or error → treat as fresh (fail-open so a cache
+          // outage doesn't block normal processing)
+        }
+      }
+    }
+    // ────────────────────────────────────────────────────────────
 
     void this.loggingService.log(
       LogType.QUEUE,

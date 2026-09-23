@@ -40,7 +40,7 @@ import { getEnv } from '@config/environment/utils';
 import { HealthcareQueryOptimizerService } from './internal/query-optimizer.service';
 import { ClinicIsolationService } from './internal/clinic-isolation.service';
 import { DatabaseMetricsService } from './internal/database-metrics.service';
-import { RetryService } from './internal/retry.service';
+import { RetryService, type RetryOptions } from './internal/retry.service';
 import { SQLInjectionPreventionService } from './internal/sql-injection-prevention.service';
 import { DataMaskingService } from './internal/data-masking.service';
 import { QueryCacheService } from './internal/query-cache.service';
@@ -546,155 +546,95 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     };
 
     try {
-      // Use retry service if available
-      if (this.retryService && queryOptions.retries && queryOptions.retries > 0) {
-        const retryResult = await this.retryService.executeWithRetry(executeWithRetry, {
-          maxAttempts: queryOptions.retries + 1,
-          initialDelay: 100,
-          maxDelay: 5000,
-        });
+      // Always use retry service when available — transient connection drops/timeouts
+      // are retryable (3 attempts by default, exponential backoff). Callers can
+      // override the attempt count with queryOptions.retries (e.g. pass 1 to
+      // effectively disable retries for a call that must not be re-executed).
+      const retryOptions: RetryOptions =
+        typeof queryOptions.retries === 'number' ? { maxAttempts: queryOptions.retries } : {};
+      const retryResult = await this.retryService?.executeWithRetry(executeWithRetry, retryOptions);
 
-        if (!retryResult.success) {
-          // Preserve original error with detailed context
-          const originalError = retryResult.error;
-          if (originalError) {
-            // If it's already a HealthcareError, preserve it
-            if (originalError instanceof HealthcareError) {
-              throw originalError;
-            }
-            // Otherwise, wrap it in a HealthcareError with full context
-            throw new HealthcareError(
-              ErrorCode.DATABASE_QUERY_FAILED,
-              `Read operation failed after ${retryResult.attempts} attempts: ${originalError.message}`,
-              undefined, // statusCode - defaults to INTERNAL_SERVER_ERROR
-              {
-                attempts: retryResult.attempts,
-                originalErrorName: originalError.name,
-                originalErrorMessage: originalError.message,
-                originalErrorStack: originalError.stack,
-                executionTime: Date.now() - startTime,
-              },
-              this.serviceName
-            );
-          }
-          // Fallback if error is missing (shouldn't happen, but handle gracefully)
+      if (!retryResult) {
+        // RetryService not available; execute directly
+        const result = await executeWithRetry();
+        const executionTime = performance.now() - startTime;
+        this.metricsService.recordQueryExecution(operationName, executionTime, true);
+        return result;
+      }
+      // narrowed below — retryResult is RetryResult<T> (not undefined)
+      const retryOutcome = retryResult;
+
+      if (!retryOutcome.success) {
+        const originalError = retryOutcome.error;
+        if (originalError) {
+          if (originalError instanceof HealthcareError) throw originalError;
           throw new HealthcareError(
             ErrorCode.DATABASE_QUERY_FAILED,
-            `Read operation failed after ${retryResult.attempts} attempts: Unknown error`,
+            `Read operation failed after ${retryOutcome.attempts} attempts: ${originalError.message}`,
             undefined,
             {
-              attempts: retryResult.attempts,
+              attempts: retryOutcome.attempts,
+              originalErrorName: originalError.name,
+              originalErrorMessage: originalError.message,
+              originalErrorStack: originalError.stack,
               executionTime: Date.now() - startTime,
             },
             this.serviceName
           );
         }
-
-        // Success - use the result (can be null/undefined for read operations)
-        // TypeScript assertion: if success is true, result should be defined
-        if (retryResult.result === undefined && retryResult.success) {
-          // This shouldn't happen, but handle gracefully
-          throw new HealthcareError(
-            ErrorCode.DATABASE_QUERY_FAILED,
-            'Read operation succeeded but returned undefined result',
-            undefined,
-            { attempts: retryResult.attempts },
-            this.serviceName
-          );
-        }
-        const result = retryResult.result as T;
-        const executionTime = performance.now() - startTime;
-
-        // Cache result asynchronously (non-blocking for 2-7ms target)
-        if (cacheKey && queryOptions.useCache !== false && this.queryCache) {
-          const cacheStrategy = queryOptions.cacheStrategy || 'short';
-          const ttl =
-            cacheStrategy === 'long'
-              ? 3600
-              : cacheStrategy === 'short'
-                ? 300
-                : cacheStrategy === 'never'
-                  ? 0
-                  : 300;
-          if (ttl > 0) {
-            // Cache asynchronously to avoid blocking response
-            setImmediate(() => {
-              void this.queryCache.setCached(cacheKey, result, {
-                ttl,
-                containsPHI: queryOptions.hipaaCompliant === true,
-                priority:
-                  (queryOptions.priority === 'critical' ? 'high' : queryOptions.priority) ||
-                  'normal',
-                tags: [
-                  'database',
-                  'read',
-                  ...(queryOptions.clinicId ? [`clinic:${queryOptions.clinicId}`] : []),
-                  ...(appointmentIdFromWhere ? [`appointment:${appointmentIdFromWhere}`] : []),
-                ],
-              });
-            });
-          }
-        }
-
-        // Record metrics asynchronously (non-blocking)
-        setImmediate(() => {
-          this.metricsService.recordQueryExecution(
-            operationName,
-            Math.round(executionTime * 100) / 100,
-            true,
-            queryOptions.clinicId
-          );
-        });
-
-        return result;
-      } else {
-        // Execute without retry
-        const result = await executeWithRetry();
-        const executionTime = performance.now() - startTime;
-
-        // Cache result asynchronously (non-blocking for 2-7ms target)
-        if (cacheKey && queryOptions.useCache !== false && this.queryCache) {
-          const cacheStrategy = queryOptions.cacheStrategy || 'short';
-          const ttl =
-            cacheStrategy === 'long'
-              ? 3600
-              : cacheStrategy === 'short'
-                ? 300
-                : cacheStrategy === 'never'
-                  ? 0
-                  : 300;
-          if (ttl > 0) {
-            // Cache asynchronously to avoid blocking response
-            setImmediate(() => {
-              void this.queryCache.setCached(cacheKey, result, {
-                ttl,
-                containsPHI: queryOptions.hipaaCompliant === true,
-                priority:
-                  (queryOptions.priority === 'critical' ? 'high' : queryOptions.priority) ||
-                  'normal',
-                tags: [
-                  'database',
-                  'read',
-                  ...(queryOptions.clinicId ? [`clinic:${queryOptions.clinicId}`] : []),
-                  ...(appointmentIdFromWhere ? [`appointment:${appointmentIdFromWhere}`] : []),
-                ],
-              });
-            });
-          }
-        }
-
-        // Record metrics asynchronously (non-blocking)
-        setImmediate(() => {
-          this.metricsService.recordQueryExecution(
-            operationName,
-            Math.round(executionTime * 100) / 100,
-            true,
-            queryOptions.clinicId
-          );
-        });
-
-        return result;
+        throw new HealthcareError(
+          ErrorCode.DATABASE_QUERY_FAILED,
+          `Read operation failed after ${retryOutcome.attempts} attempts: Unknown error`,
+          undefined,
+          { attempts: retryOutcome.attempts, executionTime: Date.now() - startTime },
+          this.serviceName
+        );
       }
+
+      const result = retryOutcome.result as T;
+      const executionTime = performance.now() - startTime;
+
+      // Cache result asynchronously (non-blocking for 2-7ms target)
+      if (cacheKey && queryOptions.useCache !== false && this.queryCache) {
+        const cacheStrategy = queryOptions.cacheStrategy || 'short';
+        const ttl =
+          cacheStrategy === 'long'
+            ? 3600
+            : cacheStrategy === 'short'
+              ? 300
+              : cacheStrategy === 'never'
+                ? 0
+                : 300;
+        if (ttl > 0) {
+          // Cache asynchronously to avoid blocking response
+          setImmediate(() => {
+            void this.queryCache.setCached(cacheKey, result, {
+              ttl,
+              containsPHI: queryOptions.hipaaCompliant === true,
+              priority:
+                (queryOptions.priority === 'critical' ? 'high' : queryOptions.priority) || 'normal',
+              tags: [
+                'database',
+                'read',
+                ...(queryOptions.clinicId ? [`clinic:${queryOptions.clinicId}`] : []),
+                ...(appointmentIdFromWhere ? [`appointment:${appointmentIdFromWhere}`] : []),
+              ],
+            });
+          });
+        }
+      }
+
+      // Record metrics asynchronously (non-blocking)
+      setImmediate(() => {
+        this.metricsService.recordQueryExecution(
+          operationName,
+          Math.round(executionTime * 100) / 100,
+          true,
+          queryOptions.clinicId
+        );
+      });
+
+      return result;
     } catch (error) {
       const executionTime = Date.now() - startTime;
       const dbError = error instanceof Error ? error : new Error(String(error));
@@ -868,87 +808,76 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     };
 
     try {
-      // Use retry service if available
-      if (this.retryService && queryOptions.retries && queryOptions.retries > 0) {
-        const retryResult = await this.retryService.executeWithRetry(executeWithRetry, {
-          maxAttempts: queryOptions.retries + 1,
-          initialDelay: 100,
-          maxDelay: 5000,
-        });
+      // Always use retry service when available — transient connection drops/timeouts
+      // are retryable (3 attempts by default, exponential backoff). Callers can
+      // override the attempt count with queryOptions.retries — e.g. pass 1 for a
+      // write that must not be silently re-executed if it already committed.
+      const retryOptions: RetryOptions =
+        typeof queryOptions.retries === 'number' ? { maxAttempts: queryOptions.retries } : {};
+      const retryResult = await this.retryService?.executeWithRetry(executeWithRetry, retryOptions);
 
-        if (!retryResult.success || !retryResult.result) {
-          // Preserve original error with detailed context
-          const originalError = retryResult.error;
-          const errorMessage = originalError
-            ? `Write operation failed after ${retryResult.attempts} attempts: ${originalError.message}`
-            : `Write operation failed after ${retryResult.attempts} attempts: Unknown error`;
+      // narrowed below — retryResult is RetryResult<T> (not undefined)
+      const retryOutcome = retryResult;
 
-          // Create audit trail for failed operation
-          if (this.config.enableAuditLogging) {
-            this.createAuditTrail(auditInfo, 'FAILURE', errorMessage);
-          }
+      if (!retryOutcome) {
+        // RetryService returned undefined unexpectedly; execute directly as fallback
+        const result = await executeWithRetry();
+        const executionTime = Date.now() - startTime;
+        this.metricsService.recordQueryExecution(
+          operationName,
+          executionTime,
+          true,
+          auditInfo.clinicId,
+          auditInfo.userId
+        );
+        return result;
+      }
 
-          if (originalError) {
-            // If it's already a HealthcareError, preserve it
-            if (originalError instanceof HealthcareError) {
-              throw originalError;
-            }
-            // Otherwise, wrap it in a HealthcareError with full context
-            throw new HealthcareError(
-              ErrorCode.DATABASE_QUERY_FAILED,
-              errorMessage,
-              undefined, // statusCode - defaults to INTERNAL_SERVER_ERROR
-              {
-                attempts: retryResult.attempts,
-                originalErrorName: originalError.name,
-                originalErrorMessage: originalError.message,
-                originalErrorStack: originalError.stack,
-                executionTime: Date.now() - startTime,
-                auditInfo,
-              },
-              this.serviceName
-            );
-          }
-          // Fallback if error is missing (shouldn't happen, but handle gracefully)
+      if (retryOutcome.success === false) {
+        const originalError = retryOutcome.error;
+        const errorMessage = originalError
+          ? `Write operation failed after ${retryOutcome.attempts} attempts: ${originalError.message}`
+          : `Write operation failed after ${retryOutcome.attempts} attempts: Unknown error`;
+        if (this.config.enableAuditLogging)
+          this.createAuditTrail(auditInfo, 'FAILURE', errorMessage);
+
+        if (originalError) {
+          if (originalError instanceof HealthcareError) throw originalError;
           throw new HealthcareError(
             ErrorCode.DATABASE_QUERY_FAILED,
             errorMessage,
-            undefined, // statusCode - defaults to INTERNAL_SERVER_ERROR
+            undefined,
             {
-              attempts: retryResult.attempts,
+              attempts: retryOutcome.attempts,
+              originalErrorName: originalError.name,
+              originalErrorMessage: originalError.message,
+              originalErrorStack: originalError.stack,
               executionTime: Date.now() - startTime,
               auditInfo,
             },
             this.serviceName
           );
         }
-
-        const result = retryResult.result;
-        const executionTime = Date.now() - startTime;
-        this.metricsService.recordQueryExecution(
-          operationName,
-          executionTime,
-          true,
-          auditInfo.clinicId,
-          auditInfo.userId
+        throw new HealthcareError(
+          ErrorCode.DATABASE_QUERY_FAILED,
+          errorMessage,
+          undefined,
+          { attempts: retryOutcome.attempts, executionTime: Date.now() - startTime, auditInfo },
+          this.serviceName
         );
-
-        return result;
-      } else {
-        // Execute without retry
-        const result = await executeWithRetry();
-
-        const executionTime = Date.now() - startTime;
-        this.metricsService.recordQueryExecution(
-          operationName,
-          executionTime,
-          true,
-          auditInfo.clinicId,
-          auditInfo.userId
-        );
-
-        return result;
       }
+
+      const result = retryOutcome.result as T;
+      const executionTime = Date.now() - startTime;
+      this.metricsService.recordQueryExecution(
+        operationName,
+        executionTime,
+        true,
+        auditInfo.clinicId,
+        auditInfo.userId
+      );
+
+      return result;
     } catch (error) {
       const executionTime = Date.now() - startTime;
       const dbError = error instanceof Error ? error : new Error(String(error));

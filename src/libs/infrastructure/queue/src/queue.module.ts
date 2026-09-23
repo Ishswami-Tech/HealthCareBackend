@@ -29,6 +29,7 @@ import type { JobData, CanonicalJobEnvelope } from '@core/types/queue.types';
 import { AppointmentQueueService } from './services/appointment-queue.service';
 import { QueueController } from './controllers/queue.controller';
 import { DeadLetterQueueService } from './services/dead-letter-queue.service';
+import { CacheModule } from '@infrastructure/cache';
 
 @Module({})
 export class QueueModule {
@@ -47,6 +48,7 @@ export class QueueModule {
           ConfigModule,
           LoggingModule,
           StorageModule,
+          forwardRef(() => CacheModule),
           forwardRef(() => ResilienceModule),
           QueueMonitoringModule,
         ],
@@ -87,6 +89,7 @@ export class QueueModule {
         forwardRef(() => ConfigModule), // Use forwardRef to handle circular dependency with DatabaseModule
         LoggingModule, // Explicitly import LoggingModule to ensure LoggingService is available
         StorageModule,
+        forwardRef(() => CacheModule),
         forwardRef(() => ResilienceModule), // Provides CircuitBreakerService for QueueHealthMonitorService
         QueueMonitoringModule,
         // Note: BillingModule NOT imported here to avoid circular dependency
@@ -243,6 +246,14 @@ export class QueueModule {
                   if (cachePassword?.trim()) {
                     workerRedisConfig.password = cachePassword.trim();
                   }
+
+                  // Initialize Dead Letter Queue so failed jobs can be moved out of the main queue
+                  void deadLetterQueueService.initialize({
+                    host: workerRedisConfig.host,
+                    port: workerRedisConfig.port,
+                    ...(workerRedisConfig.password ? { password: workerRedisConfig.password } : {}),
+                    db: workerRedisConfig.db,
+                  });
 
                   // Create workers for each queue with enhanced concurrency
                   for (const queueName of queueNames) {

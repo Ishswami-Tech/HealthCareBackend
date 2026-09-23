@@ -397,60 +397,87 @@ export class CacheWarmingService implements OnModuleInit {
 
   /**
    * Warm doctor schedule for date range
+   * Warms per-clinic availability keys matching the API read pattern:
+   *   doctor:{doctorId}:clinic:{clinicId}:location:all:availability:{date}:type:all
    */
   async warmDoctorSchedule(doctorId: string, startDate: Date, endDate: Date): Promise<void> {
     try {
       const keyFactory = this.cacheService.getKeyFactory();
       const dateKey = formatDateKeyInIST(startDate);
-      const cacheKey = keyFactory.fromTemplate(
-        'doctor:{doctorId}:clinic:{clinicId}:availability:{date}',
-        {
-          doctorId,
-          clinicId: 'all', // Will be clinic-specific when called from context
-          date: dateKey,
-        }
-      );
 
-      // Check if already cached
-      const cached = await this.cacheService.get(cacheKey);
-      if (cached) {
-        return; // Already warmed
-      }
-
-      // Fetch appointments for date range
-      const appointments = await this.databaseService.executeHealthcareRead(async client => {
+      // Get all clinics this doctor is associated with
+      const doctorClinics = await this.databaseService.executeHealthcareRead(async client => {
         return await (
           client as unknown as {
-            appointment: {
-              findMany: <T>(args: T) => Promise<unknown[]>;
+            doctorClinic: {
+              findMany: <T>(args: T) => Promise<Array<{ clinicId: string }>>;
             };
           }
-        ).appointment.findMany({
-          where: {
-            doctorId,
-            date: {
-              gte: startDate,
-              lte: endDate,
-            },
-            status: {
-              in: ['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS'],
-            },
-          },
-          select: {
-            id: true,
-            date: true,
-            time: true,
-            duration: true,
-            status: true,
-          },
-          orderBy: {
-            date: 'asc',
-          },
+        ).doctorClinic.findMany({
+          where: { doctorId },
+          select: { clinicId: true },
         });
       });
 
-      // Cache for 3 hours (matches cron interval) - increased from 6 hours to match new warming frequency
-      await this.cacheService.set(cacheKey, appointments, 10800);
+      if (doctorClinics.length === 0) {
+        return; // Doctor has no clinic associations, nothing to warm
+      }
+
+      const clinicIds = doctorClinics.map(dc => dc.clinicId);
+
+      // Warm per-clinic keys matching the API read pattern
+      for (const clinicId of clinicIds) {
+        const cacheKey = keyFactory.fromTemplate(
+          'doctor:{doctorId}:clinic:{clinicId}:location:all:availability:{date}:type:all',
+          {
+            doctorId,
+            clinicId,
+            date: dateKey,
+          }
+        );
+
+        // Check if already cached
+        const cached = await this.cacheService.get(cacheKey);
+        if (cached) {
+          continue; // Already warmed for this clinic
+        }
+
+        // Fetch appointments for this doctor in this clinic
+        const appointments = await this.databaseService.executeHealthcareRead(async client => {
+          return await (
+            client as unknown as {
+              appointment: {
+                findMany: <T>(args: T) => Promise<unknown[]>;
+              };
+            }
+          ).appointment.findMany({
+            where: {
+              doctorId,
+              clinicId,
+              date: {
+                gte: startDate,
+                lte: endDate,
+              },
+              status: {
+                in: ['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS'],
+              },
+            },
+            select: {
+              id: true,
+              date: true,
+              time: true,
+              duration: true,
+              status: true,
+            },
+            orderBy: {
+              date: 'asc',
+            },
+          });
+        });
+
+        // Cache for 3 hours (matches cron interval)
+        await this.cacheService.set(cacheKey, appointments, 10800);
+      }
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
