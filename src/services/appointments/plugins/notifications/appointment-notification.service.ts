@@ -1,4 +1,9 @@
-import { nowIso, formatDateKeyInIST, formatTimeInIST } from '@utils/date-time.util';
+import {
+  nowIso,
+  formatDateKeyInIST,
+  formatTimeInIST,
+  parseIstDateTime,
+} from '@utils/date-time.util';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
@@ -287,9 +292,9 @@ export class AppointmentNotificationService {
             'Doctor';
           const clinicName = appointment.clinic?.name || 'Healthcare Clinic';
           const appointmentDate = formatDateKeyInIST(appointment.date);
-          const appointmentTime = formatTimeInIST(
-            appointment.time ? new Date(`1970-01-01T${appointment.time}`) : appointment.date
-          );
+          const appointmentTime = appointment.time
+            ? formatTimeInIST(parseIstDateTime('1970-01-01', appointment.time) ?? appointment.date)
+            : formatTimeInIST(appointment.date);
 
           const result = await this.sendNotification({
             appointmentId: appointment.id,

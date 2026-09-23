@@ -59,6 +59,7 @@ import {
   AppointmentPriority,
   ProcessCheckInDto,
   CompleteAppointmentDto,
+  BulkCompleteAppointmentDto,
   StartConsultationDto,
   ProposeVideoSlotsDto,
   ConfirmVideoSlotDto,
@@ -1735,10 +1736,7 @@ export class AppointmentsService {
     return null;
   }
 
-  private async resolveDoctorEntityId(
-    doctorIdentifier: string,
-    clinicId: string
-  ): Promise<string | null> {
+  async resolveDoctorEntityId(doctorIdentifier: string, clinicId: string): Promise<string | null> {
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as Prisma.TransactionClient;
       const clinicScopedDoctor = await typedClient.doctor.findFirst({
@@ -4241,7 +4239,74 @@ export class AppointmentsService {
     }
   }
 
-  private async completeAssociatedVideoSession(
+  async bulkCompleteSelectedAppointments(
+    filters: { clinicId: string; doctorId?: string },
+    bulkDto: BulkCompleteAppointmentDto,
+    userId: string,
+    clinicId: string,
+    role: string = 'USER'
+  ): Promise<{ success: boolean; data?: { completed: number; failed: number } }> {
+    try {
+      const appointmentIds = Array.isArray(bulkDto.appointmentIds)
+        ? bulkDto.appointmentIds.filter((id): id is string => typeof id === 'string' && Boolean(id))
+        : [];
+
+      if (appointmentIds.length === 0) {
+        return { success: true, data: { completed: 0, failed: 0 } };
+      }
+
+      let completed = 0;
+      let failed = 0;
+
+      const completionPayload: CompleteAppointmentDto = {
+        ...(bulkDto.doctorId && { doctorId: bulkDto.doctorId }),
+        ...(bulkDto.notes && { notes: bulkDto.notes }),
+        ...(bulkDto.metadata && { metadata: bulkDto.metadata }),
+      };
+
+      for (const appointmentId of appointmentIds) {
+        try {
+          await this.completeAppointment(appointmentId, completionPayload, userId, clinicId, role);
+          completed += 1;
+        } catch (error) {
+          failed += 1;
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Bulk complete failed for appointment ${appointmentId}: ${error instanceof Error ? error.message : String(error)}`,
+            'AppointmentsService.bulkCompleteSelectedAppointments',
+            {
+              appointmentId,
+              clinicId,
+              doctorId: filters.doctorId || userId,
+              error: error instanceof Error ? error.stack : undefined,
+            }
+          );
+        }
+      }
+
+      return { success: true, data: { completed, failed } };
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Bulk complete selected appointments failed: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentsService.bulkCompleteSelectedAppointments',
+        {
+          clinicId,
+          doctorId: filters.doctorId || userId,
+          count: bulkDto.appointmentIds?.length,
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+      throw this.errors.databaseError(
+        'bulkCompleteSelectedAppointments',
+        'AppointmentsService.bulkCompleteSelectedAppointments'
+      );
+    }
+  }
+
+  async completeAssociatedVideoSession(
     appointmentId: string,
     completedAt: Date,
     clinicId: string,

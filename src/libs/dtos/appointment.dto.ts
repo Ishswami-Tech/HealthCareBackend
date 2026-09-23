@@ -1682,6 +1682,52 @@ export class CompleteAppointmentDto {
 }
 
 /**
+ * Data Transfer Object for bulk completing selected appointments
+ * @class BulkCompleteAppointmentDto
+ */
+export class BulkCompleteAppointmentDto {
+  @ApiProperty({
+    description: 'Appointment IDs to mark as completed',
+    type: [String],
+    example: ['uuid-1', 'uuid-2'],
+  })
+  @IsArray({ message: 'appointmentIds must be an array' })
+  @IsUUID('4', { each: true, message: 'Each appointmentId must be a valid UUID' })
+  @ArrayMinSize(1, { message: 'At least one appointmentId is required' })
+  @ArrayMaxSize(50, { message: 'At most 50 appointments can be completed in one bulk request' })
+  appointmentIds!: string[];
+
+  @ApiPropertyOptional({
+    description: 'Doctor ID to associate with completion',
+    required: false,
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'Doctor ID must be a valid UUID' })
+  doctorId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Completion notes applied to all selected appointments',
+    required: false,
+    example: 'Bulk completion by clinic admin',
+  })
+  @IsOptional()
+  @IsString({ message: 'Notes must be a string' })
+  notes?: string;
+
+  @ApiPropertyOptional({
+    description: 'Structured completion metadata merged into each appointment',
+    required: false,
+    example: {
+      consultationStartedAt: '2026-09-23T00:00:00.000Z',
+      consultationCompletedAt: '2026-09-23T00:00:00.000Z',
+    },
+  })
+  @IsOptional()
+  @IsObject({ message: 'Metadata must be an object' })
+  metadata?: Record<string, unknown>;
+}
+
+/**
  * Data Transfer Object for starting consultation
  * @class StartConsultationDto
  */

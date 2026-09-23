@@ -67,6 +67,7 @@ import {
   DoctorAvailabilityResponseDto,
   AppointmentFilterDto,
   CompleteAppointmentDto,
+  BulkCompleteAppointmentDto,
   ScheduleFollowUpDto,
   AppointmentChainResponseDto,
   FollowUpPlanResponseDto,
@@ -2281,6 +2282,107 @@ export class AppointmentsController {
   /**
    * @deprecated Use PATCH /appointments/:id/status with status=COMPLETED instead
    */
+
+  /**
+   * Bulk complete selected appointments
+   * POST /appointments/complete/bulk
+   */
+  @Post('complete/bulk')
+  @HttpCode(HttpStatus.OK)
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.NURSE,
+    Role.RECEPTIONIST,
+    Role.CLINIC_ADMIN
+  )
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'update', {
+    requireOwnership: false,
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @RateLimitAPI({ points: 10, duration: 60 })
+  @ApiOperation({
+    summary: 'Bulk complete selected appointments',
+    description: 'Marks multiple selected appointments as completed by IDs',
+  })
+  @ApiBody({
+    type: BulkCompleteAppointmentDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Selected appointments completed successfully',
+  })
+  @InvalidateAppointmentCache()
+  async bulkCompleteSelectedAppointments(
+    @Body(ValidationPipe) bulkDto: BulkCompleteAppointmentDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<{ completed: number; failed: number }>> {
+    const startTime = Date.now();
+    const context = 'AppointmentsController.bulkCompleteSelectedAppointments';
+    const userId = req.user?.id || '';
+    const clinicId = req.clinicContext?.clinicId || '';
+
+    try {
+      const doctorId =
+        bulkDto.doctorId ||
+        (req.user?.role === 'DOCTOR' || req.user?.role === 'ASSISTANT_DOCTOR'
+          ? ((await this.appointmentService.resolveDoctorEntityId(userId, clinicId)) ?? undefined)
+          : undefined);
+
+      const result = (await this.appointmentService.bulkCompleteSelectedAppointments(
+        {
+          clinicId,
+          ...(doctorId && { doctorId }),
+        },
+        bulkDto,
+        userId,
+        clinicId,
+        req.user?.role || 'USER'
+      )) as { success: boolean; data?: { completed: number; failed: number } };
+
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        'Bulk complete selected appointments via API',
+        context,
+        {
+          clinicId,
+          doctorId: bulkDto.doctorId || userId,
+          completed: result.data?.completed,
+          failed: result.data?.failed,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: result.data ?? { completed: 0, failed: 0 },
+        message: `Bulk completion finished: completed=${result.data?.completed}, failed=${result.data?.failed}`,
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to bulk complete selected appointments: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError || error instanceof HttpException) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(context);
+    }
+  }
+
   @Post(':id/complete')
   @HttpCode(HttpStatus.OK)
   @Roles(

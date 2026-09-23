@@ -4,13 +4,21 @@ import { Cron } from '@nestjs/schedule';
 import { ConfigService } from '@config/config.service';
 import type { CacheService } from '@infrastructure/cache/cache.service';
 import type { DatabaseService } from '@infrastructure/database/database.service';
-import { QueueService } from '@infrastructure/queue';
-import { HEALTHCARE_QUEUE } from '@infrastructure/queue/src/queue.constants';
-import { JobType } from '@core/types/queue.types';
+import { HEALTHCARE_QUEUE, QUEUE_PRIORITIES } from '@infrastructure/queue/src/queue.constants';
+import { JobType, type BulkJobData } from '@core/types/queue.types';
 import { LogType, LogLevel } from '@core/types';
 import type { LoggerLike } from '@core/types';
 import { Role } from '@core/types/enums.types';
 import { formatDateKeyInIST } from '../../../utils/date-time.util';
+import type { Job } from 'bullmq';
+
+// Structural type instead of importing the real QueueService class — a real
+// (or even type-only, per madge's static analysis) import of
+// `@infrastructure/queue` here creates a circular dependency between the
+// cache and queue modules. Only the one method actually used is declared.
+interface QueueServiceLike {
+  addBulkJobs<T = unknown>(jobType: JobType, jobs: BulkJobData<T>[]): Promise<Job[]>;
+}
 
 /**
  * Comprehensive Cache Warming Service
@@ -35,7 +43,7 @@ export class CacheWarmingService implements OnModuleInit {
     private readonly loggingService: LoggerLike,
     @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
-    @Optional() private readonly queueService?: QueueService
+    @Optional() @Inject('QUEUE_SERVICE') private readonly queueService?: QueueServiceLike
   ) {}
 
   onModuleInit(): void {
@@ -117,7 +125,7 @@ export class CacheWarmingService implements OnModuleInit {
                 type: 'clinic_cache_warming',
               },
               options: {
-                priority: QueueService.PRIORITIES.NORMAL,
+                priority: QUEUE_PRIORITIES.NORMAL,
                 removeOnComplete: 100,
                 removeOnFail: 50,
               },
@@ -222,7 +230,7 @@ export class CacheWarmingService implements OnModuleInit {
                   type: 'doctor_schedule_warming',
                 },
                 options: {
-                  priority: QueueService.PRIORITIES.NORMAL,
+                  priority: QUEUE_PRIORITIES.NORMAL,
                   removeOnComplete: 100,
                   removeOnFail: 50,
                 },

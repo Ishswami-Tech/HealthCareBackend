@@ -205,6 +205,32 @@ export class OtpService {
     return Math.max(0, this.REQUESTS_PER_STAGE - positionInStage);
   }
 
+  /**
+   * Failed OTP verification attempts, scoped to the current OTP's cache key so a
+   * fresh send always resets the counter. TTL is capped to the OTP expiry window.
+   */
+  private async getOtpVerifyAttempts(normalizedIdentifier: string): Promise<number> {
+    const attempts = await this.cacheService.get<string>(
+      `otp_verify_attempts:${normalizedIdentifier}`
+    );
+    return attempts ? parseInt(attempts, 10) : 0;
+  }
+
+  /**
+   * Atomically increments the failed-attempt counter (INCR), setting the TTL
+   * only on the first increment. A read-then-write here would let concurrent
+   * guesses race past maxAttempts before any of them observes the updated
+   * count — exactly the brute-force window this counter exists to close.
+   */
+  private async recordOtpVerifyAttempt(normalizedIdentifier: string): Promise<number> {
+    const attemptsKey = `otp_verify_attempts:${normalizedIdentifier}`;
+    const newCount = await this.cacheService.incr(attemptsKey);
+    if (newCount === 1) {
+      await this.cacheService.expire(attemptsKey, this.config.expiryMinutes * 60);
+    }
+    return newCount;
+  }
+
   async peekOtp(identifier: string): Promise<string | null> {
     const normalizedIdentifier = this.normalizeIdentifier(identifier);
     const otpKey = `otp:${normalizedIdentifier}`;
@@ -292,6 +318,7 @@ export class OtpService {
 
       await Promise.all([
         this.cacheService.del(`otp_verified:${normalizedEmail}`),
+        this.cacheService.del(`otp_verify_attempts:${normalizedEmail}`),
         this.cacheService.set(otpKey, otpEntry, expirySeconds),
         this.cacheService.set(attemptsKey, newAttemptCount.toString(), 60 * 60), // 1 hour
         cooldownSeconds > 0
@@ -443,6 +470,7 @@ export class OtpService {
 
       await Promise.all([
         this.cacheService.del(`otp_verified:${normalizedPhone}`),
+        this.cacheService.del(`otp_verify_attempts:${normalizedPhone}`),
         this.cacheService.set(otpKey, otpEntry, expirySeconds),
         this.cacheService.set(attemptsKey, newAttemptCount.toString(), 60 * 60), // 1 hour
         cooldownSeconds > 0
@@ -559,6 +587,7 @@ export class OtpService {
       const normalizedOtp = this.normalizeOtpValue(otp);
       const otpKey = `otp:${normalizedIdentifier}`;
       const verifiedKey = `otp_verified:${normalizedIdentifier}`;
+      const verifyAttemptsKey = `otp_verify_attempts:${normalizedIdentifier}`;
       const storedOtp = this.extractOtpValue(await this.cacheService.get<unknown>(otpKey));
       const recentlyVerifiedOtp = this.extractOtpValue(
         await this.cacheService.get<unknown>(verifiedKey)
@@ -566,6 +595,25 @@ export class OtpService {
       const cacheExists = await this.cacheService.exists(otpKey);
       const cacheTtl = await this.cacheService.ttl(otpKey);
       const hasValidStoredOtp = typeof storedOtp === 'string' && storedOtp.length > 0;
+
+      // NOTE: deliberately not enforced as a lockout. In a healthcare app,
+      // denying a patient/doctor access to their own account because of
+      // mistyped OTP entries is a worse failure mode than the residual
+      // brute-force exposure — the OTP's own TTL (a few minutes) is the
+      // real bound on the guessing window. We still track and log the
+      // count so unusually high attempt volumes are visible to security
+      // monitoring without ever refusing a still-valid, correctly-entered
+      // code.
+      const failedAttempts = await this.getOtpVerifyAttempts(normalizedIdentifier);
+      if (hasValidStoredOtp && failedAttempts >= this.config.maxAttempts) {
+        void this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.WARN,
+          `OTP verification exceeded ${this.config.maxAttempts} attempts (not blocked)`,
+          'OtpService',
+          { identifier: normalizedIdentifier, failedAttempts }
+        );
+      }
 
       this.logOtp('OTP verification lookup', {
         identifier: normalizedIdentifier,
@@ -603,15 +651,21 @@ export class OtpService {
       }
 
       if (storedOtp !== normalizedOtp) {
+        const newFailedAttempts = await this.recordOtpVerifyAttempt(normalizedIdentifier);
+        const attemptsRemaining = Math.max(0, this.config.maxAttempts - newFailedAttempts);
+
         this.logOtp('OTP verification mismatch', {
           identifier: normalizedIdentifier,
           otpKey,
           providedOtp: this.maskOtpValue(normalizedOtp),
           storedOtp: this.maskOtpValue(storedOtp),
+          failedAttempts: newFailedAttempts,
+          attemptsRemaining,
         });
         return {
           success: false,
           message: 'Invalid OTP',
+          attemptsRemaining,
         };
       }
 
@@ -625,11 +679,14 @@ export class OtpService {
         verifiedKey,
       });
 
-      await this.cacheService.set(
-        verifiedKey,
-        this.buildVerifiedOtpCacheEntry(normalizedOtp),
-        this.VERIFIED_OTP_TTL_SECONDS
-      );
+      await Promise.all([
+        this.cacheService.set(
+          verifiedKey,
+          this.buildVerifiedOtpCacheEntry(normalizedOtp),
+          this.VERIFIED_OTP_TTL_SECONDS
+        ),
+        this.cacheService.del(verifyAttemptsKey),
+      ]);
 
       void this.loggingService.log(
         LogType.AUTH,
@@ -722,7 +779,10 @@ export class OtpService {
     try {
       const normalizedIdentifier = this.normalizeIdentifier(identifier);
       const otpKey = `otp:${normalizedIdentifier}`;
-      await this.cacheService.del(otpKey);
+      await Promise.all([
+        this.cacheService.del(otpKey),
+        this.cacheService.del(`otp_verify_attempts:${normalizedIdentifier}`),
+      ]);
 
       void this.loggingService.log(
         LogType.SYSTEM,

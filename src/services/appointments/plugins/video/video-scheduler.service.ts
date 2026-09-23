@@ -6,6 +6,7 @@ import { ConfigService } from '@config/config.service';
 import { getVideoActiveWindowMinutes } from '@config/video.config';
 import { LogType, LogLevel } from '@core/types';
 import { AppointmentStatus, UpdateAppointmentStatusDto } from '@dtos/appointment.dto';
+import { PaymentStatus } from '@core/types/enums.types';
 import {
   VideoCallStatus,
   VideoParticipantRole,
@@ -477,6 +478,38 @@ export class VideoAppointmentSchedulerService {
 
       for (const row of expired) {
         try {
+          // Update the linked Payment row BEFORE flipping the appointment to
+          // EXPIRED (not after). The two writes aren't in one DB transaction
+          // (updateStatus() below owns its own internal writes/events/cache
+          // invalidation and doesn't accept an external transaction client),
+          // so ordering is what makes this self-healing instead of racy:
+          // - If this Payment write fails, we throw before touching the
+          //   appointment, which stays PENDING and gets retried next tick.
+          // - If it succeeds but the appointment update below then fails,
+          //   the appointment also stays PENDING and gets retried next
+          //   tick — this same updateMany just no-ops then, since it's
+          //   scoped to status: PENDING and the Payment is already EXPIRED.
+          // Either way the Payment row can never end up permanently stuck
+          // at PENDING once its appointment has actually expired, which was
+          // the original bug (dashboards/ledgers showing "Pending" forever).
+          // The PENDING guard also means a payment that completed in a race
+          // right before this cron tick is never clobbered.
+          await this.databaseService.executeHealthcareWrite(async client => {
+            await (
+              client as unknown as {
+                payment: {
+                  updateMany: (args: {
+                    where: Record<string, unknown>;
+                    data: Record<string, unknown>;
+                  }) => Promise<{ count: number }>;
+                };
+              }
+            ).payment.updateMany({
+              where: { appointmentId: row.id, status: PaymentStatus.PENDING },
+              data: { status: PaymentStatus.EXPIRED },
+            });
+          }, this.buildSystemAudit());
+
           await this.appointmentsService.updateStatus(
             row.id,
             {

@@ -58,6 +58,10 @@ export class QueueModule {
           AppointmentQueueService,
           QueueProcessor,
           QueueHealthMonitorService,
+          // String-token alias so consumers (e.g. CacheWarmingService) can inject
+          // QueueService via `import type` — avoids a static circular import
+          // between the queue and cache modules while DI still resolves correctly.
+          { provide: 'QUEUE_SERVICE', useExisting: QueueService },
           {
             provide: 'BULLMQ_QUEUES',
             useValue: [], // Empty array when cache is disabled
@@ -67,7 +71,7 @@ export class QueueModule {
             useValue: [], // Empty array when cache is disabled
           },
         ],
-        exports: [QueueService, AppointmentQueueService, QueueProcessor],
+        exports: [QueueService, 'QUEUE_SERVICE', AppointmentQueueService, QueueProcessor],
       };
     }
 
@@ -208,6 +212,10 @@ export class QueueModule {
         DeadLetterQueueService,
         QueueHealthMonitorService,
         QueueProcessor,
+        // String-token alias so consumers (e.g. CacheWarmingService) can inject
+        // QueueService via `import type` — avoids a static circular import
+        // between the queue and cache modules while DI still resolves correctly.
+        { provide: 'QUEUE_SERVICE', useExisting: QueueService },
         // QueueStatusGateway depends on QueueService and LoggingService (via LoggingModule import)
         ...(serviceName === 'worker' ? [QueueStatusGateway] : []),
         // Enhanced worker configuration for 1M users
@@ -333,6 +341,7 @@ export class QueueModule {
       ],
       exports: [
         QueueService,
+        'QUEUE_SERVICE',
         AppointmentQueueService,
         BullModule,
         // Export health monitor for HealthService
@@ -358,10 +367,12 @@ export class QueueModule {
         QueueStatusGateway,
         // Provide health monitor for HealthService
         QueueHealthMonitorService,
+        { provide: 'QUEUE_SERVICE', useExisting: QueueService },
       ],
       exports: [
         BullModule,
         QueueService,
+        'QUEUE_SERVICE',
         QueueStatusGateway,
         // Export health monitor for HealthService
         QueueHealthMonitorService,
