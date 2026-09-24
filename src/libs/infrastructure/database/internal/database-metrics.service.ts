@@ -342,10 +342,31 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
       this.cacheHitTimes.shift();
     }
 
-    // Update cache hit rate in metrics
-    const totalCacheOps = this.cacheHits + this.cacheMisses;
-    if (totalCacheOps > 0) {
-      this.currentMetrics.performance.cacheHitRate = this.cacheHits / totalCacheOps;
+    this.refreshCacheHitRate();
+  }
+
+  /**
+   * Recompute the reported cache hit rate from the bounded recent-operation
+   * windows (cacheHitTimes/cacheMissTimes), not the lifetime cacheHits/
+   * cacheMisses counters. The lifetime counters never reset, so a rate
+   * derived from them drifts slowly toward the true value for hours after
+   * every process restart instead of reflecting current cache behavior.
+   *
+   * Known limitation: the two arrays are capped independently at
+   * maxCacheTimeHistory entries each, so when hit/miss frequencies are very
+   * skewed they can span different wall-clock windows (e.g. a healthy cache
+   * with rare misses fills cacheHitTimes with the last few minutes while
+   * cacheMissTimes still holds misses from hours ago). This is acceptable
+   * for the low-hit-rate alert below (hits and misses occur at comparable
+   * frequency in that regime), but this rate should not be treated as a
+   * strictly time-symmetric recent window for other uses.
+   */
+  private refreshCacheHitRate(): void {
+    const recentHits = this.cacheHitTimes.length;
+    const recentMisses = this.cacheMissTimes.length;
+    const totalRecentOps = recentHits + recentMisses;
+    if (totalRecentOps > 0) {
+      this.currentMetrics.performance.cacheHitRate = recentHits / totalRecentOps;
     }
   }
 
@@ -363,20 +384,22 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
       this.cacheMissTimes.shift();
     }
 
-    // Update cache hit rate in metrics
-    const totalCacheOps = this.cacheHits + this.cacheMisses;
-    if (totalCacheOps > 0) {
-      this.currentMetrics.performance.cacheHitRate = this.cacheHits / totalCacheOps;
-    }
+    this.refreshCacheHitRate();
+    const totalRecentOps = this.cacheHitTimes.length + this.cacheMissTimes.length;
 
     // Log warning if cache hit rate is low
     if (
-      totalCacheOps > 100 &&
+      totalRecentOps > 100 &&
       this.currentMetrics.performance.cacheHitRate < this.minCacheHitRate
     ) {
       const cacheHitRatePercent = Math.floor(this.currentMetrics.performance.cacheHitRate * 100);
+      // Bucket to the nearest 5% for the dedup hash only (the log message
+      // below still reports the exact percentage) - the exact percentage
+      // shifts on nearly every miss, which defeated the cooldown below by
+      // treating each 1% wobble as a "changed" alert worth re-logging.
+      const cacheHitRateBucket = Math.floor(cacheHitRatePercent / 5) * 5;
       const alertHash = JSON.stringify({
-        cacheHitRatePercent,
+        cacheHitRateBucket,
         belowThreshold: true,
       });
       const now = Date.now();
@@ -393,9 +416,10 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
           this.serviceName,
           {
             cacheHitRate: this.currentMetrics.performance.cacheHitRate,
-            cacheHits: this.cacheHits,
-            cacheMisses: this.cacheMisses,
-            totalCacheOps,
+            recentCacheHits: this.cacheHitTimes.length,
+            recentCacheMisses: this.cacheMissTimes.length,
+            lifetimeCacheHits: this.cacheHits,
+            lifetimeCacheMisses: this.cacheMisses,
             recommendations: [
               'Review cache TTL settings - may be too short',
               'Check cache invalidation strategy - may be too aggressive',
