@@ -1747,19 +1747,29 @@ export class NotificationEventListener implements OnModuleInit {
     payload: EnterpriseEventPayload
   ): NotificationData | null {
     const eventPayload = payload as unknown as Record<string, unknown>;
+    const metadataRecord = asRecord(eventPayload['metadata']);
     // normalizePayload wraps enterprise events: appointment data can be at
     // eventPayload.payload.appointment (enterprise) or eventPayload.metadata.appointment (plain).
-    // Check all paths before falling back to empty object.
+    // When normalizePayload falls back to its own reconstruction (the raw event
+    // didn't satisfy isEnterpriseEventPayload - e.g. missing `category`), it
+    // sets metadata to the ENTIRE original raw object, so a caller's own
+    // `payload: {...}` sub-object ends up nested one level deeper at
+    // metadata.payload instead of top-level payload/metadata. Check all paths
+    // before falling back to empty object.
     const appointmentFromPayload = asRecord(
       (eventPayload['payload'] as Record<string, unknown> | undefined)?.['appointment']
     );
-    const appointmentFromMetadata = asRecord(
-      (eventPayload['metadata'] as Record<string, unknown> | undefined)?.['appointment']
+    const appointmentFromMetadata = asRecord(metadataRecord?.['appointment']);
+    const appointmentFromMetadataPayload = asRecord(
+      asRecord(metadataRecord?.['payload'])?.['appointment']
     );
-    const appointment = appointmentFromPayload || appointmentFromMetadata || {};
+    const appointment =
+      appointmentFromPayload || appointmentFromMetadata || appointmentFromMetadataPayload || {};
     const nestedPayload =
       asRecord((eventPayload['payload'] as Record<string, unknown> | undefined)?.['payload']) ||
       asRecord(eventPayload['payload'] as Record<string, unknown> | undefined) ||
+      asRecord(metadataRecord?.['payload']) ||
+      metadataRecord ||
       {};
     const asString = (value: unknown): string | undefined =>
       typeof value === 'string' && value.trim() ? value.trim() : undefined;
@@ -1887,7 +1897,7 @@ export class NotificationEventListener implements OnModuleInit {
       void this.loggingService.log(
         LogType.NOTIFICATION,
         LogLevel.WARN,
-        `Cannot build appointment notification: missing ${missing}. Raw payload keys: [${Object.keys(eventPayload).join(', ')}]; nested payload keys: [${Object.keys(nestedPayload).join(', ')}]`,
+        `Cannot build appointment notification: missing ${missing}. Raw payload keys: [${Object.keys(eventPayload).join(', ')}]; metadata keys: [${Object.keys(metadataRecord || {}).join(', ')}]; nested payload keys: [${Object.keys(nestedPayload).join(', ')}]`,
         'NotificationEventListener'
       );
       return null;
