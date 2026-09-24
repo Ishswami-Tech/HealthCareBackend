@@ -1228,26 +1228,14 @@ export class NotificationEventListener implements OnModuleInit {
             }
           );
         } else {
+          const reason = !notificationData
+            ? 'missing required ids (see preceding log)'
+            : 'AppointmentNotificationService unavailable';
           await this.loggingService.log(
             LogType.NOTIFICATION,
             LogLevel.WARN,
-            `Appointment notification could not be built for ${normalizedEventType}; skipping generic fallback`,
-            'NotificationEventListener',
-            {
-              eventType: normalizedEventType,
-              reason: !notificationData
-                ? 'missing required ids'
-                : 'AppointmentNotificationService unavailable',
-              appointmentId:
-                eventPayload.metadata?.['appointmentId'] ||
-                (eventPayload as unknown as Record<string, unknown>)['appointmentId'],
-              patientId:
-                eventPayload.userId ||
-                eventPayload.metadata?.['patientId'] ||
-                eventPayload.metadata?.['userId'],
-              doctorId: eventPayload.metadata?.['doctorId'],
-              clinicId: eventPayload.clinicId || eventPayload.metadata?.['clinicId'],
-            }
+            `Appointment notification could not be built for ${normalizedEventType}; skipping generic fallback. Reason: ${reason}`,
+            'NotificationEventListener'
           );
         }
         return;
@@ -1888,6 +1876,20 @@ export class NotificationEventListener implements OnModuleInit {
       (appointment['id'] as string | undefined);
 
     if (!patientId || !doctorId || !clinicId || !appointmentId) {
+      const missing = [
+        !patientId && 'patientId',
+        !doctorId && 'doctorId',
+        !clinicId && 'clinicId',
+        !appointmentId && 'appointmentId',
+      ]
+        .filter(Boolean)
+        .join(', ');
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.WARN,
+        `Cannot build appointment notification: missing ${missing}. Raw payload keys: [${Object.keys(eventPayload).join(', ')}]; nested payload keys: [${Object.keys(nestedPayload).join(', ')}]`,
+        'NotificationEventListener'
+      );
       return null;
     }
 
