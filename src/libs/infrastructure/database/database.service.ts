@@ -1885,9 +1885,20 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
    * Convert PrismaService to PrismaTransactionClient
    * Centralized conversion to avoid repeated casting (DRY principle)
    * Optimized for 10M+ users - single conversion point
+   *
+   * TransactionQueryStrategy passes the real, transaction-scoped Prisma client
+   * (Prisma's $transaction callback argument) through this same path so
+   * executeInTransaction's operation actually runs inside the SQL transaction.
+   * That value is not a PrismaService instance and has no getRawPrismaClient
+   * method, so it must be detected and passed through as-is rather than
+   * unwrapped - calling getRawPrismaClient() on it would throw, and unwrapping
+   * it would silently discard the transaction and run against the shared pool.
    */
   private toTransactionClient(prisma: PrismaService): PrismaTransactionClient {
-    return prisma.getRawPrismaClient() as unknown as PrismaTransactionClient;
+    if (typeof (prisma as { getRawPrismaClient?: unknown }).getRawPrismaClient === 'function') {
+      return prisma.getRawPrismaClient() as unknown as PrismaTransactionClient;
+    }
+    return prisma as unknown as PrismaTransactionClient;
   }
 
   /**

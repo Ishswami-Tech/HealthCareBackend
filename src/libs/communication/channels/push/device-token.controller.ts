@@ -21,7 +21,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { DeviceTokenService } from './device-token.service';
 import type { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 
-export class RegisterDeviceTokenDto {
+export class RegisterMobileDeviceTokenDto {
   @ApiProperty({
     description: 'Expo or FCM/APNs push token for the device',
     example: 'ExponentPushToken[abc123def456]',
@@ -86,7 +86,7 @@ export class DeviceTokenController {
   @ApiResponse({ status: HttpStatus.OK, description: 'Token registered' })
   @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Not authenticated' })
   async registerMyToken(
-    @Body() body: RegisterDeviceTokenDto,
+    @Body() body: RegisterMobileDeviceTokenDto,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<{ success: boolean; message: string }> {
     const userId = req.user?.sub ?? req.user?.id;

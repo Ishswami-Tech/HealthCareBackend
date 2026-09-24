@@ -58,14 +58,16 @@ export class TransactionQueryStrategy extends BaseQueryStrategy {
       );
 
       // Execute transaction operation
-      // PrismaService.$transaction accepts a callback that receives the transaction client
+      // PrismaService.$transaction accepts a callback that receives the transaction
+      // client (tx) - a PrismaClient scoped to this transaction's single pinned
+      // connection. Operations MUST run against tx, not the shared prismaService,
+      // otherwise they execute as independent, non-atomic queries against the
+      // normal pool and none of the transaction's rollback-on-error guarantees
+      // apply. toTransactionClient() (database.service.ts) recognizes this raw
+      // client and passes it through as-is instead of calling getRawPrismaClient().
       const result = await this.prismaService.$transaction(
-        async _tx => {
-          // The transaction client (_tx) is a PrismaClient instance, not PrismaService
-          // We need to wrap it or use it directly
-          // For now, execute the operation with the original prismaService
-          // The transaction context is already established by $transaction
-          return operation(this.prismaService);
+        async tx => {
+          return operation(tx as unknown as PrismaService);
         },
         {
           maxWait: context.options.timeout || 10000,

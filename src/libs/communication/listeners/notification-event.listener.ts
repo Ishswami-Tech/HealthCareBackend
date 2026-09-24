@@ -1039,15 +1039,36 @@ export class NotificationEventListener implements OnModuleInit {
     this.typedCommunicationService = this.communicationService as CommunicationService;
   }
 
-  async onModuleInit(): Promise<void> {
+  /**
+   * Resolve AppointmentNotificationService on demand rather than only once at
+   * onModuleInit. NestJS does not guarantee every module's providers are
+   * registered by the time a sibling module's onModuleInit runs, so a
+   * one-shot lookup here can permanently fail for events that happen to fire
+   * during that startup window (e.g. appointment.confirmed/completed/updated/
+   * cancelled emitted very early by other modules' own bootstrap logic) even
+   * though the service is genuinely available moments later. Falling back to
+   * moduleRef.get() again at the point of use is cheap and self-heals once
+   * the DI container has finished registering everything - it only stays
+   * permanently undefined in contexts that truly never have this provider
+   * (e.g. worker bootstrap).
+   */
+  private resolveAppointmentNotificationService(): AppointmentNotificationService | undefined {
+    if (this.appointmentNotificationService) {
+      return this.appointmentNotificationService;
+    }
     try {
       this.appointmentNotificationService = this.moduleRef.get(AppointmentNotificationService, {
         strict: false,
       });
     } catch {
-      // AppointmentNotificationService is not available in this module context (e.g., worker bootstrap)
+      // Not available in this module context (e.g., worker bootstrap) - try again next time.
       this.appointmentNotificationService = undefined;
     }
+    return this.appointmentNotificationService;
+  }
+
+  async onModuleInit(): Promise<void> {
+    this.resolveAppointmentNotificationService();
 
     await this.loggingService.log(
       LogType.SYSTEM,
@@ -1141,7 +1162,8 @@ export class NotificationEventListener implements OnModuleInit {
 
       if (normalizedEventType.startsWith('appointment.')) {
         const notificationData = this.buildAppointmentConfirmationNotificationData(eventPayload);
-        if (notificationData && this.appointmentNotificationService) {
+        const notificationService = this.resolveAppointmentNotificationService();
+        if (notificationData && notificationService) {
           const appointmentRecord = asRecord(
             (eventPayload as unknown as Record<string, unknown>)['appointment']
           );
@@ -1190,8 +1212,7 @@ export class NotificationEventListener implements OnModuleInit {
 
           notificationData.type = nextType as NotificationData['type'];
           notificationData.channels = nextChannels;
-          const result =
-            await this.appointmentNotificationService.sendNotification(notificationData);
+          const result = await notificationService.sendNotification(notificationData);
 
           await this.loggingService.log(
             LogType.NOTIFICATION,
@@ -1214,6 +1235,9 @@ export class NotificationEventListener implements OnModuleInit {
             'NotificationEventListener',
             {
               eventType: normalizedEventType,
+              reason: !notificationData
+                ? 'missing required ids'
+                : 'AppointmentNotificationService unavailable',
               appointmentId:
                 eventPayload.metadata?.['appointmentId'] ||
                 (eventPayload as unknown as Record<string, unknown>)['appointmentId'],

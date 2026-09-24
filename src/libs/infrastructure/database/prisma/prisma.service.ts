@@ -1174,7 +1174,22 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     assignDelegate<NursingNoteDelegate>('nursingNote', 'nursingNote');
     assignDelegate<VitalsFlowsheetDelegate>('vitalsFlowsheet', 'vitalsFlowsheet');
     assignDelegate<BedsideMedicationDelegate>('bedsideMedication', 'bedsideMedication');
-    assignDelegate<TransactionDelegate['$transaction']>('$transaction', '$transaction');
+    // $transaction cannot go through assignDelegate: unlike model delegates
+    // (self-contained objects whose own methods don't depend on the caller's
+    // `this`), $transaction is a plain function on PrismaClient that reads
+    // `this._engineConfig` internally. Copying the bare reference via
+    // Object.defineProperty (as assignDelegate does) left `this` bound to the
+    // PrismaService wrapper when called as `this.prismaService.$transaction(...)`,
+    // which threw immediately instead of ever starting a real transaction.
+    const realClient = this.prismaClient as unknown as {
+      $transaction: TransactionDelegate['$transaction'];
+    };
+    Object.defineProperty(this, '$transaction', {
+      value: realClient.$transaction.bind(realClient),
+      writable: false,
+      enumerable: true,
+      configurable: false,
+    });
   }
 
   /**
