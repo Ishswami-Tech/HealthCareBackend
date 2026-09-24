@@ -11,7 +11,6 @@ import { nowIso, formatDateInIST, formatTimeInIST, parseIstDateTime } from '@uti
 
 import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
-import { OnEvent } from '@nestjs/event-emitter';
 // Use direct imports to avoid TDZ issues with barrel exports
 import { EventService } from '@infrastructure/events/event.service';
 import { CommunicationService } from '@communication/communication.service';
@@ -1070,6 +1069,25 @@ export class NotificationEventListener implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     this.resolveAppointmentNotificationService();
 
+    // Subscribe via EventService.onAny() rather than the NestJS @OnEvent('**')
+    // decorator. NestJS registers wildcard @OnEvent patterns with the
+    // underlying EventEmitter2's plain .on(), which - unlike .onAny() - does
+    // not reliably prepend the matched event name as a separate argument to
+    // the listener. That mismatch was the actual cause of the persistent
+    // "appointment notification could not be built" warnings: the payload
+    // ended up in the wrong parameter, so it fell back through code paths
+    // that reconstructed a near-empty envelope. EventService.onAny() is the
+    // codebase's own documented mechanism for "listen to all events" and
+    // guarantees the (event, payload) argument order this handler expects.
+    if (this.typedEventService) {
+      this.typedEventService.onAny((event, ...args) => {
+        void this.handleEvent(
+          event,
+          args[0] as EnterpriseEventPayload | Record<string, unknown> | undefined
+        );
+      });
+    }
+
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
@@ -1082,10 +1100,10 @@ export class NotificationEventListener implements OnModuleInit {
   }
 
   /**
-   * Generic event handler that processes all events
-   * Uses @OnEvent decorator to listen to EventEmitter2 events
+   * Generic event handler that processes all events.
+   * Registered via EventService.onAny() in onModuleInit (see comment there
+   * for why this isn't a NestJS @OnEvent('**') handler).
    */
-  @OnEvent('**')
   async handleEvent(
     eventType: string | string[] | Record<string, unknown>,
     payload: EnterpriseEventPayload | Record<string, unknown> | undefined
