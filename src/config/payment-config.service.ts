@@ -337,44 +337,50 @@ export class PaymentConfigService implements OnModuleInit {
     config: ClinicPaymentConfig,
     defaults: ClinicPaymentConfig
   ): ClinicPaymentConfig {
-    // Merge primary credentials: env defaults take precedence for
-    // environment/baseUrl (production overrides DB sandbox), but clinic
-    // credentials (appId, secretKey, etc.) take precedence.
-    const defaultPrimary = defaults.payment.primary;
-    const clinicPrimary = config.payment.primary;
-    const mergedPrimary: PaymentProviderConfig | undefined =
-      clinicPrimary && defaultPrimary
-        ? {
-            ...clinicPrimary,
-            credentials: {
-              ...clinicPrimary.credentials,
-              ...defaultPrimary.credentials,
-            } as PaymentProviderConfig['credentials'],
-          }
-        : clinicPrimary || defaultPrimary;
-
-    const primary = mergedPrimary;
-    const fallbackByProvider = new Map<
-      PaymentProvider,
-      NonNullable<ClinicPaymentConfig['payment']['fallback']>[number]
-    >();
-
-    for (const fallback of config.payment.fallback || []) {
-      fallbackByProvider.set(fallback.provider, fallback);
-    }
-
-    for (const fallback of defaults.payment.fallback || []) {
-      if (!fallbackByProvider.has(fallback.provider) && fallback.provider !== primary?.provider) {
-        fallbackByProvider.set(fallback.provider, fallback);
+    // Every env-enabled provider, keyed by its own name — NOT "whichever provider
+    // happens to be the system's first-enabled one". Used only to top up missing
+    // credential fields for the SAME provider the clinic actually chose; never to
+    // pick a different provider's credentials.
+    const envProvidersByName = new Map<PaymentProvider, PaymentProviderConfig>();
+    for (const entry of [defaults.payment.primary, ...(defaults.payment.fallback || [])]) {
+      if (entry) {
+        envProvidersByName.set(entry.provider, entry);
       }
     }
+
+    const clinicPrimary = config.payment.primary;
+    const primary: PaymentProviderConfig | undefined = clinicPrimary
+      ? {
+          ...clinicPrimary,
+          credentials: {
+            ...clinicPrimary.credentials,
+            ...(envProvidersByName.get(clinicPrimary.provider)?.credentials || {}),
+          } as PaymentProviderConfig['credentials'],
+        }
+      : defaults.payment.primary;
+
+    // Fallback is opt-in per clinic: an empty/absent list means NO fallback, not
+    // "inherit every other env-enabled provider on the server". A clinic that never
+    // configured Razorpay must never have a payment silently routed through it.
+    const fallback: PaymentProviderConfig[] = (config.payment.fallback || []).map(entry => {
+      const envMatch = envProvidersByName.get(entry.provider);
+      return envMatch
+        ? {
+            ...entry,
+            credentials: {
+              ...entry.credentials,
+              ...envMatch.credentials,
+            } as PaymentProviderConfig['credentials'],
+          }
+        : entry;
+    });
 
     return {
       ...config,
       payment: {
         ...defaults.payment,
         ...config.payment,
-        fallback: Array.from(fallbackByProvider.values()),
+        fallback,
         ...(primary ? { primary } : {}),
         ...(config.payment.defaultProvider || primary?.provider || defaults.payment.defaultProvider
           ? {

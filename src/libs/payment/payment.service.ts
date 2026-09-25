@@ -42,12 +42,6 @@ import { formatCurrencyFromMinorUnits } from '../utils/currency.util';
  */
 @Injectable()
 export class PaymentService {
-  private readonly providerFailureCooldownMs = 10 * 60 * 1000;
-  private readonly recentProviderFailures = new Map<
-    string,
-    { failedAt: number; errorMessage: string }
-  >();
-
   constructor(
     private readonly loggingService: LoggingService,
     private readonly eventService: EventService,
@@ -228,6 +222,9 @@ export class PaymentService {
       return normalizedDemoResult;
     }
 
+    // Every configured provider (the clinic's primary, then its own explicit fallbacks)
+    // gets a fresh, live attempt on every request — no cross-request cooldown that could
+    // skip a provider that has already recovered, or that never actually failed this call.
     const providersToTry: PaymentProvider[] = provider
       ? [provider]
       : Array.from(
@@ -235,7 +232,7 @@ export class PaymentService {
             config.payment.primary.provider,
             ...(config.payment.fallback?.map(f => f.provider) || []),
           ])
-        ).filter(candidate => !this.isProviderTemporarilyFailed(clinicId, candidate));
+        );
 
     if (providersToTry.length === 0) {
       throw new Error(`No available payment providers for clinic: ${clinicId}`);
@@ -258,8 +255,8 @@ export class PaymentService {
 
         // Some gateways (Cashfree) make customer_phone mandatory on order creation.
         // Without a phone the order can never be created, so skip rather than spend a
-        // failed attempt plus a failure cooldown on a guaranteed rejection — that let
-        // a transient-looking "provider failed" line mask a pure data problem.
+        // failed attempt on a guaranteed rejection — that let a transient-looking
+        // "provider failed" line mask a pure data problem.
         if (
           adapter.requiresCustomerPhone?.() === true &&
           !(paymentOptions.customerPhone && paymentOptions.customerPhone.trim().length > 0)
@@ -284,7 +281,6 @@ export class PaymentService {
         if (!result.success) {
           throw new Error(result.error || `Payment provider ${p} returned an unsuccessful result`);
         }
-        this.recentProviderFailures.delete(this.getProviderFailureKey(clinicId, p));
         const normalizedResult: PaymentResult = {
           ...result,
           metadata: {
@@ -330,9 +326,8 @@ export class PaymentService {
       } catch (error) {
         // Normalize here too: a provider SDK can reject with a plain object before
         // the adapter's retry wrapper ever sees it, and `String(error)` would bake
-        // "[object Object]" into the message recorded against the failure cooldown.
+        // "[object Object]" into the logged failure message.
         lastError = toError(error);
-        this.markProviderFailed(clinicId, p, lastError.message);
         await this.loggingService.log(
           LogType.PAYMENT,
           LogLevel.WARN,
@@ -378,36 +373,6 @@ export class PaymentService {
       { clinicId }
     );
     throw lastError || new Error('Failed to create payment intent');
-  }
-
-  private getProviderFailureKey(clinicId: string, provider: PaymentProvider): string {
-    return `${clinicId}:${provider}`;
-  }
-
-  private isProviderTemporarilyFailed(clinicId: string, provider: PaymentProvider): boolean {
-    const entry = this.recentProviderFailures.get(this.getProviderFailureKey(clinicId, provider));
-    if (!entry) {
-      return false;
-    }
-
-    const age = Date.now() - entry.failedAt;
-    if (age <= this.providerFailureCooldownMs) {
-      return true;
-    }
-
-    this.recentProviderFailures.delete(this.getProviderFailureKey(clinicId, provider));
-    return false;
-  }
-
-  private markProviderFailed(
-    clinicId: string,
-    provider: PaymentProvider,
-    errorMessage: string
-  ): void {
-    this.recentProviderFailures.set(this.getProviderFailureKey(clinicId, provider), {
-      failedAt: Date.now(),
-      errorMessage,
-    });
   }
 
   /**
