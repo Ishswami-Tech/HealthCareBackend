@@ -31,7 +31,13 @@ import { CacheService } from '@infrastructure/cache';
 import { PaymentService } from './payment.service';
 import { PaymentHandoffTokenService } from './payment.handoff-token.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
-import { LogType, LogLevel, PaymentProvider, ClinicPaymentConfig } from '@core/types';
+import {
+  LogType,
+  LogLevel,
+  PaymentProvider,
+  PaymentStatus,
+  ClinicPaymentConfig,
+} from '@core/types';
 import { RoleEnum as Role } from '@core/types';
 import { Public } from '@core/decorators/public.decorator';
 import { Roles } from '@core/decorators/roles.decorator';
@@ -129,6 +135,25 @@ export class PaymentController {
     }
 
     return normalizedProvider as PaymentProvider;
+  }
+
+  private async hasPendingPaymentForTarget(
+    clinicId: string,
+    target: { appointmentId?: string; subscriptionId?: string; invoiceId?: string }
+  ): Promise<boolean> {
+    const targetFilter = target.appointmentId
+      ? { appointmentId: target.appointmentId }
+      : target.subscriptionId
+        ? { subscriptionId: target.subscriptionId }
+        : target.invoiceId
+          ? { invoiceId: target.invoiceId }
+          : null;
+    if (!targetFilter) {
+      return false;
+    }
+
+    const payments = await this.databaseService.findPaymentsSafe({ clinicId, ...targetFilter });
+    return payments.some(payment => String(payment.status) === String(PaymentStatus.PENDING));
   }
 
   /** Lenient variant for gateway redirect params: unknown values are ignored, not rejected. */
@@ -1577,6 +1602,24 @@ export class PaymentController {
       return {
         success: false,
         error: 'A target (subscription, appointment, invoice, or prescription) is required.',
+      };
+    }
+
+    // This bridge endpoint creates a bare gateway order with no local payment record.
+    // If billing already opened an order for the same target, a second one would be a
+    // duplicate whose payment cannot be matched, so refuse and let the client reopen
+    // the existing order (retries go through the billing process-payment endpoints).
+    if (await this.hasPendingPaymentForTarget(clinicId, body)) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        'Public payment intent refused: a pending payment already exists for this target',
+        'PaymentController',
+        { clinicId, appointmentId, subscriptionId, invoiceId }
+      );
+      return {
+        success: false,
+        error: 'A payment is already in progress for this item. Please go back and tap Pay again.',
       };
     }
 

@@ -86,6 +86,8 @@ interface CashfreeOrderStatusResponse {
     payment_link?: string;
   };
   order_splits?: unknown;
+  // Echoes the order_tags set at creation (clinicId, appointmentId, ...).
+  order_tags?: Record<string, string> | null;
 }
 
 interface CashfreeRefundRequest {
@@ -563,7 +565,12 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         transactionId: data.order_id,
         provider: this.getProviderName(),
         timestamp: new Date(data.created_at || Date.now()),
-        metadata: { order_status: data.order_status },
+        metadata: {
+          order_status: data.order_status,
+          // Lets BillingService bind a gateway order that has no local payment
+          // record (e.g. created by the payment bridge) to its appointment.
+          ...(data.order_tags ? { order_tags: data.order_tags } : {}),
+        },
       };
     } catch (error) {
       await this.logger.log(

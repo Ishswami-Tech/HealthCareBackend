@@ -673,6 +673,40 @@ export class BillingService implements OnModuleInit {
       : this.roundToTwo(fallbackAmount);
   }
 
+  /**
+   * Resolve the open appointment payment for a gateway order that has no local record,
+   * using the appointment/clinic tags the gateway echoes back (Cashfree `order_tags`).
+   * Only trusts tags from a real gateway verification, never skipped verifications.
+   */
+  private async findOpenPaymentByGatewayTags(
+    clinicId: string,
+    paymentStatus: PaymentStatusResult
+  ): Promise<PaymentWithRelations | null> {
+    const statusMetadata = this.asRecord(paymentStatus.metadata);
+    if (!statusMetadata || statusMetadata['verificationSkipped'] === true) {
+      return null;
+    }
+
+    const tags = this.asRecord(statusMetadata['order_tags']);
+    const appointmentId = this.asSafeString(tags?.['appointmentId']);
+    const taggedClinicId = this.asSafeString(tags?.['clinicId']);
+    if (!appointmentId || (taggedClinicId && taggedClinicId !== clinicId)) {
+      return null;
+    }
+
+    const closedStatuses = new Set(
+      [PaymentStatus.COMPLETED, PaymentStatus.REFUNDED].map(status => String(status))
+    );
+    const openPayments = (
+      await this.databaseService.findPaymentsSafe({ appointmentId, clinicId })
+    ).filter(candidate => !closedStatuses.has(String(candidate.status)));
+
+    return (
+      openPayments.sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())[0] ||
+      null
+    );
+  }
+
   private asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       return null;
@@ -3442,6 +3476,31 @@ export class BillingService implements OnModuleInit {
         }
       }
 
+      // The gateway order may not be the one stored on the payment record — e.g. the
+      // payment bridge opened a fresh Cashfree order while a Razorpay order was pending.
+      // Bind it through the gateway-verified appointment tag instead of dropping it.
+      let reboundFromOrderId: string | null = null;
+      if (!payment) {
+        payment = await this.findOpenPaymentByGatewayTags(clinicId, paymentStatus);
+        if (payment) {
+          reboundFromOrderId = this.asSafeString(this.asRecord(payment.metadata)?.['orderId']);
+          await this.loggingService.log(
+            LogType.PAYMENT,
+            LogLevel.WARN,
+            `Payment callback bound to appointment payment via gateway order tags: orderId=${orderId}`,
+            'BillingService',
+            {
+              clinicId,
+              orderId,
+              paymentId,
+              localPaymentId: payment.id,
+              previousOrderId: reboundFromOrderId,
+              provider: normalizedProvider,
+            }
+          );
+        }
+      }
+
       if (!payment) {
         // Payment record never created — this happens when the payment intent failed
         // (e.g. Cashfree rejected the order) but the gateway callback still arrives.
@@ -3543,6 +3602,11 @@ export class BillingService implements OnModuleInit {
       const callbackMetadata = this.asRecord(payment.metadata)
         ? { ...(payment.metadata as Record<string, unknown>) }
         : {};
+      if (reboundFromOrderId !== null) {
+        callbackMetadata['orderId'] = orderId;
+        callbackMetadata['provider'] = normalizedProvider;
+        callbackMetadata['supersededOrderId'] = reboundFromOrderId;
+      }
       callbackMetadata['callbackAudit'] = {
         provider: normalizedProvider || 'unknown',
         orderId,

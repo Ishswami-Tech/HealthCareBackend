@@ -362,9 +362,14 @@ export class RazorpayPaymentAdapter extends BasePaymentAdapter {
         ...(options.customerEmail && { email: options.customerEmail }),
         ...(options.customerName && { name: options.customerName }),
       };
-      if (Object.keys(prefill).length > 0) {
-        pending.metadata = { ...(pending.metadata || {}), prefill };
-      }
+      // The public key id lets clients (web + payment bridge) open Checkout for THIS
+      // order. Without it the bridge treated the order as incomplete and created a
+      // second gateway order that had no local payment record.
+      pending.metadata = {
+        ...(pending.metadata || {}),
+        razorpayKeyId: this.keyId,
+        ...(Object.keys(prefill).length > 0 ? { prefill } : {}),
+      };
       return pending;
     } catch (error) {
       await this.logger.log(
