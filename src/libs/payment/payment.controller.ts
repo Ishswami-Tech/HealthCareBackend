@@ -131,6 +131,14 @@ export class PaymentController {
     return normalizedProvider as PaymentProvider;
   }
 
+  /** Lenient variant for gateway redirect params: unknown values are ignored, not rejected. */
+  private parseRedirectedProvider(provider?: string): PaymentProvider | undefined {
+    const normalizedProvider = provider?.trim().toLowerCase() || '';
+    return this.supportedProviders.has(normalizedProvider)
+      ? (normalizedProvider as PaymentProvider)
+      : undefined;
+  }
+
   private isProviderEnabled(provider: PaymentProvider): boolean {
     return this.supportedProviders.has(provider);
   }
@@ -1714,9 +1722,27 @@ export class PaymentController {
       }
 
       const clinicId = verifiedPayload.clinicId;
-      const resolvedOrderId = verifiedPayload.orderId;
-      const resolvedPaymentId = verifiedPayload.paymentId;
-      const resolvedProvider = verifiedPayload.provider as PaymentProvider | undefined;
+      // The gateway may have been re-opened on a different order/provider than the one
+      // the token was issued for (e.g. the bridge created a Cashfree order while the
+      // token names a pending Razorpay order). The token still authenticates the clinic;
+      // the redirected order is verified against the gateway and bound via its tags.
+      const redirectedOrderId = orderId?.trim() || '';
+      const redirectedProvider = this.parseRedirectedProvider(provider);
+      const normalizedVerifiedProvider = (verifiedPayload.provider ?? '').toLowerCase();
+      const isRedirectedToOtherOrder =
+        Boolean(redirectedOrderId) &&
+        Boolean(redirectedProvider) &&
+        (redirectedOrderId !== verifiedPayload.orderId ||
+          String(redirectedProvider) !== normalizedVerifiedProvider);
+      const resolvedOrderId = isRedirectedToOtherOrder
+        ? redirectedOrderId
+        : verifiedPayload.orderId;
+      const resolvedPaymentId = isRedirectedToOtherOrder
+        ? redirectedOrderId
+        : verifiedPayload.paymentId;
+      const resolvedProvider = (
+        isRedirectedToOtherOrder ? redirectedProvider : verifiedPayload.provider
+      ) as PaymentProvider | undefined;
       const verificationPaymentId = resolvedPaymentId || resolvedOrderId;
 
       let paymentResultStatus = 'completed';
