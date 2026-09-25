@@ -256,9 +256,15 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
           ...(request.query || {}),
         };
 
-        // Add user context
+        // Add user context. Do not clobber a route param that already
+        // supplies {userId} (e.g. GET /ehr/comprehensive/:userId) — that
+        // param identifies the resource being fetched, not the caller, and
+        // overwriting it collapses every distinct resource onto one cache
+        // key keyed by whichever user happens to be making the request.
         if (request.user) {
-          params['userId'] = request.user.sub;
+          if (params['userId'] === undefined) {
+            params['userId'] = request.user.sub;
+          }
           params['userRole'] = request.user.role;
         }
 

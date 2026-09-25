@@ -1,5 +1,5 @@
 import { nowIso } from '@utils/date-time.util';
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import * as crypto from 'crypto';
 
@@ -16,7 +16,10 @@ export class LocationQrService {
   private readonly logger = new Logger(LocationQrService.name);
   private readonly SECRET_KEY: string;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    @Inject(forwardRef(() => ConfigService))
+    private readonly configService: ConfigService
+  ) {
     this.SECRET_KEY =
       this.configService.getEnv('QR_SECRET_KEY') ||
       this.configService.getEnv('QR_ENCRYPTION_KEY') ||

@@ -20,7 +20,7 @@
  * Storage format (base64): salt(32B) + iv(16B) + authTag(16B) + ciphertext
  */
 
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config';
 import * as crypto from 'crypto';
 import { LoggingService } from '@infrastructure/logging';
@@ -39,7 +39,9 @@ export class FieldEncryptionService {
   private readonly enabled: boolean;
 
   constructor(
+    @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {
     const rawKey = this.configService.get<string>('FIELD_ENCRYPTION_KEY', '');

@@ -229,13 +229,19 @@ export class JwtAuthGuard implements CanActivate {
    * @param loggingService - Logging service for audit trails
    */
   constructor(
+    @Inject(forwardRef(() => Reflector))
     private readonly reflector: Reflector,
+    @Inject(forwardRef(() => JwtService))
     private readonly jwtService: JwtService,
+    @Inject(forwardRef(() => JwtAuthService))
     private readonly jwtAuthService: JwtAuthService,
+    @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
-    @Inject(ConfigService) private readonly configService: ConfigService,
+    @Inject(forwardRef(() => ConfigService))
+    private readonly configService: ConfigService,
+    @Inject(forwardRef(() => SessionManagementService))
     private readonly sessionManagementService: SessionManagementService,
     @Inject(forwardRef(() => RateLimitService))
     private readonly rateLimitService?: RateLimitService,

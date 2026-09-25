@@ -51,7 +51,9 @@ export class VideoAnnotationService {
   private readonly ANNOTATION_CACHE_TTL = 3600; // 1 hour
 
   constructor(
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
+    @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,

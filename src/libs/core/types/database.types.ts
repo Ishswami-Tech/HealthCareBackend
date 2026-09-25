@@ -155,9 +155,11 @@ export interface Prescription {
   doctorId: string;
   date: Date;
   status: string; // PrescriptionStatus
+  diagnosis: string | null;
   notes: string | null;
   clinicId: string;
   locationId: string | null;
+  doctor?: DoctorWithRelations;
   items?: PrescriptionItem[];
 }
 export interface PrescriptionItem {

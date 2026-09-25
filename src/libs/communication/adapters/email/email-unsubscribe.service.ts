@@ -22,8 +22,11 @@ export class EmailUnsubscribeService {
   private readonly tokenSecret: string;
 
   constructor(
+    @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
+    @Inject(forwardRef(() => SuppressionListService))
     private readonly suppressionListService: SuppressionListService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService

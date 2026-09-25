@@ -32,6 +32,7 @@ export class SNSBackupService implements OnModuleInit {
   } = {};
 
   constructor(
+    @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService

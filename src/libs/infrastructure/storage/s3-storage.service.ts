@@ -20,7 +20,7 @@
  * All type assertions below are safe and verified by TypeScript compilation.
  */
 
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
@@ -79,7 +79,9 @@ export class S3StorageService implements OnModuleInit {
   private localStoragePath: string;
 
   constructor(
+    @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {
     const provider = this.configService.get<string>('S3_PROVIDER', 'contabo') as

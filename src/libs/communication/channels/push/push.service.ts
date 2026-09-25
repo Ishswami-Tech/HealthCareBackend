@@ -16,6 +16,7 @@ export class PushNotificationService implements OnModuleInit {
   private deviceTokenService?: DeviceTokenService;
 
   constructor(
+    @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,

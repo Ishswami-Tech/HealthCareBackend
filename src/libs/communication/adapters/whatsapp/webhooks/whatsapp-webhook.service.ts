@@ -65,6 +65,7 @@ interface TwilioWhatsAppWebhookEvent {
 @Injectable()
 export class WhatsAppWebhookService {
   constructor(
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService

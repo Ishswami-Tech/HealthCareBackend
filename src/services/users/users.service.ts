@@ -37,7 +37,13 @@ export interface RoleBasedRequirements {
 }
 
 type UsersAuthServiceLike = {
-  register: (data: unknown) => Promise<unknown>;
+  register: (
+    data: unknown,
+    sessionMetadata?: unknown,
+    clinicIdFromHeader?: string,
+    allowPrivilegedRoleAssignment?: boolean,
+    registeredByDoctorId?: string
+  ) => Promise<unknown>;
   logout: (userId: string) => Promise<unknown>;
 };
 
@@ -485,6 +491,10 @@ export class UsersService {
         throw this.errors.insufficientPermissions('UsersService.createUser');
       }
 
+      if (callerRole === Role.DOCTOR && targetRole !== Role.PATIENT) {
+        throw this.errors.insufficientPermissions('UsersService.createUser');
+      }
+
       if (callerRole === Role.CLINIC_ADMIN && !staffAssignableRoles.has(targetRole)) {
         throw this.errors.insufficientPermissions('UsersService.createUser');
       }
@@ -493,24 +503,54 @@ export class UsersService {
         callerRole &&
         callerRole !== Role.SUPER_ADMIN &&
         callerRole !== Role.CLINIC_ADMIN &&
-        callerRole !== Role.RECEPTIONIST
+        callerRole !== Role.RECEPTIONIST &&
+        callerRole !== Role.DOCTOR
       ) {
         throw this.errors.insufficientPermissions('UsersService.createUser');
       }
 
-      await this.authService.register({
-        email: data.email,
-        password: data.password,
-        firstName: data.firstName,
-        lastName: data.lastName,
-        role: targetRole,
-        clinicId: userClinicId,
-        phone: data.phone,
-        ...(data.gender && { gender: data.gender }),
-        ...(data.dateOfBirth && { dateOfBirth: data.dateOfBirth }),
-        ...(data.address && { address: data.address }),
-        ...(data.emergencyContact && { emergencyContact: data.emergencyContact }),
-      });
+      // When a doctor registers a patient (e.g. a walk-in), link the new
+      // Patient record straight to that doctor - resolved server-side from
+      // the caller's own session, never from request input.
+      let registeredByDoctorId: string | undefined;
+      if (callerRole === Role.DOCTOR && targetRole === Role.PATIENT && userId) {
+        const callerDoctor = await this.databaseService.executeHealthcareRead<{
+          id: string;
+        } | null>(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+            doctor: {
+              findUnique: (args: PrismaDelegateArgs) => Promise<{ id: string } | null>;
+            };
+          };
+          return typedClient.doctor.findUnique({
+            where: { userId } as PrismaDelegateArgs,
+            select: { id: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        });
+        registeredByDoctorId = callerDoctor?.id;
+      }
+
+      await this.authService.register(
+        {
+          email: data.email,
+          password: data.password,
+          firstName: data.firstName,
+          lastName: data.lastName,
+          role: targetRole,
+          clinicId: userClinicId,
+          phone: data.phone,
+          ...(data.gender && { gender: data.gender }),
+          ...(data.dateOfBirth && { dateOfBirth: data.dateOfBirth }),
+          ...(data.address && { address: data.address }),
+          ...(data.emergencyContact && { emergencyContact: data.emergencyContact }),
+        },
+        undefined,
+        undefined,
+        // Safe: callerRole was already RBAC-checked above (SUPER_ADMIN/CLINIC_ADMIN/RECEPTIONIST
+        // and role-assignability), so this trusted path may create non-PATIENT accounts.
+        true,
+        registeredByDoctorId
+      );
 
       // Get the created user from database using findUserByEmailSafe
       const userRaw = await this.databaseService.findUserByEmailSafe(data.email);
@@ -2273,7 +2313,7 @@ export class UsersService {
         profileUpdateData['address'] = profileData['address'];
       }
       if (profileData['phone']) {
-        profileUpdateData['phone'] = profileData['phone'];
+        profileUpdateData['phone'] = normalizeAuthPhoneNumber(profileData['phone'] as string);
         // Note: phoneVerified must already be true in the DB (set via the
         // /auth/verify-phone OTP endpoint). We do NOT auto-verify here.
       }

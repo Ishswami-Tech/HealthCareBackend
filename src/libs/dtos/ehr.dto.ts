@@ -18,6 +18,7 @@ import type {
   ImmunizationResponse,
   FamilyHistoryResponse,
   LifestyleAssessmentResponse,
+  PrescriptionHistoryResponse,
 } from '@core/types/ehr.types';
 
 // Medical History DTOs
@@ -571,6 +572,7 @@ export class HealthRecordSummaryDto {
   immunizations?: ImmunizationResponse[];
   familyHistory?: FamilyHistoryResponse[];
   lifestyleAssessment?: LifestyleAssessmentResponse;
+  prescriptions?: PrescriptionHistoryResponse[];
 }
 
 export class EHRAISummaryDto {

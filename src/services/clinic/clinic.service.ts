@@ -71,7 +71,9 @@ export class ClinicService {
   }
 
   constructor(
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     @Optional()
     @Inject(forwardRef(() => CacheService))
@@ -1642,6 +1644,69 @@ export class ClinicService {
     options?: ClinicPatientOptions
   ): Promise<ClinicPatientResult> {
     return await this.databaseService.getClinicPatients(id, options);
+  }
+
+  /**
+   * A doctor's patient list is simply the clinic's patient list: patients
+   * belong to the clinic, not to whichever doctor happens to see them (same
+   * data receptionist/clinic-admin see via getClinicPatients). doctorUserId
+   * is accepted for API-shape consistency and future auditing, not filtering.
+   */
+  async getClinicPatientsForDoctor(
+    clinicId: string,
+    _doctorUserId: string,
+    options?: { search?: string; limit?: number; offset?: number }
+  ): Promise<{ patients: PatientWithUser[]; total: number }> {
+    const limit = Math.min(options?.limit || 50, 200);
+    const offset = Math.max(options?.offset || 0, 0);
+
+    const patients = await this.databaseService.executeHealthcareRead<PatientWithUser[]>(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+
+        const appointments = await typedClient.appointment.findMany({
+          where: { clinicId } as PrismaDelegateArgs,
+          select: { patientId: true } as PrismaDelegateArgs,
+          distinct: ['patientId'] as unknown as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+        const patientIds = (appointments as Array<{ patientId: string }>).map(a => a.patientId);
+
+        const result = await typedClient.patient.findMany({
+          where: {
+            OR: [
+              ...(patientIds.length > 0 ? [{ id: { in: patientIds } }] : []),
+              { user: { primaryClinicId: clinicId } },
+              { user: { clinics: { some: { id: clinicId } } } },
+              { user: { userRoles: { some: { clinicId } } } },
+            ],
+          } as PrismaDelegateArgs,
+          include: { user: true } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+        return result as unknown as PatientWithUser[];
+      }
+    );
+
+    const searchTerm = options?.search?.trim().toLowerCase();
+    const filtered = searchTerm
+      ? patients.filter(p => {
+          const user = (p as unknown as { user?: Record<string, unknown> }).user;
+          const haystack = [
+            user?.['firstName'],
+            user?.['lastName'],
+            user?.['email'],
+            user?.['phone'],
+          ]
+            .filter((value): value is string => typeof value === 'string')
+            .join(' ')
+            .toLowerCase();
+          return haystack.includes(searchTerm);
+        })
+      : patients;
+
+    return {
+      patients: filtered.slice(offset, offset + limit),
+      total: filtered.length,
+    };
   }
 
   async getActiveLocations(clinicId: string): Promise<ClinicLocationResponseDto[]> {

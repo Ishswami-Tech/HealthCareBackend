@@ -1,4 +1,4 @@
-import { Module, OnModuleInit } from '@nestjs/common';
+import { Inject, Module, OnModuleInit, forwardRef } from '@nestjs/common';
 import { RbacService } from './rbac.service';
 import { RoleService } from './role.service';
 import { PermissionService } from './permission.service';
@@ -27,9 +27,13 @@ import { LogType, LogLevel } from '@core/types';
 })
 export class RbacModule implements OnModuleInit {
   constructor(
+    @Inject(forwardRef(() => PermissionService))
     private readonly permissionService: PermissionService,
+    @Inject(forwardRef(() => RoleService))
     private readonly roleService: RoleService,
+    @Inject(forwardRef(() => RbacService))
     private readonly rbacService: RbacService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {}
 

@@ -350,10 +350,34 @@ async function _setupWebSocketAdapter(
           const corsOrigins =
             corsOrigin === '*' ? '*' : corsOrigin.split(',').map((o: string) => o.trim());
 
+          // Local dev servers (Next.js, Expo, etc.) get an auto-assigned port whenever
+          // their default port is taken, so a fixed allow-list falls out of date on
+          // every restart. Accept any http://localhost:<port> origin in development
+          // only; see security-config.service.ts's configureCORS() for the HTTP equivalent.
+          const isDevelopment = configService?.isDevelopment() ?? false;
+          const localhostOriginPattern = /^http:\/\/localhost:\d+$/;
+          const socketCorsOrigin =
+            isDevelopment && corsOrigins !== '*'
+              ? (
+                  origin: string | undefined,
+                  callback: (err: Error | null, allow?: boolean) => void
+                ): void => {
+                  if (
+                    !origin ||
+                    (corsOrigins as string[]).includes(origin) ||
+                    localhostOriginPattern.test(origin)
+                  ) {
+                    callback(null, true);
+                    return;
+                  }
+                  callback(new Error(`Origin ${origin} not allowed by CORS`), false);
+                }
+              : corsOrigins;
+
           const serverRaw: unknown = super.createIOServer(port, {
             ...(options || {}),
             cors: {
-              origin: corsOrigins,
+              origin: socketCorsOrigin,
               methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
               credentials: true,
               allowedHeaders: [

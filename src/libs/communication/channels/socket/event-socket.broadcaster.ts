@@ -56,6 +56,7 @@ export class EventSocketBroadcaster implements OnModuleInit {
   constructor(
     @Inject(forwardRef(() => EventService))
     private readonly eventService: unknown,
+    @Inject(forwardRef(() => SocketService))
     private readonly socketService: SocketService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService

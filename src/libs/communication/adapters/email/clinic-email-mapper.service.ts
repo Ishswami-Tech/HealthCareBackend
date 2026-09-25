@@ -25,9 +25,11 @@ export class ClinicEmailMapperService {
   private readonly cachePrefix = 'clinic:email:map:';
 
   constructor(
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
     @Inject(forwardRef(() => CommunicationConfigService))
     private readonly communicationConfigService: CommunicationConfigService,
+    @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService

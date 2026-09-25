@@ -98,15 +98,25 @@ export class BillingService implements OnModuleInit {
   private readonly invoiceWhatsAppSendLocks = new Map<string, Promise<boolean>>();
 
   constructor(
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
+    @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => EventService))
     private readonly eventService: EventService,
+    @Inject(forwardRef(() => InvoicePDFService))
     private readonly invoicePDFService: InvoicePDFService,
+    @Inject(forwardRef(() => WhatsAppService))
     private readonly whatsAppService: WhatsAppService,
+    @Inject(forwardRef(() => PaymentService))
     private readonly paymentService: PaymentService,
+    @Inject(forwardRef(() => PaymentHandoffTokenService))
     private readonly paymentHandoffTokenService: PaymentHandoffTokenService,
+    @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => ModuleRef))
     private readonly moduleRef: ModuleRef,
     @Optional()
     @Inject(forwardRef(() => QueueService))

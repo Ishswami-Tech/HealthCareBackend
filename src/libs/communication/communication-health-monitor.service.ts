@@ -36,6 +36,7 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
   private readonly HEALTH_CHECK_CIRCUIT_BREAKER_NAME = 'communication-health-check';
 
   constructor(
+    @Inject(forwardRef(() => CircuitBreakerService))
     private readonly circuitBreakerService: CircuitBreakerService,
     @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,

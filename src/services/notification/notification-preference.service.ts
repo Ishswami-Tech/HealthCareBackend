@@ -21,8 +21,11 @@ import type {
 @Injectable()
 export class NotificationPreferenceService {
   constructor(
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
+    @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => EventService))
     private readonly eventService: EventService

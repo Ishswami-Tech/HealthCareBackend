@@ -3,10 +3,13 @@ import {
   BadRequestException,
   NotFoundException,
   ForbiddenException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import { EventService } from '@infrastructure/events/event.service';
 import { LoggingService } from '@infrastructure/logging';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import {
   CreateMedicineDto,
   UpdateInventoryDto,
@@ -109,7 +112,9 @@ export class PharmacyService {
     private readonly loggingService: LoggingService,
     private readonly appointmentQueueService: AppointmentQueueService,
     private readonly inventoryService: InventoryService,
-    private readonly expiryAlertService: ExpiryAlertService
+    private readonly expiryAlertService: ExpiryAlertService,
+    @Inject(forwardRef(() => CacheService))
+    private readonly cacheService: CacheService
   ) {}
 
   private static readonly COMPLETED_PAYMENT_STATUS = 'COMPLETED';
@@ -1152,11 +1157,14 @@ export class PharmacyService {
             doctorId: dto.doctorId,
             clinicId: clinicId,
             notes: dto.notes,
+            diagnosis: dto.diagnosis,
             items: {
               create: dto.items.map(item => ({
                 medicineId: item.medicineId,
                 quantity: item.quantity,
                 dosage: item.dosage,
+                frequency: item.frequency,
+                duration: item.duration,
                 clinicId: clinicId,
               })),
             },
@@ -1198,12 +1206,44 @@ export class PharmacyService {
       },
     ]);
 
+    await this.invalidatePatientEhrCache(dto.patientId);
+
     await this.emitMedicineDeskQueueUpdated(
       clinicId,
       String((prescription as { id?: string }).id),
       'CREATED'
     );
     return prescription;
+  }
+
+  /**
+   * Clears the cached comprehensive EHR record for the patient so a new
+   * prescription shows up immediately instead of waiting out the cache TTL.
+   * Prescription.patientId is a Patient.id, but the EHR cache is keyed by
+   * User.id, so the owning user must be resolved first.
+   */
+  private async invalidatePatientEhrCache(patientId: string): Promise<void> {
+    const patient = await this.databaseService.executeHealthcareRead<{
+      userId: string;
+    } | null>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return await typedClient.patient.findUnique({
+        where: { id: patientId } as PrismaDelegateArgs,
+        select: { userId: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+
+    if (patient?.userId) {
+      await this.cacheService.invalidateCacheByTag(`ehr:${patient.userId}`);
+      // The GET /ehr/comprehensive/:userId route is cached directly by
+      // HealthcareCacheInterceptor (@PatientCache), which stores PHI responses
+      // with a plain set() call rather than through the tag-based cache()
+      // wrapper. Its key format is `{keyTemplate}:{handlerName}`, so it must
+      // be deleted directly — tag invalidation alone does not reach it.
+      await this.cacheService.del(
+        `ehr:comprehensive:${patient.userId}:getComprehensiveHealthRecord`
+      );
+    }
   }
 
   /**

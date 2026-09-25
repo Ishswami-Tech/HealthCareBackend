@@ -76,6 +76,7 @@ export class QueueStatusGateway
   private isInitialized = false;
 
   constructor(
+    @Inject(forwardRef(() => QueueService))
     private readonly queueService: QueueService,
     @Optional()
     @Inject(forwardRef(() => LoggingService))

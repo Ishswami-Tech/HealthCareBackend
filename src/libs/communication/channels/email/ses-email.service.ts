@@ -38,6 +38,7 @@ export class SESEmailService implements OnModuleInit {
   private fromName: string = '';
 
   constructor(
+    @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService

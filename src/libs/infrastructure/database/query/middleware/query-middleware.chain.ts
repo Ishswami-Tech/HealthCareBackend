@@ -7,7 +7,7 @@
  * INTERNAL INFRASTRUCTURE COMPONENT - NOT FOR DIRECT USE
  */
 
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import type { IQueryMiddleware, QueryMiddlewareContext } from './query-middleware.interface';
 import { ValidationQueryMiddleware } from './validation-query.middleware';
 import { SecurityQueryMiddleware } from './security-query.middleware';
@@ -22,9 +22,13 @@ export class QueryMiddlewareChain {
   private firstMiddleware?: IQueryMiddleware;
 
   constructor(
+    @Inject(forwardRef(() => ValidationQueryMiddleware))
     private readonly validationMiddleware: ValidationQueryMiddleware,
+    @Inject(forwardRef(() => SecurityQueryMiddleware))
     private readonly securityMiddleware: SecurityQueryMiddleware,
+    @Inject(forwardRef(() => OptimizationQueryMiddleware))
     private readonly optimizationMiddleware: OptimizationQueryMiddleware,
+    @Inject(forwardRef(() => MetricsQueryMiddleware))
     private readonly metricsMiddleware: MetricsQueryMiddleware
   ) {
     // Build chain: Validation -> Security -> Optimization -> Metrics

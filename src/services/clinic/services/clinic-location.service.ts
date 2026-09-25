@@ -19,7 +19,9 @@ import { resolveClinicUUID } from '../../../libs/utils/clinic.utils';
 @Injectable()
 export class ClinicLocationService {
   constructor(
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     @Optional()
     @Inject(forwardRef(() => CacheService))

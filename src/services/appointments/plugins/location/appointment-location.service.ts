@@ -24,8 +24,11 @@ export class AppointmentLocationService {
   private readonly STATS_CACHE_TTL = 300; // 5 minutes
 
   constructor(
+    @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
     @Optional()
     @Inject(forwardRef(() => LocationCacheService))

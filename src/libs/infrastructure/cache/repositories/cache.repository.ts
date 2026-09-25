@@ -31,7 +31,7 @@ export class CacheRepository implements ICacheRepository {
     private readonly strategyManager: CacheStrategyManager,
     @Inject(CacheMiddlewareChain)
     private readonly middlewareChain: CacheMiddlewareChain,
-    @Inject(CacheVersioningService)
+    @Inject(forwardRef(() => CacheVersioningService))
     private readonly versioningService: CacheVersioningService,
     @Inject(CacheKeyFactory)
     private readonly keyFactory: CacheKeyFactory

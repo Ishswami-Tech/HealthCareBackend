@@ -91,12 +91,16 @@ export class CoreAppointmentService {
   private readonly METRICS_CACHE_TTL = 600; // 10 minutes
 
   constructor(
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
     @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => CacheService)) private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => QueueService))
     private readonly queueService: QueueService,
+    @Inject(forwardRef(() => EventService))
     private readonly eventService: EventService,
     @Inject(forwardRef(() => ConfigService)) private readonly configService: ConfigService,
+    @Inject(forwardRef(() => HealthcareErrorsService))
     private readonly errors: HealthcareErrorsService,
     @Inject(forwardRef(() => ConflictResolutionService))
     private readonly conflictResolutionService: ConflictResolutionService,

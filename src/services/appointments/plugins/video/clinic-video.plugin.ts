@@ -58,7 +58,9 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
    * @param consultationTracker - Service for tracking consultation metrics
    */
   constructor(
+    @Inject(forwardRef(() => VideoService))
     private readonly videoService: VideoService,
+    @Inject(forwardRef(() => VideoConsultationTracker))
     private readonly consultationTracker: VideoConsultationTracker,
     @Optional()
     @Inject(forwardRef(() => LoggingService))

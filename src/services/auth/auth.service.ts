@@ -1,5 +1,5 @@
 import { nowIso } from '@utils/date-time.util';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@config/config.service';
 import { DatabaseService } from '@infrastructure/database/database.service';
@@ -137,20 +137,35 @@ export class AuthService {
   private readonly otpDebugEnabled: boolean;
 
   constructor(
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
+    @Inject(forwardRef(() => JwtService))
     private readonly jwtService: JwtService,
+    @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly logging: LoggingService,
+    @Inject(forwardRef(() => EventService))
     private readonly eventService: EventService,
+    @Inject(forwardRef(() => HealthcareErrorsService))
     private readonly errors: HealthcareErrorsService,
+    @Inject(forwardRef(() => EmailService))
     private readonly emailService: EmailService,
+    @Inject(forwardRef(() => WhatsAppService))
     private readonly whatsAppService: WhatsAppService,
+    @Inject(forwardRef(() => SessionManagementService))
     private readonly sessionService: SessionManagementService,
+    @Inject(forwardRef(() => RbacService))
     private readonly rbacService: RbacService,
+    @Inject(forwardRef(() => JwtAuthService))
     private readonly jwtAuthService: JwtAuthService,
+    @Inject(forwardRef(() => SocialAuthService))
     private readonly socialAuthService: SocialAuthService,
+    @Inject(forwardRef(() => OtpService))
     private readonly otpService: OtpService,
+    @Inject(forwardRef(() => QueueService))
     private readonly queueService: QueueService
   ) {
     // Defensive check: ensure configService is available
@@ -345,7 +360,8 @@ export class AuthService {
   private async ensurePatientRecordForAuth(
     userId: string,
     clinicId?: string,
-    source: string = 'auth'
+    source: string = 'auth',
+    registeredByDoctorId?: string
   ): Promise<void> {
     try {
       const existingPatient = await this.databaseService.executeHealthcareRead(async client => {
@@ -374,7 +390,10 @@ export class AuthService {
           };
 
           return await typedClient.patient.create({
-            data: { userId } as PrismaDelegateArgs,
+            data: {
+              userId,
+              ...(registeredByDoctorId && { registeredByDoctorId }),
+            } as PrismaDelegateArgs,
           } as PrismaDelegateArgs);
         },
         {
@@ -415,7 +434,15 @@ export class AuthService {
   async register(
     registerDto: RegisterDto,
     _sessionMetadata?: { userAgent?: string; ipAddress?: string },
-    clinicIdFromHeader?: string // NEW: Accept clinic ID from controller/headers
+    clinicIdFromHeader?: string, // NEW: Accept clinic ID from controller/headers
+    // Only set by UsersService.createUser, which has already performed its own
+    // RBAC checks for the caller and the requested role. Never derive this from
+    // request input - it must stay unreachable from public registration.
+    allowPrivilegedRoleAssignment = false,
+    // Doctor.id of the doctor registering this patient (e.g. a walk-in),
+    // resolved server-side from the caller's own session in
+    // UsersService.createUser. Never accept this from request input.
+    registeredByDoctorId?: string
   ): Promise<AuthResponse> {
     try {
       // 1. SECURITY: Validate body clinicId doesn't mismatch header
@@ -522,8 +549,8 @@ export class AuthService {
           })()
         : 12; // Safe default - will be updated during profile completion with actual DOB
 
-      const requestedRole = registerDto.role ?? 'PATIENT';
-      if (requestedRole !== 'PATIENT') {
+      const requestedRole = (registerDto.role as Role) ?? Role.PATIENT;
+      if (requestedRole !== Role.PATIENT && !allowPrivilegedRoleAssignment) {
         throw this.errors.validationError(
           'role',
           'Public registration is limited to patient accounts',
@@ -531,7 +558,7 @@ export class AuthService {
         );
       }
 
-      const effectiveRole = Role.PATIENT;
+      const effectiveRole = requestedRole;
       const userid = generateUserId(registerDto.email, true);
       const user = await this.databaseService.createUserSafe({
         email: registerDto.email,
@@ -541,7 +568,7 @@ export class AuthService {
         age,
         firstName: registerDto.firstName,
         lastName: registerDto.lastName,
-        ...(registerDto.phone && { phone: registerDto.phone }),
+        ...(registerDto.phone && { phone: normalizeAuthPhoneNumber(registerDto.phone) }),
         ...(registerDto.dateOfBirth && { dateOfBirth: new Date(registerDto.dateOfBirth) }),
         ...(registerDto.gender && { gender: registerDto.gender }),
         ...(registerDto.address && { address: registerDto.address }),
@@ -553,8 +580,13 @@ export class AuthService {
       });
 
       // 6. Ensure Patient record exists for patient registrations
-      if ((registerDto.role || 'PATIENT') === 'PATIENT') {
-        await this.ensurePatientRecordForAuth(user.id, clinicUUID, 'register');
+      if (effectiveRole === Role.PATIENT) {
+        await this.ensurePatientRecordForAuth(
+          user.id,
+          clinicUUID,
+          'register',
+          registeredByDoctorId
+        );
       }
 
       const clinicName = await this.resolveClinicDisplayName(clinicUUID);

@@ -54,6 +54,7 @@ export class EmailQueueService {
     @Optional()
     @InjectQueue(HEALTHCARE_QUEUE)
     private readonly emailQueue: Queue<EmailQueueData> | null,
+    @Inject(forwardRef(() => QueueService))
     private readonly queueService: QueueService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService

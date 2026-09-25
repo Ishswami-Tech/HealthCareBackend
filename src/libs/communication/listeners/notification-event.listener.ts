@@ -1016,7 +1016,9 @@ export class NotificationEventListener implements OnModuleInit {
     eventService: unknown,
     @Inject(forwardRef(() => CommunicationService))
     private readonly communicationService: unknown,
+    @Inject(forwardRef(() => ModuleRef))
     private readonly moduleRef: ModuleRef,
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService

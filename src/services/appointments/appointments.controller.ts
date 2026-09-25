@@ -154,10 +154,15 @@ import type { AppointmentWithRelations } from '@core/types/database.types';
 )
 export class AppointmentsController {
   constructor(
+    @Inject(forwardRef(() => AppointmentsService))
     private readonly appointmentService: AppointmentsService,
+    @Inject(forwardRef(() => HealthcareErrorsService))
     private readonly errors: HealthcareErrorsService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => VideoService))
     private readonly videoService: VideoService,
     @Inject(forwardRef(() => CheckInService))
     private readonly checkInService: CheckInService,

@@ -45,6 +45,7 @@ export class ClinicAnalyticsPlugin extends BaseAppointmentPlugin {
   ];
 
   constructor(
+    @Inject(forwardRef(() => AppointmentAnalyticsService))
     private readonly analyticsService: AppointmentAnalyticsService,
     @Optional()
     @Inject(forwardRef(() => LoggingService))

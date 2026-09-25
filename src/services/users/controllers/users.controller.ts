@@ -62,12 +62,12 @@ export class UsersController {
   ) {}
 
   @Post()
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.DOCTOR)
   @RequireResourcePermission('users', 'create')
   @ApiOperation({
     summary: 'Create user',
     description:
-      'Create a new user. Accessible by Super Admin, Clinic Admin, and Receptionist with create permission.',
+      'Create a new user. Accessible by Super Admin, Clinic Admin, and Receptionist with create permission. Doctors may also use this to register a new patient (patient role only).',
   })
   @ApiBody({ type: CreateUserDto })
   @ApiResponse({

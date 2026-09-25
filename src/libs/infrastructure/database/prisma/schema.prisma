@@ -714,35 +714,43 @@ model Doctor {
   followUpPlans                FollowUpPlan[]
   primaryCoverageAssignments   AssistantDoctorCoverageAssignment[] @relation("AssistantCoveragePrimaryDoctor")
   assistantCoverageAssignments AssistantDoctorCoverageAssignment[] @relation("AssistantCoverageAssistantDoctor")
+  registeredPatients           Patient[]                           @relation("PatientRegisteredByDoctor")
 }
 
 model Patient {
-  id                 String                       @id @default(uuid())
-  userId             String                       @unique
-  prakriti           Prakriti?
-  dosha              Dosha?
-  createdAt          DateTime                     @default(now())
-  appointments       Appointment[]
-  checkIns           CheckIn[]
-  eligibilityChecks  EligibilityCheck[]
-  healthRecords      HealthRecord[]
-  insurance          Insurance[]
-  admissions         Admission[]
-  bedCharges         BedCharge[]
-  nursingNotes       NursingNote[]
-  vitalsFlowsheets   VitalsFlowsheet[]
-  bedsideMedications BedsideMedication[]
-  user               User                         @relation(fields: [userId], references: [id])
-  prescriptions      Prescription[]
-  queueEntries       QueueEntry[]
-  recurringSeries    RecurringAppointmentSeries[]
-  followUpPlans      FollowUpPlan[]
-  reviews            Review[]
-  therapySessions    TherapySession[]
-  waitlistEntries    WaitlistEntry[]
-  videoConsultations VideoConsultation[]
-  insuranceClaims    InsuranceClaim[]
-  familyMembers      FamilyMember[]               @relation("PatientFamilyMembers")
+  id                   String                       @id @default(uuid())
+  userId               String                       @unique
+  prakriti             Prakriti?
+  dosha                Dosha?
+  createdAt            DateTime                     @default(now())
+  // Doctor who manually registered this patient (e.g. a walk-in), independent
+  // of any appointment. Null for patients who self-registered or were
+  // registered by reception/clinic-admin.
+  registeredByDoctorId String?
+  registeredByDoctor   Doctor?                      @relation("PatientRegisteredByDoctor", fields: [registeredByDoctorId], references: [id])
+  appointments         Appointment[]
+  checkIns             CheckIn[]
+  eligibilityChecks    EligibilityCheck[]
+  healthRecords        HealthRecord[]
+  insurance            Insurance[]
+  admissions           Admission[]
+  bedCharges           BedCharge[]
+  nursingNotes         NursingNote[]
+  vitalsFlowsheets     VitalsFlowsheet[]
+  bedsideMedications   BedsideMedication[]
+  user                 User                         @relation(fields: [userId], references: [id])
+  prescriptions        Prescription[]
+  queueEntries         QueueEntry[]
+  recurringSeries      RecurringAppointmentSeries[]
+  followUpPlans        FollowUpPlan[]
+  reviews              Review[]
+  therapySessions      TherapySession[]
+  waitlistEntries      WaitlistEntry[]
+  videoConsultations   VideoConsultation[]
+  insuranceClaims      InsuranceClaim[]
+  familyMembers        FamilyMember[]               @relation("PatientFamilyMembers")
+
+  @@index([registeredByDoctorId])
 }
 
 model FamilyMember {
@@ -895,6 +903,7 @@ model Prescription {
   doctorId   String
   date       DateTime           @default(now())
   status     PrescriptionStatus @default(PENDING)
+  diagnosis  String?
   notes      String?
   clinicId   String
   locationId String?

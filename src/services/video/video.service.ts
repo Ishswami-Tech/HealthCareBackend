@@ -150,6 +150,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     private readonly providerFactory: VideoProviderFactory,
     @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,

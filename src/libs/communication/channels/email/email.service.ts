@@ -87,7 +87,8 @@ export class EmailService implements OnModuleInit {
    * @param configService - Configuration service for environment variables
    */
   constructor(
-    @Inject(ConfigService) private readonly configService: ConfigService,
+    @Inject(forwardRef(() => ConfigService))
+    private readonly configService: ConfigService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => HttpService))

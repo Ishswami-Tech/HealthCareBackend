@@ -4,7 +4,7 @@
  * @description Manages chain of responsibility for cache middleware
  */
 
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import type { ICacheMiddleware, CacheMiddlewareContext } from './cache-middleware.interface';
 import { ValidationCacheMiddleware } from './validation-cache.middleware';
 import { MetricsCacheMiddleware } from './metrics-cache.middleware';
@@ -17,7 +17,9 @@ export class CacheMiddlewareChain {
   private firstMiddleware?: ICacheMiddleware;
 
   constructor(
+    @Inject(forwardRef(() => ValidationCacheMiddleware))
     private readonly validationMiddleware: ValidationCacheMiddleware,
+    @Inject(forwardRef(() => MetricsCacheMiddleware))
     private readonly metricsMiddleware: MetricsCacheMiddleware
   ) {
     this.buildChain();

@@ -33,8 +33,11 @@ interface ZeptoMailWebhookEvent {
 @Injectable()
 export class ZeptoMailWebhookService {
   constructor(
+    @Inject(forwardRef(() => SuppressionListService))
     private readonly suppressionListService: SuppressionListService,
+    @Inject(forwardRef(() => ClinicEmailMapperService))
     private readonly clinicEmailMapper: ClinicEmailMapperService,
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService

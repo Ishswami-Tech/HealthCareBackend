@@ -7,8 +7,9 @@ import { isCacheEnabled } from '@config/cache.config';
 // Import helper functions for environment variable access in static factory
 // Use top-level import for strict TypeScript compliance (no require())
 import { getEnvWithDefault } from '../../../../config/environment/utils';
-// Note: BillingModule is imported dynamically via forwardRef to avoid circular dependency
-// InvoicePDFService is injected via token in QueueProcessor
+// InvoicePDFService is provided via standalone InvoicePDFModule to avoid
+// pulling the full BillingModule (and its QueueModule dependency) into QueueModule.
+import { InvoicePDFModule, InvoicePDFService } from '@services/billing/invoice-pdf.module';
 
 // Internal imports - Core
 import { QueueService } from './queue.service';
@@ -51,6 +52,7 @@ export class QueueModule {
           forwardRef(() => CacheModule),
           forwardRef(() => ResilienceModule),
           QueueMonitoringModule,
+          InvoicePDFModule,
         ],
         controllers: [QueueController],
         providers: [
@@ -96,8 +98,7 @@ export class QueueModule {
         forwardRef(() => CacheModule),
         forwardRef(() => ResilienceModule), // Provides CircuitBreakerService for QueueHealthMonitorService
         QueueMonitoringModule,
-        // Note: BillingModule NOT imported here to avoid circular dependency
-        // InvoicePDFService is optional in QueueProcessor and will be null if BillingModule is not available
+        InvoicePDFModule,
         BullModule.forRootAsync({
           imports: [forwardRef(() => ConfigModule)],
           useFactory: (configService: ConfigService) => {
@@ -227,7 +228,8 @@ export class QueueModule {
                   queueProcessor: QueueProcessor,
                   _prisma: DatabaseService,
                   configService: ConfigService,
-                  deadLetterQueueService: DeadLetterQueueService
+                  deadLetterQueueService: DeadLetterQueueService,
+                  _invoicePDFService: InvoicePDFService
                 ) => {
                   const workers: Worker[] = [];
 
@@ -313,7 +315,13 @@ export class QueueModule {
 
                   return workers;
                 },
-                inject: [QueueProcessor, 'DATABASE_SERVICE', ConfigService, DeadLetterQueueService],
+                inject: [
+                  QueueProcessor,
+                  'DATABASE_SERVICE',
+                  ConfigService,
+                  DeadLetterQueueService,
+                  'InvoicePDFService',
+                ],
               },
             ]
           : []),

@@ -47,8 +47,11 @@ export class ClinicGuard implements CanActivate {
    * @param clinicIsolationService - Service for clinic access validation
    */
   constructor(
+    @Inject(forwardRef(() => Reflector))
     private readonly reflector: Reflector,
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => ClinicIsolationService))
     private readonly clinicIsolationService: ClinicIsolationService

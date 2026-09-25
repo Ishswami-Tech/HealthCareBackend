@@ -83,6 +83,7 @@ export class CommunicationResilienceService implements OnModuleInit, OnModuleDes
   };
 
   constructor(
+    @Inject(forwardRef(() => CircuitBreakerService))
     private readonly circuitBreakerService: CircuitBreakerService,
     @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,

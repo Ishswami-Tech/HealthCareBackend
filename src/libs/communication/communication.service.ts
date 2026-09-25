@@ -162,11 +162,17 @@ export class CommunicationService implements OnModuleInit {
   };
 
   constructor(
+    @Inject(forwardRef(() => SocketService))
     private readonly socketService: SocketService,
+    @Inject(forwardRef(() => PushNotificationService))
     private readonly pushService: PushNotificationService,
+    @Inject(forwardRef(() => EmailService))
     private readonly emailService: EmailService,
+    @Inject(forwardRef(() => EmailTemplatesService))
     private readonly emailTemplatesService: EmailTemplatesService,
+    @Inject(forwardRef(() => WhatsAppService))
     private readonly whatsAppService: WhatsAppService,
+    @Inject(forwardRef(() => SNSBackupService))
     private readonly snsBackupService: SNSBackupService,
 
     @Inject(forwardRef(() => EventService))

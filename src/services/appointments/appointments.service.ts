@@ -159,20 +159,30 @@ export class AppointmentsService {
 
     // Plugin System - Hybrid Approach (Optimized for 10M+ users)
     // Registry-based: For cross-service discovery, dynamic loading, and less frequent plugins
+    @Inject(forwardRef(() => EnterprisePluginRegistry))
     private readonly pluginRegistry: EnterprisePluginRegistry,
+    @Inject(forwardRef(() => EnterprisePluginManager))
     private readonly pluginManager: EnterprisePluginManager,
 
     // Direct Injection: Hot-path plugins (top 5 most frequently used)
     // Performance: Direct access eliminates registry lookup overhead (~0.1ms saved per call)
     // Type Safety: Full TypeScript support with IDE autocomplete
     // Scale: Critical for 10M+ concurrent users - these plugins handle 80% of traffic
+    @Inject(forwardRef(() => ClinicCheckInPlugin))
     private readonly clinicCheckInPlugin: ClinicCheckInPlugin, // Hot path: Check-in operations (very frequent)
+    @Inject(forwardRef(() => CheckInService))
     private readonly checkInService: CheckInService,
+    @Inject(forwardRef(() => ClinicNotificationPlugin))
     private readonly clinicNotificationPlugin: ClinicNotificationPlugin, // Hot path: Notifications (every appointment action)
+    @Inject(forwardRef(() => ClinicConfirmationPlugin))
     private readonly clinicConfirmationPlugin: ClinicConfirmationPlugin, // Hot path: Confirmations (common)
+    @Inject(forwardRef(() => ClinicLocationPlugin))
     private readonly clinicLocationPlugin: ClinicLocationPlugin, // Medium: Location queries (moderate frequency)
+    @Inject(forwardRef(() => ClinicFollowUpPlugin))
     private readonly clinicFollowUpPlugin: ClinicFollowUpPlugin, // Medium: Follow-up operations (moderate frequency)
+    @Inject(forwardRef(() => AppointmentReminderService))
     private readonly appointmentReminderService: AppointmentReminderService,
+    @Inject(forwardRef(() => ClinicVideoPlugin))
     private readonly clinicVideoPlugin: ClinicVideoPlugin, // Video consultations (medium-low frequency)
 
     // Infrastructure Services
@@ -182,6 +192,7 @@ export class AppointmentsService {
     // Use QueueService from @infrastructure/queue (migrated from Bull to BullMQ)
     // All jobs now route through HEALTHCARE_QUEUE via JobType enum
     @Inject(forwardRef(() => QueueService)) private readonly queueService: QueueService,
+    @Inject(forwardRef(() => AppointmentQueueService))
     private readonly appointmentQueueService: AppointmentQueueService,
     @Inject(forwardRef(() => EventService)) private readonly eventService: EventService,
     @Inject(forwardRef(() => ConfigService)) private readonly configService: ConfigService,
@@ -197,7 +208,9 @@ export class AppointmentsService {
     private readonly notificationPreferenceService: NotificationPreferenceService,
 
     // Error Handling & RBAC
+    @Inject(forwardRef(() => HealthcareErrorsService))
     private readonly errors: HealthcareErrorsService,
+    @Inject(forwardRef(() => RbacService))
     private readonly rbacService: RbacService,
     @Inject(forwardRef(() => BillingService))
     private readonly billingService: BillingService

@@ -48,6 +48,7 @@ export class IpWhitelistGuard implements CanActivate {
   private readonly cidrRanges: Array<{ network: string; prefix: number }>;
 
   constructor(
+    @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService

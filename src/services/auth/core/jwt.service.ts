@@ -1,5 +1,5 @@
 import { nowIso } from '@utils/date-time.util';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@config/config.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
@@ -23,9 +23,13 @@ export class JwtAuthService {
   private readonly MAX_DEVICES_PER_USER = 5;
 
   constructor(
+    @Inject(forwardRef(() => JwtService))
     private readonly jwtService: JwtService,
+    @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {
     void this.loggingService.log(

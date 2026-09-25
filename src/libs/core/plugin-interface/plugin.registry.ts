@@ -53,6 +53,7 @@ export class EnterprisePluginRegistry
   private readonly domainIndex = new Map<string, Set<string>>(); // domain -> Set<pluginName>
 
   constructor(
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     @Optional()
     @Inject(forwardRef(() => EventService))

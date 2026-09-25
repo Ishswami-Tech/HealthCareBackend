@@ -170,6 +170,16 @@ export class PrescriptionItemDto {
   @IsOptional()
   @IsString()
   dosage?: string;
+
+  @ApiPropertyOptional({ example: 'Twice daily', description: 'How often to take the medicine' })
+  @IsOptional()
+  @IsString()
+  frequency?: string;
+
+  @ApiPropertyOptional({ example: '5 days', description: 'How long to take the medicine' })
+  @IsOptional()
+  @IsString()
+  duration?: string;
 }
 
 /**
@@ -200,6 +210,14 @@ export class CreatePharmacyPrescriptionDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @ApiPropertyOptional({
+    example: 'Common cold',
+    description: 'Primary diagnosis or clinical impression',
+  })
+  @IsOptional()
+  @IsString()
+  diagnosis?: string;
 }
 
 export class UpdatePrescriptionStatusDto {

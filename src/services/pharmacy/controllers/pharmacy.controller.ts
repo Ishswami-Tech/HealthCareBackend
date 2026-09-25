@@ -50,7 +50,7 @@ export class PharmacyController {
    * @description Get all medicines in pharmacy inventory
    */
   @Get('inventory')
-  @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.DOCTOR, Role.ASSISTANT_DOCTOR)
   @RequireResourcePermission('inventory', 'read')
   @Cache({ ttl: 300, tags: ['pharmacy', 'inventory'], priority: 'normal' })
   @RateLimitAPI()

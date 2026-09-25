@@ -10,7 +10,7 @@ import { nowIso } from '@utils/date-time.util';
  */
 
 // External imports
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit, forwardRef } from '@nestjs/common';
 
 // Internal imports - Core
 import { EnterprisePluginRegistry, EnterprisePluginManager } from '@core/plugin-interface';
@@ -44,24 +44,40 @@ import { ClinicEligibilityPlugin } from './eligibility/clinic-eligibility.plugin
 @Injectable()
 export class AppointmentPluginInitializer implements OnModuleInit {
   constructor(
+    @Inject(forwardRef(() => EnterprisePluginRegistry))
     private readonly registry: EnterprisePluginRegistry,
+    @Inject(forwardRef(() => EnterprisePluginManager))
     private readonly pluginManager: EnterprisePluginManager,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     // Inject all plugins
-
+    @Inject(forwardRef(() => ClinicNotificationPlugin))
     private readonly clinicNotificationPlugin: ClinicNotificationPlugin,
+    @Inject(forwardRef(() => ClinicReminderPlugin))
     private readonly clinicReminderPlugin: ClinicReminderPlugin,
+    @Inject(forwardRef(() => ClinicAnalyticsPlugin))
     private readonly clinicAnalyticsPlugin: ClinicAnalyticsPlugin,
+    @Inject(forwardRef(() => ClinicFollowUpPlugin))
     private readonly clinicFollowUpPlugin: ClinicFollowUpPlugin,
+    @Inject(forwardRef(() => ClinicLocationPlugin))
     private readonly clinicLocationPlugin: ClinicLocationPlugin,
+    @Inject(forwardRef(() => ClinicConfirmationPlugin))
     private readonly clinicConfirmationPlugin: ClinicConfirmationPlugin,
+    @Inject(forwardRef(() => ClinicCheckInPlugin))
     private readonly clinicCheckInPlugin: ClinicCheckInPlugin,
+    @Inject(forwardRef(() => ClinicPaymentPlugin))
     private readonly clinicPaymentPlugin: ClinicPaymentPlugin,
+    @Inject(forwardRef(() => ClinicVideoPlugin))
     private readonly clinicVideoPlugin: ClinicVideoPlugin,
+    @Inject(forwardRef(() => AppointmentCommunicationsPlugin))
     private readonly appointmentCommunicationsPlugin: AppointmentCommunicationsPlugin,
+    @Inject(forwardRef(() => ClinicTemplatePlugin))
     private readonly clinicTemplatePlugin: ClinicTemplatePlugin,
+    @Inject(forwardRef(() => ClinicWaitlistPlugin))
     private readonly clinicWaitlistPlugin: ClinicWaitlistPlugin,
+    @Inject(forwardRef(() => ClinicResourcePlugin))
     private readonly clinicResourcePlugin: ClinicResourcePlugin,
+    @Inject(forwardRef(() => ClinicEligibilityPlugin))
     private readonly clinicEligibilityPlugin: ClinicEligibilityPlugin
   ) {}
 

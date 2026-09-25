@@ -459,6 +459,27 @@ export interface LifestyleAssessmentResponse {
   updatedAt: string;
 }
 
+export interface PrescriptionHistoryItemResponse {
+  id: string;
+  medicineId: string | null;
+  medicineName: string;
+  dosage: string;
+  frequency: string;
+  duration: string;
+  quantity: number;
+}
+
+export interface PrescriptionHistoryResponse {
+  id: string;
+  date: string;
+  status: string;
+  diagnosis: string;
+  notes: string;
+  doctorId: string;
+  doctorName: string;
+  items: PrescriptionHistoryItemResponse[];
+}
+
 export interface MedicalHistoryBase {
   id: string;
   userId: string;

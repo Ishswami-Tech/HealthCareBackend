@@ -89,8 +89,11 @@ export class CheckInService {
   ]);
 
   constructor(
+    @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
     @Inject(forwardRef(() => AppointmentQueueService))
     private readonly appointmentQueueService: AppointmentQueueService

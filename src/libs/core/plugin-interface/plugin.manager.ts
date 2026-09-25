@@ -9,7 +9,7 @@
  */
 
 // External imports
-import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit, OnModuleDestroy, forwardRef } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ConfigService } from '@config/config.service';
 
@@ -73,9 +73,13 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
   private healthCheckInterval?: NodeJS.Timeout;
 
   constructor(
+    @Inject(forwardRef(() => EnterprisePluginRegistry))
     private readonly registry: EnterprisePluginRegistry,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => EventEmitter2))
     private readonly eventEmitter: EventEmitter2,
+    @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService
   ) {
     // Use ConfigService (which uses dotenv) for all environment variable access

@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { BillingService } from './billing.service';
-import { InvoicePDFService } from './invoice-pdf.service';
+import { InvoicePDFModule } from './invoice-pdf.module';
 import { BillingEventsListener } from './billing.events';
 import { BillingController } from './controllers/billing.controller';
 import { DatabaseModule } from '@infrastructure/database/database.module';
@@ -31,22 +31,18 @@ import { QueueModule } from '@queue/src/queue.module';
     CacheModule,
     PaymentModule,
     PaymentHandoffTokenModule,
+    InvoicePDFModule,
     QueueModule, // Queue processing for invoice PDF generation, bulk operations
   ],
   controllers: [BillingController],
   providers: [
     BillingService,
-    InvoicePDFService,
     BillingEventsListener,
-    {
-      provide: 'InvoicePDFService',
-      useExisting: InvoicePDFService,
-    },
     {
       provide: 'BILLING_SERVICE',
       useExisting: BillingService,
     },
   ],
-  exports: [BillingService, 'BILLING_SERVICE', InvoicePDFService],
+  exports: [BillingService, 'BILLING_SERVICE', InvoicePDFModule],
 })
 export class BillingModule {}

@@ -32,8 +32,11 @@ export class CheckInLocationService {
   private readonly CHECKIN_CACHE_TTL = 1800; // 30 minutes
 
   constructor(
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
+    @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => AppointmentQueueService))
     private readonly appointmentQueueService: AppointmentQueueService,

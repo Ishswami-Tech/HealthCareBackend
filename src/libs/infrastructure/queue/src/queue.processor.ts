@@ -89,13 +89,23 @@ export class QueueProcessor {
     @Inject(S3StorageService)
     private readonly s3StorageService: S3StorageService,
     @Optional()
-    @Inject('InvoicePDFService')
-    private readonly invoicePDFService?: InvoicePDFServiceType,
-    @Optional()
     @Inject(CacheService)
     private readonly cacheService?: CacheService,
     private readonly moduleRef?: ModuleRef
   ) {}
+
+  private getInvoicePDFService(): InvoicePDFServiceType | null {
+    if (!this.moduleRef) {
+      return null;
+    }
+    try {
+      return this.moduleRef.get<InvoicePDFServiceType>('InvoicePDFService', {
+        strict: false,
+      });
+    } catch {
+      return null;
+    }
+  }
 
   private getWhatsAppService(): WhatsAppService | null {
     if (!this.moduleRef) {
@@ -1543,18 +1553,6 @@ export class QueueProcessor {
         throw new Error(`Invoice ${invoiceId} not found`);
       }
 
-      // Check if InvoicePDFService is available
-      if (!this.invoicePDFService) {
-        void this.loggingService.log(
-          LogType.QUEUE,
-          LogLevel.WARN,
-          `InvoicePDFService not available, skipping PDF generation`,
-          'QueueProcessor',
-          { invoiceId }
-        );
-        return { success: false };
-      }
-
       // Get user and clinic details for PDF
       const user = await this.prisma.findUserByIdSafe(invoice.userId);
       const clinic = await this.prisma.findClinicByIdSafe(invoice.clinicId);
@@ -1653,11 +1651,18 @@ export class QueueProcessor {
         }
       }
 
+      // Resolve PDF service at runtime to avoid circular DI dependencies.
+      // If it is unavailable, skip PDF generation rather than hard-failing.
+      const invoicePDFService = this.getInvoicePDFService();
+      if (!invoicePDFService) {
+        return { success: false };
+      }
+
       // Generate PDF
-      const { filePath, fileName } = await this.invoicePDFService.generateInvoicePDF(pdfData);
+      const { filePath, fileName } = await invoicePDFService.generateInvoicePDF(pdfData);
 
       // Get public URL
-      const pdfUrl = this.invoicePDFService.getPublicInvoiceUrl(fileName);
+      const pdfUrl = invoicePDFService.getPublicInvoiceUrl(fileName);
 
       // Update invoice with PDF info
       await this.prisma.updateInvoiceSafe(invoiceId, {

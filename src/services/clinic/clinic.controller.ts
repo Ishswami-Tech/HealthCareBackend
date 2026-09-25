@@ -859,6 +859,8 @@ export class ClinicController {
     Role.SUPER_ADMIN,
     Role.CLINIC_ADMIN,
     Role.RECEPTIONIST,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
     Role.NURSE,
     Role.THERAPIST,
     Role.COUNSELOR,
@@ -1037,6 +1039,57 @@ export class ClinicController {
     } catch (_error) {
       this.logger.error(
         `Failed to get clinic patients for clinic ${id}: ${(_error as Error).message}`,
+        (_error as Error).stack
+      );
+      throw _error;
+    }
+  }
+
+  @Get(':id/doctors/:doctorId/patients')
+  @HttpCode(HttpStatus.OK)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.RECEPTIONIST,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE
+  )
+  @RequireResourcePermission('clinics', 'read', { requireOwnership: true })
+  @ApiOperation({
+    summary: "Get one doctor's patients within a clinic",
+    description:
+      'Returns patients this doctor has an appointment with, plus patients this doctor registered directly (e.g. a walk-in).',
+  })
+  @ApiParam({ name: 'id', description: 'The ID of the clinic', type: 'string', format: 'uuid' })
+  @ApiParam({ name: 'doctorId', description: "The doctor's User ID", type: 'string' })
+  @ApiQuery({ name: 'search', required: false, type: String })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'offset', required: false, type: Number })
+  @ApiResponse({ status: HttpStatus.OK, description: "Returns this doctor's patients." })
+  async getDoctorPatients(
+    @Param('id', ClinicIdPipe) id: string,
+    @Param('doctorId') doctorId: string,
+    @Query('search') search?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string
+  ) {
+    try {
+      this.logger.log(`Getting patients for doctor ${doctorId} in clinic ${id}`);
+
+      const result = await this.clinicService.getClinicPatientsForDoctor(id, doctorId, {
+        ...(search?.trim() ? { search: search.trim() } : {}),
+        ...(limit ? { limit: Number.parseInt(limit, 10) } : {}),
+        ...(offset ? { offset: Number.parseInt(offset, 10) } : {}),
+      });
+
+      this.logger.log(
+        `Retrieved ${result.patients.length} of ${result.total} patients for doctor ${doctorId} in clinic ${id}`
+      );
+      return result;
+    } catch (_error) {
+      this.logger.error(
+        `Failed to get patients for doctor ${doctorId} in clinic ${id}: ${(_error as Error).message}`,
         (_error as Error).stack
       );
       throw _error;

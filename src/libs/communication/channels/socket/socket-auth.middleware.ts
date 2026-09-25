@@ -67,6 +67,7 @@ interface SocketHandshake {
 @Injectable()
 export class SocketAuthMiddleware {
   constructor(
+    @Inject(forwardRef(() => JwtService))
     private readonly jwtService: JwtService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService

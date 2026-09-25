@@ -21,8 +21,11 @@ import { IS_PUBLIC_KEY } from '@core/decorators/public.decorator';
 @Injectable()
 export class RbacGuard implements CanActivate {
   constructor(
+    @Inject(forwardRef(() => RbacService))
     private readonly rbacService: RbacService,
+    @Inject(forwardRef(() => Reflector))
     private readonly reflector: Reflector,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,

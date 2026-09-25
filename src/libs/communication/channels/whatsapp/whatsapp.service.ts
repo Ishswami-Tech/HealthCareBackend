@@ -28,10 +28,13 @@ export class WhatsAppService {
   private readonly TEMPLATE_LANGUAGE_CODE = 'en_US';
 
   constructor(
+    @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => WhatsAppConfig))
     private readonly whatsAppConfig: WhatsAppConfig,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => HttpService))
     private readonly httpService: HttpService,
     @Inject(forwardRef(() => ProviderFactory))
     private readonly providerFactory: ProviderFactory,

@@ -87,6 +87,7 @@ export class ChatBackupService implements OnModuleInit {
   private readonly messageRetentionDays = 365; // Keep messages for 1 year
 
   constructor(
+    @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService

@@ -304,8 +304,27 @@ export class SecurityConfigService {
 
     const corsOrigins = expandedOrigins.length > 0 ? expandedOrigins : false;
 
+    // Local dev servers (Next.js, Expo, etc.) get an auto-assigned port whenever
+    // their default port is taken, so a fixed allow-list falls out of date on
+    // every restart. Accept any http://localhost:<port> origin in development
+    // only; staging/production keep the strict exact-match allow-list above.
+    const isDevelopment = this.configService.isDevelopment();
+    const localhostOriginPattern = /^http:\/\/localhost:\d+$/;
+    const corsOriginOption = isDevelopment
+      ? (
+          origin: string | undefined,
+          callback: (err: Error | null, allow?: boolean) => void
+        ): void => {
+          if (!origin || expandedOrigins.includes(origin) || localhostOriginPattern.test(origin)) {
+            callback(null, true);
+            return;
+          }
+          callback(new Error(`Origin ${origin} not allowed by CORS`), false);
+        }
+      : corsOrigins;
+
     app.enableCors({
-      origin: corsOrigins,
+      origin: corsOriginOption,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
       credentials: credentialsEnabled,
       allowedHeaders: [
@@ -417,7 +436,12 @@ export class SecurityConfigService {
             throw new Error('CORS wildcard origin is not allowed when credentials are enabled');
           }
 
-          if (allowedOrigins.includes(origin)) {
+          // See configureCORS() for why development additionally accepts any
+          // http://localhost:<port> origin (auto-assigned dev server ports).
+          const isDevOrigin =
+            this.configService.isDevelopment() && /^http:\/\/localhost:\d+$/.test(origin);
+
+          if (allowedOrigins.includes(origin) || isDevOrigin) {
             replyTyped.header('Access-Control-Allow-Origin', origin);
             replyTyped.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
             // Previous configuration before adding X-Request-ID:

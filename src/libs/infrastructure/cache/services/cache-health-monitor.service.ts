@@ -63,6 +63,7 @@ export class CacheHealthMonitorService implements OnModuleInit, OnModuleDestroy 
     private readonly cacheService: CacheHealthMonitorServiceCacheLike,
     @Inject(forwardRef(() => CacheProviderFactory))
     private readonly providerFactory: CacheProviderFactory,
+    @Inject(forwardRef(() => CircuitBreakerService))
     private readonly circuitBreakerService: CircuitBreakerService
   ) {
     // Circuit breaker is managed by CircuitBreakerService using named instances

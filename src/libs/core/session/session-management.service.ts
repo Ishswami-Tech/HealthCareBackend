@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit, Inject, Optional } from '@nestjs/common';
+import { Injectable, OnModuleInit, Inject, Optional, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -53,11 +53,16 @@ export class SessionManagementService implements OnModuleInit {
   private config!: SessionConfig;
 
   constructor(
+    @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
-    @Inject(ConfigService) private readonly configService: ConfigService,
+    @Inject(forwardRef(() => ConfigService)) private readonly configService: ConfigService,
+    @Inject(forwardRef(() => JwtService))
     private readonly jwtService: JwtService,
-    @Optional() private readonly databaseService?: DatabaseService
+    @Optional()
+    @Inject(forwardRef(() => DatabaseService))
+    private readonly databaseService?: DatabaseService
   ) {}
 
   /**

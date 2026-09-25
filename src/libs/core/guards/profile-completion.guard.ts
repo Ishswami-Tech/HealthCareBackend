@@ -85,9 +85,11 @@ const PROFILE_COMPLETION_ENFORCED_ROLES: ReadonlySet<string> = new Set([Role.PAT
 @Injectable()
 export class ProfileCompletionGuard implements CanActivate {
   constructor(
+    @Inject(forwardRef(() => Reflector))
     private readonly reflector: Reflector,
     @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly logging: LoggingService
   ) {}
 

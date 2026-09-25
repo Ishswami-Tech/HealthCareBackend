@@ -62,6 +62,7 @@ import type {
   ImmunizationResponse,
   FamilyHistoryResponse,
   LifestyleAssessmentResponse,
+  PrescriptionHistoryResponse,
 } from '@core/types/ehr.types';
 import type {
   MedicalHistoryBase,
@@ -81,9 +82,13 @@ export class EHRService {
   private readonly eventService: IEventService;
 
   constructor(
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
+    @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => StaticAssetService))
     private readonly staticAssetService: StaticAssetService,
     @Inject(forwardRef(() => EventService))
     eventService: unknown,
@@ -270,6 +275,8 @@ export class EHRService {
                 updatedAt: nowIso(),
               };
 
+          const prescriptions = await this.getPrescriptionHistory(userId, clinicId);
+
           return {
             medicalHistory,
             labReports,
@@ -281,6 +288,7 @@ export class EHRService {
             immunizations,
             familyHistory,
             lifestyleAssessment,
+            prescriptions,
           };
         } catch (error) {
           await this.loggingService.log(
@@ -298,6 +306,62 @@ export class EHRService {
         tags: [`ehr:${userId}`],
         priority: 'high',
         containsPHI: true,
+      }
+    );
+  }
+
+  /**
+   * Fetches the patient's pharmacy-linked prescription history (visit-by-visit
+   * record of which medicines were given), keyed by the patient's User.id.
+   * Prescription.patientId is a foreign key to Patient.id, not User.id, so the
+   * Patient record must be resolved first.
+   */
+  private async getPrescriptionHistory(
+    userId: string,
+    clinicId?: string
+  ): Promise<PrescriptionHistoryResponse[]> {
+    return this.databaseService.executeHealthcareRead<PrescriptionHistoryResponse[]>(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+
+        const patient = await typedClient.patient.findFirst({
+          where: { userId } as PrismaDelegateArgs,
+          select: { id: true } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+
+        if (!patient) {
+          return [];
+        }
+
+        const prescriptions = await typedClient.prescription.findMany({
+          where: (clinicId
+            ? { patientId: patient.id, clinicId }
+            : { patientId: patient.id }) as PrismaDelegateArgs,
+          orderBy: { date: 'desc' } as PrismaDelegateArgs,
+          include: {
+            doctor: { include: { user: { select: { name: true } } } },
+            items: { include: { medicine: { select: { name: true } } } },
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+
+        return prescriptions.map(prescription => ({
+          id: prescription.id,
+          date: new Date(prescription.date).toISOString(),
+          status: String(prescription.status),
+          diagnosis: prescription.diagnosis || '',
+          notes: prescription.notes || '',
+          doctorId: prescription.doctorId,
+          doctorName: prescription.doctor?.user?.name || 'Unknown',
+          items: (prescription.items || []).map(item => ({
+            id: item.id,
+            medicineId: item.medicineId,
+            medicineName: item.medicine?.name || 'Unknown medicine',
+            dosage: item.dosage || '',
+            frequency: item.frequency || '',
+            duration: item.duration || '',
+            quantity: item.quantity ?? 1,
+          })),
+        }));
       }
     );
   }

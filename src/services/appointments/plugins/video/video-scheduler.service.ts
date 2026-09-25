@@ -64,8 +64,11 @@ export class VideoAppointmentSchedulerService {
   }
 
   constructor(
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
     @Inject(forwardRef(() => VideoConsultationTracker))
     private readonly consultationTracker: VideoConsultationTracker,
@@ -73,6 +76,7 @@ export class VideoAppointmentSchedulerService {
     private readonly appointmentsService: AppointmentsService,
     @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => EventService))
     private readonly eventService: EventService
   ) {}
 
