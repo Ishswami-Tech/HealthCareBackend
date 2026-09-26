@@ -346,6 +346,30 @@ export class RegisterDto {
   @IsOptional()
   address?: string;
 
+  @ApiProperty({ description: 'Locality / area', example: 'Kothrud', required: false })
+  @IsString({ message: 'Area must be a string' })
+  @IsOptional()
+  area?: string;
+
+  @ApiProperty({ description: 'District', example: 'Pune', required: false })
+  @IsString({ message: 'District must be a string' })
+  @IsOptional()
+  district?: string;
+
+  @ApiProperty({ description: 'Occupation', example: 'Teacher', required: false })
+  @IsString({ message: 'Occupation must be a string' })
+  @IsOptional()
+  occupation?: string;
+
+  @ApiProperty({
+    description: 'Organization / employer',
+    example: 'Sunrise School',
+    required: false,
+  })
+  @IsString({ message: 'Organization must be a string' })
+  @IsOptional()
+  organization?: string;
+
   @ApiProperty({
     description: 'Emergency contact information',
     example: { name: 'John Doe', phone: '+1234567890', relationship: 'Father' },

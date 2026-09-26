@@ -29,6 +29,7 @@ import { EventsModule } from '@infrastructure/events/events.module';
 import { CacheModule } from '@infrastructure/cache/cache.module';
 import { SessionModule } from '@core/session/session.module';
 import { PatientsModule } from './services/patients/patients.module';
+import { PatientVisitsModule } from './services/patient-visits/patient-visits.module';
 import { DoctorsModule } from './services/doctors/doctors.module';
 import { StaffModule } from './services/staff/staff.module';
 import { AnalyticsModule } from './services/analytics/analytics.module';
@@ -107,6 +108,8 @@ import { SentryModule } from '@sentry/nestjs/setup';
     // Support modules
     HealthModule,
     PatientsModule,
+    // OPD registration / per-visit case-sheet (Basic Details + History)
+    PatientVisitsModule,
     DoctorsModule,
     StaffModule,
     AnalyticsModule,

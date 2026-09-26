@@ -291,10 +291,15 @@ export class UsersService {
           ...(userRecord.zipCode ? { zipCode: userRecord.zipCode } : {}),
         };
         let patientRecord = result.patient as { id?: string } | null | undefined;
-        if (String(result.role).toUpperCase() === 'PATIENT') {
-          if (!patientRecord?.id) {
-            await this.patientsService.ensurePatientProfile(result.id);
-          }
+        if (String(result.role).toUpperCase() === 'PATIENT' && !patientRecord?.id) {
+          // `result` already came from findUserByIdSafe with `patient: true` included
+          // (user.methods.ts userInclude), so patientRecord is normally already
+          // populated here. This re-query only runs as a genuine fallback — when the
+          // patient profile didn't exist yet and ensurePatientProfile just created it —
+          // instead of unconditionally re-hitting Postgres on every call (this method
+          // is behind a 30s cache with SWR off, so a cache miss was previously a
+          // guaranteed second round trip for data already in hand).
+          await this.patientsService.ensurePatientProfile(result.id);
 
           patientRecord = await this.databaseService.executeHealthcareRead(async client => {
             const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
@@ -542,6 +547,10 @@ export class UsersService {
           ...(data.gender && { gender: data.gender }),
           ...(data.dateOfBirth && { dateOfBirth: data.dateOfBirth }),
           ...(data.address && { address: data.address }),
+          ...(data.area && { area: data.area }),
+          ...(data.district && { district: data.district }),
+          ...(data.occupation && { occupation: data.occupation }),
+          ...(data.organization && { organization: data.organization }),
           ...(data.emergencyContact && { emergencyContact: data.emergencyContact }),
         },
         undefined,
@@ -1031,6 +1040,10 @@ export class UsersService {
         state: cleanedData.state,
         country: cleanedData.country,
         zipCode: (cleanedData as Record<string, unknown>)['zipCode'],
+        area: cleanedData.area,
+        district: cleanedData.district,
+        occupation: cleanedData.occupation,
+        organization: cleanedData.organization,
         profilePicture: cleanedData.profilePicture,
       };
       // Auto-populate name from firstName + lastName if either was provided

@@ -29,6 +29,7 @@ import {
   SubscriptionStatus,
   InvoiceStatus,
   PaymentStatus,
+  PaymentMethod,
   AppointmentQueueCategory,
 } from '@core/types/enums.types';
 import {
@@ -75,7 +76,14 @@ import type {
   PrismaTransactionClientWithDelegates,
   PrismaDelegateArgs,
 } from '@core/types/prisma.types';
-import type { InvoicePDFData } from '@core/types/billing.types';
+import type {
+  InvoicePDFData,
+  InvoiceRecord,
+  BillType,
+  PatientBillRow,
+  PatientBillHistory,
+} from '@core/types/billing.types';
+import type { ClinicSettings } from '@core/types/clinic.types';
 import type {
   AppointmentWithRelations,
   PaymentWithRelations,
@@ -1573,12 +1581,18 @@ export class BillingService implements OnModuleInit {
             tax: data.tax || 0,
             discount: data.discount || 0,
             totalAmount,
-            status: InvoiceStatus.PENDING,
+            status: data.status || InvoiceStatus.PENDING,
             dueDate: new Date(data.dueDate),
+            billType: data.billType || 'OTHER',
             ...(data.subscriptionId && { subscriptionId: data.subscriptionId }),
             ...(data.description && { description: data.description }),
             ...(data.lineItems && { lineItems: data.lineItems }),
             ...(data.metadata && { metadata: data.metadata }),
+            ...(data.patientId && { patientId: data.patientId }),
+            ...(data.visitId && { visitId: data.visitId }),
+            ...(data.prescriptionId && { prescriptionId: data.prescriptionId }),
+            ...(data.appointmentId && { appointmentId: data.appointmentId }),
+            ...(data.paidAt && { paidAt: new Date(data.paidAt) }),
           } as never,
           include: {
             subscription: true,
@@ -1805,7 +1819,11 @@ export class BillingService implements OnModuleInit {
     return invoice;
   }
 
-  async markInvoiceAsPaid(id: string, requester?: BillingAccessContext) {
+  async markInvoiceAsPaid(
+    id: string,
+    requester?: BillingAccessContext,
+    options?: { skipWhatsApp?: boolean }
+  ) {
     const existingInvoice = await this.getInvoice(id, requester);
     const invoice = await this.databaseService.updateInvoiceSafe(id, {
       status: InvoiceStatus.PAID,
@@ -1837,10 +1855,745 @@ export class BillingService implements OnModuleInit {
       );
     }
 
-    await this.eventService.emit('billing.receipt.paid', { receiptId: id, invoice });
+    await this.eventService.emit('billing.receipt.paid', {
+      receiptId: id,
+      invoice,
+      skipWhatsApp: Boolean(options?.skipWhatsApp),
+    });
     await this.invalidateUserInvoiceCaches(existingInvoice.userId);
 
     return invoice;
+  }
+
+  // ============ Bill History (OPD consultation + pharmacy invoices) ============
+
+  /**
+   * Reads `Clinic.settings.billingSettings` (a loosely-typed `Json?` column)
+   * as the domain `ClinicSettings['billingSettings']` shape. Returns null
+   * when the clinic has no settings configured yet (`resolveConsultationFee`
+   * falls through to the "no fee configured" case in that scenario).
+   */
+  private async getClinicBillingSettings(
+    clinicId: string
+  ): Promise<ClinicSettings['billingSettings'] | null> {
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      const clinic = (await typedClient.clinic.findUnique({
+        where: { id: clinicId } as PrismaDelegateArgs,
+        select: { settings: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as { settings?: unknown } | null;
+
+      const settings = this.asRecord(clinic?.settings);
+      const billingSettings = settings ? this.asRecord(settings['billingSettings']) : null;
+      return billingSettings as ClinicSettings['billingSettings'] | null;
+    });
+  }
+
+  /**
+   * Resolves the consultation fee for a visit: an explicit `Doctor.consultationFee`
+   * (for the visit's assigned doctor) takes priority over the clinic-wide
+   * `billingSettings.opdConsultationFee` default. Returns null when neither is
+   * configured, so callers can fall back to asking the user for an amount.
+   */
+  async resolveConsultationFee(clinicId: string, doctorId?: string | null): Promise<number | null> {
+    if (doctorId) {
+      const doctorFee = await this.databaseService.executeHealthcareRead(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        const doctor = (await typedClient.doctor.findUnique({
+          where: { id: doctorId } as PrismaDelegateArgs,
+          select: { consultationFee: true } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs)) as { consultationFee?: number | null } | null;
+        return typeof doctor?.consultationFee === 'number' ? doctor.consultationFee : null;
+      });
+
+      if (typeof doctorFee === 'number' && doctorFee > 0) {
+        return doctorFee;
+      }
+    }
+
+    const billingSettings = await this.getClinicBillingSettings(clinicId);
+    if (
+      typeof billingSettings?.opdConsultationFee === 'number' &&
+      billingSettings.opdConsultationFee > 0
+    ) {
+      return billingSettings.opdConsultationFee;
+    }
+
+    return null;
+  }
+
+  /**
+   * Generic unique-constraint (P2002) detector for a named column, used by
+   * the idempotent ensure* methods below to recover from a concurrent
+   * duplicate create instead of failing the request.
+   */
+  private isUniqueConstraintOnField(error: unknown, field: string): boolean {
+    if (!error || typeof error !== 'object') {
+      return false;
+    }
+
+    const code = 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+    const message = 'message' in error && typeof error.message === 'string' ? error.message : '';
+
+    return code === 'P2002' && (message.includes(field) || message.includes(`"${field}"`));
+  }
+
+  private async findInvoiceByVisitId(
+    visitId: string,
+    clinicId: string,
+    billType: BillType
+  ): Promise<InvoiceRecord | null> {
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return (await typedClient.invoice.findFirst({
+        where: { visitId, clinicId, billType } as PrismaDelegateArgs,
+        include: { payments: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as unknown as InvoiceRecord | null;
+    });
+  }
+
+  private async findInvoiceByPrescriptionId(
+    prescriptionId: string,
+    clinicId?: string
+  ): Promise<InvoiceRecord | null> {
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return (await typedClient.invoice.findFirst({
+        where: {
+          prescriptionId,
+          billType: 'PHARMACY',
+          ...(clinicId ? { clinicId } : {}),
+        } as PrismaDelegateArgs,
+        include: { payments: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as unknown as InvoiceRecord | null;
+    });
+  }
+
+  /**
+   * Full invoice record (including the bill-history columns) by ID, scoped
+   * to a clinic. Used by `recordInvoicePayment` instead of `getInvoice()`
+   * because `InvoiceWithRelations` does not yet expose `billType`/`visitId`/
+   * `prescriptionId` at the type level (see `InvoiceRecord` doc-comment).
+   */
+  private async getInvoiceRecord(
+    invoiceId: string,
+    clinicId?: string
+  ): Promise<InvoiceRecord | null> {
+    const invoice = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return (await typedClient.invoice.findUnique({
+        where: { id: invoiceId } as PrismaDelegateArgs,
+        include: { payments: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as unknown as InvoiceRecord | null;
+    });
+
+    if (!invoice) {
+      return null;
+    }
+    if (clinicId && invoice.clinicId !== clinicId) {
+      return null;
+    }
+    return invoice;
+  }
+
+  /**
+   * Idempotent per visit on the `(visitId, CONSULTATION)` unique constraint:
+   * a second call (e.g. a retried request) returns the existing invoice
+   * instead of erroring. Reuses `createInvoice()` so invoice numbering, the
+   * PDF-generation queue job, and the `billing.invoice.created` event all
+   * stay consistent with every other invoice in the system.
+   */
+  async ensureVisitConsultationInvoice(
+    visitId: string,
+    clinicId: string,
+    options: {
+      amount?: number;
+      discount?: number;
+      waive?: boolean;
+      actor?: { userId?: string; role?: string };
+    } = {}
+  ): Promise<InvoiceRecord> {
+    const existing = await this.findInvoiceByVisitId(visitId, clinicId, 'CONSULTATION');
+    if (existing) {
+      return existing;
+    }
+
+    const visit = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        patientVisit: {
+          findFirst: (args: PrismaDelegateArgs) => Promise<{
+            id: string;
+            opdNumber: string;
+            patientId: string;
+            doctorId: string | null;
+            clinicId: string;
+          } | null>;
+        };
+      };
+      return await typedClient.patientVisit.findFirst({
+        where: { id: visitId, clinicId } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+
+    if (!visit) {
+      throw new NotFoundException(`Visit ${visitId} not found`);
+    }
+
+    const patient = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return (await typedClient.patient.findUnique({
+        where: { id: visit.patientId } as PrismaDelegateArgs,
+        select: { userId: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as { userId?: string } | null;
+    });
+
+    if (!patient?.userId) {
+      throw new BadRequestException(`Patient for visit ${visitId} has no linked user account`);
+    }
+
+    const waive = Boolean(options.waive);
+    const discount = Math.max(0, Number(options.discount || 0));
+    const resolvedAmount = waive
+      ? 0
+      : typeof options.amount === 'number' && options.amount >= 0
+        ? options.amount
+        : await this.resolveConsultationFee(clinicId, visit.doctorId);
+
+    if (resolvedAmount === null) {
+      throw new BadRequestException(
+        'No consultation fee configured for this clinic/doctor. Provide an amount to bill.'
+      );
+    }
+
+    const unitPrice = Number(resolvedAmount);
+    const now = new Date();
+    const lineItemDescription = `OPD consultation – ${visit.opdNumber}`;
+    const lineItems = [
+      {
+        description: lineItemDescription,
+        quantity: 1,
+        unitPrice,
+        amount: waive ? 0 : unitPrice,
+        itemType: 'CONSULTATION',
+        refId: visitId,
+      },
+    ];
+
+    const createData: CreateInvoiceDto = {
+      userId: patient.userId,
+      clinicId,
+      amount: waive ? 0 : unitPrice,
+      tax: 0,
+      discount: waive ? 0 : discount,
+      dueDate: now.toISOString(),
+      description: lineItemDescription,
+      lineItems: lineItems as unknown as Record<string, unknown>,
+      billType: 'CONSULTATION',
+      patientId: visit.patientId,
+      visitId,
+      ...(waive
+        ? {
+            status: InvoiceStatus.PAID,
+            paidAt: now.toISOString(),
+            metadata: {
+              waived: true,
+              waivedBy: options.actor?.userId ?? null,
+              skipWhatsApp: true,
+            },
+          }
+        : {}),
+    };
+
+    try {
+      return (await this.createInvoice(createData)) as unknown as InvoiceRecord;
+    } catch (error) {
+      if (this.isUniqueConstraintOnField(error, 'visitId')) {
+        const retried = await this.findInvoiceByVisitId(visitId, clinicId, 'CONSULTATION');
+        if (retried) {
+          return retried;
+        }
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Idempotent per prescription on the `(prescriptionId, PHARMACY)` unique
+   * constraint. Line items mirror `PharmacyService.getPrescriptionTotal`
+   * (quantity x Medicine.price per item).
+   */
+  async ensurePrescriptionInvoice(
+    prescriptionId: string,
+    clinicId: string,
+    actor?: { userId?: string; role?: string }
+  ): Promise<InvoiceRecord> {
+    const existing = await this.findInvoiceByPrescriptionId(prescriptionId, clinicId);
+    if (existing) {
+      return existing;
+    }
+
+    const prescription = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return await typedClient.prescription.findUnique({
+        where: { id: prescriptionId } as PrismaDelegateArgs,
+        include: {
+          items: { include: { medicine: true } },
+          patient: { include: { user: { select: { id: true } } } },
+        } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+
+    const prescriptionRecord = prescription as {
+      id: string;
+      clinicId: string;
+      patientId: string;
+      visitId?: string | null;
+      items?: Array<{
+        id: string;
+        quantity?: number | null;
+        medicine?: { name?: string | null; price?: number | null } | null;
+      }>;
+      patient?: { user?: { id?: string | null } | null } | null;
+    } | null;
+
+    if (!prescriptionRecord) {
+      throw new NotFoundException(`Prescription ${prescriptionId} not found`);
+    }
+    if (clinicId && prescriptionRecord.clinicId !== clinicId) {
+      throw new BadRequestException('Prescription does not belong to this clinic');
+    }
+
+    const patientUserId = prescriptionRecord.patient?.user?.id;
+    if (!patientUserId) {
+      throw new BadRequestException('Prescription patient has no linked user account');
+    }
+
+    const lineItems = (prescriptionRecord.items || []).map(item => {
+      const quantity = Number(item.quantity || 0);
+      const unitPrice = Number(item.medicine?.price || 0);
+      const amount = Number((quantity * unitPrice).toFixed(2));
+      return {
+        description: item.medicine?.name
+          ? `${item.medicine.name} x${quantity}`
+          : `Medicine item x${quantity}`,
+        quantity,
+        unitPrice,
+        amount,
+        itemType: 'PHARMACY',
+        refId: item.id,
+      };
+    });
+    const amount = Number(lineItems.reduce((sum, item) => sum + item.amount, 0).toFixed(2));
+
+    const createData: CreateInvoiceDto = {
+      userId: patientUserId,
+      clinicId,
+      amount,
+      tax: 0,
+      discount: 0,
+      dueDate: new Date().toISOString(),
+      description: `Pharmacy bill for prescription ${prescriptionId}`,
+      lineItems: lineItems as unknown as Record<string, unknown>,
+      billType: 'PHARMACY',
+      patientId: prescriptionRecord.patientId,
+      prescriptionId,
+      metadata: { createdByUserId: actor?.userId ?? null, createdByRole: actor?.role ?? null },
+      ...(prescriptionRecord.visitId ? { visitId: prescriptionRecord.visitId } : {}),
+    };
+
+    try {
+      return (await this.createInvoice(createData)) as unknown as InvoiceRecord;
+    } catch (error) {
+      if (this.isUniqueConstraintOnField(error, 'prescriptionId')) {
+        const retried = await this.findInvoiceByPrescriptionId(prescriptionId, clinicId);
+        if (retried) {
+          return retried;
+        }
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Read-only lookup used by PharmacyService to enrich a single prescription
+   * with its invoice (if one exists yet) without creating one. Public
+   * counterpart of the private `findInvoiceByPrescriptionId` used by
+   * `ensurePrescriptionInvoice`'s idempotency check.
+   */
+  async findPrescriptionInvoice(
+    prescriptionId: string,
+    clinicId?: string
+  ): Promise<InvoiceRecord | null> {
+    return this.findInvoiceByPrescriptionId(prescriptionId, clinicId);
+  }
+
+  /**
+   * Batched counterpart of `findPrescriptionInvoice` for list/queue views
+   * (medicine desk queue, prescription lists) so enriching N prescriptions
+   * costs one query instead of N.
+   */
+  async findPrescriptionInvoices(
+    clinicId: string,
+    prescriptionIds: string[]
+  ): Promise<Map<string, InvoiceRecord>> {
+    if (prescriptionIds.length === 0) {
+      return new Map();
+    }
+
+    const invoices = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return (await typedClient.invoice.findMany({
+        where: {
+          clinicId,
+          billType: 'PHARMACY',
+          prescriptionId: { in: prescriptionIds },
+        } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as unknown as InvoiceRecord[];
+    });
+
+    return new Map(
+      invoices
+        .filter(invoice => Boolean(invoice.prescriptionId))
+        .map(invoice => [String(invoice.prescriptionId), invoice] as const)
+    );
+  }
+
+  /**
+   * Records a manual (cash/UPI/card/net-banking) payment against an invoice.
+   * When completed payments now cover the full total, marks the invoice PAID
+   * — suppressing the automatic WhatsApp receipt send unless the clinic has
+   * opted in via `billingSettings.autoWhatsAppReceipts`. Also nudges the
+   * medicine desk queue for PHARMACY invoices so a paid prescription flips to
+   * dispensable without waiting for the next poll.
+   */
+  async recordInvoicePayment(
+    invoiceId: string,
+    clinicId: string,
+    options: {
+      method: PaymentMethod;
+      amount?: number;
+      transactionId?: string;
+      note?: string;
+      actor?: { userId?: string; role?: string };
+    }
+  ): Promise<{ invoice: InvoiceRecord; payment: PaymentWithRelations }> {
+    const invoice = await this.getInvoiceRecord(invoiceId, clinicId);
+    if (!invoice) {
+      throw new NotFoundException(`Invoice ${invoiceId} not found`);
+    }
+
+    const paidSoFar = Number(
+      (invoice.payments || [])
+        .filter(payment => String(payment.status).toUpperCase() === 'COMPLETED')
+        .reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+        .toFixed(2)
+    );
+    const balance = Math.max(0, Number((invoice.totalAmount - paidSoFar).toFixed(2)));
+    const amount =
+      typeof options.amount === 'number' && options.amount > 0 ? options.amount : balance;
+
+    if (amount <= 0) {
+      throw new BadRequestException('Invoice is already fully paid');
+    }
+
+    const payment = await this.databaseService.createPaymentSafe({
+      amount: Number(amount.toFixed(2)),
+      clinicId,
+      userId: invoice.userId,
+      invoiceId,
+      status: PaymentStatus.COMPLETED,
+      method: options.method,
+      ...(options.transactionId && { transactionId: options.transactionId }),
+      description: `Payment collected for invoice ${invoice.invoiceNumber}`,
+      metadata: {
+        collectedBy: options.actor?.userId ?? null,
+        collectedByRole: options.actor?.role ?? null,
+        collectedAt: new Date().toISOString(),
+        paymentFor: invoice.billType,
+        ...(invoice.prescriptionId ? { prescriptionId: invoice.prescriptionId } : {}),
+        ...(invoice.visitId ? { visitId: invoice.visitId } : {}),
+        ...(options.note ? { note: options.note } : {}),
+      },
+    });
+
+    await this.emitBillingPaymentStateEvents({
+      paymentId: payment.id,
+      clinicId,
+      payment,
+    });
+
+    if (invoice.userId) {
+      await this.invalidateUserPaymentCaches(invoice.userId);
+    }
+
+    let updatedInvoice: InvoiceRecord = invoice;
+    const newPaidTotal = paidSoFar + amount;
+    // Small epsilon guards against float rounding leaving the invoice
+    // PENDING forever when paidSoFar + amount is e.g. 499.9999999999999.
+    if (newPaidTotal + 0.005 >= invoice.totalAmount) {
+      const billingSettings = await this.getClinicBillingSettings(clinicId);
+      await this.markInvoiceAsPaid(invoiceId, undefined, {
+        skipWhatsApp: !billingSettings?.autoWhatsAppReceipts,
+      });
+      updatedInvoice = (await this.getInvoiceRecord(invoiceId, clinicId)) ?? invoice;
+
+      if (invoice.billType === 'PHARMACY') {
+        await this.eventService.emit('pharmacy.medicine_desk.updated', {
+          clinicId,
+          paymentId: payment.id,
+          prescriptionId: invoice.prescriptionId ?? null,
+          action: 'PAYMENT_UPDATED',
+          queueCategory: AppointmentQueueCategory.MEDICINE_DESK,
+          paymentStatus: 'PAID',
+          pendingAmount: 0,
+          queueStatus: 'PENDING',
+        });
+      }
+    }
+
+    return { invoice: updatedInvoice, payment };
+  }
+
+  private deriveBillRowStatus(
+    rawStatus: string,
+    paidAmount: number,
+    total: number
+  ): 'PENDING' | 'PARTIAL' | 'PAID' | 'VOID' | 'REFUNDED' {
+    const normalized = rawStatus.toUpperCase();
+    if (normalized === 'VOID') {
+      return 'VOID';
+    }
+    if (normalized === 'PAID') {
+      return 'PAID';
+    }
+    if (paidAmount <= 0) {
+      return 'PENDING';
+    }
+    if (paidAmount >= total) {
+      return 'PAID';
+    }
+    return 'PARTIAL';
+  }
+
+  private inferLegacyPaymentBillType(metadata: unknown): BillType {
+    const paymentFor = this.asSafeString(this.asRecord(metadata)?.['paymentFor']).toUpperCase();
+    if (paymentFor.includes('PRESCRIPTION')) {
+      return 'PHARMACY';
+    }
+    if (paymentFor.includes('CONSULTATION')) {
+      return 'CONSULTATION';
+    }
+    return 'OTHER';
+  }
+
+  /**
+   * Per-patient Bill History: every Invoice for this patient (consultation,
+   * pharmacy, and any other bill type) merged with legacy orphan Payments
+   * (no invoiceId — pre-dates the bill-history columns, e.g. old prescription
+   * cash payments) so nothing collected before this feature disappears from
+   * the tab. Newest first, paginated after merging since the two sources
+   * can't be paginated independently.
+   */
+  async getPatientBillHistory(
+    patientId: string,
+    clinicId: string,
+    filters: {
+      type?: string;
+      status?: string;
+      from?: string;
+      to?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+    actor?: { userId?: string; role?: string }
+  ): Promise<PatientBillHistory> {
+    const limit = Math.min(Math.max(filters.limit ?? 20, 1), 100);
+    const offset = Math.max(filters.offset ?? 0, 0);
+
+    const patient = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return (await typedClient.patient.findUnique({
+        where: { id: patientId } as PrismaDelegateArgs,
+        select: { id: true, userId: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as { id: string; userId: string } | null;
+    });
+
+    if (!patient) {
+      throw new NotFoundException(`Patient ${patientId} not found`);
+    }
+
+    if (actor?.role === 'PATIENT' && actor.userId && actor.userId !== patient.userId) {
+      throw new ForbiddenException('You can only view your own bill history');
+    }
+
+    const bundle = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        patientVisit: {
+          findMany: (args: PrismaDelegateArgs) => Promise<Array<{ id: string; opdNumber: string }>>;
+        };
+      };
+
+      const invoiceWhere: Record<string, unknown> = {
+        clinicId,
+        OR: [{ patientId }, { userId: patient.userId }],
+      };
+      if (filters.from || filters.to) {
+        invoiceWhere['createdAt'] = {
+          ...(filters.from ? { gte: new Date(filters.from) } : {}),
+          ...(filters.to ? { lte: new Date(filters.to) } : {}),
+        };
+      }
+
+      const invoices = (await typedClient.invoice.findMany({
+        where: invoiceWhere as PrismaDelegateArgs,
+        include: { payments: true } as PrismaDelegateArgs,
+        orderBy: { createdAt: 'desc' } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as unknown as InvoiceRecord[];
+
+      const orphanPayments = (await typedClient.payment.findMany({
+        where: {
+          clinicId,
+          userId: patient.userId,
+          invoiceId: null,
+        } as PrismaDelegateArgs,
+        orderBy: { createdAt: 'desc' } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as unknown as Array<{
+        id: string;
+        amount: number;
+        method: string | null;
+        status: string;
+        transactionId: string | null;
+        description: string | null;
+        metadata: unknown;
+        createdAt: Date;
+      }>;
+
+      const visitIds = Array.from(
+        new Set(invoices.map(invoice => invoice.visitId).filter((id): id is string => Boolean(id)))
+      );
+      const visits = visitIds.length
+        ? await typedClient.patientVisit.findMany({
+            where: { id: { in: visitIds } } as PrismaDelegateArgs,
+            select: { id: true, opdNumber: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs)
+        : [];
+
+      return { invoices, orphanPayments, visits };
+    });
+
+    const opdByVisitId = new Map(bundle.visits.map(visit => [visit.id, visit.opdNumber]));
+
+    const invoiceRows: PatientBillRow[] = bundle.invoices.map(invoice => {
+      const payments = (invoice.payments || []).map(payment => ({
+        id: payment.id,
+        amount: Number(payment.amount || 0),
+        method: payment.method ?? null,
+        status: String(payment.status),
+        transactionId: payment.transactionId ?? null,
+        createdAt: new Date(payment.createdAt).toISOString(),
+      }));
+      const paidAmount = Number(
+        payments
+          .filter(payment => payment.status.toUpperCase() === 'COMPLETED')
+          .reduce((sum, payment) => sum + payment.amount, 0)
+          .toFixed(2)
+      );
+      const total = Number(invoice.totalAmount || 0);
+      const balance = Math.max(0, Number((total - paidAmount).toFixed(2)));
+
+      return {
+        id: invoice.id,
+        source: 'INVOICE',
+        billType: invoice.billType || 'OTHER',
+        invoiceNumber: invoice.invoiceNumber,
+        date: new Date(invoice.createdAt).toISOString(),
+        description: invoice.description ?? null,
+        visitId: invoice.visitId ?? null,
+        opdNumber: invoice.visitId ? (opdByVisitId.get(invoice.visitId) ?? null) : null,
+        prescriptionId: invoice.prescriptionId ?? null,
+        appointmentId: invoice.appointmentId ?? null,
+        subtotal: Number(invoice.amount || 0),
+        tax: Number(invoice.tax || 0),
+        discount: Number(invoice.discount || 0),
+        total,
+        paidAmount,
+        balance,
+        status: this.deriveBillRowStatus(String(invoice.status), paidAmount, total),
+        payments,
+        downloadable: true,
+      };
+    });
+
+    const paymentRows: PatientBillRow[] = bundle.orphanPayments.map(payment => {
+      const isCompleted = String(payment.status).toUpperCase() === 'COMPLETED';
+      const amount = Number(payment.amount || 0);
+
+      return {
+        id: payment.id,
+        source: 'PAYMENT',
+        billType: this.inferLegacyPaymentBillType(payment.metadata),
+        invoiceNumber: null,
+        date: new Date(payment.createdAt).toISOString(),
+        description: payment.description ?? null,
+        visitId: null,
+        opdNumber: null,
+        prescriptionId:
+          this.asSafeString(this.asRecord(payment.metadata)?.['prescriptionId']) || null,
+        appointmentId: null,
+        subtotal: amount,
+        tax: 0,
+        discount: 0,
+        total: amount,
+        paidAmount: isCompleted ? amount : 0,
+        balance: isCompleted ? 0 : amount,
+        status: isCompleted ? 'PAID' : 'PENDING',
+        payments: [
+          {
+            id: payment.id,
+            amount,
+            method: payment.method ?? null,
+            status: String(payment.status),
+            transactionId: payment.transactionId ?? null,
+            createdAt: new Date(payment.createdAt).toISOString(),
+          },
+        ],
+        downloadable: false,
+      };
+    });
+
+    let rows = [...invoiceRows, ...paymentRows].sort(
+      (left, right) => new Date(right.date).getTime() - new Date(left.date).getTime()
+    );
+
+    if (filters.type) {
+      rows = rows.filter(row => row.billType === filters.type);
+    }
+    if (filters.status) {
+      rows = rows.filter(row => row.status === filters.status);
+    }
+
+    const total = rows.length;
+    const paged = rows.slice(offset, offset + limit);
+
+    const summary = rows.reduce(
+      (accumulator, row) => {
+        accumulator.totalBilled += row.total;
+        accumulator.totalPaid += row.paidAmount;
+        accumulator.outstanding += row.status === 'VOID' ? 0 : row.balance;
+        return accumulator;
+      },
+      { totalBilled: 0, totalPaid: 0, outstanding: 0 }
+    );
+
+    return {
+      rows: paged,
+      total,
+      summary: {
+        totalBilled: Number(summary.totalBilled.toFixed(2)),
+        totalPaid: Number(summary.totalPaid.toFixed(2)),
+        outstanding: Number(summary.outstanding.toFixed(2)),
+      },
+    };
   }
 
   // ============ Payments ============
@@ -2083,14 +2836,24 @@ export class BillingService implements OnModuleInit {
         // Filter to this user's payments and exclude payments from
         // expired/cancelled/no-show appointments. Also enrich with
         // patientName and orderId from metadata.
+        //
+        // Non-appointment payments (consultation/pharmacy invoice payments,
+        // and legacy prescription cash/online payments that never had an
+        // appointment to begin with) used to be dropped unconditionally here
+        // because of the `if (!apt) return false` short-circuit below — this
+        // silently hid every prescription/consultation payment from the
+        // patient's payment history. They are now included whenever the
+        // payment's own `userId` matches the requested user.
         return allPayments
           .filter(p => {
             const apt = p.appointment;
-            if (!apt) return false;
-            const aptPatient = (apt as unknown as { patient?: { userId?: string } }).patient;
-            if (aptPatient?.userId !== userId) return false;
-            const aptStatus = String(apt.status || '').toUpperCase();
-            return !['EXPIRED', 'CANCELLED', 'NO_SHOW'].includes(aptStatus);
+            if (apt) {
+              const aptPatient = (apt as unknown as { patient?: { userId?: string } }).patient;
+              if (aptPatient?.userId !== userId) return false;
+              const aptStatus = String(apt.status || '').toUpperCase();
+              return !['EXPIRED', 'CANCELLED', 'NO_SHOW'].includes(aptStatus);
+            }
+            return p.userId === userId;
           })
           .map(p => {
             const metadata = this.asRecord(p.metadata);
@@ -3027,7 +3790,7 @@ export class BillingService implements OnModuleInit {
     // Extract payment intent details with proper type checking
     const paymentId = paymentIntentResult.paymentId || '';
     const orderId = paymentIntentResult.orderId || '';
-    const providerName = paymentIntentResult.provider || '';
+    const providerName = paymentIntentResult.provider || provider || PaymentProvider.CASHFREE;
     const providerResponse = this.asRecord(paymentIntentResult.providerResponse) || {};
     const gatewayRedirectUrl =
       this.asSafeString(paymentIntentResult.metadata?.['redirectUrl']) ||
@@ -3036,7 +3799,7 @@ export class BillingService implements OnModuleInit {
     const redirectUrl = this.buildPaymentCallbackUrl(
       appointment.clinicId,
       orderId || gatewayOrderId,
-      provider,
+      providerName as PaymentProvider,
       appointment.id,
       paymentId || undefined,
       appointmentType

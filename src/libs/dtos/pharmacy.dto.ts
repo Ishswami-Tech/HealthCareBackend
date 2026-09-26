@@ -218,6 +218,15 @@ export class CreatePharmacyPrescriptionDto {
   @IsOptional()
   @IsString()
   diagnosis?: string;
+
+  @ApiPropertyOptional({
+    example: 'visit-uuid',
+    description:
+      'PatientVisit.id this prescription was written in, so the pharmacy invoice groups under the OPD visit in Bill History.',
+  })
+  @IsOptional()
+  @IsString()
+  visitId?: string;
 }
 
 export class UpdatePrescriptionStatusDto {
@@ -232,6 +241,17 @@ export class UpdatePrescriptionStatusDto {
   @IsOptional()
   @IsString()
   notes?: string;
+}
+
+export class RecordCashPaymentDto {
+  @ApiPropertyOptional({
+    example: 250,
+    description: 'Cash collected. Defaults to the full pending amount when omitted.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
+  amount?: number;
 }
 
 export class DispensePrescriptionItemDto {

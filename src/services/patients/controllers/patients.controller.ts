@@ -397,12 +397,20 @@ export class PatientsController {
       }
     }
 
+    // Registration-desk demographics are administrative (not clinical), so every
+    // staff role allowed on this route may update them.
+    if (dto.address != null) updates['address'] = dto.address;
+    if (dto.area != null) updates['area'] = dto.area;
+    if (dto.district != null) updates['district'] = dto.district;
+    if (dto.occupation != null) updates['occupation'] = dto.occupation;
+    if (dto.organization != null) updates['organization'] = dto.organization;
+
     if (role === Role.RECEPTIONIST) {
       if (dto.emergencyContact != null) updates['emergencyContact'] = dto.emergencyContact;
       if (dto.insurance != null) updates['insurance'] = dto.insurance;
       if (Object.keys(updates).length === 0) {
         throw new ForbiddenException(
-          'Receptionist can only update emergency contact and insurance information'
+          'Receptionist can only update demographics, emergency contact and insurance information'
         );
       }
     } else {

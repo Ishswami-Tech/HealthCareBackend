@@ -32,6 +32,8 @@ import {
   UpdateMedicationDto,
   CreateImmunizationDto,
   UpdateImmunizationDto,
+  CreateFamilyHistoryDto,
+  UpdateFamilyHistoryDto,
   CreatePrescriptionDto,
   EHRAISummaryDto,
   CreateMedicalRecordDto,
@@ -44,6 +46,7 @@ import type {
   RadiologyReportResponse,
   SurgicalRecordResponse,
   ImmunizationResponse,
+  FamilyHistoryResponse,
   MedicalRecordFilters,
   CreateMedicalRecordInput,
 } from '@core/types/ehr.types';
@@ -230,6 +233,65 @@ export class EHRController {
     const clinicId = req.clinicContext?.clinicId;
     if (!clinicId) throw new ForbiddenException('Clinic context required for EHR writes');
     await this.ehrService.deleteMedicalHistory(id, clinicId);
+  }
+
+  // ============ Family History ============
+
+  @Post('family-history')
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.NURSE, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('medical-records', 'create')
+  async createFamilyHistory(
+    @Body() createDto: CreateFamilyHistoryDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<FamilyHistoryResponse> {
+    // 🔒 TENANT ISOLATION: Inject clinicId into DTO
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new ForbiddenException('Clinic context required for EHR writes');
+    return this.ehrService.createFamilyHistory({ ...createDto, clinicId });
+  }
+
+  // Not cached: small per-patient list that is edited inline during intake.
+  @Get('family-history/:userId')
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.PATIENT,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN
+  )
+  @RequireResourcePermission('medical-records', 'read', { requireOwnership: true })
+  async getFamilyHistory(
+    @Param('userId') userId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<FamilyHistoryResponse[]> {
+    return this.ehrService.getFamilyHistory(userId, req.clinicContext?.clinicId);
+  }
+
+  @Put('family-history/:id')
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.NURSE, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('medical-records', 'update')
+  async updateFamilyHistory(
+    @Param('id') id: string,
+    @Body() updateDto: UpdateFamilyHistoryDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<FamilyHistoryResponse> {
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new ForbiddenException('Clinic context required for EHR writes');
+    return this.ehrService.updateFamilyHistory(id, updateDto, clinicId);
+  }
+
+  @Delete('family-history/:id')
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('medical-records', 'delete')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteFamilyHistory(
+    @Param('id') id: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<void> {
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new ForbiddenException('Clinic context required for EHR writes');
+    await this.ehrService.deleteFamilyHistory(id, clinicId);
   }
 
   // ============ Lab Reports ============

@@ -16,10 +16,15 @@ import {
   IsUUID,
   IsBoolean,
   IsObject,
+  IsIn,
+  Min,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { IsClinicId } from '@core/decorators/clinic-id.validator';
 import { AppointmentPriority, AppointmentType, TreatmentType } from '@dtos/appointment.dto';
 import { PaymentProvider } from '@core/types';
+import { BILL_TYPES, type BillType } from '@core/types/billing.types';
 
 export class CreateBillingPlanDto {
   @IsString()
@@ -172,53 +177,246 @@ export class UpdateSubscriptionDto {
 }
 
 export class CreatePaymentDto {
+  @IsNumber()
+  @IsPositive()
   amount!: number;
+
   @IsNotEmpty({ message: 'Clinic ID is required' })
   @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   clinicId!: string;
+
+  @IsOptional()
+  @IsString()
   appointmentId?: string;
+
+  @IsOptional()
+  @IsString()
   userId?: string;
+
+  @IsOptional()
+  @IsString()
   invoiceId?: string;
+
+  @IsOptional()
+  @IsString()
   subscriptionId?: string;
+
+  @IsOptional()
+  @IsEnum(PaymentMethod)
   method?: PaymentMethod;
+
+  @IsOptional()
+  @IsString()
   transactionId?: string;
+
+  @IsOptional()
+  @IsString()
   description?: string;
+
+  @IsOptional()
+  @IsObject()
   metadata?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsEnum(PaymentProvider)
   provider?: PaymentProvider;
 }
 
 export class UpdatePaymentDto {
+  @IsOptional()
+  @IsEnum(PaymentStatus)
   status?: PaymentStatus;
+
+  @IsOptional()
+  @IsEnum(PaymentMethod)
   method?: PaymentMethod;
+
+  @IsOptional()
+  @IsString()
   transactionId?: string;
+
+  @IsOptional()
+  @IsNumber()
   refundAmount?: number;
+
+  @IsOptional()
+  @IsObject()
   metadata?: Record<string, unknown>;
 }
 
 export class CreateInvoiceDto {
+  @IsNotEmpty({ message: 'User ID is required' })
+  @IsString()
   userId!: string;
+
   @IsNotEmpty({ message: 'Clinic ID is required' })
   @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   clinicId!: string;
+
+  @IsOptional()
+  @IsString()
   subscriptionId?: string;
+
+  @IsNumber()
+  @Min(0)
   amount!: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
   tax?: number = 0;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
   discount?: number = 0;
+
+  @IsNotEmpty({ message: 'Due date is required' })
+  @IsDateString()
   dueDate!: string;
+
+  @IsOptional()
+  @IsString()
   description?: string;
+
+  @IsOptional()
   lineItems?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsObject()
   metadata?: Record<string, unknown>;
+
+  /**
+   * Bill-history columns (see `Invoice.billType/patientId/visitId/prescriptionId/appointmentId`
+   * in schema.prisma). All optional so the pre-existing `POST /billing/invoices`
+   * route keeps working for callers that only pass the original fields.
+   */
+  @IsOptional()
+  @IsIn(BILL_TYPES)
+  billType?: BillType;
+
+  @IsOptional()
+  @IsString()
+  patientId?: string;
+
+  @IsOptional()
+  @IsString()
+  visitId?: string;
+
+  @IsOptional()
+  @IsString()
+  prescriptionId?: string;
+
+  @IsOptional()
+  @IsString()
+  appointmentId?: string;
+
+  /**
+   * Allows internal callers (e.g. `ensureVisitConsultationInvoice` waiving a
+   * fee) to create an invoice that is already settled, instead of always
+   * starting PENDING. Left optional/undecorated-by-default behaviour intact
+   * for the public route: omit both to get the original PENDING invoice.
+   */
+  @IsOptional()
+  @IsEnum(InvoiceStatus)
+  status?: InvoiceStatus;
+
+  @IsOptional()
+  @IsDateString()
+  paidAt?: string;
 }
 
 export class UpdateInvoiceDto {
+  @IsOptional()
+  @IsEnum(InvoiceStatus)
   status?: InvoiceStatus;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
   amount?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
   tax?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
   discount?: number;
+
+  @IsOptional()
+  @IsDateString()
   dueDate?: string;
+
+  @IsOptional()
+  @IsString()
   description?: string;
+
+  @IsOptional()
   lineItems?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsObject()
   metadata?: Record<string, unknown>;
+}
+
+export class CollectInvoicePaymentDto {
+  @IsEnum(PaymentMethod)
+  method!: PaymentMethod;
+
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
+  amount?: number;
+
+  @IsOptional()
+  @IsString()
+  transactionId?: string;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+export class CreateConsultationInvoiceDto {
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  amount?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  discount?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  waive?: boolean;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CollectInvoicePaymentDto)
+  collect?: CollectInvoicePaymentDto;
+}
+
+export class RecordInvoicePaymentDto {
+  @IsEnum(PaymentMethod)
+  method!: PaymentMethod;
+
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
+  amount?: number;
+
+  @IsOptional()
+  @IsString()
+  transactionId?: string;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
 }
 
 export class CreateClinicExpenseDto {

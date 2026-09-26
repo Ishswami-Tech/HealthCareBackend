@@ -37,6 +37,8 @@ import {
   CreateInsuranceClaimDto,
   UpdateInsuranceClaimDto,
   CreateInPersonSubscriptionAppointmentDto,
+  CreateConsultationInvoiceDto,
+  RecordInvoicePaymentDto,
 } from '@dtos/billing.dto';
 import { ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
@@ -504,6 +506,140 @@ export class BillingController {
   @RequireResourcePermission('invoices', 'update')
   async markInvoiceAsPaid(@Param('id') id: string, @Request() req?: ClinicAuthenticatedRequest) {
     return this.billingService.markInvoiceAsPaid(id, this.buildBillingAccessContext(req));
+  }
+
+  // ============ Bill History (OPD consultation + pharmacy invoices) ============
+
+  private buildVisitActor(req?: ClinicAuthenticatedRequest): { userId?: string; role?: string } {
+    return {
+      ...(req?.user?.['sub'] ? { userId: req.user['sub'] as string } : {}),
+      ...(req?.user?.['role'] ? { role: req.user['role'] as string } : {}),
+    };
+  }
+
+  private requireClinicContext(req?: ClinicAuthenticatedRequest): string {
+    const clinicId = req?.clinicContext?.clinicId;
+    if (!clinicId) {
+      throw new NotFoundException('Clinic context is required');
+    }
+    return clinicId;
+  }
+
+  @Post('visits/:visitId/consultation-invoice')
+  @Roles(
+    Role.RECEPTIONIST,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.CLINIC_ADMIN,
+    Role.FINANCE_BILLING,
+    Role.SUPER_ADMIN
+  )
+  // NOTE: 'billing:create' (not 'invoices:create') so RECEPTIONIST — which
+  // has billing:create but not invoices:create in rbac.service.ts — can
+  // reach this route. DOCTOR/ASSISTANT_DOCTOR have invoices:create but not
+  // billing:create, so they currently pass @Roles here but will still get a
+  // 403 from RbacGuard. Neither DOCTOR nor RECEPTIONIST holds both
+  // permissions today, so a single @RequireResourcePermission cannot satisfy
+  // every role @Roles allows; granting the missing permission to whichever
+  // role(s) should actually call this route manually is a follow-up in
+  // rbac.service.ts, which is out of scope for this change. In practice the
+  // primary path (OPD registration auto-creating the invoice) goes through
+  // PatientVisitsService calling BillingService directly and is unaffected.
+  @RequireResourcePermission('billing', 'create')
+  async createConsultationInvoice(
+    @Param('visitId') visitId: string,
+    @Body() dto: CreateConsultationInvoiceDto,
+    @Request() req?: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = this.requireClinicContext(req);
+    const actor = this.buildVisitActor(req);
+
+    const invoice = await this.billingService.ensureVisitConsultationInvoice(visitId, clinicId, {
+      ...(dto.amount !== undefined ? { amount: dto.amount } : {}),
+      ...(dto.discount !== undefined ? { discount: dto.discount } : {}),
+      ...(dto.waive !== undefined ? { waive: dto.waive } : {}),
+      actor,
+    });
+
+    if (dto.collect) {
+      return this.billingService.recordInvoicePayment(invoice.id, clinicId, {
+        method: dto.collect.method,
+        ...(dto.collect.amount !== undefined ? { amount: dto.collect.amount } : {}),
+        ...(dto.collect.transactionId ? { transactionId: dto.collect.transactionId } : {}),
+        ...(dto.collect.note ? { note: dto.collect.note } : {}),
+        actor,
+      });
+    }
+
+    return { invoice };
+  }
+
+  @Post('invoices/:id/record-payment')
+  @Roles(
+    Role.RECEPTIONIST,
+    Role.PHARMACIST,
+    Role.CLINIC_ADMIN,
+    Role.FINANCE_BILLING,
+    Role.SUPER_ADMIN
+  )
+  @RequireResourcePermission('payments', 'create')
+  async recordInvoicePayment(
+    @Param('id') invoiceId: string,
+    @Body() dto: RecordInvoicePaymentDto,
+    @Request() req?: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = this.requireClinicContext(req);
+    return this.billingService.recordInvoicePayment(invoiceId, clinicId, {
+      method: dto.method,
+      ...(dto.amount !== undefined ? { amount: dto.amount } : {}),
+      ...(dto.transactionId ? { transactionId: dto.transactionId } : {}),
+      ...(dto.note ? { note: dto.note } : {}),
+      actor: this.buildVisitActor(req),
+    });
+  }
+
+  @Get('patients/:patientId/bills')
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.RECEPTIONIST,
+    Role.PHARMACIST,
+    Role.NURSE,
+    Role.CLINIC_ADMIN,
+    Role.FINANCE_BILLING,
+    Role.SUPER_ADMIN,
+    Role.PATIENT
+  )
+  // NOTE: 'invoices:read' (not 'billing:read') so PHARMACIST — which has
+  // invoices:read but not billing:read in rbac.service.ts — can reach this
+  // route too. NURSE has neither permission today; granting NURSE
+  // 'invoices:read' (or 'billing:read') in rbac.service.ts is a follow-up
+  // this task could not make (rbac.service.ts is out of scope here).
+  @RequireResourcePermission('invoices', 'read')
+  async getPatientBills(
+    @Param('patientId') patientId: string,
+    @Request() req?: ClinicAuthenticatedRequest,
+    @Query('type') type?: string,
+    @Query('status') status?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string
+  ) {
+    const clinicId = this.requireClinicContext(req);
+    return this.billingService.getPatientBillHistory(
+      patientId,
+      clinicId,
+      {
+        ...(type ? { type } : {}),
+        ...(status ? { status } : {}),
+        ...(from ? { from } : {}),
+        ...(to ? { to } : {}),
+        ...(limit ? { limit: Number.parseInt(limit, 10) } : {}),
+        ...(offset ? { offset: Number.parseInt(offset, 10) } : {}),
+      },
+      this.buildVisitActor(req)
+    );
   }
 
   // ============ Payments ============
@@ -1038,7 +1174,13 @@ export class BillingController {
   // ============ Invoice PDF & WhatsApp ============
 
   @Post('invoices/:id/generate-pdf')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.RECEPTIONIST,
+    Role.PHARMACIST,
+    Role.FINANCE_BILLING
+  )
   @RequireResourcePermission('invoices', 'read')
   async generateInvoicePDF(@Param('id') invoiceId: string) {
     await this.queueService.addJob(
@@ -1078,7 +1220,8 @@ export class BillingController {
     Role.RECEPTIONIST,
     Role.PATIENT,
     Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR
+    Role.ASSISTANT_DOCTOR,
+    Role.PHARMACIST
   )
   @RequireResourcePermission('invoices', 'read')
   async downloadInvoicePDFById(
@@ -1159,14 +1302,11 @@ export class BillingController {
   @RequireResourcePermission('payments', 'create')
   async processSubscriptionPayment(
     @Param('id') subscriptionId: string,
-    @Query('provider') provider?: string,
     @Request() req?: ClinicAuthenticatedRequest
   ) {
-    const paymentProvider = this.parseAdminPaymentProvider(provider, req);
-
     const result = await this.billingService.processSubscriptionPayment(
       subscriptionId,
-      paymentProvider,
+      undefined,
       this.buildBillingAccessContext(req)
     );
     return {
@@ -1198,15 +1338,12 @@ export class BillingController {
   async processAppointmentPayment(
     @Param('id') appointmentId: string,
     @Body() body: { appointmentType: 'VIDEO_CALL' | 'IN_PERSON' | 'HOME_VISIT' },
-    @Query('provider') provider?: string,
     @Request() req?: ClinicAuthenticatedRequest
   ) {
-    const paymentProvider = this.parseAdminPaymentProvider(provider, req);
-
     const result = await this.billingService.processAppointmentPayment(
       appointmentId,
       body.appointmentType,
-      paymentProvider,
+      undefined,
       this.buildBillingAccessContext(req)
     );
     return {
@@ -1222,13 +1359,11 @@ export class BillingController {
   @RequireResourcePermission('payments', 'create')
   async processInvoicePayment(
     @Param('id') invoiceId: string,
-    @Query('provider') provider?: string,
     @Request() req?: ClinicAuthenticatedRequest
   ) {
-    const paymentProvider = this.parseAdminPaymentProvider(provider, req);
     const result = await this.billingService.processInvoicePayment(
       invoiceId,
-      paymentProvider,
+      undefined,
       this.buildBillingAccessContext(req)
     );
     return {

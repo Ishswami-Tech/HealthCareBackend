@@ -30,6 +30,12 @@ import type {
   ClinicLocationResponseDto,
 } from '@core/types/clinic.types';
 import type { PatientWithUser, Doctor, ClinicAdmin, Clinic } from '@core/types';
+
+/** Patient row for staff-facing lists, enriched with OPD visit counters. */
+export type DoctorPatientListItem = PatientWithUser & {
+  totalVisits: number;
+  lastVisit: Date | null;
+};
 import type { ClinicPatientOptions, ClinicPatientResult } from '@core/types/database.types';
 import type { AssignClinicAdminDto, ClinicStatsResponseDto } from '@dtos/clinic.dto';
 import type {
@@ -1656,7 +1662,7 @@ export class ClinicService {
     clinicId: string,
     _doctorUserId: string,
     options?: { search?: string; limit?: number; offset?: number }
-  ): Promise<{ patients: PatientWithUser[]; total: number }> {
+  ): Promise<{ patients: DoctorPatientListItem[]; total: number }> {
     const limit = Math.min(options?.limit || 50, 200);
     const offset = Math.max(options?.offset || 0, 0);
 
@@ -1681,6 +1687,10 @@ export class ClinicService {
             ],
           } as PrismaDelegateArgs,
           include: { user: true } as PrismaDelegateArgs,
+          // Stable ordering: without it Postgres returns rows in physical
+          // order, which changes after any update and makes pagination
+          // skip/duplicate patients.
+          orderBy: { createdAt: 'desc' } as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
         return result as unknown as PatientWithUser[];
       }
@@ -1703,10 +1713,66 @@ export class ClinicService {
         })
       : patients;
 
+    const page = filtered.slice(offset, offset + limit);
+    const visitStats = await this.getOpdVisitStats(
+      clinicId,
+      page.map(p => p.id)
+    );
+
     return {
-      patients: filtered.slice(offset, offset + limit),
+      patients: page.map(p => ({
+        ...p,
+        totalVisits: visitStats.get(p.id)?.totalVisits ?? 0,
+        lastVisit: visitStats.get(p.id)?.lastVisit ?? null,
+      })),
       total: filtered.length,
     };
+  }
+
+  /**
+   * OPD visit counters for the "Visits" column of staff patient lists:
+   * number of OPD registrations in this clinic and the most recent one.
+   */
+  private async getOpdVisitStats(
+    clinicId: string,
+    patientIds: string[]
+  ): Promise<Map<string, { totalVisits: number; lastVisit: Date | null }>> {
+    const stats = new Map<string, { totalVisits: number; lastVisit: Date | null }>();
+    if (patientIds.length === 0) return stats;
+
+    const rows = await this.databaseService.executeHealthcareRead<
+      Array<{
+        patientId: string;
+        _count: { _all: number };
+        _max: { registrationDate: Date | null };
+      }>
+    >(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        patientVisit: {
+          groupBy: (args: PrismaDelegateArgs) => Promise<
+            Array<{
+              patientId: string;
+              _count: { _all: number };
+              _max: { registrationDate: Date | null };
+            }>
+          >;
+        };
+      };
+      return typedClient.patientVisit.groupBy({
+        by: ['patientId'],
+        where: { clinicId, patientId: { in: patientIds } },
+        _count: { _all: true },
+        _max: { registrationDate: true },
+      } as PrismaDelegateArgs);
+    });
+
+    for (const row of rows) {
+      stats.set(row.patientId, {
+        totalVisits: row._count._all,
+        lastVisit: row._max.registrationDate,
+      });
+    }
+    return stats;
   }
 
   async getActiveLocations(clinicId: string): Promise<ClinicLocationResponseDto[]> {

@@ -101,6 +101,11 @@ export class DoctorsService {
           details: { fields: Object.keys(updateData) },
         }
       );
+
+      // Bust the getDoctorProfile cache added above — it wouldn't otherwise be
+      // invalidated by anything (invalidateClinicCache below only fires when
+      // clinicId is provided, and only busts clinic-scoped tags).
+      await this.cacheService.invalidateCacheByTag(`doctor:${userId}`);
     }
 
     if (data.clinicId) {
@@ -128,23 +133,37 @@ export class DoctorsService {
   }
 
   async getDoctorProfile(userId: string) {
-    return await this.databaseService.executeHealthcareRead(async client => {
-      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-        user: { findUnique: (args: PrismaDelegateArgs) => Promise<unknown> };
-      };
-      return await typedClient.user.findUnique({
-        where: { id: userId } as PrismaDelegateArgs,
-        include: {
-          doctor: {
+    // Same pattern as getAllDoctors below: reference data that changes only on an
+    // explicit profile edit. Tagged `doctor:${userId}` so it's busted both by
+    // createOrUpdateDoctor below and by CacheService.invalidateAppointmentCache
+    // (appointment writes already tag doctor:${doctorId}), and `user:${userId}`
+    // so any generic user-profile update also busts it.
+    return await this.cacheService.cache(
+      this.cacheService.getKeyFactory().fromTemplate('doctor:{userId}:profile', { userId }),
+      async () =>
+        this.databaseService.executeHealthcareRead(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+            user: { findUnique: (args: PrismaDelegateArgs) => Promise<unknown> };
+          };
+          return await typedClient.user.findUnique({
+            where: { id: userId } as PrismaDelegateArgs,
             include: {
-              clinics: {
-                include: { clinic: true },
+              doctor: {
+                include: {
+                  clinics: {
+                    include: { clinic: true },
+                  },
+                },
               },
-            },
-          },
-        } as PrismaDelegateArgs,
-      } as PrismaDelegateArgs);
-    });
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        }),
+      {
+        ttl: 3600,
+        enableSwr: true,
+        tags: [`doctor:${userId}`, `user:${userId}`],
+      }
+    );
   }
 
   async getAllDoctors(filters?: {

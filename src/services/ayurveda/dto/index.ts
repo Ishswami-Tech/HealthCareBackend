@@ -20,3 +20,10 @@ export {
   DoshaImbalanceResponseDto,
   AyurvedicTimelineResponseDto,
 } from './ayurveda.dto';
+
+export {
+  ClassicalExamType,
+  UpsertClassicalExamFindingDto,
+  UpsertClassicalExamFindingsDto,
+} from './classical-exam.dto';
+export type { ClassicalExamFindingResponse } from './classical-exam.dto';

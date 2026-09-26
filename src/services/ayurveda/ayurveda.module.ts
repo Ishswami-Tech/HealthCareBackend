@@ -20,6 +20,7 @@ import { AyurvedicDiagnosisService } from '@services/ayurveda/services/ayurvedic
 import { SampraptiService } from '@services/ayurveda/services/samprapti.service';
 import { DoshaImbalanceService } from '@services/ayurveda/services/dosha-imbalance.service';
 import { AyurvedicTimelineService } from '@services/ayurveda/services/ayurvedic-timeline.service';
+import { ClassicalExamService } from '@services/ayurveda/services/classical-exam.service';
 
 /**
  * NestJS module for Ayurvedic clinical data APIs.
@@ -50,7 +51,8 @@ import { AyurvedicTimelineService } from '@services/ayurveda/services/ayurvedic-
     SampraptiService,
     DoshaImbalanceService,
     AyurvedicTimelineService,
+    ClassicalExamService,
   ],
-  exports: [AyurvedaService],
+  exports: [AyurvedaService, ClassicalExamService],
 })
 export class AyurvedaModule {}

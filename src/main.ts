@@ -756,6 +756,20 @@ async function bootstrap() {
     // Set framework adapter in security service (if available)
     if (securityConfigService && frameworkAdapter) {
       securityConfigService.setFrameworkAdapter(frameworkAdapter);
+
+      // Register @fastify/multipart. This is NOT covered by
+      // configureProductionSecurity() (which is never called from this file) —
+      // without this, every file-upload route returns FST_ERR_CTP_INVALID_MEDIA_TYPE.
+      if (app) {
+        try {
+          await securityConfigService.configureMultipart(app);
+          logger.log('Multipart (file upload) support configured');
+        } catch (multipartError) {
+          logger.warn(
+            `Failed to configure multipart support: ${(multipartError as Error).message}`
+          );
+        }
+      }
     } else {
       if (!securityConfigService) {
         logger.warn('SecurityConfigService not available, skipping framework adapter setup');

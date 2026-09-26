@@ -23,6 +23,10 @@ export type UserCreateInput = {
   dateOfBirth?: Date;
   gender?: string;
   address?: string;
+  area?: string;
+  district?: string;
+  occupation?: string;
+  organization?: string;
   city?: string;
   state?: string;
   country?: string;
@@ -53,6 +57,10 @@ export type UserUpdateInput = {
   dateOfBirth?: Date;
   gender?: string;
   address?: string;
+  area?: string;
+  district?: string;
+  occupation?: string;
+  organization?: string;
   city?: string;
   state?: string;
   country?: string;

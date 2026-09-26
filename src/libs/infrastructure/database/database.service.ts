@@ -396,13 +396,24 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
         ? String(queryOptions.where['id'])
         : '';
 
-    const hasDiscriminatingParams =
+    const hasEntityShapeParams =
       'where' in cacheParams ||
       'select' in cacheParams ||
       'include' in cacheParams ||
       'orderBy' in cacheParams ||
       'page' in cacheParams ||
       'limit' in cacheParams;
+
+    // clinicId/userId alone were previously excluded here, so a call like
+    // `.clinicId(clinicId).useCache(true).build()` (no where/select/etc.) never
+    // got a cache key — caching silently never happened despite being requested.
+    // They're gated on an EXPLICIT useCache(true) (not just "not false") because
+    // clinicId/userId are also used throughout the codebase for row-level
+    // scoping/authorization, not always caching intent — this must not silently
+    // start caching calls that never asked for it.
+    const hasScopeParams = 'clinicId' in cacheParams || 'userId' in cacheParams;
+    const hasDiscriminatingParams =
+      hasEntityShapeParams || (hasScopeParams && queryOptions.useCache === true);
 
     const cacheKey =
       queryOptions.useCache !== false && this.queryCache && hasDiscriminatingParams

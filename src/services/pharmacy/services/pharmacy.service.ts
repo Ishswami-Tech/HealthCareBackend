@@ -6,6 +6,7 @@ import {
   Inject,
   forwardRef,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { DatabaseService } from '@infrastructure/database';
 import { EventService } from '@infrastructure/events/event.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -21,7 +22,7 @@ import {
 } from '@dtos/pharmacy.dto';
 import { LogLevel, LogType, AppointmentQueueCategory } from '@core/types';
 import { PrismaDelegateArgs, PrismaTransactionClientWithDelegates } from '@core/types/prisma.types';
-import { PaymentStatus } from '@core/types/enums.types';
+import { PaymentMethod, PaymentStatus } from '@core/types/enums.types';
 import { PaymentService } from '@payment/payment.service';
 import type { PaymentIntentOptions, PaymentResult } from '@core/types/payment.types';
 import { PaymentProvider } from '@core/types/payment.types';
@@ -103,8 +104,60 @@ type InventoryFilterOptions = {
   expiringDays?: number;
 };
 
+/**
+ * Minimal shape of BillingService this module depends on. Resolved lazily
+ * via ModuleRef (PharmacyModule does not import BillingModule, to avoid a
+ * cross-domain module dependency) instead of constructor-injected.
+ */
+interface PrescriptionInvoiceRecord {
+  id: string;
+  invoiceNumber: string;
+  status: string;
+  totalAmount: number;
+  prescriptionId: string | null;
+}
+
+interface BillingServiceLike {
+  ensurePrescriptionInvoice: (
+    prescriptionId: string,
+    clinicId: string,
+    actor?: { userId?: string; role?: string }
+  ) => Promise<PrescriptionInvoiceRecord>;
+  findPrescriptionInvoice: (
+    prescriptionId: string,
+    clinicId?: string
+  ) => Promise<PrescriptionInvoiceRecord | null>;
+  findPrescriptionInvoices: (
+    clinicId: string,
+    prescriptionIds: string[]
+  ) => Promise<Map<string, PrescriptionInvoiceRecord>>;
+  recordInvoicePayment: (
+    invoiceId: string,
+    clinicId: string,
+    options: {
+      method: PaymentMethod;
+      amount?: number;
+      transactionId?: string;
+      note?: string;
+      actor?: { userId?: string; role?: string };
+    }
+  ) => Promise<{ invoice: PrescriptionInvoiceRecord; payment: { id: string } }>;
+  markInvoiceAsPaid: (
+    id: string,
+    requester?: { userId?: string; role?: string; clinicId?: string },
+    options?: { skipWhatsApp?: boolean }
+  ) => Promise<unknown>;
+  updateInvoice: (
+    id: string,
+    data: { status: string },
+    requester?: { userId?: string; role?: string; clinicId?: string }
+  ) => Promise<unknown>;
+}
+
 @Injectable()
 export class PharmacyService {
+  private billingServiceRef: BillingServiceLike | null = null;
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly paymentService: PaymentService,
@@ -113,6 +166,7 @@ export class PharmacyService {
     private readonly appointmentQueueService: AppointmentQueueService,
     private readonly inventoryService: InventoryService,
     private readonly expiryAlertService: ExpiryAlertService,
+    private readonly moduleRef: ModuleRef,
     @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService
   ) {}
@@ -120,6 +174,62 @@ export class PharmacyService {
   private static readonly COMPLETED_PAYMENT_STATUS = 'COMPLETED';
   private static readonly PAYMENT_FOR_PRESCRIPTION_DISPENSE = 'PRESCRIPTION_DISPENSE';
   private static readonly MEDICINE_QUEUE_DOMAIN = 'medicine-desk';
+
+  /**
+   * Lazily resolves BillingService by its DI token instead of importing
+   * BillingModule (which would create a cross-domain module dependency).
+   * Returns null — rather than throwing — when unavailable so pharmacy
+   * payment/dispense flows degrade gracefully (no invoice/printable receipt)
+   * instead of hard-failing on a wiring issue.
+   */
+  private getBillingService(): BillingServiceLike | null {
+    if (!this.billingServiceRef) {
+      this.billingServiceRef = this.moduleRef.get<BillingServiceLike>('BILLING_SERVICE', {
+        strict: false,
+      });
+    }
+    return this.billingServiceRef;
+  }
+
+  /**
+   * Best-effort: creates (or fetches) the PHARMACY invoice for a
+   * prescription. Never throws — a billing hiccup must not block a cash
+   * collection or dispense that the pharmacist is actively performing.
+   */
+  private async ensurePrescriptionInvoiceSafe(
+    prescriptionId: string,
+    clinicId: string,
+    actor?: { userId?: string; role?: string }
+  ): Promise<PrescriptionInvoiceRecord | null> {
+    const billingService = this.getBillingService();
+    if (!billingService) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'BILLING_SERVICE unavailable; skipping pharmacy invoice creation',
+        'PharmacyService',
+        { prescriptionId, clinicId }
+      );
+      return null;
+    }
+
+    try {
+      return await billingService.ensurePrescriptionInvoice(prescriptionId, clinicId, actor);
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to ensure pharmacy invoice for prescription',
+        'PharmacyService',
+        {
+          prescriptionId,
+          clinicId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      return null;
+    }
+  }
 
   private isSupportedPaymentProvider(provider: string): provider is PaymentProvider {
     return (
@@ -507,6 +617,7 @@ export class PharmacyService {
       prescribedAt?: Date | string | null;
       locationName?: string | null;
       doctorRole?: string;
+      invoice?: { id: string; invoiceNumber: string; status: string } | null;
     }
   ) {
     const queuePosition =
@@ -540,6 +651,10 @@ export class PharmacyService {
       totalInQueue: context.totalInQueue,
       patientName: context.patientName,
       doctorName: context.doctorName,
+      invoiceId: context.invoice?.id || null,
+      invoiceNumber: context.invoice?.invoiceNumber || null,
+      invoiceStatus: context.invoice?.status || null,
+      downloadable: Boolean(context.invoice),
       patientUserId: prescription.patient?.user?.id || null,
       patientPhone: prescription.patient?.user?.phone || null,
       patientEmail: prescription.patient?.user?.email || null,
@@ -678,6 +793,12 @@ export class PharmacyService {
     }
 
     const payments = clinicId ? await this.databaseService.findPaymentsSafe({ clinicId }) : [];
+    const invoicesByPrescriptionId = clinicId
+      ? await this.findPrescriptionInvoicesSafe(
+          clinicId,
+          prescriptions.map(prescription => prescription.id)
+        )
+      : new Map<string, { id: string; invoiceNumber: string; status: string }>();
     await this.syncMedicineDeskQueueEntries(prescriptions);
 
     const queueByClinic = new Map<
@@ -735,8 +856,25 @@ export class PharmacyService {
         prescribedAt: prescription.date || null,
         locationName: prescription.location?.name || null,
         doctorRole: String(prescription.doctor?.user?.role || 'DOCTOR').toUpperCase(),
+        invoice: invoicesByPrescriptionId.get(prescription.id) ?? null,
       });
     });
+  }
+
+  /** Best-effort batched invoice lookup — never throws. */
+  private async findPrescriptionInvoicesSafe(
+    clinicId: string,
+    prescriptionIds: string[]
+  ): Promise<Map<string, PrescriptionInvoiceRecord>> {
+    const billingService = this.getBillingService();
+    if (!billingService) {
+      return new Map();
+    }
+    try {
+      return await billingService.findPrescriptionInvoices(clinicId, prescriptionIds);
+    } catch {
+      return new Map();
+    }
   }
 
   private async emitMedicineDeskQueueUpdated(
@@ -744,6 +882,22 @@ export class PharmacyService {
     prescriptionId: string,
     action: 'CREATED' | 'PAYMENT_UPDATED' | 'DISPENSED' | 'PARTIALLY_DISPENSED' | 'CANCELLED'
   ) {
+    // GET /pharmacy/prescriptions is cached (tags: pharmacy, prescriptions).
+    // Every queue state change must bust it or the Prescription Management
+    // page keeps showing "Payment pending" after a payment lands.
+    try {
+      await this.cacheService.invalidateCacheByTag('prescriptions');
+      await this.cacheService.invalidateCacheByTag('pharmacy');
+    } catch (cacheError) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'Failed to invalidate prescription list cache',
+        'PharmacyService',
+        { prescriptionId, action, error: (cacheError as Error).message }
+      );
+    }
+
     try {
       const prescription = await this.getPrescriptionByIdForAccess(prescriptionId, clinicId);
       const queue = await this.getMedicineDeskQueue(clinicId);
@@ -1158,6 +1312,7 @@ export class PharmacyService {
             clinicId: clinicId,
             notes: dto.notes,
             diagnosis: dto.diagnosis,
+            ...(dto.visitId && { visitId: dto.visitId }),
             items: {
               create: dto.items.map(item => ({
                 medicineId: item.medicineId,
@@ -1234,15 +1389,15 @@ export class PharmacyService {
     });
 
     if (patient?.userId) {
-      await this.cacheService.invalidateCacheByTag(`ehr:${patient.userId}`);
-      // The GET /ehr/comprehensive/:userId route is cached directly by
-      // HealthcareCacheInterceptor (@PatientCache), which stores PHI responses
-      // with a plain set() call rather than through the tag-based cache()
-      // wrapper. Its key format is `{keyTemplate}:{handlerName}`, so it must
-      // be deleted directly — tag invalidation alone does not reach it.
-      await this.cacheService.del(
-        `ehr:comprehensive:${patient.userId}:getComprehensiveHealthRecord`
-      );
+      // Service-level EHR caches are tagged `ehr:{userId}`; controller-level
+      // @PatientCache entries (incl. the comprehensive record) are tagged
+      // `user:{userId}`. Both are cleared; the explicit del() is kept as a
+      // belt-and-braces guard for entries written before tag indexing existed.
+      await Promise.all([
+        this.cacheService.invalidateCacheByTag(`ehr:${patient.userId}`),
+        this.cacheService.invalidateCacheByTag(`user:${patient.userId}`),
+        this.cacheService.del(`ehr:comprehensive:${patient.userId}:getComprehensiveHealthRecord`),
+      ]);
     }
   }
 
@@ -1759,12 +1914,67 @@ export class PharmacyService {
         itemCount: dto.items?.length || 0,
         userId: 'system',
       });
+
+      if (String(dispenseSummary.status || '').toUpperCase() === 'FILLED') {
+        await this.ensureDispensedPrescriptionInvoiceSettled(
+          prescriptionId,
+          resolvedClinicId,
+          enrichedPrescription as { totalAmount?: number; paidAmount?: number }
+        );
+      }
     }
 
     return {
       ...enrichedPrescription,
       dispenseSummary,
     };
+  }
+
+  /**
+   * Runs after a prescription reaches FILLED: ensures the PHARMACY invoice
+   * exists (a fully-dispensed prescription is always billable, even if no
+   * online/cash payment was collected up front — e.g. a zero-cost or
+   * insurance-covered dispense) and, when completed payments already cover
+   * the total, marks it PAID so Bill History and the printable invoice
+   * reflect reality immediately instead of waiting on a separate call.
+   * Best-effort by design (see `ensurePrescriptionInvoiceSafe`).
+   */
+  private async ensureDispensedPrescriptionInvoiceSettled(
+    prescriptionId: string,
+    clinicId: string,
+    paymentState: { totalAmount?: number; paidAmount?: number }
+  ): Promise<void> {
+    const invoice = await this.ensurePrescriptionInvoiceSafe(prescriptionId, clinicId);
+    if (!invoice || String(invoice.status).toUpperCase() === 'PAID') {
+      return;
+    }
+
+    const totalAmount = Number(paymentState.totalAmount ?? invoice.totalAmount ?? 0);
+    const paidAmount = Number(paymentState.paidAmount ?? 0);
+    if (totalAmount > 0 && paidAmount + 0.005 < totalAmount) {
+      return;
+    }
+
+    const billingService = this.getBillingService();
+    if (!billingService) {
+      return;
+    }
+
+    try {
+      await billingService.markInvoiceAsPaid(invoice.id, { clinicId }, { skipWhatsApp: true });
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to mark pharmacy invoice as paid after dispense',
+        'PharmacyService',
+        {
+          prescriptionId,
+          invoiceId: invoice.id,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+    }
   }
 
   async reversePrescriptionDispense(
@@ -2031,12 +2241,68 @@ export class PharmacyService {
         prescriptionId,
         action: 'PRESCRIPTION_REVERSED',
       });
+
+      await this.voidPrescriptionInvoiceIfUnpaid(prescriptionId, resolvedClinicId);
     }
 
     return {
       ...hydratedPrescription,
       reversalSummary,
     };
+  }
+
+  /**
+   * A dispense reversal means the pharmacy bill is no longer valid as
+   * billed. If no COMPLETED payment has been collected against it yet, void
+   * it outright; if it was already paid, leave it alone — a paid invoice
+   * needs a refund workflow, not a silent void.
+   */
+  private async voidPrescriptionInvoiceIfUnpaid(
+    prescriptionId: string,
+    clinicId: string
+  ): Promise<void> {
+    const billingService = this.getBillingService();
+    if (!billingService) {
+      return;
+    }
+
+    try {
+      const invoice = await billingService.findPrescriptionInvoice(prescriptionId, clinicId);
+      if (!invoice) {
+        return;
+      }
+
+      const status = String(invoice.status).toUpperCase();
+      if (status === 'PAID' || status === 'VOID') {
+        return;
+      }
+
+      const payments = await this.databaseService.findPaymentsSafe({ clinicId });
+      const hasCompletedPayment = payments.some(payment => {
+        const metadata = this.asRecord(payment.metadata);
+        return (
+          metadata?.['prescriptionId'] === prescriptionId &&
+          String(payment.status).toUpperCase() === PharmacyService.COMPLETED_PAYMENT_STATUS
+        );
+      });
+      if (hasCompletedPayment) {
+        return;
+      }
+
+      await billingService.updateInvoice(invoice.id, { status: 'VOID' }, { clinicId });
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to void unpaid pharmacy invoice after dispense reversal',
+        'PharmacyService',
+        {
+          prescriptionId,
+          clinicId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+    }
   }
 
   async getPharmacyBatchAudit(
@@ -2443,6 +2709,7 @@ export class PharmacyService {
       clinicId: prescription.clinicId,
     });
     const paymentState = this.buildPrescriptionPaymentState(prescription, payments);
+    const invoice = await this.findPrescriptionInvoiceSafe(prescription.id, clinicId);
 
     return {
       prescriptionId: prescription.id,
@@ -2452,7 +2719,31 @@ export class PharmacyService {
       pendingAmount: paymentState.pendingAmount,
       paymentStatus: paymentState.paymentStatus,
       canDispense: paymentState.canDispense,
+      ...(invoice && {
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        invoiceStatus: invoice.status,
+      }),
     };
+  }
+
+  /** Best-effort read-only invoice lookup — never throws. */
+  private async findPrescriptionInvoiceSafe(
+    prescriptionId: string,
+    clinicId?: string
+  ): Promise<PrescriptionInvoiceRecord | null> {
+    if (!clinicId) {
+      return null;
+    }
+    const billingService = this.getBillingService();
+    if (!billingService) {
+      return null;
+    }
+    try {
+      return await billingService.findPrescriptionInvoice(prescriptionId, clinicId);
+    } catch {
+      return null;
+    }
   }
 
   async createPrescriptionPaymentIntent(
@@ -2502,10 +2793,17 @@ export class PharmacyService {
       normalizedProvider
     );
 
+    const invoice = await this.ensurePrescriptionInvoiceSafe(
+      prescription.id,
+      prescription.clinicId,
+      actor
+    );
+
     const paymentRecord = await this.databaseService.createPaymentSafe({
       amount: paymentState.pendingAmount,
       clinicId: prescription.clinicId,
       ...(prescription.patient?.user?.id && { userId: prescription.patient.user.id }),
+      ...(invoice && { invoiceId: invoice.id }),
       status: PaymentStatus.PENDING,
       ...(paymentIntentResult.paymentId || paymentIntentResult.orderId
         ? { transactionId: paymentIntentResult.paymentId || paymentIntentResult.orderId }
@@ -2529,6 +2827,76 @@ export class PharmacyService {
       prescriptionId: prescription.id,
       paymentId: paymentRecord.id,
       paymentIntent: paymentIntentResult,
+      ...(invoice && { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber }),
+    };
+  }
+
+  /**
+   * Records an over-the-counter cash payment so the medicine desk can
+   * dispense. Skips the online gateway entirely: the dispense gate
+   * (`buildPrescriptionPaymentState`) only looks for COMPLETED payments
+   * linked to the prescription, regardless of how they were collected.
+   */
+  async recordCashPrescriptionPayment(
+    prescriptionId: string,
+    clinicId: string | undefined,
+    actor: { userId?: string; role?: string },
+    amount?: number
+  ) {
+    if (!clinicId) throw new BadRequestException('Clinic ID is required');
+
+    const prescription = await this.getPrescriptionByIdForAccess(prescriptionId, clinicId);
+
+    if (String(prescription.status) === 'CANCELLED') {
+      throw new BadRequestException('Cancelled prescriptions cannot be paid');
+    }
+    if (String(prescription.status) === 'FILLED') {
+      throw new BadRequestException('Prescription has already been dispensed');
+    }
+
+    const paymentState = await this.getPrescriptionPaymentSummary(prescriptionId, clinicId, actor);
+    if (paymentState.pendingAmount <= 0) {
+      return { alreadyPaid: true, ...paymentState, prescriptionId };
+    }
+
+    const cashAmount = amount !== undefined ? Number(amount) : paymentState.pendingAmount;
+    if (!Number.isFinite(cashAmount) || cashAmount <= 0) {
+      throw new BadRequestException('Cash amount must be greater than zero');
+    }
+    if (cashAmount > paymentState.pendingAmount) {
+      throw new BadRequestException(
+        `Cash amount exceeds pending amount of INR ${paymentState.pendingAmount}`
+      );
+    }
+
+    const invoice = await this.ensurePrescriptionInvoiceSafe(prescription.id, clinicId, actor);
+
+    const paymentRecord = await this.databaseService.createPaymentSafe({
+      amount: Number(cashAmount.toFixed(2)),
+      clinicId: prescription.clinicId,
+      ...(prescription.patient?.user?.id && { userId: prescription.patient.user.id }),
+      ...(invoice && { invoiceId: invoice.id }),
+      status: PaymentStatus.COMPLETED,
+      method: PaymentMethod.CASH,
+      description: `Cash payment for prescription ${prescription.id}`,
+      metadata: {
+        ...this.getPrescriptionPaymentMetadata(prescription.id),
+        paymentMethod: PaymentMethod.CASH,
+        collectedBy: actor.userId ?? null,
+        collectedByRole: actor.role ?? null,
+        collectedAt: new Date().toISOString(),
+      },
+    });
+
+    await this.emitMedicineDeskQueueUpdated(clinicId, prescription.id, 'PAYMENT_UPDATED');
+
+    const updatedState = await this.getPrescriptionPaymentSummary(prescriptionId, clinicId, actor);
+    return {
+      ...updatedState,
+      prescriptionId: prescription.id,
+      paymentId: paymentRecord.id,
+      method: PaymentMethod.CASH,
+      ...(invoice && { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber }),
     };
   }
 }

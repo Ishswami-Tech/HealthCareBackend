@@ -494,10 +494,25 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   }
 
   async set<T>(key: string, value: T, ttl?: number): Promise<void>;
-  async set<T>(key: string, value: T, ttl?: { ttl?: number } | number): Promise<void> {
+  async set<T>(
+    key: string,
+    value: T,
+    ttl?: { ttl?: number; tags?: readonly string[] } | number
+  ): Promise<void>;
+  async set<T>(
+    key: string,
+    value: T,
+    ttl?: { ttl?: number; tags?: readonly string[] } | number
+  ): Promise<void> {
     this.ensureConfigInitialized();
     const resolvedTtl = typeof ttl === 'number' ? ttl : ttl?.ttl;
-    const options: CacheOperationOptions = resolvedTtl !== undefined ? { ttl: resolvedTtl } : {};
+    const resolvedTags = typeof ttl === 'number' ? undefined : ttl?.tags;
+    // Tags are registered in the repository's tag index so that
+    // invalidateCacheByTag() reaches entries written via set() as well as cache().
+    const options: CacheOperationOptions = {
+      ...(resolvedTtl !== undefined ? { ttl: resolvedTtl } : {}),
+      ...(resolvedTags && resolvedTags.length > 0 ? { tags: [...resolvedTags] } : {}),
+    };
 
     // Set in L2 (distributed cache)
     await this.cacheRepository.set(key, value, options);
@@ -644,6 +659,13 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
     if (patientId) {
       patterns.push(this.keyFactory.patient(patientId, clinicId, '*'));
+      // The patient dashboard summary (PatientsService.getDashboardSummary) is tagged
+      // `user:${patientId}` and composes appointment data — without this, completing
+      // or cancelling an appointment left the dashboard's appointment fields stale
+      // until the dashboard cache's own TTL expired. Same bug class as the payment
+      // handoff staleness fixed earlier: an appointment write path that didn't bust
+      // every cache tagged with that user.
+      tags.push(`user:${patientId}`);
     }
 
     if (doctorId) {

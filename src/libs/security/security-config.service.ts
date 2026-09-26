@@ -194,12 +194,20 @@ export class SecurityConfigService {
   }
 
   /**
-   * Configure multipart form data handling
+   * Configure multipart form data handling (file uploads via `@fastify/multipart`).
+   *
+   * Public (not just called from `configureProductionSecurity`): every file-upload
+   * route in the app (`patients/:id/documents`, `patient-documents/investigations`,
+   * `patient-documents/documents`, ...) depends on this plugin being registered,
+   * and `configureProductionSecurity` itself is otherwise never invoked from
+   * `main.ts` — without a standalone call here, `@fastify/multipart` is never
+   * registered at all and every multipart upload fails with
+   * `FST_ERR_CTP_INVALID_MEDIA_TYPE`, in every environment, not just production.
    *
    * @param app - NestJS application instance
    * @returns Promise<void>
    */
-  private async configureMultipart(app: INestApplication): Promise<void> {
+  async configureMultipart(app: INestApplication): Promise<void> {
     const adapter = this.getFastifyAdapter();
     await adapter.registerMultipart(app, {
       limits: {

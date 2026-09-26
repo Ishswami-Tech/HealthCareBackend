@@ -2991,10 +2991,12 @@ export class AppointmentsService {
       }
     );
 
-    if (_role === 'PATIENT') {
-      return this.coreAppointmentService.getAppointments(filters, context, page, limit);
-    }
-
+    // PATIENT used to bypass this cache entirely (every my-appointments load hit
+    // Postgres uncached). That was because CacheService.invalidateAppointmentCache
+    // didn't bust `user:${patientId}` on status changes, so a completed/cancelled
+    // appointment could show stale here. That tag is now included (see
+    // cache.service.ts invalidateAppointmentCache), so the cache below — already
+    // keyed and tagged per-user — is safe for patients too.
     return this.cacheService.cache(
       cacheKey,
       () => this.coreAppointmentService.getAppointments(filters, context, page, limit),

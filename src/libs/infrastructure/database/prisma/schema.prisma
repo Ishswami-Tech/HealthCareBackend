@@ -26,10 +26,14 @@ model User {
   gender                     String?
   dateOfBirth                DateTime?
   address                    String?
+  area                       String?
+  district                   String?
   city                       String?
   state                      String?
   country                    String?
   zipCode                    String?
+  occupation                 String?
+  organization               String?
   emergencyContact           String?
   isVerified                 Boolean                   @default(false)
   isActive                   Boolean                   @default(true)
@@ -753,6 +757,274 @@ model Patient {
   @@index([registeredByDoctorId])
 }
 
+// OPD registration / encounter. A patient can have many visits over their
+// lifetime, each with its own OPD number generated at registration time.
+// Loosely coupled by plain string FKs (no Prisma @relation), matching the
+// convention already used by the lowercase Ayurveda models below.
+model PatientVisit {
+  id                String            @id @default(uuid())
+  opdNumber         String
+  registrationDate  DateTime          @default(now())
+  patientId         String
+  clinicId          String
+  doctorId          String?
+  specialCaseFlags  SpecialCaseFlag[]
+  internationalId   String?
+  presentIllness    String?
+  presentComplaints String?
+  knownCaseOf       String?
+  pastHistoryNotes  String?
+  habits            Json?
+  nidra             String?
+  nidraNotes        String?
+  foodAllergyNotes  String?
+  drugAllergyNotes  String?
+  createdBy         String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@unique([clinicId, opdNumber])
+  @@index([patientId])
+  @@index([clinicId])
+  @@map("patient_visits")
+}
+
+// One row per visit: General Examination + Physical Measurement numeric
+// fields. Kept separate from the generic `Vital` model on purpose — `Vital`
+// is treated as a longitudinal time series elsewhere (health trends), and
+// mixing one-off intake snapshots into it risks cross-contaminating that
+// series (the same class of bug as the EHR cache-key collision fixed
+// earlier this session).
+model visitVitalsExamination {
+  id            String   @id @default(uuid())
+  visitId       String   @unique
+  heightCm      Float?
+  weightKg      Float?
+  bmi           Float?
+  temperatureC  Float?
+  pulse         Int?
+  bpSystolic    Int?
+  bpDiastolic   Int?
+  rr            Int?
+  painScore     Int?
+  fbs           Float?
+  ppbs          Float?
+  pbs           Float?
+  spo2          Float?
+  sleep         String?
+  bowel         String?
+  appetite      String?
+  neck          Float?
+  chest         Float?
+  upperAbs      Float?
+  waist         Float?
+  lowerAbs      Float?
+  hips          Float?
+  thighLeft     Float?
+  thighRight    Float?
+  calfLeft      Float?
+  calfRight     Float?
+  upperArmLeft  Float?
+  upperArmRight Float?
+  recordedBy    String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("visit_vitals_examinations")
+}
+
+// Per-clinic OPD number counter. Allocation is a single
+// INSERT ... ON CONFLICT ... RETURNING statement, which is atomic on its own.
+// That matters because executeHealthcareWrite does not wrap its callback in
+// one transaction, so a transaction-scoped advisory lock would not serialize
+// concurrent registrations.
+model opdSequence {
+  clinicId  String   @id
+  lastValue Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@map("opd_sequences")
+}
+
+// ---------------------------------------------------------------------------
+// Case-sheet phase 2: Therapy / Panchakarma, Diet chart, Investigations &
+// Documents. All visit-scoped, plain string FKs, snake_case tables — same
+// conventions as PatientVisit / classicalExamFinding above.
+// ---------------------------------------------------------------------------
+
+// A therapy course planned by the doctor for one OPD visit (e.g. Abhyanga ×
+// 7 days). Sessions are recorded against it by the therapist. The
+// appointment-bound `TherapySession` model is a different concept and is
+// intentionally not reused.
+model visitTherapyPlan {
+  id                String        @id @default(uuid())
+  visitId           String
+  patientId         String
+  clinicId          String
+  procedure         TreatmentType
+  procedureLabel    String?
+  plannedSessions   Int
+  completedSessions Int           @default(0)
+  frequency         String?
+  startDate         DateTime
+  endDate           DateTime?
+  therapistUserId   String?
+  medicinesUsed     String?
+  notes             String?
+  status            TherapyStatus @default(SCHEDULED)
+  createdBy         String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([visitId])
+  @@index([patientId, clinicId])
+  @@index([therapistUserId, status])
+  @@map("visit_therapy_plans")
+}
+
+// One performed session of a therapy plan. sessionNumber is allocated
+// atomically (UPDATE ... RETURNING on the plan) and guarded by the unique.
+model visitTherapySession {
+  id              String        @id @default(uuid())
+  planId          String
+  visitId         String
+  clinicId        String
+  sessionNumber   Int
+  sessionDate     DateTime
+  durationMinutes Int?
+  observations    String?
+  patientResponse String?
+  painScore       Int?
+  status          TherapyStatus @default(COMPLETED)
+  performedBy     String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([planId, sessionNumber])
+  @@index([planId])
+  @@index([performedBy, sessionDate])
+  @@map("visit_therapy_sessions")
+}
+
+enum DietAdviceCategory {
+  TAKE
+  AVOID
+  OCCASIONAL
+}
+
+// Food master for the diet-chart picker. clinicId NULL = system seed row,
+// otherwise a clinic-specific addition. Labels in the four supported
+// languages are fixed columns (validated, ILIKE-searchable across scripts).
+model dietChartFood {
+  id        String   @id @default(uuid())
+  clinicId  String?
+  key       String
+  nameEn    String
+  nameGu    String?
+  nameHi    String?
+  nameMr    String?
+  group     String?
+  isActive  Boolean  @default(true)
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([clinicId, key])
+  @@index([clinicId])
+  @@map("diet_chart_foods")
+}
+
+// One diet-chart header per OPD visit (print language + free notes).
+model visitDietChart {
+  id            String   @id @default(uuid())
+  visitId       String   @unique
+  patientId     String
+  clinicId      String
+  printLanguage String   @default("en")
+  notes         String?
+  recordedBy    String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([patientId])
+  @@index([clinicId])
+  @@map("visit_diet_charts")
+}
+
+// Take / Avoid / Occasional items. Labels are SNAPSHOTS taken at prescribing
+// time so later edits to the food master never rewrite an issued chart.
+model visitDietChartItem {
+  id         String             @id @default(uuid())
+  visitId    String
+  category   DietAdviceCategory
+  foodId     String?
+  nameEn     String
+  nameGu     String?
+  nameHi     String?
+  nameMr     String?
+  note       String?
+  sortOrder  Int                @default(0)
+  recordedBy String?
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+
+  @@index([visitId])
+  @@index([visitId, category])
+  @@map("visit_diet_chart_items")
+}
+
+enum PatientDocumentCategory {
+  INVESTIGATION
+  DOCUMENT
+}
+
+enum PatientDocumentMediaKind {
+  IMAGE
+  PDF
+  AUDIO
+  VIDEO
+  OTHER
+}
+
+// Uploaded patient files (X-ray / lab / MRI reports, ID proofs, consent
+// forms, audio/video). Always stored PRIVATELY under storageKey; never a
+// public URL. Soft-deleted (deletedAt) so the object is kept for retention.
+model patientDocument {
+  id              String                   @id @default(uuid())
+  clinicId        String
+  patientId       String
+  visitId         String?
+  category        PatientDocumentCategory
+  subType         String?
+  title           String
+  notes           String?
+  reportDate      DateTime?
+  fileName        String
+  mimeType        String
+  mediaKind       PatientDocumentMediaKind @default(OTHER)
+  fileSize        Int
+  storageKey      String
+  storageProvider String
+  checksum        String?
+  labReportId     String?
+  uploadedBy      String
+  uploadedByRole  String?
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+  deletedAt       DateTime?
+  deletedBy       String?
+
+  @@index([clinicId, patientId, category, deletedAt])
+  @@index([visitId])
+  @@map("patient_documents")
+}
+
+enum SpecialCaseFlag {
+  MINOR
+  PHYSICAL_HANDICAP
+  PREGNANT_OR_SENIOR_CITIZEN
+}
+
 model FamilyMember {
   id              String        @id @default(uuid())
   patientId       String
@@ -907,6 +1179,9 @@ model Prescription {
   notes      String?
   clinicId   String
   locationId String?
+  // Optional link to the OPD visit the prescription was written in (plain
+  // string FK), so pharmacy bills group under the visit in Bill History.
+  visitId    String?
   doctor     Doctor             @relation(fields: [doctorId], references: [id])
   patient    Patient            @relation(fields: [patientId], references: [id])
   location   ClinicLocation?    @relation(fields: [locationId], references: [id])
@@ -914,6 +1189,7 @@ model Prescription {
 
   @@index([clinicId])
   @@index([locationId])
+  @@index([visitId])
 }
 
 model PrescriptionItem {
@@ -1021,6 +1297,7 @@ model Payment {
   @@index([userId])
   @@index([status])
   @@index([subscriptionId])
+  @@index([invoiceId])
 }
 
 model Subscription {
@@ -1099,15 +1376,39 @@ model Invoice {
   whatsappSentAt  DateTime?
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
+  // Bill-history links (plain string FKs, no @relation — same convention as
+  // patient_visits). userId stays the User.id used by the legacy queries;
+  // patientId is the Patient.id the OPD case-sheet is keyed on.
+  billType        BillType         @default(OTHER)
+  patientId       String?
+  visitId         String?
+  prescriptionId  String?
+  appointmentId   String?
   subscription    Subscription?    @relation(fields: [subscriptionId], references: [id])
   payments        Payment[]
   insuranceClaims InsuranceClaim[]
 
+  // One consultation bill per OPD visit and one pharmacy bill per
+  // prescription (NULLs are distinct in Postgres, so other rows are unaffected).
+  @@unique([visitId, billType])
+  @@unique([prescriptionId, billType])
   @@index([userId])
   @@index([subscriptionId])
   @@index([clinicId])
   @@index([status])
   @@index([dueDate])
+  @@index([patientId, createdAt])
+  @@index([clinicId, patientId])
+}
+
+// Kind of bill an Invoice represents; drives the patient "Bill History" tab.
+enum BillType {
+  CONSULTATION
+  PHARMACY
+  APPOINTMENT
+  SUBSCRIPTION
+  IPD
+  OTHER
 }
 
 model ClinicExpense {
@@ -1427,6 +1728,7 @@ model MedicalHistory {
   id        String   @id @default(uuid())
   userId    String
   clinicId  String?
+  visitId   String?
   condition String
   diagnosis String?
   treatment String?
@@ -1440,6 +1742,7 @@ model MedicalHistory {
   @@index([userId])
   @@index([clinicId])
   @@index([doctorId])
+  @@index([visitId])
 }
 
 model LabReport {
@@ -1639,6 +1942,38 @@ model nadiPariksha {
   @@map("nadi_pariksha_records")
 }
 
+// One row per classical-examination category per visit (e.g. Ashtavidha
+// Pariksha's "jihva" category, or Personal History's "diet" category).
+// `SAMPRAPTI_GHATAKA` names the pathogenesis-*components* checklist taken at
+// intake — deliberately distinct from `sampraptiStage` above, which tracks
+// the six Shatkriyakala disease-progression *stages* over time. Same
+// classical name, unrelated data and lifecycle — do not merge them.
+model classicalExamFinding {
+  id              String            @id @default(uuid())
+  visitId         String
+  examType        ClassicalExamType
+  categoryKey     String
+  selectedOptions String[]
+  remark          String?
+  recordedBy      String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([visitId, examType, categoryKey])
+  @@index([visitId])
+  @@index([examType])
+  @@map("classical_exam_findings")
+}
+
+enum ClassicalExamType {
+  ASHTAVIDHA_PARIKSHA
+  DASHAVIDHA_PARIKSHA
+  SROTAS_PARIKSHA
+  SAMPRAPTI_GHATAKA
+  PAIN_ASSESSMENT
+  PERSONAL_HISTORY
+}
+
 model doshaImbalance {
   id                String   @id @default(uuid())
   patientId         String
@@ -1778,6 +2113,7 @@ model FamilyHistory {
   clinicId     String?
   relation     String
   condition    String
+  duration     String?
   diagnosedAge Int?
   doctorId     String?
   notes        String?
@@ -1852,6 +2188,7 @@ model Medication {
   id           String    @id @default(uuid())
   userId       String
   clinicId     String?
+  visitId      String?
   name         String
   dosage       String
   frequency    String
@@ -1870,6 +2207,7 @@ model Medication {
   @@index([userId])
   @@index([clinicId])
   @@index([doctorId])
+  @@index([visitId])
 }
 
 model DietaryRestriction {

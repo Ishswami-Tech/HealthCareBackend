@@ -11,6 +11,7 @@ import {
   Min,
   IsDateString,
   IsEmail,
+  MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -304,6 +305,38 @@ export class QuickRegisterPatientDto {
  * @class UpdatePatientDto
  */
 export class UpdatePatientDto {
+  // Registration-desk demographics (stored on the User row; editable from the
+  // OPD case-sheet "Basic Details" panel by clinic staff).
+  @ApiPropertyOptional({ example: '12 Shivaji Nagar' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  address?: string;
+
+  @ApiPropertyOptional({ example: 'Kothrud' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  area?: string;
+
+  @ApiPropertyOptional({ example: 'Pune' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  district?: string;
+
+  @ApiPropertyOptional({ example: 'Teacher' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  occupation?: string;
+
+  @ApiPropertyOptional({ example: 'Sunrise School' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  organization?: string;
+
   @ApiPropertyOptional({ example: '1990-01-15' })
   @IsOptional()
   @IsString()
