@@ -4,7 +4,7 @@
  * @description Centralized Electronic Health Record Data Transfer Objects
  */
 
-import { IsString, IsOptional, IsDateString } from 'class-validator';
+import { IsString, IsOptional, IsDateString, IsInt, Min } from 'class-validator';
 import { IsClinicId } from '@core/decorators/clinic-id.validator';
 import type { TreatmentPlanDto } from './appointment.dto';
 import type {
@@ -554,6 +554,66 @@ export class UpdateImmunizationDto {
   @IsOptional()
   @IsString()
   location?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+// Family History DTOs
+export class CreateFamilyHistoryDto {
+  @IsString()
+  userId!: string;
+
+  @IsOptional()
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
+  clinicId?: string;
+
+  @IsString()
+  relation!: string;
+
+  @IsString()
+  condition!: string;
+
+  @IsOptional()
+  @IsString()
+  duration?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  diagnosedAge?: number;
+
+  @IsOptional()
+  @IsString()
+  doctorId?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+export class UpdateFamilyHistoryDto {
+  @IsOptional()
+  @IsString()
+  relation?: string;
+
+  @IsOptional()
+  @IsString()
+  condition?: string;
+
+  @IsOptional()
+  @IsString()
+  duration?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  diagnosedAge?: number;
+
+  @IsOptional()
+  @IsString()
+  doctorId?: string;
 
   @IsOptional()
   @IsString()

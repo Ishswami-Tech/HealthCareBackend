@@ -26,10 +26,14 @@ model User {
   gender                     String?
   dateOfBirth                DateTime?
   address                    String?
+  area                       String?
+  district                   String?
   city                       String?
   state                      String?
   country                    String?
   zipCode                    String?
+  occupation                 String?
+  organization               String?
   emergencyContact           String?
   isVerified                 Boolean                   @default(false)
   isActive                   Boolean                   @default(true)
@@ -753,6 +757,101 @@ model Patient {
   @@index([registeredByDoctorId])
 }
 
+// OPD registration / encounter. A patient can have many visits over their
+// lifetime, each with its own OPD number generated at registration time.
+// Loosely coupled by plain string FKs (no Prisma @relation), matching the
+// convention already used by the lowercase Ayurveda models below.
+model PatientVisit {
+  id                String            @id @default(uuid())
+  opdNumber         String
+  registrationDate  DateTime          @default(now())
+  patientId         String
+  clinicId          String
+  doctorId          String?
+  specialCaseFlags  SpecialCaseFlag[]
+  internationalId   String?
+  presentIllness    String?
+  presentComplaints String?
+  knownCaseOf       String?
+  pastHistoryNotes  String?
+  habits            Json?
+  nidra             String?
+  nidraNotes        String?
+  foodAllergyNotes  String?
+  drugAllergyNotes  String?
+  createdBy         String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@unique([clinicId, opdNumber])
+  @@index([patientId])
+  @@index([clinicId])
+  @@map("patient_visits")
+}
+
+// One row per visit: General Examination + Physical Measurement numeric
+// fields. Kept separate from the generic `Vital` model on purpose — `Vital`
+// is treated as a longitudinal time series elsewhere (health trends), and
+// mixing one-off intake snapshots into it risks cross-contaminating that
+// series (the same class of bug as the EHR cache-key collision fixed
+// earlier this session).
+model visitVitalsExamination {
+  id            String   @id @default(uuid())
+  visitId       String   @unique
+  heightCm      Float?
+  weightKg      Float?
+  bmi           Float?
+  temperatureC  Float?
+  pulse         Int?
+  bpSystolic    Int?
+  bpDiastolic   Int?
+  rr            Int?
+  painScore     Int?
+  fbs           Float?
+  ppbs          Float?
+  pbs           Float?
+  spo2          Float?
+  sleep         String?
+  bowel         String?
+  appetite      String?
+  neck          Float?
+  chest         Float?
+  upperAbs      Float?
+  waist         Float?
+  lowerAbs      Float?
+  hips          Float?
+  thighLeft     Float?
+  thighRight    Float?
+  calfLeft      Float?
+  calfRight     Float?
+  upperArmLeft  Float?
+  upperArmRight Float?
+  recordedBy    String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("visit_vitals_examinations")
+}
+
+// Per-clinic OPD number counter. Allocation is a single
+// INSERT ... ON CONFLICT ... RETURNING statement, which is atomic on its own.
+// That matters because executeHealthcareWrite does not wrap its callback in
+// one transaction, so a transaction-scoped advisory lock would not serialize
+// concurrent registrations.
+model opdSequence {
+  clinicId  String   @id
+  lastValue Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@map("opd_sequences")
+}
+
+enum SpecialCaseFlag {
+  MINOR
+  PHYSICAL_HANDICAP
+  PREGNANT_OR_SENIOR_CITIZEN
+}
+
 model FamilyMember {
   id              String        @id @default(uuid())
   patientId       String
@@ -1427,6 +1526,7 @@ model MedicalHistory {
   id        String   @id @default(uuid())
   userId    String
   clinicId  String?
+  visitId   String?
   condition String
   diagnosis String?
   treatment String?
@@ -1440,6 +1540,7 @@ model MedicalHistory {
   @@index([userId])
   @@index([clinicId])
   @@index([doctorId])
+  @@index([visitId])
 }
 
 model LabReport {
@@ -1639,6 +1740,38 @@ model nadiPariksha {
   @@map("nadi_pariksha_records")
 }
 
+// One row per classical-examination category per visit (e.g. Ashtavidha
+// Pariksha's "jihva" category, or Personal History's "diet" category).
+// `SAMPRAPTI_GHATAKA` names the pathogenesis-*components* checklist taken at
+// intake — deliberately distinct from `sampraptiStage` above, which tracks
+// the six Shatkriyakala disease-progression *stages* over time. Same
+// classical name, unrelated data and lifecycle — do not merge them.
+model classicalExamFinding {
+  id              String            @id @default(uuid())
+  visitId         String
+  examType        ClassicalExamType
+  categoryKey     String
+  selectedOptions String[]
+  remark          String?
+  recordedBy      String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([visitId, examType, categoryKey])
+  @@index([visitId])
+  @@index([examType])
+  @@map("classical_exam_findings")
+}
+
+enum ClassicalExamType {
+  ASHTAVIDHA_PARIKSHA
+  DASHAVIDHA_PARIKSHA
+  SROTAS_PARIKSHA
+  SAMPRAPTI_GHATAKA
+  PAIN_ASSESSMENT
+  PERSONAL_HISTORY
+}
+
 model doshaImbalance {
   id                String   @id @default(uuid())
   patientId         String
@@ -1778,6 +1911,7 @@ model FamilyHistory {
   clinicId     String?
   relation     String
   condition    String
+  duration     String?
   diagnosedAge Int?
   doctorId     String?
   notes        String?
@@ -1852,6 +1986,7 @@ model Medication {
   id           String    @id @default(uuid())
   userId       String
   clinicId     String?
+  visitId      String?
   name         String
   dosage       String
   frequency    String
@@ -1870,6 +2005,7 @@ model Medication {
   @@index([userId])
   @@index([clinicId])
   @@index([doctorId])
+  @@index([visitId])
 }
 
 model DietaryRestriction {

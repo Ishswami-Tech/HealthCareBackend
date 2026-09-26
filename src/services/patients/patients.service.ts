@@ -133,6 +133,11 @@ export class PatientsService {
       coverageEndDate?: string;
       coverageType: string;
     };
+    address?: string;
+    area?: string;
+    district?: string;
+    occupation?: string;
+    organization?: string;
   }) {
     const { userId } = data;
 
@@ -151,12 +156,17 @@ export class PatientsService {
     // 1. Ensure Patient Record Exists
     await this.ensurePatientProfile(userId, data.clinicId);
 
-    // 2. Update User Profile (Gender, DOB)
-    if (data.gender || data.dateOfBirth) {
-      const updateData: Record<string, unknown> = {};
-      if (data.gender) updateData['gender'] = data.gender;
-      if (data.dateOfBirth) updateData['dateOfBirth'] = new Date(data.dateOfBirth);
+    // 2. Update User Profile (Gender, DOB, registration-desk demographics)
+    const updateData: Record<string, unknown> = {};
+    if (data.gender) updateData['gender'] = data.gender;
+    if (data.dateOfBirth) updateData['dateOfBirth'] = new Date(data.dateOfBirth);
+    const demographicKeys = ['address', 'area', 'district', 'occupation', 'organization'] as const;
+    for (const key of demographicKeys) {
+      const value = data[key];
+      if (value !== undefined) updateData[key] = value.trim() || null;
+    }
 
+    if (Object.keys(updateData).length > 0) {
       await this.databaseService.executeHealthcareWrite(
         async client => {
           const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
@@ -343,6 +353,11 @@ export class PatientsService {
         coverageEndDate?: string;
         coverageType: string;
       };
+      address?: string;
+      area?: string;
+      district?: string;
+      occupation?: string;
+      organization?: string;
     });
   }
 

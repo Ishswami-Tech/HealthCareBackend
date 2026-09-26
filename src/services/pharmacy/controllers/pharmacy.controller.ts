@@ -23,6 +23,7 @@ import {
   PharmacyStatsDto,
   CreateSupplierDto,
   UpdateSupplierDto,
+  RecordCashPaymentDto,
 } from '@dtos/pharmacy.dto';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
@@ -307,6 +308,38 @@ export class PharmacyController {
         ...(req.user?.role ? { role: req.user.role } : {}),
       },
       paymentProvider
+    );
+  }
+
+  /**
+   * @endpoint POST /pharmacy/prescriptions/:id/record-cash-payment
+   * @access RECEPTIONIST, PHARMACIST, CLINIC_ADMIN, FINANCE_BILLING, SUPER_ADMIN
+   * @description Record an over-the-counter cash payment so the medicine desk can dispense
+   */
+  @Post('prescriptions/:id/record-cash-payment')
+  @Roles(
+    Role.RECEPTIONIST,
+    Role.PHARMACIST,
+    Role.CLINIC_ADMIN,
+    Role.FINANCE_BILLING,
+    Role.SUPER_ADMIN
+  )
+  @RequireResourcePermission('payments', 'create')
+  @ApiOperation({ summary: 'Record a cash payment for a prescription (no gateway)' })
+  async recordCashPrescriptionPayment(
+    @Param('id') id: string,
+    @Body() body: RecordCashPaymentDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    return this.pharmacyService.recordCashPrescriptionPayment(
+      id,
+      clinicId,
+      {
+        ...(req.user?.sub ? { userId: req.user.sub } : {}),
+        ...(req.user?.role ? { role: req.user.role } : {}),
+      },
+      body?.amount
     );
   }
 

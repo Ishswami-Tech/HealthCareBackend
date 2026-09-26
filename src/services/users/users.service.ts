@@ -542,6 +542,10 @@ export class UsersService {
           ...(data.gender && { gender: data.gender }),
           ...(data.dateOfBirth && { dateOfBirth: data.dateOfBirth }),
           ...(data.address && { address: data.address }),
+          ...(data.area && { area: data.area }),
+          ...(data.district && { district: data.district }),
+          ...(data.occupation && { occupation: data.occupation }),
+          ...(data.organization && { organization: data.organization }),
           ...(data.emergencyContact && { emergencyContact: data.emergencyContact }),
         },
         undefined,
@@ -1031,6 +1035,10 @@ export class UsersService {
         state: cleanedData.state,
         country: cleanedData.country,
         zipCode: (cleanedData as Record<string, unknown>)['zipCode'],
+        area: cleanedData.area,
+        district: cleanedData.district,
+        occupation: cleanedData.occupation,
+        organization: cleanedData.organization,
         profilePicture: cleanedData.profilePicture,
       };
       // Auto-populate name from firstName + lastName if either was provided

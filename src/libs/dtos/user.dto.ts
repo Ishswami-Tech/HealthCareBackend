@@ -398,6 +398,30 @@ export class SimpleCreateUserDto {
   @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
   zipCode?: string;
 
+  @ApiPropertyOptional({ example: 'Kothrud', description: 'Locality / area' })
+  @IsOptional()
+  @IsString({ message: 'Area must be a string' })
+  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  area?: string;
+
+  @ApiPropertyOptional({ example: 'Pune', description: 'District' })
+  @IsOptional()
+  @IsString({ message: 'District must be a string' })
+  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  district?: string;
+
+  @ApiPropertyOptional({ example: 'Teacher', description: 'Occupation' })
+  @IsOptional()
+  @IsString({ message: 'Occupation must be a string' })
+  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  occupation?: string;
+
+  @ApiPropertyOptional({ example: 'Sunrise School', description: 'Organization / employer' })
+  @IsOptional()
+  @IsString({ message: 'Organization must be a string' })
+  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  organization?: string;
+
   @ApiPropertyOptional({
     example: 'clinic-uuid-123',
     description: 'Primary clinic ID for multi-tenant context',
@@ -960,6 +984,30 @@ export class UpdateUserProfileDto {
   @IsString({ message: 'Zip code must be a string' })
   @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
   zipCode?: string;
+
+  @ApiPropertyOptional({ example: 'Kothrud', description: 'Locality / area' })
+  @IsOptional()
+  @IsString({ message: 'Area must be a string' })
+  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  area?: string;
+
+  @ApiPropertyOptional({ example: 'Pune', description: 'District' })
+  @IsOptional()
+  @IsString({ message: 'District must be a string' })
+  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  district?: string;
+
+  @ApiPropertyOptional({ example: 'Teacher', description: 'Occupation' })
+  @IsOptional()
+  @IsString({ message: 'Occupation must be a string' })
+  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  occupation?: string;
+
+  @ApiPropertyOptional({ example: 'Sunrise School', description: 'Organization / employer' })
+  @IsOptional()
+  @IsString({ message: 'Organization must be a string' })
+  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  organization?: string;
 
   @ApiPropertyOptional({
     type: () => EmergencyContactDto,

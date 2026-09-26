@@ -234,6 +234,17 @@ export class UpdatePrescriptionStatusDto {
   notes?: string;
 }
 
+export class RecordCashPaymentDto {
+  @ApiPropertyOptional({
+    example: 250,
+    description: 'Cash collected. Defaults to the full pending amount when omitted.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
+  amount?: number;
+}
+
 export class DispensePrescriptionItemDto {
   @ApiProperty({ example: 'med-uuid-123', description: 'Medicine ID' })
   @IsString()

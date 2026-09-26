@@ -234,6 +234,69 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
     );
   }
 
+  /**
+   * Parameters available to `{placeholder}` substitution in key and tag
+   * templates: route params, query params, and the caller's identity.
+   *
+   * Do not clobber a route param that already supplies {userId}
+   * (e.g. GET /ehr/comprehensive/:userId) — that param identifies the
+   * resource being fetched, not the caller, and overwriting it collapses
+   * every distinct resource onto one cache key keyed by whichever user
+   * happens to be making the request.
+   */
+  private buildTemplateParams(request: CustomFastifyRequest): Record<string, unknown> {
+    const params: Record<string, unknown> = {
+      ...(request.params || {}),
+      ...(request.query || {}),
+    };
+    if (request.user) {
+      if (params['userId'] === undefined) {
+        params['userId'] = request.user.sub;
+      }
+      params['userRole'] = request.user.role;
+    }
+    return params;
+  }
+
+  private resolveTemplate(template: string, params: Record<string, unknown>): string {
+    let resolved = template;
+    for (const [param, value] of Object.entries(params)) {
+      resolved = resolved.replace(`{${param}}`, String(value));
+    }
+    return resolved;
+  }
+
+  private finalizeTemplateKey(
+    resolvedKey: string,
+    request: CustomFastifyRequest,
+    options: UnifiedCacheOptions,
+    context: ExecutionContext
+  ): string {
+    let key = resolvedKey;
+    // Add clinic specificity if needed
+    if (options.clinicSpecific && request.params?.['clinicId']) {
+      key = `clinic:${request.params['clinicId'] as string}:${key}`;
+    }
+    // Add method name for uniqueness
+    return `${key}:${context.getHandler().name}`;
+  }
+
+  /**
+   * Cache tags with `{placeholder}`s resolved the same way as the key
+   * template (so `user:{userId}` becomes `user:<id>`). Used for every write
+   * path so that invalidateCacheByTag() reaches PHI/emergency entries too.
+   */
+  private resolveTags(options: UnifiedCacheOptions, context: ExecutionContext): string[] {
+    if (!options.tags || options.tags.length === 0) return [];
+    try {
+      const request = context.switchToHttp().getRequest<CustomFastifyRequest>();
+      const params = this.buildTemplateParams(request);
+      return options.tags.map(tag => this.resolveTemplate(tag, params));
+    } catch {
+      return [...options.tags];
+    }
+  }
+
   private generateCacheKey(context: ExecutionContext, options: UnifiedCacheOptions): string | null {
     try {
       const request = context.switchToHttp().getRequest<CustomFastifyRequest>();
@@ -250,40 +313,8 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
 
       // Use key template with parameter substitution
       if (options.keyTemplate) {
-        let key = options.keyTemplate;
-        const params: Record<string, unknown> = {
-          ...(request.params || {}),
-          ...(request.query || {}),
-        };
-
-        // Add user context. Do not clobber a route param that already
-        // supplies {userId} (e.g. GET /ehr/comprehensive/:userId) — that
-        // param identifies the resource being fetched, not the caller, and
-        // overwriting it collapses every distinct resource onto one cache
-        // key keyed by whichever user happens to be making the request.
-        if (request.user) {
-          if (params['userId'] === undefined) {
-            params['userId'] = request.user.sub;
-          }
-          params['userRole'] = request.user.role;
-        }
-
-        // Replace placeholders in template
-        for (const [param, value] of Object.entries(params)) {
-          const placeholder = `{${param}}`;
-          key = key.replace(placeholder, String(value));
-        }
-
-        // Add clinic specificity if needed
-        if (options.clinicSpecific && request.params?.['clinicId']) {
-          key = `clinic:${request.params['clinicId'] as string}:${key}`;
-        }
-
-        // Add method name for uniqueness
-        const methodName = context.getHandler().name;
-        key = `${key}:${methodName}`;
-
-        return key;
+        const key = this.resolveTemplate(options.keyTemplate, this.buildTemplateParams(request));
+        return this.finalizeTemplateKey(key, request, options, context);
       }
 
       // Generate default key based on route and parameters
@@ -454,16 +485,20 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
 
         // Apply healthcare-specific caching logic
         const cacheTTL = options.ttl ?? 1800;
+        // Tags are registered for the set() paths too; otherwise writes that
+        // call invalidateCacheByTag() never reach PHI/emergency entries and a
+        // create followed by a list read returns the pre-create data.
+        const tags = this.resolveTags(options, context);
         if (options.containsPHI) {
           // PHI data gets additional security measures
-          await this.cacheService.set(cacheKey, serializedValue, cacheTTL);
+          await this.cacheService.set(cacheKey, serializedValue, { ttl: cacheTTL, tags });
 
           // Track PHI cache access for compliance
           await this.trackPHIAccess(cacheKey, context, 'cache_set');
         } else if (options.emergencyData) {
           // Emergency data uses minimal TTL
           const emergencyTTL = Math.min(ttl, 300); // Max 5 minutes
-          await this.cacheService.set(cacheKey, serializedValue, emergencyTTL);
+          await this.cacheService.set(cacheKey, serializedValue, { ttl: emergencyTTL, tags });
         } else {
           // Standard caching with SWR support
           await this.cacheService.cache(cacheKey, () => Promise.resolve(value), {

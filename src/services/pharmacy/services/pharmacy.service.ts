@@ -21,7 +21,7 @@ import {
 } from '@dtos/pharmacy.dto';
 import { LogLevel, LogType, AppointmentQueueCategory } from '@core/types';
 import { PrismaDelegateArgs, PrismaTransactionClientWithDelegates } from '@core/types/prisma.types';
-import { PaymentStatus } from '@core/types/enums.types';
+import { PaymentMethod, PaymentStatus } from '@core/types/enums.types';
 import { PaymentService } from '@payment/payment.service';
 import type { PaymentIntentOptions, PaymentResult } from '@core/types/payment.types';
 import { PaymentProvider } from '@core/types/payment.types';
@@ -744,6 +744,22 @@ export class PharmacyService {
     prescriptionId: string,
     action: 'CREATED' | 'PAYMENT_UPDATED' | 'DISPENSED' | 'PARTIALLY_DISPENSED' | 'CANCELLED'
   ) {
+    // GET /pharmacy/prescriptions is cached (tags: pharmacy, prescriptions).
+    // Every queue state change must bust it or the Prescription Management
+    // page keeps showing "Payment pending" after a payment lands.
+    try {
+      await this.cacheService.invalidateCacheByTag('prescriptions');
+      await this.cacheService.invalidateCacheByTag('pharmacy');
+    } catch (cacheError) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'Failed to invalidate prescription list cache',
+        'PharmacyService',
+        { prescriptionId, action, error: (cacheError as Error).message }
+      );
+    }
+
     try {
       const prescription = await this.getPrescriptionByIdForAccess(prescriptionId, clinicId);
       const queue = await this.getMedicineDeskQueue(clinicId);
@@ -1234,15 +1250,15 @@ export class PharmacyService {
     });
 
     if (patient?.userId) {
-      await this.cacheService.invalidateCacheByTag(`ehr:${patient.userId}`);
-      // The GET /ehr/comprehensive/:userId route is cached directly by
-      // HealthcareCacheInterceptor (@PatientCache), which stores PHI responses
-      // with a plain set() call rather than through the tag-based cache()
-      // wrapper. Its key format is `{keyTemplate}:{handlerName}`, so it must
-      // be deleted directly — tag invalidation alone does not reach it.
-      await this.cacheService.del(
-        `ehr:comprehensive:${patient.userId}:getComprehensiveHealthRecord`
-      );
+      // Service-level EHR caches are tagged `ehr:{userId}`; controller-level
+      // @PatientCache entries (incl. the comprehensive record) are tagged
+      // `user:{userId}`. Both are cleared; the explicit del() is kept as a
+      // belt-and-braces guard for entries written before tag indexing existed.
+      await Promise.all([
+        this.cacheService.invalidateCacheByTag(`ehr:${patient.userId}`),
+        this.cacheService.invalidateCacheByTag(`user:${patient.userId}`),
+        this.cacheService.del(`ehr:comprehensive:${patient.userId}:getComprehensiveHealthRecord`),
+      ]);
     }
   }
 
@@ -2529,6 +2545,71 @@ export class PharmacyService {
       prescriptionId: prescription.id,
       paymentId: paymentRecord.id,
       paymentIntent: paymentIntentResult,
+    };
+  }
+
+  /**
+   * Records an over-the-counter cash payment so the medicine desk can
+   * dispense. Skips the online gateway entirely: the dispense gate
+   * (`buildPrescriptionPaymentState`) only looks for COMPLETED payments
+   * linked to the prescription, regardless of how they were collected.
+   */
+  async recordCashPrescriptionPayment(
+    prescriptionId: string,
+    clinicId: string | undefined,
+    actor: { userId?: string; role?: string },
+    amount?: number
+  ) {
+    if (!clinicId) throw new BadRequestException('Clinic ID is required');
+
+    const prescription = await this.getPrescriptionByIdForAccess(prescriptionId, clinicId);
+
+    if (String(prescription.status) === 'CANCELLED') {
+      throw new BadRequestException('Cancelled prescriptions cannot be paid');
+    }
+    if (String(prescription.status) === 'FILLED') {
+      throw new BadRequestException('Prescription has already been dispensed');
+    }
+
+    const paymentState = await this.getPrescriptionPaymentSummary(prescriptionId, clinicId, actor);
+    if (paymentState.pendingAmount <= 0) {
+      return { alreadyPaid: true, ...paymentState, prescriptionId };
+    }
+
+    const cashAmount = amount !== undefined ? Number(amount) : paymentState.pendingAmount;
+    if (!Number.isFinite(cashAmount) || cashAmount <= 0) {
+      throw new BadRequestException('Cash amount must be greater than zero');
+    }
+    if (cashAmount > paymentState.pendingAmount) {
+      throw new BadRequestException(
+        `Cash amount exceeds pending amount of INR ${paymentState.pendingAmount}`
+      );
+    }
+
+    const paymentRecord = await this.databaseService.createPaymentSafe({
+      amount: Number(cashAmount.toFixed(2)),
+      clinicId: prescription.clinicId,
+      ...(prescription.patient?.user?.id && { userId: prescription.patient.user.id }),
+      status: PaymentStatus.COMPLETED,
+      method: PaymentMethod.CASH,
+      description: `Cash payment for prescription ${prescription.id}`,
+      metadata: {
+        ...this.getPrescriptionPaymentMetadata(prescription.id),
+        paymentMethod: PaymentMethod.CASH,
+        collectedBy: actor.userId ?? null,
+        collectedByRole: actor.role ?? null,
+        collectedAt: new Date().toISOString(),
+      },
+    });
+
+    await this.emitMedicineDeskQueueUpdated(clinicId, prescription.id, 'PAYMENT_UPDATED');
+
+    const updatedState = await this.getPrescriptionPaymentSummary(prescriptionId, clinicId, actor);
+    return {
+      ...updatedState,
+      prescriptionId: prescription.id,
+      paymentId: paymentRecord.id,
+      method: PaymentMethod.CASH,
     };
   }
 }

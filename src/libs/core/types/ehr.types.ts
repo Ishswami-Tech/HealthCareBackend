@@ -436,6 +436,7 @@ export interface FamilyHistoryResponse {
   clinicId: string;
   relation: string;
   condition: string;
+  duration?: string;
   doctorId: string;
   diagnosedAge?: number;
   notes: string;
@@ -608,6 +609,7 @@ export interface FamilyHistoryBase {
   clinicId?: string | null;
   relation?: string | null;
   condition: string;
+  duration?: string | null;
   diagnosedAge?: number | null;
   doctorId?: string | null;
   notes?: string | null;

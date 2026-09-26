@@ -628,6 +628,7 @@ export class RbacService {
         'lab-reports:*',
         'vitals:*',
         'medications:*',
+        'ayurveda:*',
         'notifications:read',
         'notifications:create',
         'analytics:read',
@@ -659,6 +660,7 @@ export class RbacService {
         'medications:*',
         'notifications:read',
         'notifications:create',
+        'ayurveda:*',
         'analytics:read',
       ],
       NURSE: [
@@ -670,6 +672,7 @@ export class RbacService {
         'video:create',
         'video:update',
         'vitals:*',
+        'ayurveda:read',
         'analytics:read',
       ],
       RECEPTIONIST: [
@@ -743,6 +746,7 @@ export class RbacService {
         'medical-records:read',
         'inventory:*',
         'medications:*',
+        'payments:create',
         'profile:read',
         'profile:update',
       ],

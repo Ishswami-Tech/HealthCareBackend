@@ -46,6 +46,8 @@ import {
   UpdateMedicationDto,
   CreateImmunizationDto,
   UpdateImmunizationDto,
+  CreateFamilyHistoryDto,
+  UpdateFamilyHistoryDto,
   HealthRecordSummaryDto,
   EHRAISummaryDto,
   CreatePrescriptionDto,
@@ -510,7 +512,14 @@ export class EHRService {
   }
 
   async invalidateUserEHRCache(userId: string) {
-    await this.cacheService.invalidateCacheByTag(`ehr:${userId}`);
+    // Service-level caches are tagged `ehr:{userId}`; the controller-level
+    // @PatientCache entries (medical-history, comprehensive record, vitals,
+    // allergies, ...) are tagged `user:{userId}`. Both must be cleared or a
+    // write followed by a read returns the pre-write list.
+    await Promise.all([
+      this.cacheService.invalidateCacheByTag(`ehr:${userId}`),
+      this.cacheService.invalidateCacheByTag(`user:${userId}`),
+    ]);
   }
 
   // ============ Medical History ============
@@ -2156,14 +2165,218 @@ export class EHRService {
     await this.invalidateUserEHRCache(typedAllergy.userId);
   }
 
+  // ============ Family History ============
+
+  async createFamilyHistory(data: CreateFamilyHistoryDto): Promise<FamilyHistoryResponse> {
+    const record = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const createData: {
+          userId: string;
+          clinicId?: string;
+          relation: string;
+          condition: string;
+          duration?: string;
+          diagnosedAge?: number;
+          doctorId?: string;
+          notes?: string;
+        } = {
+          userId: data.userId,
+          relation: data.relation,
+          condition: data.condition,
+        };
+        if (data.clinicId) {
+          createData.clinicId = data.clinicId;
+        }
+        if (data.duration) {
+          createData.duration = data.duration;
+        }
+        if (data.diagnosedAge !== undefined) {
+          createData.diagnosedAge = data.diagnosedAge;
+        }
+        if (data.doctorId) {
+          createData.doctorId = data.doctorId;
+        }
+        if (data.notes) {
+          createData.notes = data.notes;
+        }
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          familyHistory: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.familyHistory.create({
+          data: createData as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId: data.userId || 'system',
+        clinicId: data.clinicId || '',
+        resourceType: 'FAMILY_HISTORY',
+        operation: 'CREATE',
+        resourceId: '',
+        userRole: 'system',
+        details: { userId: data.userId, relation: data.relation },
+      }
+    );
+
+    const typedRecord = record as FamilyHistoryBase;
+    await this.eventService.emit('ehr.family-history.created', {
+      familyHistoryId: typedRecord.id,
+      userId: typedRecord.userId,
+    });
+    await this.invalidateUserEHRCache(typedRecord.userId);
+
+    return this.transformFamilyHistory(typedRecord);
+  }
+
+  async getFamilyHistory(userId: string, clinicId?: string): Promise<FamilyHistoryResponse[]> {
+    const records = await this.databaseService.executeHealthcareRead<FamilyHistoryBase[]>(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          familyHistory: { findMany: (args: PrismaDelegateArgs) => Promise<FamilyHistoryBase[]> };
+        };
+        return await typedClient.familyHistory.findMany({
+          where: (clinicId ? { userId, clinicId } : { userId }) as PrismaDelegateArgs,
+          orderBy: { createdAt: 'desc' } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      }
+    );
+    return records.map(record => this.transformFamilyHistory(record));
+  }
+
+  async updateFamilyHistory(
+    id: string,
+    data: UpdateFamilyHistoryDto,
+    clinicId?: string
+  ): Promise<FamilyHistoryResponse> {
+    const existing = await this.databaseService.executeHealthcareRead<{
+      userId: string;
+      clinicId?: string | null;
+    } | null>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        familyHistory: {
+          findUnique: (
+            args: PrismaDelegateArgs
+          ) => Promise<{ userId: string; clinicId?: string | null } | null>;
+        };
+      };
+      return typedClient.familyHistory.findUnique({
+        where: { id } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+    if (!existing) throw new NotFoundException(`Family history record with ID ${id} not found`);
+    if (clinicId && existing.clinicId && existing.clinicId !== clinicId) {
+      throw new NotFoundException(`Family history record with ID ${id} not found`);
+    }
+
+    const record = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const updateData: {
+          relation?: string;
+          condition?: string;
+          duration?: string;
+          diagnosedAge?: number;
+          doctorId?: string;
+          notes?: string;
+        } = {};
+        if (data.relation) {
+          updateData.relation = data.relation;
+        }
+        if (data.condition) {
+          updateData.condition = data.condition;
+        }
+        if (data.duration !== undefined) {
+          updateData.duration = data.duration;
+        }
+        if (data.diagnosedAge !== undefined) {
+          updateData.diagnosedAge = data.diagnosedAge;
+        }
+        if (data.doctorId) {
+          updateData.doctorId = data.doctorId;
+        }
+        if (data.notes !== undefined) {
+          updateData.notes = data.notes;
+        }
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          familyHistory: { update: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.familyHistory.update({
+          where: { id } as PrismaDelegateArgs,
+          data: updateData as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId: 'system',
+        clinicId: '',
+        resourceType: 'FAMILY_HISTORY',
+        operation: 'UPDATE',
+        resourceId: id,
+        userRole: 'system',
+        details: { updateFields: Object.keys(data) },
+      }
+    );
+
+    const typedRecord = record as FamilyHistoryBase;
+    await this.eventService.emit('ehr.family-history.updated', { familyHistoryId: id });
+    await this.invalidateUserEHRCache(typedRecord.userId);
+
+    return this.transformFamilyHistory(typedRecord);
+  }
+
+  async deleteFamilyHistory(id: string, clinicId?: string): Promise<void> {
+    const existing = await this.databaseService.executeHealthcareRead<{
+      userId: string;
+      clinicId?: string | null;
+    } | null>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        familyHistory: {
+          findUnique: (
+            args: PrismaDelegateArgs
+          ) => Promise<{ userId: string; clinicId?: string | null } | null>;
+        };
+      };
+      return await typedClient.familyHistory.findUnique({
+        where: { id } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+    if (!existing) throw new NotFoundException(`Family history record with ID ${id} not found`);
+    // 🔒 TENANT ISOLATION
+    if (clinicId && existing.clinicId && existing.clinicId !== clinicId) {
+      throw new NotFoundException(`Family history record with ID ${id} not found`);
+    }
+
+    await this.databaseService.executeHealthcareWrite<unknown>(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          familyHistory: { delete: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.familyHistory.delete({
+          where: { id } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId: existing.userId,
+        clinicId: existing.clinicId || '',
+        resourceType: 'FAMILY_HISTORY',
+        operation: 'DELETE',
+        resourceId: id,
+        userRole: 'system',
+        details: { userId: existing.userId },
+      }
+    );
+    await this.eventService.emit('ehr.family-history.deleted', { familyHistoryId: id });
+    await this.invalidateUserEHRCache(existing.userId);
+  }
+
   // ============ Medications ============
 
-  async createMedication(data: CreateMedicationDto): Promise<MedicationResponse> {
+  async createMedication(
+    data: CreateMedicationDto & { clinicId?: string }
+  ): Promise<MedicationResponse> {
     // Use executeHealthcareWrite for create with audit logging
     const medication = await this.databaseService.executeHealthcareWrite(
       async client => {
         const createData: {
           userId: string;
+          clinicId?: string;
           name: string;
           dosage: string;
           frequency: string;
@@ -2180,6 +2393,11 @@ export class EHRService {
           startDate: new Date(data.startDate),
           prescribedBy: data.prescribedBy,
         };
+        // The controller injects the caller's clinic; without persisting it the
+        // clinic-scoped GET /ehr/medications/:userId never returns this row.
+        if (data.clinicId) {
+          createData.clinicId = data.clinicId;
+        }
         if (data.endDate) {
           createData.endDate = new Date(data.endDate);
         }
@@ -2198,7 +2416,7 @@ export class EHRService {
       },
       {
         userId: data.userId || 'system',
-        clinicId: '',
+        clinicId: data.clinicId || '',
         resourceType: 'MEDICATION',
         operation: 'CREATE',
         resourceId: '',
@@ -4359,6 +4577,7 @@ export class EHRService {
       clinicId?: string | null;
       relation?: string | null;
       condition: string;
+      duration?: string | null;
       diagnosedAge?: number | null;
       doctorId?: string | null;
       notes?: string | null;
@@ -4387,6 +4606,9 @@ export class EHRService {
     };
     if (typedRecord.diagnosedAge && typeof typedRecord.diagnosedAge === 'number') {
       result.diagnosedAge = typedRecord.diagnosedAge;
+    }
+    if (typedRecord.duration && typeof typedRecord.duration === 'string') {
+      result.duration = typedRecord.duration;
     }
     return result;
   }
