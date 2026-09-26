@@ -133,10 +133,14 @@ export class PaymentService {
       throw new Error(`No payment configuration found for clinic: ${clinicId}`);
     }
 
-    // Use specified provider or default from config
+    const configuredProviders = [config.payment.primary, ...(config.payment.fallback || [])];
     const providerConfig = provider
-      ? config.payment.fallback?.find(f => f.provider === provider) || config.payment.primary
+      ? configuredProviders.find(candidate => candidate?.provider === provider)
       : config.payment.primary;
+
+    if (!providerConfig) {
+      throw new Error(`Payment provider ${provider} is not configured for clinic: ${clinicId}`);
+    }
 
     if (!providerConfig.enabled) {
       throw new Error(

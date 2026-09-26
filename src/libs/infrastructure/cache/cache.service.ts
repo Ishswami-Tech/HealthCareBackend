@@ -659,6 +659,13 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
     if (patientId) {
       patterns.push(this.keyFactory.patient(patientId, clinicId, '*'));
+      // The patient dashboard summary (PatientsService.getDashboardSummary) is tagged
+      // `user:${patientId}` and composes appointment data — without this, completing
+      // or cancelling an appointment left the dashboard's appointment fields stale
+      // until the dashboard cache's own TTL expired. Same bug class as the payment
+      // handoff staleness fixed earlier: an appointment write path that didn't bust
+      // every cache tagged with that user.
+      tags.push(`user:${patientId}`);
     }
 
     if (doctorId) {

@@ -3027,7 +3027,7 @@ export class BillingService implements OnModuleInit {
     // Extract payment intent details with proper type checking
     const paymentId = paymentIntentResult.paymentId || '';
     const orderId = paymentIntentResult.orderId || '';
-    const providerName = paymentIntentResult.provider || '';
+    const providerName = paymentIntentResult.provider || provider || PaymentProvider.CASHFREE;
     const providerResponse = this.asRecord(paymentIntentResult.providerResponse) || {};
     const gatewayRedirectUrl =
       this.asSafeString(paymentIntentResult.metadata?.['redirectUrl']) ||
@@ -3036,7 +3036,7 @@ export class BillingService implements OnModuleInit {
     const redirectUrl = this.buildPaymentCallbackUrl(
       appointment.clinicId,
       orderId || gatewayOrderId,
-      provider,
+      providerName as PaymentProvider,
       appointment.id,
       paymentId || undefined,
       appointmentType

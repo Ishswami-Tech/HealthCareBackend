@@ -1159,14 +1159,11 @@ export class BillingController {
   @RequireResourcePermission('payments', 'create')
   async processSubscriptionPayment(
     @Param('id') subscriptionId: string,
-    @Query('provider') provider?: string,
     @Request() req?: ClinicAuthenticatedRequest
   ) {
-    const paymentProvider = this.parseAdminPaymentProvider(provider, req);
-
     const result = await this.billingService.processSubscriptionPayment(
       subscriptionId,
-      paymentProvider,
+      undefined,
       this.buildBillingAccessContext(req)
     );
     return {
@@ -1198,15 +1195,12 @@ export class BillingController {
   async processAppointmentPayment(
     @Param('id') appointmentId: string,
     @Body() body: { appointmentType: 'VIDEO_CALL' | 'IN_PERSON' | 'HOME_VISIT' },
-    @Query('provider') provider?: string,
     @Request() req?: ClinicAuthenticatedRequest
   ) {
-    const paymentProvider = this.parseAdminPaymentProvider(provider, req);
-
     const result = await this.billingService.processAppointmentPayment(
       appointmentId,
       body.appointmentType,
-      paymentProvider,
+      undefined,
       this.buildBillingAccessContext(req)
     );
     return {
@@ -1222,13 +1216,11 @@ export class BillingController {
   @RequireResourcePermission('payments', 'create')
   async processInvoicePayment(
     @Param('id') invoiceId: string,
-    @Query('provider') provider?: string,
     @Request() req?: ClinicAuthenticatedRequest
   ) {
-    const paymentProvider = this.parseAdminPaymentProvider(provider, req);
     const result = await this.billingService.processInvoicePayment(
       invoiceId,
-      paymentProvider,
+      undefined,
       this.buildBillingAccessContext(req)
     );
     return {

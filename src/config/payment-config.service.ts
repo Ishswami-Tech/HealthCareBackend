@@ -359,9 +359,6 @@ export class PaymentConfigService implements OnModuleInit {
         }
       : defaults.payment.primary;
 
-    // Fallback is opt-in per clinic: an empty/absent list means NO fallback, not
-    // "inherit every other env-enabled provider on the server". A clinic that never
-    // configured Razorpay must never have a payment silently routed through it.
     const fallback: PaymentProviderConfig[] = (config.payment.fallback || []).map(entry => {
       const envMatch = envProvidersByName.get(entry.provider);
       return envMatch
@@ -374,13 +371,27 @@ export class PaymentConfigService implements OnModuleInit {
           }
         : entry;
     });
+    const configuredProviders = new Set<PaymentProvider>([
+      ...(primary ? [primary.provider] : []),
+      ...fallback.map(entry => entry.provider),
+    ]);
+    const envFallback: PaymentProviderConfig[] = [
+      defaults.payment.primary,
+      ...(defaults.payment.fallback || []),
+    ].flatMap(entry => {
+      if (!entry || configuredProviders.has(entry.provider)) {
+        return [];
+      }
+      configuredProviders.add(entry.provider);
+      return [{ ...entry }];
+    });
 
     return {
       ...config,
       payment: {
         ...defaults.payment,
         ...config.payment,
-        fallback,
+        fallback: [...fallback, ...envFallback],
         ...(primary ? { primary } : {}),
         ...(config.payment.defaultProvider || primary?.provider || defaults.payment.defaultProvider
           ? {

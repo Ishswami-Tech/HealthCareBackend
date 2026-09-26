@@ -291,14 +291,9 @@ export class PharmacyController {
   @ApiOperation({ summary: 'Create payment intent for prescription dispense' })
   async processPrescriptionPayment(
     @Param('id') id: string,
-    @Query('provider') provider: string | undefined,
     @Request() req: ClinicAuthenticatedRequest
   ) {
     const clinicId = req.clinicContext?.clinicId;
-    const paymentProvider =
-      provider && (req.user?.role === Role.SUPER_ADMIN || req.user?.role === Role.CLINIC_ADMIN)
-        ? provider
-        : undefined;
 
     return this.pharmacyService.createPrescriptionPaymentIntent(
       id,
@@ -307,7 +302,7 @@ export class PharmacyController {
         ...(req.user?.sub ? { userId: req.user.sub } : {}),
         ...(req.user?.role ? { role: req.user.role } : {}),
       },
-      paymentProvider
+      undefined
     );
   }
 
