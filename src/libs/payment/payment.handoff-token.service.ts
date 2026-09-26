@@ -89,7 +89,7 @@ export class PaymentHandoffTokenService {
     const payload: PaymentHandoffPayload = {
       orderId: params.orderId,
       clinicId: params.clinicId,
-      provider: params.provider || 'razorpay',
+      provider: params.provider || 'cashfree',
       iat: now,
       exp,
       jti,
