@@ -30,6 +30,7 @@ import {
   WebhookVerificationOptions,
   PaymentProviderAdapter,
   PaymentProvider,
+  PaymentProviderConfig,
   EnterpriseEventPayload,
 } from '@core/types';
 import { PaymentProviderFactory } from './adapters/factories/payment-provider.factory';
@@ -124,6 +125,13 @@ export class PaymentService {
   /**
    * Get payment provider adapter for a clinic
    */
+  /**
+   * Get payment provider adapter for a clinic.
+   *
+   * If the requested provider exists in clinic config but has no usable
+   * credentials, this falls back to the clinic's primary/default provider
+   * instead of returning a broken adapter.
+   */
   private async getProviderAdapter(
     clinicId: string,
     provider?: PaymentProvider
@@ -134,9 +142,16 @@ export class PaymentService {
     }
 
     // Use specified provider or default from config
-    const providerConfig = provider
+    let providerConfig = provider
       ? config.payment.fallback?.find(f => f.provider === provider) || config.payment.primary
       : config.payment.primary;
+
+    // Fall back to primary/default when the requested provider has empty
+    // credentials — avoids "keyId and keySecret are required" when only
+    // env vars exist for a different provider.
+    if (provider && !this.hasUsableCredentials(providerConfig)) {
+      providerConfig = config.payment.primary;
+    }
 
     if (!providerConfig.enabled) {
       throw new Error(
@@ -151,6 +166,13 @@ export class PaymentService {
     );
 
     return adapter;
+  }
+
+  private hasUsableCredentials(config: PaymentProviderConfig): boolean {
+    const credentials = config.credentials || {};
+    return Object.values(credentials).some(
+      value => typeof value === 'string' && value.trim().length > 0
+    );
   }
 
   /**
