@@ -6,6 +6,7 @@
  */
 
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events/event.service';
@@ -29,6 +30,44 @@ import { VisitVitalsExaminationService } from '@services/patient-visits/services
 export interface VisitActor {
   userId?: string;
   role?: string;
+}
+
+/**
+ * Consultation invoice as returned by BillingService, trimmed to the fields
+ * this module needs. Resolved lazily via ModuleRef (see `getBillingService`)
+ * instead of a constructor import, since PatientVisitsModule does not (and
+ * per the task brief should not) import BillingModule.
+ */
+interface VisitInvoiceRecord {
+  id: string;
+  invoiceNumber: string;
+  totalAmount: number;
+  status: string;
+  payments?: Array<{ amount: number; status: string }>;
+}
+
+interface BillingServiceLike {
+  ensureVisitConsultationInvoice: (
+    visitId: string,
+    clinicId: string,
+    options: {
+      amount?: number;
+      discount?: number;
+      waive?: boolean;
+      actor?: { userId?: string; role?: string };
+    }
+  ) => Promise<VisitInvoiceRecord>;
+  recordInvoicePayment: (
+    invoiceId: string,
+    clinicId: string,
+    options: {
+      method: 'CASH' | 'UPI' | 'CARD' | 'NET_BANKING';
+      amount?: number;
+      transactionId?: string;
+      note?: string;
+      actor?: { userId?: string; role?: string };
+    }
+  ) => Promise<{ invoice: VisitInvoiceRecord; payment: { id: string } }>;
 }
 
 interface PatientVisitRow {
@@ -124,13 +163,25 @@ interface PatientWithUserRow {
 
 @Injectable()
 export class PatientVisitsService {
+  private billingServiceRef: BillingServiceLike | null = null;
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly loggingService: LoggingService,
     private readonly eventService: EventService,
     private readonly vitalsService: VisitVitalsExaminationService,
-    private readonly classicalExamService: ClassicalExamService
+    private readonly classicalExamService: ClassicalExamService,
+    private readonly moduleRef: ModuleRef
   ) {}
+
+  private getBillingService(): BillingServiceLike | null {
+    if (!this.billingServiceRef) {
+      this.billingServiceRef = this.moduleRef.get<BillingServiceLike>('BILLING_SERVICE', {
+        strict: false,
+      });
+    }
+    return this.billingServiceRef;
+  }
 
   async createVisit(
     dto: CreatePatientVisitDto,
@@ -209,7 +260,91 @@ export class PatientVisitsService {
       { visitId: row.id, opdNumber: row.opdNumber, clinicId }
     );
 
-    return this.toResponse(row);
+    const consultationInvoice = await this.attachConsultationInvoice(row, dto, clinicId, actor);
+    return this.toResponse(row, consultationInvoice);
+  }
+
+  /**
+   * Best-effort: creates the OPD consultation invoice (and optionally
+   * collects the fee immediately) for a just-registered visit. Never lets a
+   * billing failure fail the registration itself — the visit row already
+   * exists and the OPD number is already allocated by the time this runs, so
+   * the worst case is a receptionist creating the bill manually afterwards
+   * via `POST visits/:visitId/consultation-invoice`.
+   */
+  private async attachConsultationInvoice(
+    row: PatientVisitRow,
+    dto: CreatePatientVisitDto,
+    clinicId: string,
+    actor: VisitActor
+  ): Promise<PatientVisitResponse['consultationInvoice']> {
+    if (dto.skipConsultationInvoice) {
+      return null;
+    }
+
+    const billingService = this.getBillingService();
+    if (!billingService) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'BILLING_SERVICE unavailable; skipping consultation invoice for visit',
+        'PatientVisitsService',
+        { visitId: row.id }
+      );
+      return null;
+    }
+
+    const billingActor = {
+      ...(actor.userId ? { userId: actor.userId } : {}),
+      ...(actor.role ? { role: actor.role } : {}),
+    };
+
+    try {
+      let invoice = await billingService.ensureVisitConsultationInvoice(row.id, clinicId, {
+        ...(dto.consultationFee !== undefined ? { amount: dto.consultationFee } : {}),
+        ...(dto.feeDiscount !== undefined ? { discount: dto.feeDiscount } : {}),
+        ...(dto.waiveFee !== undefined ? { waive: dto.waiveFee } : {}),
+        actor: billingActor,
+      });
+
+      if (dto.collectFee) {
+        const result = await billingService.recordInvoicePayment(invoice.id, clinicId, {
+          method: dto.collectFee.method,
+          ...(dto.collectFee.transactionId ? { transactionId: dto.collectFee.transactionId } : {}),
+          ...(dto.collectFee.note ? { note: dto.collectFee.note } : {}),
+          actor: billingActor,
+        });
+        invoice = result.invoice;
+      }
+
+      const paidAmount =
+        String(invoice.status).toUpperCase() === 'PAID'
+          ? invoice.totalAmount
+          : (invoice.payments || [])
+              .filter(payment => String(payment.status).toUpperCase() === 'COMPLETED')
+              .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+
+      return {
+        id: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        totalAmount: invoice.totalAmount,
+        status: invoice.status,
+        paidAmount,
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to create/collect consultation invoice for visit — registration was not affected',
+        'PatientVisitsService',
+        {
+          visitId: row.id,
+          clinicId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      return null;
+    }
   }
 
   async getVisitById(visitId: string, clinicId: string): Promise<PatientVisitResponse> {
@@ -514,7 +649,10 @@ export class PatientVisitsService {
     );
   }
 
-  private toResponse(row: PatientVisitRow): PatientVisitResponse {
+  private toResponse(
+    row: PatientVisitRow,
+    consultationInvoice?: PatientVisitResponse['consultationInvoice']
+  ): PatientVisitResponse {
     return {
       id: row.id,
       opdNumber: row.opdNumber,
@@ -536,6 +674,7 @@ export class PatientVisitsService {
       createdBy: row.createdBy ?? null,
       createdAt: new Date(row.createdAt).toISOString(),
       updatedAt: new Date(row.updatedAt).toISOString(),
+      ...(consultationInvoice !== undefined ? { consultationInvoice } : {}),
     };
   }
 }

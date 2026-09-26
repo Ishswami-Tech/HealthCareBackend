@@ -413,6 +413,43 @@ export class S3StorageService implements OnModuleInit {
   }
 
   /**
+   * Presigned GET for a private object with response-header overrides, so the
+   * browser receives the stored MIME type and a `Content-Disposition` chosen by
+   * the caller (inline preview vs. attachment download with a friendly name).
+   */
+  async getPresignedDownloadUrl(
+    key: string,
+    options: {
+      expiresIn?: number;
+      contentType?: string;
+      disposition?: 'inline' | 'attachment';
+      fileName?: string;
+    } = {}
+  ): Promise<string> {
+    if (!this.s3Client || !this.config.bucket) {
+      throw new Error('S3 client not initialized');
+    }
+
+    const disposition = options.disposition ?? 'inline';
+    const contentDisposition = options.fileName
+      ? `${disposition}; filename="${options.fileName.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(options.fileName)}`
+      : disposition;
+
+    const command = new GetObjectCommand({
+      Bucket: this.config.bucket,
+      Key: key,
+      ResponseContentDisposition: contentDisposition,
+      ...(options.contentType ? { ResponseContentType: options.contentType } : {}),
+    });
+
+    // Type assertion - verified safe by TypeScript compilation
+    const client = this.s3Client as S3Client;
+    return await getSignedUrl(client, command, {
+      expiresIn: options.expiresIn ?? this.config.publicUrlExpiration ?? 3600,
+    });
+  }
+
+  /**
    * Delete file from S3 or local storage
    */
   async deleteFile(key: string): Promise<boolean> {

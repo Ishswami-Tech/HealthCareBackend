@@ -765,10 +765,15 @@ export class PatientsService {
   }
 
   /**
-   * Invalidates dashboard summary cache for a user. Called from
-   * billing.events.ts and any other event listener that should bust
-   * the cache on lifecycle events (e.g. appointment.completed,
-   * invoice.paid, payment.completed, prescription.dispensed).
+   * Invalidates dashboard summary cache for a user directly, by tag.
+   *
+   * NOTE: appointment lifecycle events already invalidate this cache without
+   * calling this method — `CacheService.invalidateAppointmentCache()` tags
+   * every appointment write with `user:${patientId}`, which this cache shares.
+   * Payment/invoice writes similarly bust `user:${userId}` via
+   * `BillingService`'s own invalidation helpers. Call this method directly
+   * only for a write path that doesn't already go through one of those (e.g.
+   * a new pharmacy/EHR event that should also refresh the dashboard).
    */
   async invalidateDashboardSummary(userId: string): Promise<void> {
     if (!userId) return;

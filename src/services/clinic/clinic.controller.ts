@@ -597,6 +597,12 @@ export class ClinicController {
     Role.PATIENT
   )
   @RequireResourcePermission('clinics', 'read', { requireOwnership: true })
+  @Cache({
+    keyTemplate: 'clinic:{id}:hours',
+    ttl: 1800, // 30 minutes — reference/config data, changes only on an explicit edit
+    tags: ['clinics', 'clinic:{id}'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get clinic operating hours',
     description: 'Retrieves operating hours for all locations in the clinic.',

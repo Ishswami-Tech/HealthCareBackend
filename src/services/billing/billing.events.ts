@@ -207,10 +207,16 @@ export class BillingEventsListener {
   async handleReceiptPaid(payload: {
     receiptId?: string;
     invoice?: { id?: string };
-    payload?: { receiptId?: string; invoice?: { id?: string } };
+    skipWhatsApp?: boolean;
+    payload?: {
+      receiptId?: string;
+      invoice?: { id?: string };
+      skipWhatsApp?: boolean;
+    };
   }) {
     const receiptId = payload?.receiptId ?? payload?.payload?.receiptId;
     const invoiceSnapshot = payload?.invoice ?? payload?.payload?.invoice;
+    const skipWhatsApp = Boolean(payload?.skipWhatsApp ?? payload?.payload?.skipWhatsApp);
 
     if (!receiptId) {
       await this.loggingService.log(
@@ -218,6 +224,17 @@ export class BillingEventsListener {
         LogLevel.WARN,
         'Skipping receipt.paid event with missing receiptId',
         'BillingEventsListener'
+      );
+      return;
+    }
+
+    if (skipWhatsApp) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        'Skipping receipt.paid WhatsApp delivery — caller requested skipWhatsApp (e.g. manual cash/UPI collection without billingSettings.autoWhatsAppReceipts)',
+        'BillingEventsListener',
+        { receiptId }
       );
       return;
     }

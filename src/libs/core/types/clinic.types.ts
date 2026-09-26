@@ -398,6 +398,16 @@ export interface ClinicSettings {
     taxRate: number;
     paymentMethods: string[];
     invoicePrefix: string;
+    /** Default OPD consultation fee used when the visit's doctor has no `Doctor.consultationFee`. */
+    opdConsultationFee?: number;
+    /** Fee charged for a follow-up visit within `followUpValidityDays` of a prior visit. */
+    followUpFee?: number;
+    /** Number of days after a visit during which a follow-up fee (instead of the full OPD fee) applies. */
+    followUpValidityDays?: number;
+    /** Tax percentage applied to consultation invoices. */
+    consultationTaxPercent?: number;
+    /** When false (default), cash/manual invoice payments do not trigger the WhatsApp receipt auto-send. */
+    autoWhatsAppReceipts?: boolean;
   };
   securitySettings: {
     mfaRequired: boolean;

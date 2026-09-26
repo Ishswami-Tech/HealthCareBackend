@@ -6,8 +6,10 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsArray,
+  IsBoolean,
   IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsNumber,
   IsObject,
@@ -16,12 +18,30 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export enum SpecialCaseFlag {
   MINOR = 'MINOR',
   PHYSICAL_HANDICAP = 'PHYSICAL_HANDICAP',
   PREGNANT_OR_SENIOR_CITIZEN = 'PREGNANT_OR_SENIOR_CITIZEN',
+}
+
+export class CollectVisitFeeDto {
+  @ApiPropertyOptional({ example: 'CASH', enum: ['CASH', 'UPI', 'CARD', 'NET_BANKING'] })
+  @IsIn(['CASH', 'UPI', 'CARD', 'NET_BANKING'])
+  method!: 'CASH' | 'UPI' | 'CARD' | 'NET_BANKING';
+
+  @ApiPropertyOptional({ example: 'txn-uuid-123' })
+  @IsOptional()
+  @IsString()
+  transactionId?: string;
+
+  @ApiPropertyOptional({ example: 'Collected at reception desk' })
+  @IsOptional()
+  @IsString()
+  note?: string;
 }
 
 export class CreatePatientVisitDto {
@@ -81,6 +101,47 @@ export class CreatePatientVisitDto {
   @IsOptional()
   @IsString()
   knownCaseOf?: string;
+
+  @ApiPropertyOptional({
+    example: 500,
+    description:
+      'Explicit consultation fee for this visit. Falls back to Doctor.consultationFee, then the clinic billingSettings default, when omitted.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  consultationFee?: number;
+
+  @ApiPropertyOptional({ example: 50, description: 'Discount off the resolved consultation fee' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  feeDiscount?: number;
+
+  @ApiPropertyOptional({
+    example: false,
+    description: 'Waive the consultation fee entirely (invoice created PAID at ₹0)',
+  })
+  @IsOptional()
+  @IsBoolean()
+  waiveFee?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Collect the consultation fee immediately at registration',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CollectVisitFeeDto)
+  collectFee?: CollectVisitFeeDto;
+
+  @ApiPropertyOptional({
+    example: false,
+    description:
+      'Skip creating a consultation invoice for this visit entirely (e.g. free follow-up)',
+  })
+  @IsOptional()
+  @IsBoolean()
+  skipConsultationInvoice?: boolean;
 }
 
 export class UpdatePatientVisitDto {
@@ -278,6 +339,19 @@ export interface PatientVisitResponse {
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Consultation invoice created for this visit (billType CONSULTATION),
+   * when one could be created — null when billing was skipped (e.g. no
+   * fee configured and `skipConsultationInvoice` not set, or the billing
+   * write failed; registration itself never fails because of billing).
+   */
+  consultationInvoice?: {
+    id: string;
+    invoiceNumber: string;
+    totalAmount: number;
+    status: string;
+    paidAmount: number;
+  } | null;
 }
 
 export interface VisitVitalsExaminationResponse {

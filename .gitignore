@@ -116,6 +116,9 @@ run-seed.js
 .env.local-prod
 graphify-out/
 
+# Local storage fallback for uploads (S3StorageService) — never commit patient files
+storage/
+
 # Development output files
 devops-output*.txt
 devops_status*.txt
