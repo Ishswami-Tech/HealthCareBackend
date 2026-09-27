@@ -656,10 +656,23 @@ export class LoggingService {
 
       const isNoisyLog = this.isNoisyLog(message, context, level);
 
+      // Every HTTP request writes exactly two of these (LoggingInterceptor logs
+      // one on entry, one on completion, for literally every route including
+      // guard-rejected ones) — that's an AuditLog INSERT via executeHealthcareWrite
+      // (audit wrapper + row-level security + metrics overhead) added to EVERY
+      // request, competing with real business queries for the same connection
+      // pool. Confirmed in prod: 112 REQUEST + 112 RESPONSE rows in 10 minutes,
+      // the majority of all AuditLog writes, while every endpoint measured
+      // 2-18s regardless of its own query cost. These are operational request
+      // tracing, not HIPAA audit events (payment/appointment/auth writes are
+      // logged separately under their own LogType and are unaffected) — they
+      // still get stored in the cache list above for the Logger UI dashboard.
+      const isRequestTracingLog = type === LogType.REQUEST || type === LogType.RESPONSE;
+
       // ALWAYS store logs in cache (even if noisy) for dashboard visibility
       // CRITICAL: ERROR and WARN level logs are NEVER filtered as noisy - they must always appear
       // Only skip database logging for noisy/timeout logs (but still store in cache)
-      if (!isNoisyLog && !isTimeoutOrConnectionError) {
+      if (!isNoisyLog && !isTimeoutOrConnectionError && !isRequestTracingLog) {
         try {
           // Enhanced database logging with better error handling
           // CRITICAL: Skip database logging if we're in a recursive loop or connection pool is exhausted
