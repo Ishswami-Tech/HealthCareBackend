@@ -166,13 +166,33 @@ export class SecurityConfigService {
       port: cachePort,
       ...(cachePassword?.trim() && { password: cachePassword.trim() }),
       connectTimeout: 5000,
+      // Fail fast instead of queuing commands indefinitely while
+      // disconnected/reconnecting — with the default (queue enabled), every
+      // request's rate-limit check would wait behind a growing backlog if
+      // this connection ever had a hiccup, since @fastify/rate-limit runs on
+      // every single request.
+      enableOfflineQueue: false,
       maxRetriesPerRequest: 1,
       lazyConnect: true,
+    });
+    // An unhandled 'error' event on an EventEmitter throws in Node — without
+    // this listener, any connection hiccup on this client could crash or
+    // hang request handling instead of just failing this one rate-limit
+    // check.
+    rateLimitRedisClient.on('error', error => {
+      this.logger.warn(
+        `Rate-limit Redis client error: ${error instanceof Error ? error.message : String(error)}`
+      );
     });
     await adapter.registerRateLimit(app, {
       max: rateLimitConfig.max,
       timeWindow: this.configService.getEnv('RATE_LIMIT_WINDOW', '1 minute'),
       redis: rateLimitRedisClient,
+      // If this Redis client has any problem (disconnected, timeout,
+      // command error), let the request through rather than blocking it —
+      // rate limiting is a defense-in-depth control, not something that
+      // should be able to take the whole app down if its own store hiccups.
+      skipOnError: true,
       keyGenerator: (request: Partial<AuthenticatedRequest>) => {
         const ip = request.ip || 'unknown';
         const userAgent = request.headers?.['user-agent'];
