@@ -283,11 +283,32 @@ export abstract class BaseCacheClientService {
 
   async get(key: string): Promise<string | null> {
     if (!this.client || this.client.status !== 'ready') {
+      // Same silent no-op as set() below: a value that was written
+      // successfully moments earlier (confirmed present and correctly
+      // shaped via direct inspection) still gets treated as a cache miss on
+      // the very next read whenever the client isn't 'ready' at that exact
+      // instant - indistinguishable from "never cached" to every caller,
+      // which is why the dashboard-summary composition kept re-running on
+      // nearly every request even after its write started succeeding.
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.WARN,
+        `[BaseCacheClientService] get() skipped for key "${key}": client ${!this.client ? 'missing' : `not ready (status=${this.client.status})`}`,
+        'BaseCacheClientService.get',
+        { key, clientStatus: this.client?.status ?? 'no-client' }
+      );
       return null;
     }
     try {
       return await this.client.get(key);
-    } catch {
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.WARN,
+        `[BaseCacheClientService] get() threw for key "${key}": ${error instanceof Error ? error.message : String(error)}`,
+        'BaseCacheClientService.get',
+        { key, error: error instanceof Error ? error.stack : String(error) }
+      );
       return null;
     }
   }
