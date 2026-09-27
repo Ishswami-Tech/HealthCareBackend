@@ -844,10 +844,16 @@ export class PatientsService {
 
     await this.loggingService.log(
       LogType.SYSTEM,
-      // Surface the composition timing at WARN whenever the slowest sub-call
-      // alone would already trip the frontend's "Slow API request" threshold
-      // (~2s) — otherwise this is easy to miss among routine INFO noise.
-      slowestSubCall && slowestSubCall[1] > 2000 ? LogLevel.WARN : LogLevel.INFO,
+      // Routine composition telemetry - always INFO. This fires on every
+      // request, so tagging it WARN (as a prior revision did whenever the
+      // slowest sub-call exceeded 2s) flooded the production terminal/docker
+      // logs with a near-constant stream of "Composed for user X" lines,
+      // drowning out actual warnings (cache misses, low cache hit rate).
+      // It's still captured by the logger/events system regardless of level
+      // (LoggingService stores every log in the cache before level-gating
+      // terminal output), so timing data remains available on the logger
+      // dashboard - it just doesn't spam the console.
+      LogLevel.INFO,
       `[dashboard-summary] Composed for user ${userId}`,
       'PatientsService.composeDashboardSummary',
       {
