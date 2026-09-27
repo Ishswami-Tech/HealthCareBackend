@@ -249,14 +249,16 @@ export class AuthController {
   @Public()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
-  @Cache({
-    keyTemplate: 'auth:refresh_token:{userId}:cache',
-    ttl: 300, // 5 minutes cache for refresh tokens
-    tags: ['auth', 'refresh_tokens'],
-    priority: 'high',
-    enableSWR: false, // Security: fresh tokens always
-    containsPHI: true,
-  })
+  // Removed @Cache() - this endpoint is @Public() (no JwtAuthGuard, so no
+  // reliable req.user to key on) and the interceptor short-circuits with
+  // `return of(cachedResult)` on a hit, skipping the entire method body -
+  // including authService.refreshToken() (no new tokens issued) and
+  // reply.setCookie() (cookies never updated). For up to 5 minutes every
+  // refresh call from the same key returned a stale, already-used token
+  // pair with no cookie update, breaking refresh-token rotation and risking
+  // cross-session (or on this public route, potentially cross-user) token
+  // reuse. Token refresh must always execute fresh - it is not a
+  // cacheable read.
   @InvalidateCache({
     patterns: ['auth:login_attempt:*', 'user:{userId}:*'],
     tags: ['login_attempts', 'user_sessions'],
