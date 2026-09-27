@@ -65,12 +65,24 @@ export class ZeptoMailWebhookService {
           await this.handleUnsubscribe(event);
           break;
         default:
+          // `event.event` has come back undefined on every webhook received so
+          // far — the ZeptoMailWebhookEvent interface's field name(s) were
+          // never verified against ZeptoMail's actual payload (the controller's
+          // own comment admits this: "adjust based on their documentation").
+          // Logging the full raw payload here (not PHI — email delivery
+          // metadata) so the real field name/shape can be fixed from evidence
+          // instead of another guess.
           await this.loggingService.log(
             LogType.EMAIL,
             LogLevel.WARN,
             `Unknown ZeptoMail webhook event: ${String(event.event)}`,
             'ZeptoMailWebhookService',
-            { event: String(event.event), messageId: event.message_id }
+            {
+              event: String(event.event),
+              messageId: event.message_id,
+              rawPayloadKeys: Object.keys(event as unknown as Record<string, unknown>),
+              rawPayload: JSON.stringify(event),
+            }
           );
       }
     } catch (error) {
