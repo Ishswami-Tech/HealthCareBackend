@@ -328,23 +328,40 @@ export class LoggingService {
           return;
         }
 
-        const retainedLogs = cachedLogs.filter(logJson => {
-          try {
-            const parsed = JSON.parse(logJson) as Record<string, unknown>;
-            const timestamp = this.getLogEntryTimestamp(parsed);
-            if (timestamp === 0) {
-              return true;
+        // Parsing all 10000 entries synchronously in one pass blocks the event
+        // loop for the entire duration (confirmed: this is what was causing the
+        // multi-second stalls across unrelated concurrent requests whenever this
+        // 5-minute cleanup happened to fire mid-request). Chunking with a
+        // setImmediate yield between batches keeps each blocking slice small
+        // enough that other pending request handlers still get a turn.
+        const CHUNK_SIZE = 500;
+        const retainedLogs: string[] = [];
+        for (let i = 0; i < cachedLogs.length; i += CHUNK_SIZE) {
+          const chunk = cachedLogs.slice(i, i + CHUNK_SIZE);
+          for (const logJson of chunk) {
+            try {
+              const parsed = JSON.parse(logJson) as Record<string, unknown>;
+              const timestamp = this.getLogEntryTimestamp(parsed);
+              if (timestamp === 0) {
+                retainedLogs.push(logJson);
+                continue;
+              }
+
+              const retentionMs = this.isHealthCheckLogEntry(parsed)
+                ? this.healthLogRetentionMs
+                : this.generalLogRetentionMs;
+
+              if (Date.now() - timestamp < retentionMs) {
+                retainedLogs.push(logJson);
+              }
+            } catch {
+              retainedLogs.push(logJson);
             }
-
-            const retentionMs = this.isHealthCheckLogEntry(parsed)
-              ? this.healthLogRetentionMs
-              : this.generalLogRetentionMs;
-
-            return Date.now() - timestamp < retentionMs;
-          } catch {
-            return true;
           }
-        });
+          if (i + CHUNK_SIZE < cachedLogs.length) {
+            await new Promise<void>(resolve => setImmediate(resolve));
+          }
+        }
 
         if (retainedLogs.length !== cachedLogs.length) {
           await cacheService.del('logs');
