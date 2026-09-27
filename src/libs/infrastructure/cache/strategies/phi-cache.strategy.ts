@@ -41,6 +41,21 @@ export class PHICacheStrategy extends BaseCacheStrategy {
 
     // SWR pattern: Try to get cached value first
     const cached = await this.getCached<T>(key);
+    // Temporary diagnostic: logPHIAccess() below never surfaced in any prior
+    // check despite this class confirmed being the writer (raw, unwrapped
+    // stored shape only matches this strategy's setCached call, not SWR's
+    // {data,timestamp} wrapper) - meaning either logPHIAccess() itself is
+    // silently failing every time (it has its own swallow-all catch), or
+    // getCached() is returning null/a mismatched value right after a
+    // confirmed-successful write moments earlier. This line uses a distinct
+    // message so it's identifiable even if logPHIAccess is the broken one.
+    void this.loggingService.log(
+      LogType.CACHE,
+      LogLevel.WARN,
+      `[PHICacheStrategy] getCached returned ${cached === null ? 'null' : `non-null (${typeof cached})`} for key "${key}"`,
+      'PHICacheStrategy.execute',
+      { key, isNull: cached === null, valueType: typeof cached }
+    );
     if (cached !== null) {
       // Return cached value immediately (stale is OK for PHI)
       // Revalidate in background (fire and forget)
