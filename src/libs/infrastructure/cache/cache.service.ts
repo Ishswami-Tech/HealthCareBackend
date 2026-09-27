@@ -388,6 +388,22 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
         this.metrics.recordOperation(false, responseTime, false);
       }
 
+      // This is the point where a strategy-level failure (e.g. serialization
+      // erroring inside cacheRepository.cache()) gets silently downgraded to
+      // "fall back to direct fetch" below — the caller gets a correct
+      // response, so nothing looked broken, but the key never actually
+      // caches and every future call pays the same fetchFn cost forever.
+      // Logging here (rather than only in BaseCacheStrategy.setCached, which
+      // never runs when the failure happens before the strategy's own
+      // set call) is what actually surfaces the root cause.
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.WARN,
+        `[CacheService] cache() failed for key "${key}", falling back to direct fetch: ${error instanceof Error ? error.message : String(error)}`,
+        'CacheService.cache',
+        { key, error: error instanceof Error ? error.stack : String(error) }
+      );
+
       // Handle error with graceful degradation
       if (this.errorHandler) {
         try {
