@@ -19,6 +19,8 @@ import type {
 import { DragonflyService } from '@cache/dragonfly/dragonfly.service';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
+import { LogType, LogLevel } from '@core/types';
+import type { LoggerLike } from '@core/types';
 
 /**
  * Dragonfly cache provider adapter - implements full IAdvancedCacheProvider interface
@@ -41,7 +43,10 @@ export class DragonflyCacheProvider implements IAdvancedCacheProvider {
     private readonly dragonflyService: DragonflyService,
     // ConfigService injected with forwardRef to handle circular dependencies (same pattern as CacheService)
     @Inject(forwardRef(() => ConfigService))
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService,
+    // Use string token to avoid importing LoggingService (prevents SWC TDZ circular-import issues)
+    @Inject('LOGGING_SERVICE')
+    private readonly loggingService: LoggerLike
   ) {
     // DragonflyService injected via forwardRef to handle circular dependencies
     // ConfigService injected with forwardRef to match pattern used in CacheService
@@ -68,8 +73,22 @@ export class DragonflyCacheProvider implements IAdvancedCacheProvider {
     try {
       const serialized = typeof value === 'string' ? value : JSON.stringify(value);
       await this.dragonflyService.set(key, serialized, ttl);
-    } catch {
-      // Fail silently - cache is not critical
+    } catch (error) {
+      // This is the actual active write path in production (CACHE_PROVIDER=
+      // dragonfly): three other silent-catch layers upstream (RedisService.set,
+      // BaseCacheStrategy.setCached, CacheService.cache) were all fixed to log
+      // first, but none of them ever fired because this class - a completely
+      // separate provider, not delegating to RedisService - is what
+      // CacheProviderFactory actually returns when dragonfly is configured.
+      // A confirmed-broken cache write (patient dashboard-summary composite
+      // never persisting) was invisible until logging landed here.
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.WARN,
+        `[DragonflyCacheProvider] set() failed for key "${key}": ${error instanceof Error ? error.message : String(error)}`,
+        'DragonflyCacheProvider.set',
+        { key, error: error instanceof Error ? error.stack : String(error) }
+      );
     }
   }
 
