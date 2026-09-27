@@ -41,8 +41,15 @@ export abstract class BaseCacheStrategy implements ICacheStrategy {
   protected async setCached<T>(key: string, value: T, ttl: number): Promise<void> {
     try {
       await this.cacheProvider.set(key, value, ttl);
-    } catch {
-      // Fail silently - cache is not critical
+    } catch (error) {
+      // A silent failure here is indistinguishable from "not cached yet" to
+      // every reader, so a persistent write failure (e.g. a serialization
+      // error on a large/complex payload) meant a key would never actually
+      // populate and every read would keep paying the full fetchFn cost
+      // forever, with no signal anywhere that caching wasn't working.
+      console.warn(
+        `[CacheStrategy] setCached failed for key "${key}": ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 
