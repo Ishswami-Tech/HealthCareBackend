@@ -149,6 +149,27 @@ export class ClinicController {
     return clinicId.trim();
   }
 
+  /**
+   * Defense-in-depth: verify the caller (unless SUPER_ADMIN) is actually
+   * assigned to the target clinic before returning/mutating that clinic's
+   * data. `@RequireResourcePermission(..., { requireOwnership: true })` does
+   * NOT enforce this on its own — RbacGuard has no ownership-check case for
+   * the 'clinics' resource, so it silently falls through to a generic role
+   * permission check. Reuses clinicService.getClinicById()'s own
+   * (already-fixed) isolation logic as the source of truth rather than
+   * duplicating the clinic-assignment lookup here.
+   */
+  private async assertClinicAccess(
+    req: ClinicAuthenticatedRequest,
+    targetClinicId: string
+  ): Promise<void> {
+    const userId = req.user?.sub || req.user?.id;
+    const role = req.user?.role;
+    if (role === Role.SUPER_ADMIN) return;
+    const clinicId = this.resolveClinicId(req, true);
+    await this.clinicService.getClinicById(targetClinicId, false, userId, role, clinicId);
+  }
+
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
@@ -682,6 +703,8 @@ export class ClinicController {
 
       this.logger.log(`Updating clinic ${id} by user ${userId}`);
 
+      await this.assertClinicAccess(req, id);
+
       const result = await this.clinicService.updateClinic(id, {
         ...updateClinicDto,
         ...(updateClinicDto.communicationConfig && {
@@ -957,6 +980,7 @@ export class ClinicController {
       if (!userId || userId === 'anonymous') {
         // Allow clinic-context-only reads for booking flows that are clinic-scoped but do not carry a user subject.
       }
+      await this.assertClinicAccess(req, id);
       const result = await this.clinicService.getClinicStaff(id, userId);
       this.logger.log(`Retrieved ${result?.length || 0} staff for clinic ${id}`);
       return result;
@@ -1029,6 +1053,8 @@ export class ClinicController {
 
       this.logger.log(`Getting patients for clinic ${id} by user ${userId}`);
 
+      await this.assertClinicAccess(req, id);
+
       const hasPagination = page !== undefined || limit !== undefined || search !== undefined;
       const result = hasPagination
         ? await this.clinicService.getClinicPatientsPaginated(id, {
@@ -1076,12 +1102,15 @@ export class ClinicController {
   async getDoctorPatients(
     @Param('id', ClinicIdPipe) id: string,
     @Param('doctorId') doctorId: string,
+    @Req() req: ClinicAuthenticatedRequest,
     @Query('search') search?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string
   ) {
     try {
       this.logger.log(`Getting patients for doctor ${doctorId} in clinic ${id}`);
+
+      await this.assertClinicAccess(req, id);
 
       const result = await this.clinicService.getClinicPatientsForDoctor(id, doctorId, {
         ...(search?.trim() ? { search: search.trim() } : {}),

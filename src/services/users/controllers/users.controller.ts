@@ -238,8 +238,8 @@ export class UsersController {
     description: 'Get recent activity logs for a user.',
   })
   @ApiResponse({ status: 200, description: 'Return user activity logs.' })
-  async getUserActivity(@Param('id') id: string) {
-    return this.usersService.getUserActivity(id);
+  async getUserActivity(@Param('id') id: string, @OptionalClinicId() clinicId?: string) {
+    return this.usersService.getUserActivity(id, 20, clinicId);
   }
 
   @Patch(':id')

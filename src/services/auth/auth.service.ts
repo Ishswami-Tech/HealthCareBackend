@@ -1397,7 +1397,6 @@ export class AuthService {
           reusedExistingOtp: false,
           ...(clinicId && { clinicId }),
           isNewUser: !user,
-          otp: result.otp || otpCode,
         })
         .catch(error => {
           void this.logging.log(
@@ -1422,7 +1421,6 @@ export class AuthService {
           method: isEmail ? 'Email' : 'SMS',
           ipAddress: sessionMetadata?.ipAddress,
           userAgent: sessionMetadata?.userAgent,
-          otp: result.otp || otpCode,
         }
       );
 
@@ -2865,12 +2863,15 @@ export class AuthService {
     const failedKey = `failed_login:${email}`;
     const lockKey = `account_lock:${email}`;
 
-    // Get current failed count
-    const current = await this.cacheService.get<string>(failedKey);
-    const failedCount = current ? parseInt(current) + 1 : 1;
-
-    // Store failed count for 1 hour
-    await this.cacheService.set(failedKey, failedCount.toString(), 3600);
+    // Atomically increment (INCR), setting the TTL only on the first
+    // increment. A read-then-write here would let concurrent guesses race
+    // past the threshold before any of them observes the updated count —
+    // exactly the brute-force window this counter exists to close (same
+    // fix as OtpService.recordOtpVerifyAttempt).
+    const failedCount = await this.cacheService.incr(failedKey);
+    if (failedCount === 1) {
+      await this.cacheService.expire(failedKey, 3600);
+    }
 
     // Log the failed attempt
     await this.logging.log(

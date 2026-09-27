@@ -1213,17 +1213,6 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     const operationName = 'CRITICAL_OPERATION';
 
     try {
-      // Use critical operation connection with highest priority
-      await this.connectionPoolManager.executeCriticalQuery<T>(
-        '', // Query will be executed through Prisma
-        [],
-        {
-          priority: 'high',
-          timeout: priority === CriticalPriority.EMERGENCY ? 120000 : 60000,
-          retries: priority === CriticalPriority.EMERGENCY ? 5 : 3,
-        }
-      );
-
       // Execute the critical operation
       const result = await this.executeWrite(
         operation,
@@ -1239,6 +1228,8 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
         {
           ...options,
           priority: 'critical',
+          timeout: options?.timeout ?? (priority === CriticalPriority.EMERGENCY ? 120000 : 60000),
+          retries: options?.retries ?? (priority === CriticalPriority.EMERGENCY ? 5 : 3),
         }
       );
 

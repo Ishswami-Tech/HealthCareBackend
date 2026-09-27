@@ -11,6 +11,11 @@ import type { CacheOperationOptions } from '@core/types';
 import type { ICacheProvider } from '@core/types';
 import { LogType, LogLevel } from '@core/types';
 import type { LoggerLike } from '@core/types';
+import {
+  encryptPHIValue,
+  decryptPHIValue,
+  getMissingEncryptionKeyWarningOnce,
+} from '@infrastructure/cache/utils/phi-encryption.util';
 
 /**
  * PHI cache strategy - enhanced security and audit logging
@@ -98,6 +103,41 @@ export class PHICacheStrategy extends BaseCacheStrategy {
       case 'standard':
       default:
         return 3600; // 1 hour
+    }
+  }
+
+  /**
+   * PHI must be encrypted at rest in the cache — override the base
+   * strategy's plain get/set to transparently encrypt on write and decrypt
+   * on read, so every caller of this strategy gets encryption without
+   * having to opt in per call site.
+   */
+  protected override async getCached<T>(key: string): Promise<T | null> {
+    try {
+      const raw = await this.cacheProvider.get<unknown>(key);
+      return decryptPHIValue<T>(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  protected override async setCached<T>(key: string, value: T, ttl: number): Promise<void> {
+    try {
+      const missingKeyWarning = getMissingEncryptionKeyWarningOnce();
+      if (missingKeyWarning) {
+        void this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.ERROR,
+          missingKeyWarning,
+          'PHICacheStrategy'
+        );
+      }
+      const encrypted = encryptPHIValue(value);
+      await this.cacheProvider.set(key, encrypted, ttl);
+    } catch (error) {
+      console.warn(
+        `[PHICacheStrategy] setCached failed for key "${key}": ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 

@@ -494,6 +494,13 @@ export class BaseSocket
   ): Promise<WsResponse<RoomEventData>> {
     try {
       const { room } = data;
+      const user = this.clientMetadata.get(client.id);
+      if (!this.isRoomOwnedByUser(room, user)) {
+        return {
+          event: 'joinRoom',
+          data: { success: false, error: 'You do not have permission to join this room' },
+        };
+      }
       await this.joinRoom(client, room);
       return { event: 'joinRoom', data: { success: true, room } };
     } catch (error: unknown) {
@@ -506,6 +513,24 @@ export class BaseSocket
         data: { success: false, error: errorMessage },
       };
     }
+  }
+
+  /**
+   * A connected client may only join rooms scoped to their own identity —
+   * their own user room, their own clinic's room, or a role room within
+   * their own clinic. Without this check, any connected client could join
+   * `user:<other-id>`/`clinic:<other-id>` verbatim via the generic
+   * 'joinRoom' event and receive PHI broadcast to that room, bypassing the
+   * scoping autoJoinRooms() already applies on connection.
+   */
+  private isRoomOwnedByUser(room: string, user: AuthenticatedUser | undefined): boolean {
+    if (!user) return false;
+    if (room === `user:${user.userId}`) return true;
+    if (user.clinicId) {
+      if (room === `clinic:${user.clinicId}`) return true;
+      if (user.role && room === `clinic:${user.clinicId}:role:${user.role}`) return true;
+    }
+    return false;
   }
 
   @SubscribeMessage('leaveRoom')

@@ -568,11 +568,16 @@ export class RbacService {
   }
 
   /**
-   * Check role-based permission
+   * Single source of truth for role -> permission mappings. Used by both
+   * checkRolePermission() (live authorization decisions) and
+   * getRoleBasedPermissions() (permission summaries and the fallback path
+   * used when the DB-driven role_permissions lookup fails) — previously
+   * these were two independently hand-maintained copies that had already
+   * drifted apart, silently dropping several roles and permissions from
+   * the fallback path.
    */
-  private checkRolePermission(roleName: string, resource: string, action: string): boolean {
-    // Define role-based permissions
-    const rolePermissions: Record<string, string[]> = {
+  private getRolePermissionsMap(): Record<string, string[]> {
+    return {
       SUPER_ADMIN: ['*'],
       CLINIC_ADMIN: [
         'users:*',
@@ -833,6 +838,13 @@ export class RbacService {
         'profile:update',
       ],
     };
+  }
+
+  /**
+   * Check role-based permission
+   */
+  private checkRolePermission(roleName: string, resource: string, action: string): boolean {
+    const rolePermissions = this.getRolePermissionsMap();
 
     const normalizedRole = roleName.trim().toUpperCase();
     const normalizedResource = resource.trim().toLowerCase();
@@ -1189,183 +1201,14 @@ export class RbacService {
   }
 
   /**
-   * Get role-based permissions
+   * Get role-based permissions. Delegates to the single shared
+   * role-permissions map (see getRolePermissionsMap()) so this stays in
+   * sync with the live authorization decisions in checkRolePermission().
    */
   private getRoleBasedPermissions(roleName: string): string[] {
-    const rolePermissions: Record<string, string[]> = {
-      SUPER_ADMIN: ['*'],
-      CLINIC_ADMIN: [
-        'users:*',
-        'appointments:*',
-        'clinics:read',
-        'clinics:create',
-        'clinics:update',
-        'clinics:delete',
-        'patients:*',
-        'doctors:read',
-        'doctors:create',
-        'doctors:update',
-        'billing:*',
-        'subscriptions:*',
-        'invoices:*',
-        'payments:*',
-        'video:*',
-        'ehr:*',
-        'medical-records:*',
-        'lab-reports:*',
-        'vitals:*',
-        'medications:*',
-        'prescriptions:*',
-        'notifications:*',
-        'profile:read',
-        'profile:update',
-        'reports:*',
-        'settings:*',
-        'therapy:*',
-      ],
-      DOCTOR: [
-        'appointments:read',
-        'appointments:create',
-        'appointments:update',
-        'patients:read',
-        'patients:create',
-        'patients:update',
-        'doctors:read',
-        'profile:read',
-        'profile:update',
-        'users:create',
-        'users:update',
-        'clinics:read',
-        'billing:read',
-        'inventory:read',
-        'video:read',
-        'video:create',
-        'video:update',
-        'medical-records:*',
-        'prescriptions:*',
-        'ehr:read',
-        'ehr:create',
-        'ehr:update',
-        'lab-reports:*',
-        'vitals:*',
-        'medications:*',
-        'ayurveda:*',
-        'therapy:*',
-        'invoices:read',
-        'invoices:create',
-        'payments:read',
-        'billing:create',
-        'notifications:read',
-        'notifications:create',
-        'analytics:read',
-      ],
-      ASSISTANT_DOCTOR: [
-        'appointments:read',
-        'appointments:create',
-        'appointments:update',
-        'patients:read',
-        'patients:create',
-        'patients:update',
-        'doctors:read',
-        'profile:read',
-        'profile:update',
-        'users:update',
-        'clinics:read',
-        'billing:read',
-        'inventory:read',
-        'video:read',
-        'video:create',
-        'video:update',
-        'medical-records:*',
-        'prescriptions:*',
-        'ehr:read',
-        'ehr:create',
-        'ehr:update',
-        'lab-reports:*',
-        'vitals:*',
-        'medications:*',
-        'ayurveda:*',
-        'therapy:*',
-        'invoices:read',
-        'invoices:create',
-        'payments:read',
-        'billing:create',
-        'notifications:read',
-        'notifications:create',
-        'analytics:read',
-      ],
-      NURSE: [
-        'appointments:read',
-        'patients:read',
-        'patients:update',
-        'medical-records:read',
-        'medical-records:create',
-        'video:read',
-        'video:create',
-        'video:update',
-        'vitals:*',
-        'ayurveda:read',
-        'therapy:read',
-        'invoices:read',
-        'analytics:read',
-      ],
-      RECEPTIONIST: [
-        'appointments:*',
-        'users:read',
-        'users:create',
-        'patients:read',
-        'patients:create',
-        'patients:update',
-        'doctors:read',
-        'clinics:read',
-        'billing:read',
-        'billing:create',
-        'billing:update',
-        'invoices:read',
-        'payments:read',
-        'payments:create',
-        'subscriptions:read',
-        'subscriptions:create',
-        'subscriptions:update',
-        'scheduling:*',
-        'video:read',
-        'video:create',
-        'video:update',
-        'queue:*',
-        'notifications:read',
-        'notifications:create',
-        'medical-records:read',
-        'prescriptions:read',
-        'prescriptions:update',
-        'profile:read',
-        'profile:update',
-      ],
-      PATIENT: [
-        'appointments:read',
-        'appointments:create',
-        'appointments:update',
-        'doctors:read', // View doctors for booking (doctors controller allows PATIENT on GET)
-        'clinics:read', // View clinic locations for booking (clinic-location controller allows PATIENT on GET)
-        'profile:read',
-        'profile:update',
-        'users:update', // Update own profile (users controller PATCH with requireOwnership)
-        'medical-records:read',
-        // Billing permissions - patients can view and manage their own billing data
-        'billing:read',
-        'subscriptions:read',
-        'subscriptions:create', // Create subscription (billing controller POST subscriptions)
-        'subscriptions:update', // Cancel/renew, book appointment with subscription
-        'invoices:read',
-        'payments:read',
-        'payments:create',
-        // Video consultation
-        'video:read',
-        'video:create',
-        'video:update',
-      ],
-    };
-
-    return rolePermissions[roleName] || [];
+    const rolePermissions = this.getRolePermissionsMap();
+    const normalizedRole = roleName.trim().toUpperCase();
+    return rolePermissions[normalizedRole] || rolePermissions[roleName] || [];
   }
 
   /**

@@ -14,6 +14,11 @@ import { tap, catchError } from 'rxjs/operators';
 
 // Internal imports - Infrastructure
 import { CacheService } from '@infrastructure/cache/cache.service';
+import {
+  encryptPHIValue,
+  decryptPHIValue,
+  getMissingEncryptionKeyWarningOnce,
+} from '@infrastructure/cache/utils/phi-encryption.util';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 
@@ -360,7 +365,8 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       try {
         // Route to appropriate cache method based on healthcare data type
         if (options.patientSpecific) {
-          return await this.cacheService.get(cacheKey);
+          const raw = await this.cacheService.get(cacheKey);
+          return decryptPHIValue(raw);
         }
 
         if (options.emergencyData) {
@@ -379,8 +385,13 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
         // The cache strategies store data as { data: T, timestamp: number }
         // but the interceptor reads directly from the provider, so we need
         // to unwrap here to return the actual data to the client.
+        // decryptPHIValue is a no-op passthrough for non-encrypted values
+        // (needed here too since @Cache({containsPHI:true}) without
+        // patientSpecific writes via the encrypted branch above but reads
+        // via this branch, not the patientSpecific one).
         const cachedValue = await this.cacheService.get(cacheKey);
-        return this.unwrapCacheValue(cachedValue) ?? null;
+        const decrypted = decryptPHIValue(cachedValue);
+        return this.unwrapCacheValue(decrypted) ?? null;
       } catch (cacheError) {
         void this.loggingService?.log(
           LogType.CACHE,
@@ -458,13 +469,15 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
     context: ExecutionContext
   ): Promise<void> {
     try {
-      // Never cache empty arrays — they are often transient (e.g. race with
-      // doctor/location assignment). This single guard covers all write paths
-      // (normal, condition, PHI, SWR) and is defense-in-depth alongside the
-      // service-level early returns.
-      if (Array.isArray(value) && value.length === 0) {
-        return;
-      }
+      // Empty arrays are often transient (e.g. race with doctor/location
+      // assignment), so don't cache them at the normal TTL — but a genuinely
+      // empty steady-state list (e.g. a patient with zero appointments) is
+      // common and would otherwise never get a cache hit. Cache empty
+      // results briefly instead of skipping entirely.
+      const isEmptyArrayResult = Array.isArray(value) && value.length === 0;
+      const effectiveOptions: UnifiedCacheOptions = isEmptyArrayResult
+        ? { ...options, ttl: Math.min(options.ttl ?? 30, 30) }
+        : options;
 
       // Check if cache service is available
       if (!this.cacheService) {
@@ -480,22 +493,35 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
 
       // Safely call cache service methods with error handling
       try {
-        const ttl = this.calculateTTL(options, context);
+        const ttl = this.calculateTTL(effectiveOptions, context);
         const serializedValue = JSON.stringify(value);
 
         // Apply healthcare-specific caching logic
-        const cacheTTL = options.ttl ?? 1800;
+        const cacheTTL = effectiveOptions.ttl ?? 1800;
         // Tags are registered for the set() paths too; otherwise writes that
         // call invalidateCacheByTag() never reach PHI/emergency entries and a
         // create followed by a list read returns the pre-create data.
-        const tags = this.resolveTags(options, context);
-        if (options.containsPHI) {
-          // PHI data gets additional security measures
-          await this.cacheService.set(cacheKey, serializedValue, { ttl: cacheTTL, tags });
+        const tags = this.resolveTags(effectiveOptions, context);
+        if (effectiveOptions.containsPHI) {
+          // PHI data gets additional security measures — encrypted at rest,
+          // not stored as plaintext JSON like the other branches.
+          const missingKeyWarning = getMissingEncryptionKeyWarningOnce();
+          if (missingKeyWarning) {
+            void this.loggingService?.log(
+              LogType.SECURITY,
+              LogLevel.ERROR,
+              missingKeyWarning,
+              'HealthcareCacheInterceptor'
+            );
+          }
+          const encryptedValue = encryptPHIValue(value);
+          await this.cacheService.set(cacheKey, encryptedValue, { ttl: cacheTTL, tags });
 
-          // Track PHI cache access for compliance
-          await this.trackPHIAccess(cacheKey, context, 'cache_set');
-        } else if (options.emergencyData) {
+          // Track PHI cache access for compliance (fire-and-forget: audit
+          // logging must not add latency to the request's critical path;
+          // trackPHIAccess handles its own errors internally).
+          void this.trackPHIAccess(cacheKey, context, 'cache_set');
+        } else if (effectiveOptions.emergencyData) {
           // Emergency data uses minimal TTL
           const emergencyTTL = Math.min(ttl, 300); // Max 5 minutes
           await this.cacheService.set(cacheKey, serializedValue, { ttl: emergencyTTL, tags });
@@ -503,20 +529,22 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
           // Standard caching with SWR support
           await this.cacheService.cache(cacheKey, () => Promise.resolve(value), {
             ttl,
-            ...(options.compress !== undefined && { compress: options.compress }),
-            ...(options.enableCompression !== undefined && {
-              compress: options.enableCompression,
+            ...(effectiveOptions.compress !== undefined && { compress: effectiveOptions.compress }),
+            ...(effectiveOptions.enableCompression !== undefined && {
+              compress: effectiveOptions.enableCompression,
             }),
-            priority: this.mapPriority(options.priority),
-            enableSwr: options.enableSWR !== false,
-            ...(options.staleTime !== undefined && {
-              staleTime: options.staleTime,
+            priority: this.mapPriority(effectiveOptions.priority),
+            enableSwr: effectiveOptions.enableSWR !== false,
+            ...(effectiveOptions.staleTime !== undefined && {
+              staleTime: effectiveOptions.staleTime,
             }),
-            ...(options.tags !== undefined && { tags: [...(options.tags ?? [])] }),
+            ...(effectiveOptions.tags !== undefined && {
+              tags: [...(effectiveOptions.tags ?? [])],
+            }),
           });
         }
 
-        const ttlValue = options.ttl ?? 1800;
+        const ttlValue = effectiveOptions.ttl ?? 1800;
         await this.loggingService.log(
           LogType.CACHE,
           LogLevel.DEBUG,
@@ -686,11 +714,11 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
 
   private mapPriority(priority?: string): 'high' | 'low' {
     switch (priority) {
-      case 'critical':
-      case 'high':
-        return 'high';
       case 'normal':
       case 'low':
+        return 'low';
+      case 'critical':
+      case 'high':
       default:
         return 'high'; // Healthcare data defaults to high priority
     }

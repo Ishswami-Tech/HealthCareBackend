@@ -3217,7 +3217,7 @@ export class AppointmentsService {
         return expiredResult;
       }
 
-      case AppointmentStatus.CANCELLED:
+      case AppointmentStatus.CANCELLED: {
         // Production policy: enforce 4-hour cancellation notice for patients.
         // Temporarily disabled for testing so near-term appointments can be cancelled.
         // if (role === 'PATIENT') {
@@ -3242,14 +3242,29 @@ export class AppointmentsService {
           );
         }
 
-        // Trigger refund for cancellation
-        await this.triggerAppointmentRefund(
+        // Validate the cancellation itself succeeds (e.g. rejects an
+        // already-COMPLETED/CANCELLED/IN_PROGRESS appointment) BEFORE
+        // triggering any refund — refunding first meant a rejected
+        // cancellation (invalid state transition) still issued a real
+        // gateway refund for an appointment that stayed unchanged.
+        const cancelResult = await this.cancelAppointment(
           appointmentId,
+          updateDto.reason,
+          userId,
           clinicId,
-          `Appointment cancelled: ${updateDto.reason}`
+          role
         );
 
-        return this.cancelAppointment(appointmentId, updateDto.reason, userId, clinicId, role);
+        if (cancelResult.success) {
+          await this.triggerAppointmentRefund(
+            appointmentId,
+            clinicId,
+            `Appointment cancelled: ${updateDto.reason}`
+          );
+        }
+
+        return cancelResult;
+      }
 
       case AppointmentStatus.NO_SHOW: {
         // Handle automated refund if it's a doctor no-show

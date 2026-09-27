@@ -381,260 +381,282 @@ export class CoreAppointmentService {
         };
       }
 
-      // 4. Check for scheduling conflicts
+      // 4. Check for scheduling conflicts. The conflict check (read) and the
+      // eventual insert further below are not atomic on their own — two
+      // concurrent booking requests for the same doctor/slot (different
+      // patients, or the same patient double-clicking/double-tabbing) can
+      // both read zero conflicts before either commits, then both insert,
+      // producing two confirmed appointments for the same doctor at the
+      // same time. Serialize the whole conflict-check-through-insert span
+      // per doctor+slot with a short-lived distributed lock.
       const appointmentDate = new Date(createDto.appointmentDate);
-      const existingAppointments = await this.getExistingTimeSlots(
-        resolvedIds.doctorId,
-        context.clinicId,
-        appointmentDate
-      );
-
-      const conflictResult = await this.conflictResolutionService.resolveSchedulingConflict(
-        {
-          patientId: resolvedIds.patientId,
-          doctorId: resolvedIds.doctorId,
-          clinicId: context.clinicId,
-          requestedTime: appointmentDate,
-          duration: createDto.duration,
-          priority: this.mapPriority(createDto.priority || AppointmentPriority.NORMAL),
-          serviceType: createDto.type,
-          ...(createDto.notes && { notes: createDto.notes }),
-        },
-        this.convertToTimeSlots(existingAppointments, resolvedIds.doctorId, context.clinicId),
-        { allowOverlap: false, suggestAlternatives: true }
-      );
-
-      if (!conflictResult.canSchedule && conflictResult.conflicts.length > 0) {
+      const bookingLockKey = `lock:booking:${resolvedIds.doctorId}:${context.clinicId}:${appointmentDate.toISOString()}`;
+      const bookingLockAcquired = await this.cacheService.acquireLock(bookingLockKey, 15);
+      if (!bookingLockAcquired) {
         return {
           success: false,
           error: 'SCHEDULING_CONFLICT',
-          message: 'Appointment time conflicts with existing schedule',
-          metadata: {
-            processingTime: Date.now() - startTime,
-            conflicts: conflictResult.conflicts,
-            alternatives: conflictResult.alternatives,
-          },
-        };
-      }
-
-      // 4. Create appointment with enhanced metadata
-      // Normalize the supplied slot before persisting so date-only inputs do not
-      // collapse to midnight UTC and surface as 05:30 in IST.
-      const appointmentDateTime = this.resolveAppointmentDateTime(createDto);
-      const { date: dateStr, time: timeStr } = this.getISTDateAndTime(appointmentDateTime);
-
-      // 4a. Idempotency: prevent creating a duplicate active appointment for the
-      // same (patient, doctor, date, time, location) tuple within a short window.
-      // Frontend payment-retry flows can otherwise create multiple rows for the
-      // same logical slot. For video appointments, this guards against the
-      // payment-retry race; for in-person, it protects against rapid double-clicks.
-      const dedupWindowMs = isVideoCallAppointmentType(createDto.type)
-        ? 24 * 60 * 60 * 1000 // 24 hours for video appointments (payment retries common)
-        : 10 * 60 * 1000; // 10 minutes for in-person (quick double-click guard)
-      const dedupWindowStart = new Date(Date.now() - dedupWindowMs);
-      const existingRecent = (await this.databaseService.executeRead(async prisma => {
-        const tx = prisma as unknown as PrismaTransactionClientWithDelegates;
-        return tx.appointment.findFirst({
-          where: {
-            patientId: resolvedIds.patientId,
-            doctorId: resolvedIds.doctorId,
-            ...(resolvedIds.locationId
-              ? { locationId: resolvedIds.locationId }
-              : { locationId: null }),
-            date: new Date(`${dateStr}T00:00:00.000+05:30`),
-            time: timeStr,
-            type: createDto.type,
-            createdAt: { gte: dedupWindowStart },
-          },
-          orderBy: { createdAt: 'desc' },
-        });
-      })) as { id: string } | null;
-
-      if (existingRecent) {
-        void this.loggingService.log(
-          LogType.BUSINESS,
-          LogLevel.WARN,
-          `Duplicate appointment creation detected; returning existing appointment ${existingRecent.id}`,
-          'CoreAppointmentService.createAppointment',
-          {
-            patientId: resolvedIds.patientId,
-            doctorId: resolvedIds.doctorId,
-            date: dateStr,
-            time: timeStr,
-            existingId: existingRecent.id,
-          }
-        );
-        return {
-          success: true,
-          data: { id: existingRecent.id } as unknown as Record<string, unknown>,
-          message: 'An active appointment already exists for this slot.',
+          message: 'This slot is currently being booked by another request. Please try again.',
           metadata: { processingTime: Date.now() - startTime },
         };
       }
 
-      if (isVideoCallAppointmentType(createDto.type)) {
-        const clinicSettings = await this.databaseService.executeHealthcareRead(async client => {
-          const typedClient = client as unknown as {
-            clinic: {
-              findUnique: (args: unknown) => Promise<{ settings?: unknown } | null>;
-            };
-          };
+      try {
+        const existingAppointments = await this.getExistingTimeSlots(
+          resolvedIds.doctorId,
+          context.clinicId,
+          appointmentDate
+        );
 
-          return typedClient.clinic.findUnique({
-            where: { id: context.clinicId },
-            select: { settings: true },
-          });
-        });
+        const conflictResult = await this.conflictResolutionService.resolveSchedulingConflict(
+          {
+            patientId: resolvedIds.patientId,
+            doctorId: resolvedIds.doctorId,
+            clinicId: context.clinicId,
+            requestedTime: appointmentDate,
+            duration: createDto.duration,
+            priority: this.mapPriority(createDto.priority || AppointmentPriority.NORMAL),
+            serviceType: createDto.type,
+            ...(createDto.notes && { notes: createDto.notes }),
+          },
+          this.convertToTimeSlots(existingAppointments, resolvedIds.doctorId, context.clinicId),
+          { allowOverlap: false, suggestAlternatives: true }
+        );
 
-        const appointmentSettings = this.extractAppointmentSettings(clinicSettings?.settings);
-        const videoCallWindow = this.extractVideoCallWindow(appointmentSettings);
-        if (
-          videoCallWindow &&
-          !this.isSlotWithinWindow(timeStr, Number(createDto.duration), videoCallWindow)
-        ) {
+        if (!conflictResult.canSchedule && conflictResult.conflicts.length > 0) {
           return {
             success: false,
-            error: 'VALIDATION_ERROR',
-            message: 'Video appointment must be scheduled within the clinic video call window',
+            error: 'SCHEDULING_CONFLICT',
+            message: 'Appointment time conflicts with existing schedule',
             metadata: {
               processingTime: Date.now() - startTime,
+              conflicts: conflictResult.conflicts,
+              alternatives: conflictResult.alternatives,
             },
           };
         }
-      }
 
-      const appointmentData: Record<string, unknown> = {
-        ...createDto,
-        patientId: resolvedIds.patientId,
-        doctorId: resolvedIds.doctorId,
-        ...(resolvedIds.locationId && { locationId: resolvedIds.locationId }),
-        userId: context.userId, // Add required userId
-        clinicId: context.clinicId, // Enforce context clinic ID
-        priority: createDto.priority || AppointmentPriority.NORMAL,
-        date: new Date(`${dateStr}T00:00:00.000+05:30`),
-        time: timeStr,
-      };
+        // 4. Create appointment with enhanced metadata
+        // Normalize the supplied slot before persisting so date-only inputs do not
+        // collapse to midnight UTC and surface as 05:30 in IST.
+        const appointmentDateTime = this.resolveAppointmentDateTime(createDto);
+        const { date: dateStr, time: timeStr } = this.getISTDateAndTime(appointmentDateTime);
 
-      // VIDEO_CALL appointments require upfront per-appointment payment.
-      // Start them in PENDING with a payment-expiry window so that:
-      //   - the UI can show a countdown timer
-      //   - the scheduler can auto-cancel unpaid appointments
-      // IN_PERSON appointments are subscription-based, so they go straight
-      // to SCHEDULED (and then CONFIRMED by the receptionist).
-      const appointmentType = String(createDto.type || '').toUpperCase();
-      if (appointmentType === 'VIDEO_CALL') {
-        // Keep video appointment duration aligned with the web booking slot.
-        appointmentData['duration'] = 15;
-        const windowMinutes = getVideoPaymentWindowMinutes();
-        const expiresAt = new Date(Date.now() + windowMinutes * 60_000);
-        appointmentData['status'] = AppointmentStatus.PENDING;
-        appointmentData['paymentExpiresAt'] = expiresAt;
-        // Surface the window in metadata so the frontend can render a
-        // countdown without having to know the exact expiry timestamp yet.
-        appointmentData['metadata'] = {
-          ...((createDto as { metadata?: Record<string, unknown> }).metadata || {}),
-          paymentWindowMinutes: windowMinutes,
-          paymentWindowStartedAt: new Date().toISOString(),
+        // 4a. Idempotency: prevent creating a duplicate active appointment for the
+        // same (patient, doctor, date, time, location) tuple within a short window.
+        // Frontend payment-retry flows can otherwise create multiple rows for the
+        // same logical slot. For video appointments, this guards against the
+        // payment-retry race; for in-person, it protects against rapid double-clicks.
+        const dedupWindowMs = isVideoCallAppointmentType(createDto.type)
+          ? 24 * 60 * 60 * 1000 // 24 hours for video appointments (payment retries common)
+          : 10 * 60 * 1000; // 10 minutes for in-person (quick double-click guard)
+        const dedupWindowStart = new Date(Date.now() - dedupWindowMs);
+        const existingRecent = (await this.databaseService.executeRead(async prisma => {
+          const tx = prisma as unknown as PrismaTransactionClientWithDelegates;
+          return tx.appointment.findFirst({
+            where: {
+              patientId: resolvedIds.patientId,
+              doctorId: resolvedIds.doctorId,
+              ...(resolvedIds.locationId
+                ? { locationId: resolvedIds.locationId }
+                : { locationId: null }),
+              date: new Date(`${dateStr}T00:00:00.000+05:30`),
+              time: timeStr,
+              type: createDto.type,
+              createdAt: { gte: dedupWindowStart },
+            },
+            orderBy: { createdAt: 'desc' },
+          });
+        })) as { id: string } | null;
+
+        if (existingRecent) {
+          void this.loggingService.log(
+            LogType.BUSINESS,
+            LogLevel.WARN,
+            `Duplicate appointment creation detected; returning existing appointment ${existingRecent.id}`,
+            'CoreAppointmentService.createAppointment',
+            {
+              patientId: resolvedIds.patientId,
+              doctorId: resolvedIds.doctorId,
+              date: dateStr,
+              time: timeStr,
+              existingId: existingRecent.id,
+            }
+          );
+          return {
+            success: true,
+            data: { id: existingRecent.id } as unknown as Record<string, unknown>,
+            message: 'An active appointment already exists for this slot.',
+            metadata: { processingTime: Date.now() - startTime },
+          };
+        }
+
+        if (isVideoCallAppointmentType(createDto.type)) {
+          const clinicSettings = await this.databaseService.executeHealthcareRead(async client => {
+            const typedClient = client as unknown as {
+              clinic: {
+                findUnique: (args: unknown) => Promise<{ settings?: unknown } | null>;
+              };
+            };
+
+            return typedClient.clinic.findUnique({
+              where: { id: context.clinicId },
+              select: { settings: true },
+            });
+          });
+
+          const appointmentSettings = this.extractAppointmentSettings(clinicSettings?.settings);
+          const videoCallWindow = this.extractVideoCallWindow(appointmentSettings);
+          if (
+            videoCallWindow &&
+            !this.isSlotWithinWindow(timeStr, Number(createDto.duration), videoCallWindow)
+          ) {
+            return {
+              success: false,
+              error: 'VALIDATION_ERROR',
+              message: 'Video appointment must be scheduled within the clinic video call window',
+              metadata: {
+                processingTime: Date.now() - startTime,
+              },
+            };
+          }
+        }
+
+        const appointmentData: Record<string, unknown> = {
+          ...createDto,
+          patientId: resolvedIds.patientId,
+          doctorId: resolvedIds.doctorId,
+          ...(resolvedIds.locationId && { locationId: resolvedIds.locationId }),
+          userId: context.userId, // Add required userId
+          clinicId: context.clinicId, // Enforce context clinic ID
+          priority: createDto.priority || AppointmentPriority.NORMAL,
+          date: new Date(`${dateStr}T00:00:00.000+05:30`),
+          time: timeStr,
         };
-      } else {
-        appointmentData['status'] = AppointmentStatus.SCHEDULED;
-      }
-      // Remove appointmentDate as it's not part of AppointmentCreateInput
-      delete appointmentData['appointmentDate'];
 
-      // Cast to AppointmentCreateInput - appointmentData has all required fields from createDto
-      const appointment = (await this.databaseService.createAppointmentSafe(
-        appointmentData as unknown as Parameters<
-          typeof this.databaseService.createAppointmentSafe
-        >[0]
-      )) as AppointmentData;
+        // VIDEO_CALL appointments require upfront per-appointment payment.
+        // Start them in PENDING with a payment-expiry window so that:
+        //   - the UI can show a countdown timer
+        //   - the scheduler can auto-cancel unpaid appointments
+        // IN_PERSON appointments are subscription-based, so they go straight
+        // to SCHEDULED (and then CONFIRMED by the receptionist).
+        const appointmentType = String(createDto.type || '').toUpperCase();
+        if (appointmentType === 'VIDEO_CALL') {
+          // Keep video appointment duration aligned with the web booking slot.
+          appointmentData['duration'] = 15;
+          const windowMinutes = getVideoPaymentWindowMinutes();
+          const expiresAt = new Date(Date.now() + windowMinutes * 60_000);
+          appointmentData['status'] = AppointmentStatus.PENDING;
+          appointmentData['paymentExpiresAt'] = expiresAt;
+          // Surface the window in metadata so the frontend can render a
+          // countdown without having to know the exact expiry timestamp yet.
+          appointmentData['metadata'] = {
+            ...((createDto as { metadata?: Record<string, unknown> }).metadata || {}),
+            paymentWindowMinutes: windowMinutes,
+            paymentWindowStartedAt: new Date().toISOString(),
+          };
+        } else {
+          appointmentData['status'] = AppointmentStatus.SCHEDULED;
+        }
+        // Remove appointmentDate as it's not part of AppointmentCreateInput
+        delete appointmentData['appointmentDate'];
 
-      // Cast for AppointmentResult compatibility
-      const appointmentResult = appointment as unknown as Record<string, unknown>;
+        // Cast to AppointmentCreateInput - appointmentData has all required fields from createDto
+        const appointment = (await this.databaseService.createAppointmentSafe(
+          appointmentData as unknown as Parameters<
+            typeof this.databaseService.createAppointmentSafe
+          >[0]
+        )) as AppointmentData;
 
-      // 5. Auto-create video room for VIDEO_CALL appointments
-      // Note: Video room creation is handled by AppointmentsService after appointment creation
-      // to avoid circular dependencies. The video room creation is triggered via event.
-      if (isVideoCallAppointmentType(appointment.type)) {
+        // Cast for AppointmentResult compatibility
+        const appointmentResult = appointment as unknown as Record<string, unknown>;
+
+        // 5. Auto-create video room for VIDEO_CALL appointments
+        // Note: Video room creation is handled by AppointmentsService after appointment creation
+        // to avoid circular dependencies. The video room creation is triggered via event.
+        if (isVideoCallAppointmentType(appointment.type)) {
+          void this.loggingService.log(
+            LogType.BUSINESS,
+            LogLevel.INFO,
+            `Video appointment created - video room will be auto-created`,
+            'CoreAppointmentService.createAppointment',
+            { appointmentId: appointment.id, type: appointment.type }
+          );
+        }
+
+        // 6. Initialize workflow
+        this.workflowEngine.initializeWorkflow(appointment.id, 'APPOINTMENT_CREATED');
+
+        // 7. Queue background operations
+        void this.queueBackgroundOperations(appointment, context);
+
+        // 8. Emit events
+        void this.eventService.emit('appointment.created', {
+          appointmentId: appointment.id,
+          clinicId: appointment.clinicId,
+          doctorId: appointment.doctorId,
+          patientId: appointment.patientId,
+          scheduledDate: appointment.date,
+          scheduledTime: appointment.time,
+          appointment,
+          context,
+        });
+
+        // 7. HIPAA audit log
+        void this.hipaaAuditLog('CREATE_APPOINTMENT', context, {
+          appointmentId: appointment.id,
+          patientId: appointment.patientId,
+          outcome: 'SUCCESS',
+        });
+
+        // 8. Invalidate cache
+        void Promise.all([
+          this.invalidateAppointmentCache(context.clinicId),
+          resolvedIds.patientUserId
+            ? this.cacheService.invalidateMyAppointmentsCache(resolvedIds.patientUserId)
+            : Promise.resolve(0),
+          resolvedIds.patientUserId
+            ? this.cacheService.invalidateUpcomingAppointmentsCache(resolvedIds.patientUserId)
+            : Promise.resolve(0),
+          resolvedIds.doctorUserId
+            ? this.cacheService.invalidateDoctorCache(resolvedIds.doctorUserId, context.clinicId)
+            : Promise.resolve(0),
+        ]).catch((error: unknown) => {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            'Failed to invalidate appointment cache after create',
+            'CoreAppointmentService.createAppointment',
+            {
+              clinicId: context.clinicId,
+              patientUserId: resolvedIds.patientUserId,
+              doctorUserId: resolvedIds.doctorUserId,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          );
+        });
+
+        const processingTime = Date.now() - startTime;
         void this.loggingService.log(
           LogType.BUSINESS,
           LogLevel.INFO,
-          `Video appointment created - video room will be auto-created`,
+          `Appointment created successfully in ${processingTime}ms`,
           'CoreAppointmentService.createAppointment',
-          { appointmentId: appointment.id, type: appointment.type }
+          { processingTime }
         );
+
+        return {
+          success: true,
+          data: appointmentResult,
+          message: 'Appointment created successfully',
+          metadata: {
+            processingTime,
+            warnings: conflictResult.warnings || [],
+          },
+        };
+      } finally {
+        await this.cacheService.releaseLock(bookingLockKey);
       }
-
-      // 6. Initialize workflow
-      this.workflowEngine.initializeWorkflow(appointment.id, 'APPOINTMENT_CREATED');
-
-      // 7. Queue background operations
-      void this.queueBackgroundOperations(appointment, context);
-
-      // 8. Emit events
-      void this.eventService.emit('appointment.created', {
-        appointmentId: appointment.id,
-        clinicId: appointment.clinicId,
-        doctorId: appointment.doctorId,
-        patientId: appointment.patientId,
-        scheduledDate: appointment.date,
-        scheduledTime: appointment.time,
-        appointment,
-        context,
-      });
-
-      // 7. HIPAA audit log
-      void this.hipaaAuditLog('CREATE_APPOINTMENT', context, {
-        appointmentId: appointment.id,
-        patientId: appointment.patientId,
-        outcome: 'SUCCESS',
-      });
-
-      // 8. Invalidate cache
-      void Promise.all([
-        this.invalidateAppointmentCache(context.clinicId),
-        resolvedIds.patientUserId
-          ? this.cacheService.invalidateMyAppointmentsCache(resolvedIds.patientUserId)
-          : Promise.resolve(0),
-        resolvedIds.patientUserId
-          ? this.cacheService.invalidateUpcomingAppointmentsCache(resolvedIds.patientUserId)
-          : Promise.resolve(0),
-        resolvedIds.doctorUserId
-          ? this.cacheService.invalidateDoctorCache(resolvedIds.doctorUserId, context.clinicId)
-          : Promise.resolve(0),
-      ]).catch((error: unknown) => {
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.WARN,
-          'Failed to invalidate appointment cache after create',
-          'CoreAppointmentService.createAppointment',
-          {
-            clinicId: context.clinicId,
-            patientUserId: resolvedIds.patientUserId,
-            doctorUserId: resolvedIds.doctorUserId,
-            error: error instanceof Error ? error.message : String(error),
-          }
-        );
-      });
-
-      const processingTime = Date.now() - startTime;
-      void this.loggingService.log(
-        LogType.BUSINESS,
-        LogLevel.INFO,
-        `Appointment created successfully in ${processingTime}ms`,
-        'CoreAppointmentService.createAppointment',
-        { processingTime }
-      );
-
-      return {
-        success: true,
-        data: appointmentResult,
-        message: 'Appointment created successfully',
-        metadata: {
-          processingTime,
-          warnings: conflictResult.warnings || [],
-        },
-      };
     } catch (error) {
       const processingTime = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';

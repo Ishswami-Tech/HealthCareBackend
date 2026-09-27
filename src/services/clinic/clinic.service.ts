@@ -1123,8 +1123,12 @@ export class ClinicService {
     clinicId?: string
   ): Promise<ClinicResponseDto> {
     try {
-      // Enforce isolation for patients
-      if (role === Role.PATIENT && userId) {
+      // Enforce isolation for every non-super-admin role — previously this
+      // only ran for PATIENT, so CLINIC_ADMIN/DOCTOR/RECEPTIONIST/NURSE
+      // could fetch any other clinic's data (including its patient list via
+      // the sibling getClinicPatients/getClinicStaff endpoints) just by
+      // passing a different clinic id in the URL.
+      if (role !== Role.SUPER_ADMIN && userId) {
         const configuredClinicId = this.resolveConfiguredClinicId();
 
         // 1. Allow access if ID matches Configured ID (Single Tenant Env)
@@ -1203,7 +1207,7 @@ export class ClinicService {
       if (!clinic) throw new NotFoundException('Clinic not found');
 
       // Post-fetch permission check for non-UUID access
-      if (role === Role.PATIENT && userId) {
+      if (role !== Role.SUPER_ADMIN && userId) {
         const clinicData = clinic as ClinicResponseDto;
         const assignedClinicIds = await this.databaseService.executeHealthcareRead<string[]>(
           async client => {

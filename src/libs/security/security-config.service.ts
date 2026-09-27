@@ -124,7 +124,7 @@ export class SecurityConfigService {
    * @param app - NestJS application instance
    * @returns Promise<void>
    */
-  private async configureCompression(app: INestApplication): Promise<void> {
+  async configureCompression(app: INestApplication): Promise<void> {
     const adapter = this.getFastifyAdapter();
     await adapter.registerCompression(app, {
       global: true,
@@ -149,27 +149,30 @@ export class SecurityConfigService {
    * @param app - NestJS application instance
    * @returns Promise<void>
    */
-  private async configureRateLimiting(app: INestApplication): Promise<void> {
+  async configureRateLimiting(app: INestApplication): Promise<void> {
     const adapter = this.getFastifyAdapter();
     // Use ConfigService (which uses dotenv) for all environment variable access
     const rateLimitConfig = this.configService.getRateLimitConfig();
+    // @fastify/rate-limit requires an actual ioredis client instance for its
+    // `redis` option (it calls client.defineCommand(...) internally) — a
+    // plain {host, port, password} config object throws
+    // "this.redis.defineCommand is not a function" at plugin registration.
+    const cacheHost = this.configService.getCacheHost();
+    const cachePort = this.configService.getCachePort();
+    const cachePassword = this.configService.getCachePassword();
+    const { default: Redis } = await import('ioredis');
+    const rateLimitRedisClient = new Redis({
+      host: cacheHost,
+      port: cachePort,
+      ...(cachePassword?.trim() && { password: cachePassword.trim() }),
+      connectTimeout: 5000,
+      maxRetriesPerRequest: 1,
+      lazyConnect: true,
+    });
     await adapter.registerRateLimit(app, {
       max: rateLimitConfig.max,
       timeWindow: this.configService.getEnv('RATE_LIMIT_WINDOW', '1 minute'),
-      redis: (() => {
-        // Use ConfigService (which uses dotenv) for environment variable access
-        const cacheHost = this.configService.getCacheHost();
-        const cachePort = this.configService.getCachePort();
-        const cachePassword = this.configService.getCachePassword();
-
-        return {
-          host: cacheHost,
-          port: cachePort,
-          ...(cachePassword?.trim() && {
-            password: cachePassword.trim(),
-          }),
-        };
-      })(),
+      redis: rateLimitRedisClient,
       keyGenerator: (request: Partial<AuthenticatedRequest>) => {
         const ip = request.ip || 'unknown';
         const userAgent = request.headers?.['user-agent'];
@@ -230,7 +233,7 @@ export class SecurityConfigService {
    * @param app - NestJS application instance
    * @returns Promise<void>
    */
-  private async configureHelmet(app: INestApplication): Promise<void> {
+  async configureHelmet(app: INestApplication): Promise<void> {
     const adapter = this.getFastifyAdapter();
 
     const scriptSrc = [

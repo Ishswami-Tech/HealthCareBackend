@@ -26,6 +26,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { QueueService } from '@queue/src/queue.service';
 import { EventService } from '@infrastructure/events/event.service';
+import { SocketAuthMiddleware } from '@communication/channels/socket/socket-auth.middleware';
 
 // Internal imports - Infrastructure
 import { LoggingService, safeLog, safeLogError } from '@infrastructure/logging';
@@ -78,6 +79,8 @@ export class QueueStatusGateway
   constructor(
     @Inject(forwardRef(() => QueueService))
     private readonly queueService: QueueService,
+    @Inject(forwardRef(() => SocketAuthMiddleware))
+    private readonly socketAuth: SocketAuthMiddleware,
     @Optional()
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService?: LoggingService,
@@ -238,12 +241,15 @@ export class QueueStatusGateway
     }
   }
 
-  handleConnection(client: Socket) {
+  async handleConnection(client: Socket) {
     try {
-      const tenantId = this.extractTenantId(client);
-      const userId = this.extractUserId(client);
-
-      this.validateClientAccess(client, tenantId);
+      // Real JWT/session verification — never trust client-supplied
+      // tenantId/clinicId/doctorId query params directly, since anyone can
+      // set them to another clinic's IDs and receive that clinic's
+      // real-time queue/PHI broadcasts.
+      const user = await this.socketAuth.validateConnection(client);
+      const tenantId = user.clinicId || 'default';
+      const userId = user.userId;
 
       const session: ClientSession = {
         clientId: client.id,
@@ -268,13 +274,12 @@ export class QueueStatusGateway
 
       void client.join(`tenant:${tenantId}`);
 
-      const clinicId = client.handshake.query['clinicId'] as string;
-      const locationId = client.handshake.query['locationId'] as string;
-      const doctorId = client.handshake.query['doctorId'] as string;
-
-      if (clinicId) void client.join(`clinic:${clinicId}`);
-      if (locationId) void client.join(`location:${locationId}`);
-      if (doctorId) void client.join(`doctor:${doctorId}`);
+      // Only the caller's own authenticated clinic room — never the
+      // client-supplied query param.
+      if (user.clinicId) void client.join(`clinic:${user.clinicId}`);
+      // Doctor-specific room: only the doctor's own room, derived from
+      // their authenticated identity, not a client-supplied doctorId.
+      if (user.role === 'DOCTOR') void client.join(`doctor:${user.userId}`);
 
       safeLog(
         this.loggingService,
@@ -354,12 +359,17 @@ export class QueueStatusGateway
       this.queueSubscriptions.get(queueName)!.add(client.id);
       session.subscribedQueues.add(queueName);
 
-      // Dynamic room joining based on filters
+      // Room joining is restricted to the caller's own authenticated
+      // clinic/tenant — client-supplied filter values are never trusted for
+      // room membership (they can still be used to filter query results,
+      // just not to join another clinic's/doctor's broadcast room).
       const dynamicFilters = filters as Record<string, string>;
-      if (dynamicFilters['clinicId']) void client.join(`clinic:${dynamicFilters['clinicId']}`);
-      if (dynamicFilters['locationId'])
-        void client.join(`location:${dynamicFilters['locationId']}`);
-      if (dynamicFilters['doctorId']) void client.join(`doctor:${dynamicFilters['doctorId']}`);
+      if (dynamicFilters['clinicId'] && dynamicFilters['clinicId'] === session.tenantId) {
+        void client.join(`clinic:${dynamicFilters['clinicId']}`);
+      }
+      if (dynamicFilters['doctorId'] && dynamicFilters['doctorId'] === session.userId) {
+        void client.join(`doctor:${dynamicFilters['doctorId']}`);
+      }
 
       // Send immediate update if possible
       // Since we removed polling, we rely on events.
@@ -408,35 +418,6 @@ export class QueueStatusGateway
       });
     } catch (error) {
       safeLogError(this.loggingService, error, 'QueueStatusGateway.sendQueueSnapshot');
-    }
-  }
-
-  private extractTenantId(client: Socket): string {
-    return (
-      (client.handshake.query['tenantId'] as string) ||
-      (client.handshake.headers['x-tenant-id'] as string) ||
-      'default'
-    );
-  }
-
-  private extractUserId(client: Socket): string {
-    return (
-      (client.handshake.query['userId'] as string) ||
-      (client.handshake.headers['x-user-id'] as string) ||
-      'anonymous'
-    );
-  }
-
-  private validateClientAccess(client: Socket, tenantId: string): void {
-    const token = client.handshake.auth['token'] as string | undefined;
-    if (!token && tenantId !== 'default') {
-      throw new HealthcareError(
-        ErrorCode.AUTH_INSUFFICIENT_PERMISSIONS,
-        'Authentication required',
-        undefined,
-        { tenantId },
-        'QueueStatusGateway'
-      );
     }
   }
 

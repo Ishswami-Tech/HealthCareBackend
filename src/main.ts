@@ -757,10 +757,34 @@ async function bootstrap() {
     if (securityConfigService && frameworkAdapter) {
       securityConfigService.setFrameworkAdapter(frameworkAdapter);
 
-      // Register @fastify/multipart. This is NOT covered by
-      // configureProductionSecurity() (which is never called from this file) —
-      // without this, every file-upload route returns FST_ERR_CTP_INVALID_MEDIA_TYPE.
+      // Register production security middleware individually. None of this is
+      // covered by configureProductionSecurity() (which bundles all of it but
+      // is never called from this file) — without these standalone calls,
+      // responses go out uncompressed, there is no rate limiting, no Helmet
+      // security headers, and every file-upload route returns
+      // FST_ERR_CTP_INVALID_MEDIA_TYPE.
       if (app) {
+        try {
+          await securityConfigService.configureCompression(app);
+          logger.log('Compression configured');
+        } catch (compressionError) {
+          logger.warn(`Failed to configure compression: ${(compressionError as Error).message}`);
+        }
+
+        try {
+          await securityConfigService.configureRateLimiting(app);
+          logger.log('Rate limiting configured');
+        } catch (rateLimitError) {
+          logger.warn(`Failed to configure rate limiting: ${(rateLimitError as Error).message}`);
+        }
+
+        try {
+          await securityConfigService.configureHelmet(app);
+          logger.log('Helmet security headers configured');
+        } catch (helmetError) {
+          logger.warn(`Failed to configure Helmet: ${(helmetError as Error).message}`);
+        }
+
         try {
           await securityConfigService.configureMultipart(app);
           logger.log('Multipart (file upload) support configured');

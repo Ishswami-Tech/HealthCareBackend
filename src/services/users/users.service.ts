@@ -252,6 +252,22 @@ export class UsersService {
           throw this.errors.userNotFound(id, 'UsersService.findOne');
         }
 
+        // Defense-in-depth: clinicId is passed by the caller's own validated
+        // clinic context (via ClinicGuard) but was previously only used to
+        // namespace the cache key — the actual DB lookup and this response
+        // were returned regardless of the target user's clinic, letting any
+        // staff member fetch any other clinic's user profile by ID. Only
+        // enforced when the target user actually has a primaryClinicId set
+        // (covers the common case without risking false negatives for
+        // multi-clinic staff who may not have one).
+        if (
+          clinicId &&
+          (user as { primaryClinicId?: string | null }).primaryClinicId &&
+          (user as { primaryClinicId?: string | null }).primaryClinicId !== clinicId
+        ) {
+          throw this.errors.userNotFound(id, 'UsersService.findOne');
+        }
+
         const { password: _password, ...result } = user;
         const userRecord = result as typeof result & {
           gender?: string | null;
@@ -1908,8 +1924,21 @@ export class UsersService {
   /**
    * Get user activity (audit logs)
    */
-  async getUserActivity(userId: string, limit = 20): Promise<unknown[]> {
+  async getUserActivity(userId: string, limit = 20, clinicId?: string): Promise<unknown[]> {
     try {
+      // Defense-in-depth: this endpoint previously returned any user's audit
+      // trail regardless of the caller's own clinic — verify the target
+      // user actually belongs to the caller's clinic first (same
+      // primaryClinicId check as findOne()).
+      if (clinicId) {
+        const target = await this.databaseService.findUserByIdSafe(userId);
+        const targetClinicId = (target as { primaryClinicId?: string | null } | null)
+          ?.primaryClinicId;
+        if (targetClinicId && targetClinicId !== clinicId) {
+          return [];
+        }
+      }
+
       return await this.databaseService.executeHealthcareRead<unknown[]>(async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
           auditLog: {

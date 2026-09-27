@@ -140,6 +140,28 @@ export class AppointmentQueueService {
     }
   }
 
+  /**
+   * Every read-modify-write on a per-doctor queue list (lRange -> compute ->
+   * rewriteQueueList) is not atomic on its own — two concurrent callers
+   * (e.g. a double-clicked "Call Next", or a BullMQ job retry racing the
+   * original attempt) can both read the same snapshot, and the last write
+   * wins, silently reverting or duplicating queue entries. Serialize the
+   * whole read-modify-write span per queueKey with a short-lived
+   * distributed lock instead.
+   */
+  private async withQueueLock<T>(queueKey: string, fn: () => Promise<T>): Promise<T> {
+    const lockKey = `lock:${queueKey}`;
+    const acquired = await this.cacheService.acquireLock(lockKey, 10);
+    if (!acquired) {
+      throw new Error(`Queue is busy, please retry: ${queueKey}`);
+    }
+    try {
+      return await fn();
+    } finally {
+      await this.cacheService.releaseLock(lockKey);
+    }
+  }
+
   private async invalidateQueueReadCaches(params: {
     clinicId: string;
     domain: string;
@@ -887,20 +909,28 @@ export class AppointmentQueueService {
       const queueKeys = await this.cacheService.keys(pattern);
 
       for (const key of queueKeys) {
-        const entries = await this.cacheService.lRange(key, 0, -1);
-        const entryIndex = entries.findIndex(entry => {
-          const entryData = JSON.parse(entry) as QueueEntryData;
-          return entryData.appointmentId === appointmentId;
-        });
+        const lockResult = await this.withQueueLock(key, async () => {
+          const entries = await this.cacheService.lRange(key, 0, -1);
+          const foundIndex = entries.findIndex(entry => {
+            const entryData = JSON.parse(entry) as QueueEntryData;
+            return entryData.appointmentId === appointmentId;
+          });
 
-        if (entryIndex !== -1) {
-          const entryData = JSON.parse(entries[entryIndex] || '{}') as QueueEntryData;
+          if (foundIndex === -1) {
+            return null;
+          }
+
+          const entryData = JSON.parse(entries[foundIndex] || '{}') as QueueEntryData;
           entryData.status = 'CONFIRMED';
           entryData.confirmedAt = nowIso();
           const updatedEntries = [...entries];
-          updatedEntries[entryIndex] = JSON.stringify(entryData);
+          updatedEntries[foundIndex] = JSON.stringify(entryData);
           await this.rewriteQueueList(key, updatedEntries);
+          return entryData;
+        });
 
+        if (lockResult) {
+          const entryData = lockResult;
           const keyParts = key.split(':');
           const queueDate = keyParts[4] || this.getQueueDate();
           await this.invalidateQueueReadCaches({
@@ -969,24 +999,29 @@ export class AppointmentQueueService {
     try {
       // P1 FIX: Include clinicId in key
       const queueKey = `queue:${domain}:${clinicId}:${doctorId}:${formatDateKeyInIST(new Date())}`;
-      const entries = await this.cacheService.lRange(queueKey, 0, -1);
+      const entryData = await this.withQueueLock(queueKey, async () => {
+        const entries = await this.cacheService.lRange(queueKey, 0, -1);
 
-      const entryIndex = entries.findIndex(entry => {
-        const entryData = JSON.parse(entry) as QueueEntryData;
-        return entryData.appointmentId === appointmentId;
+        const entryIndex = entries.findIndex(entry => {
+          const parsed = JSON.parse(entry) as QueueEntryData;
+          return parsed.appointmentId === appointmentId;
+        });
+
+        if (entryIndex === -1) {
+          throw new NotFoundException(`Appointment ${appointmentId} not found in queue`);
+        }
+
+        const parsedEntryData = JSON.parse(entries[entryIndex] || '{}') as QueueEntryData;
+        parsedEntryData.status = 'IN_PROGRESS';
+        parsedEntryData.startedAt = nowIso();
+        parsedEntryData.actualWaitTime = this.calculateActualWaitTime(
+          parsedEntryData.checkedInAt || ''
+        );
+        const updatedEntries = [...entries];
+        updatedEntries[entryIndex] = JSON.stringify(parsedEntryData);
+        await this.rewriteQueueList(queueKey, updatedEntries);
+        return parsedEntryData;
       });
-
-      if (entryIndex === -1) {
-        throw new NotFoundException(`Appointment ${appointmentId} not found in queue`);
-      }
-
-      const entryData = JSON.parse(entries[entryIndex] || '{}') as QueueEntryData;
-      entryData.status = 'IN_PROGRESS';
-      entryData.startedAt = nowIso();
-      entryData.actualWaitTime = this.calculateActualWaitTime(entryData.checkedInAt || '');
-      const updatedEntries = [...entries];
-      updatedEntries[entryIndex] = JSON.stringify(entryData);
-      await this.rewriteQueueList(queueKey, updatedEntries);
 
       // Invalidate cache
       await this.invalidateQueueReadCaches({
@@ -1087,24 +1122,27 @@ export class AppointmentQueueService {
       // P1 FIX: Include clinicId
       const queueKey = `queue:${domain}:${clinicId}:${doctorId}:${date}`;
 
-      // Get current queue
-      const entries = await this.cacheService.lRange(queueKey, 0, -1);
+      const reorderedEntries = await this.withQueueLock(queueKey, async () => {
+        // Get current queue
+        const entries = await this.cacheService.lRange(queueKey, 0, -1);
 
-      // Reorder based on new order
-      const reorderedEntries = newOrder
-        .map((appointmentId: string) => {
-          return entries.find(entry => {
-            const entryData = JSON.parse(entry) as QueueEntryData;
-            return entryData.appointmentId === appointmentId;
-          });
-        })
-        .filter(Boolean);
+        // Reorder based on new order
+        const reordered = newOrder
+          .map((appointmentId: string) => {
+            return entries.find(entry => {
+              const entryData = JSON.parse(entry) as QueueEntryData;
+              return entryData.appointmentId === appointmentId;
+            });
+          })
+          .filter(Boolean);
 
-      // Clear and repopulate queue
-      await this.rewriteQueueList(
-        queueKey,
-        reorderedEntries.map(entry => entry as string)
-      );
+        // Clear and repopulate queue
+        await this.rewriteQueueList(
+          queueKey,
+          reordered.map(entry => entry as string)
+        );
+        return reordered;
+      });
 
       // Invalidate cache
       await this.invalidateQueueReadCaches({
@@ -1479,20 +1517,27 @@ export class AppointmentQueueService {
     const queueKey = `queue:${domain}:${clinicId}:${doctorId}:${date}`;
 
     try {
-      const entries = await this.cacheService.lRange(queueKey, 0, -1);
-      const newEntries = entries.filter(entry => {
-        const data = JSON.parse(entry) as QueueEntryData;
-        return data.appointmentId !== appointmentId;
+      const removedEntry = await this.withQueueLock(queueKey, async () => {
+        const entries = await this.cacheService.lRange(queueKey, 0, -1);
+        const newEntries = entries.filter(entry => {
+          const data = JSON.parse(entry) as QueueEntryData;
+          return data.appointmentId !== appointmentId;
+        });
+
+        if (entries.length === newEntries.length) {
+          return undefined;
+        }
+
+        await this.rewriteQueueList(queueKey, newEntries);
+        return entries
+          .map(entry => JSON.parse(entry) as QueueEntryData)
+          .find(entry => entry.appointmentId === appointmentId);
       });
 
-      if (entries.length === newEntries.length) {
+      if (!removedEntry) {
         return { success: false, message: 'Patient not found in queue' };
       }
 
-      await this.rewriteQueueList(queueKey, newEntries);
-      const removedEntry = entries
-        .map(entry => JSON.parse(entry) as QueueEntryData)
-        .find(entry => entry.appointmentId === appointmentId);
       await this.invalidateQueueReadCaches({
         clinicId,
         domain,
@@ -1542,27 +1587,34 @@ export class AppointmentQueueService {
     const queueKey = `queue:${domain}:${clinicId}:${doctorId}:${date}`;
 
     try {
-      const entries = await this.cacheService.lRange(queueKey, 0, -1);
+      const entryData = await this.withQueueLock(queueKey, async () => {
+        const entries = await this.cacheService.lRange(queueKey, 0, -1);
 
-      // Find the specific patient being called
-      const nextIndex = entries.findIndex(entry => {
-        const data = JSON.parse(entry) as QueueEntryData;
-        return data.appointmentId === appointmentId;
+        // Find the specific patient being called
+        const nextIndex = entries.findIndex(entry => {
+          const data = JSON.parse(entry) as QueueEntryData;
+          return data.appointmentId === appointmentId;
+        });
+
+        if (nextIndex === -1) {
+          return null;
+        }
+
+        const parsedEntryData = JSON.parse(entries[nextIndex] || '{}') as QueueEntryData;
+        parsedEntryData.status = 'IN_PROGRESS';
+        parsedEntryData.startedAt = nowIso();
+
+        // Update local array
+        entries[nextIndex] = JSON.stringify(parsedEntryData);
+
+        // Replace list in Redis
+        await this.rewriteQueueList(queueKey, entries);
+        return parsedEntryData;
       });
 
-      if (nextIndex === -1) {
+      if (!entryData) {
         return { success: false, message: 'Patient not found in queue' };
       }
-
-      const entryData = JSON.parse(entries[nextIndex] || '{}') as QueueEntryData;
-      entryData.status = 'IN_PROGRESS';
-      entryData.startedAt = nowIso();
-
-      // Update local array
-      entries[nextIndex] = JSON.stringify(entryData);
-
-      // Replace list in Redis
-      await this.rewriteQueueList(queueKey, entries);
 
       // Invalidate cache
       await this.invalidateQueueReadCaches({

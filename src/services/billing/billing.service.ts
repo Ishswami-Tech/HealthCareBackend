@@ -659,6 +659,23 @@ export class BillingService implements OnModuleInit {
     return Math.round(value * 100) / 100;
   }
 
+  /**
+   * Rupees -> integer paise, and back. Summing/subtracting rupee floats
+   * directly (even with a final .toFixed(2)/roundToTwo pass) still lets
+   * IEEE-754 rounding error accumulate across multiple line items, partial
+   * payments, and refunds on the same invoice. Doing the arithmetic in
+   * integer paise avoids that; only convert back to rupees at the boundary
+   * (DB write / API response) where the existing rupee-based schema and
+   * DTOs are unchanged.
+   */
+  private toPaise(rupees: number): number {
+    return Math.round((rupees || 0) * 100);
+  }
+
+  private fromPaise(paise: number): number {
+    return paise / 100;
+  }
+
   private getGstRatePercent(): number {
     const configuredRate =
       Number(this.configService.getEnv('BILLING_GST_RATE_PERCENT')) ||
@@ -1440,7 +1457,9 @@ export class BillingService implements OnModuleInit {
   // ============ Invoices ============
 
   async createInvoice(data: CreateInvoiceDto) {
-    const totalAmount = data.amount + (data.tax || 0) - (data.discount || 0);
+    const totalAmount = this.fromPaise(
+      this.toPaise(data.amount) + this.toPaise(data.tax || 0) - this.toPaise(data.discount || 0)
+    );
     const maxAttempts = 3;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -2171,7 +2190,7 @@ export class BillingService implements OnModuleInit {
     const lineItems = (prescriptionRecord.items || []).map(item => {
       const quantity = Number(item.quantity || 0);
       const unitPrice = Number(item.medicine?.price || 0);
-      const amount = Number((quantity * unitPrice).toFixed(2));
+      const amount = this.fromPaise(Math.round(quantity * this.toPaise(unitPrice)));
       return {
         description: item.medicine?.name
           ? `${item.medicine.name} x${quantity}`
@@ -2183,7 +2202,9 @@ export class BillingService implements OnModuleInit {
         refId: item.id,
       };
     });
-    const amount = Number(lineItems.reduce((sum, item) => sum + item.amount, 0).toFixed(2));
+    const amount = this.fromPaise(
+      lineItems.reduce((sum, item) => sum + this.toPaise(item.amount), 0)
+    );
 
     const createData: CreateInvoiceDto = {
       userId: patientUserId,
@@ -2282,13 +2303,14 @@ export class BillingService implements OnModuleInit {
       throw new NotFoundException(`Invoice ${invoiceId} not found`);
     }
 
-    const paidSoFar = Number(
+    const paidSoFar = this.fromPaise(
       (invoice.payments || [])
         .filter(payment => String(payment.status).toUpperCase() === 'COMPLETED')
-        .reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
-        .toFixed(2)
+        .reduce((sum, payment) => sum + this.toPaise(Number(payment.amount || 0)), 0)
     );
-    const balance = Math.max(0, Number((invoice.totalAmount - paidSoFar).toFixed(2)));
+    const balance = this.fromPaise(
+      Math.max(0, this.toPaise(invoice.totalAmount) - this.toPaise(paidSoFar))
+    );
     const amount =
       typeof options.amount === 'number' && options.amount > 0 ? options.amount : balance;
 
@@ -2492,14 +2514,13 @@ export class BillingService implements OnModuleInit {
         transactionId: payment.transactionId ?? null,
         createdAt: new Date(payment.createdAt).toISOString(),
       }));
-      const paidAmount = Number(
+      const paidAmount = this.fromPaise(
         payments
           .filter(payment => payment.status.toUpperCase() === 'COMPLETED')
-          .reduce((sum, payment) => sum + payment.amount, 0)
-          .toFixed(2)
+          .reduce((sum, payment) => sum + this.toPaise(payment.amount), 0)
       );
       const total = Number(invoice.totalAmount || 0);
-      const balance = Math.max(0, Number((total - paidAmount).toFixed(2)));
+      const balance = this.fromPaise(Math.max(0, this.toPaise(total) - this.toPaise(paidAmount)));
 
       return {
         id: invoice.id,
@@ -2575,11 +2596,11 @@ export class BillingService implements OnModuleInit {
     const total = rows.length;
     const paged = rows.slice(offset, offset + limit);
 
-    const summary = rows.reduce(
+    const summaryPaise = rows.reduce(
       (accumulator, row) => {
-        accumulator.totalBilled += row.total;
-        accumulator.totalPaid += row.paidAmount;
-        accumulator.outstanding += row.status === 'VOID' ? 0 : row.balance;
+        accumulator.totalBilled += this.toPaise(row.total);
+        accumulator.totalPaid += this.toPaise(row.paidAmount);
+        accumulator.outstanding += row.status === 'VOID' ? 0 : this.toPaise(row.balance);
         return accumulator;
       },
       { totalBilled: 0, totalPaid: 0, outstanding: 0 }
@@ -2589,9 +2610,9 @@ export class BillingService implements OnModuleInit {
       rows: paged,
       total,
       summary: {
-        totalBilled: Number(summary.totalBilled.toFixed(2)),
-        totalPaid: Number(summary.totalPaid.toFixed(2)),
-        outstanding: Number(summary.outstanding.toFixed(2)),
+        totalBilled: this.fromPaise(summaryPaise.totalBilled),
+        totalPaid: this.fromPaise(summaryPaise.totalPaid),
+        outstanding: this.fromPaise(summaryPaise.outstanding),
       },
     };
   }
@@ -5166,6 +5187,18 @@ export class BillingService implements OnModuleInit {
     status: string;
     error?: string;
   }> {
+    // Prevent concurrent refund requests for the same payment from both
+    // reading refundAmount=0, both passing the "already refunded" check,
+    // and both successfully calling the gateway (double payout while the
+    // DB only records one). 30s covers the gateway round-trip below.
+    const lockKey = `refund:payment:${paymentId}`;
+    const lockAcquired = await this.cacheService.acquireLock(lockKey, 30);
+    if (!lockAcquired) {
+      throw new BadRequestException(
+        'A refund is already being processed for this payment. Please try again shortly.'
+      );
+    }
+
     try {
       if (amount !== undefined && (!Number.isFinite(amount) || amount <= 0)) {
         throw new BadRequestException('Refund amount must be a positive number');
@@ -5349,6 +5382,8 @@ export class BillingService implements OnModuleInit {
         }
       );
       throw error;
+    } finally {
+      await this.cacheService.releaseLock(lockKey);
     }
   }
 

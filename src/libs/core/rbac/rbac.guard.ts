@@ -210,7 +210,7 @@ export class RbacGuard implements CanActivate {
             'RbacGuard',
             { userId, clinicId: requirementClinicId, reason: accessResult.error }
           );
-          return undefined;
+          throw new ForbiddenException(`Access denied for clinic: ${requirementClinicId}`);
         }
       }
       return requirementClinicId;
@@ -235,7 +235,7 @@ export class RbacGuard implements CanActivate {
             'RbacGuard',
             { userId, clinicId: extractedClinicId, reason: accessResult.error }
           );
-          return undefined;
+          throw new ForbiddenException(`Access denied for clinic: ${extractedClinicId}`);
         }
       }
     }
@@ -261,10 +261,8 @@ export class RbacGuard implements CanActivate {
    * Check if user has super admin role
    */
   private isSuperAdmin(roles: string[]): boolean {
-    return roles.some(
-      role =>
-        role === 'SUPER_ADMIN' || role === 'SYSTEM_ADMIN' || role.toLowerCase().includes('super')
-    );
+    const superAdminRoles = new Set(['SUPER_ADMIN', 'SYSTEM_ADMIN']);
+    return roles.some(role => superAdminRoles.has(role));
   }
 
   /**

@@ -1731,7 +1731,9 @@ export class QueueProcessor {
       for (let i = 0; i < invoiceDataList.length; i += batchSize) {
         const batch = invoiceDataList.slice(i, i + batchSize);
 
-        for (const invoiceData of batch) {
+        for (let batchIndex = 0; batchIndex < batch.length; batchIndex++) {
+          const invoiceData: unknown = batch[batchIndex];
+          const itemIndex = i + batchIndex;
           try {
             // Type-safe invoice data extraction
             const invoiceDataTyped = invoiceData as {
@@ -1747,8 +1749,18 @@ export class QueueProcessor {
               lineItems?: Array<{ description: string; amount: number }>;
             };
 
-            // Generate invoice number
-            const invoiceNumber = `INV-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            // Deterministic per-item invoice number (batchId + index) instead
+            // of Date.now()+random — BullMQ's at-least-once delivery can
+            // retry this entire job after a partial failure, and a random
+            // number gave no way to detect "this specific invoice in this
+            // batch was already created" on retry, producing duplicate
+            // invoices for already-committed items.
+            const invoiceNumber = `INV-${batchId}-${itemIndex}`;
+            const alreadyCreated = await this.prisma.findInvoicesSafe({ invoiceNumber });
+            if (alreadyCreated.length > 0) {
+              created++;
+              continue;
+            }
 
             // Create invoice using DatabaseService
             await this.prisma.createInvoiceSafe({
@@ -1800,7 +1812,7 @@ export class QueueProcessor {
               'QueueProcessor',
               {
                 batchId,
-                invoiceIndex: i + batch.indexOf(invoiceData),
+                invoiceIndex: itemIndex,
                 error:
                   invoiceError instanceof Error
                     ? invoiceError.message

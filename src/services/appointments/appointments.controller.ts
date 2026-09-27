@@ -2140,6 +2140,31 @@ export class AppointmentsController {
     const clinicId = req.clinicContext?.clinicId || '';
 
     try {
+      // Additional security check for patients: RbacGuard's requireOwnership
+      // is never consulted here because the PATIENT role's blanket
+      // appointments:update permission already satisfies the primary
+      // permission check (ownership is only a fallback for a denied
+      // permission, not an additional restriction) — mirrors the same
+      // manual check already applied in cancelAppointment() above.
+      if (req.user?.role === Role.PATIENT && userId) {
+        const patient = (await this.appointmentService.getPatientByUserId(userId)) as {
+          id: string;
+        } | null;
+        const appointment = (await this.appointmentService.getAppointmentById(
+          appointmentId,
+          clinicId
+        )) as {
+          patientId?: string;
+          patient?: { id: string };
+        };
+        const appointmentPatientId = appointment.patientId || appointment.patient?.id;
+        if (appointmentPatientId !== patient?.id) {
+          throw this.errors.insufficientPermissions(
+            'Patients can only update their own appointments'
+          );
+        }
+      }
+
       const result = await this.appointmentService.updateStatus(
         appointmentId,
         updateDto,

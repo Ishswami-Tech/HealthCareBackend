@@ -106,12 +106,41 @@ export class EHRService {
     this.eventService = eventService;
   }
 
+  /**
+   * HIPAA requires PHI *access* (not just modification) to be auditable.
+   * executeHealthcareWrite logs an audit trail automatically; there is no
+   * equivalent for executeHealthcareRead, so every PHI-read method in this
+   * service must log its own access explicitly. Fire-and-forget: audit
+   * logging must not add latency to the read path, and a logging failure
+   * must never block returning already-fetched PHI to the caller.
+   */
+  private logPHIAccess(
+    resourceType: string,
+    userId: string,
+    clinicId: string | undefined,
+    details?: Record<string, unknown>
+  ): void {
+    void this.loggingService
+      .log(LogType.AUDIT, LogLevel.INFO, `HIPAA Audit: VIEW_${resourceType}`, 'EHRService', {
+        action: `VIEW_${resourceType}`,
+        userId,
+        clinicId,
+        timestamp: nowIso(),
+        ...details,
+        compliance: { hipaa: true, phiAccessed: true, auditTrail: true },
+      })
+      .catch(() => {
+        // Never let audit-logging failures affect the read path.
+      });
+  }
+
   // ============ Comprehensive Health Record ============
 
   async getComprehensiveHealthRecord(
     userId: string,
     clinicId?: string
   ): Promise<HealthRecordSummaryDto> {
+    this.logPHIAccess('COMPREHENSIVE_HEALTH_RECORD', userId, clinicId);
     const cacheKey = `ehr:comprehensive:${userId}:${clinicId || 'all'}`;
 
     return this.cacheService.cache(
@@ -584,6 +613,7 @@ export class EHRService {
   }
 
   async getMedicalHistory(userId: string, clinicId?: string): Promise<MedicalHistoryResponse[]> {
+    this.logPHIAccess('MEDICAL_HISTORY', userId, clinicId);
     const cacheKey = `ehr:medical-history:${userId}:${clinicId || 'all'}`;
 
     return this.cacheService.cache(
@@ -641,7 +671,7 @@ export class EHRService {
           const existing = await typedClientCheck.medicalHistory.findUnique({
             where: { id } as PrismaDelegateArgs,
           } as PrismaDelegateArgs);
-          if (existing && existing.clinicId && existing.clinicId !== clinicId) {
+          if (existing && existing.clinicId !== clinicId) {
             throw new NotFoundException(`Medical history record with ID ${id} not found`);
           }
         }
@@ -849,6 +879,7 @@ export class EHRService {
     clinicId?: string,
     filters?: MedicalRecordFilters
   ): Promise<MedicalRecordResponse[]> {
+    this.logPHIAccess('MEDICAL_RECORDS', userId, clinicId);
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
         healthRecord: {
@@ -915,6 +946,7 @@ export class EHRService {
   }
 
   async getMedicalRecordById(id: string, clinicId?: string): Promise<MedicalRecordResponse | null> {
+    this.logPHIAccess('MEDICAL_RECORD', 'unknown', clinicId, { recordId: id });
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
         healthRecord: { findFirst: (args: PrismaDelegateArgs) => Promise<unknown> };
@@ -1231,6 +1263,7 @@ export class EHRService {
   }
 
   async getLabReports(userId: string, clinicId?: string): Promise<LabReportResponse[]> {
+    this.logPHIAccess('LAB_REPORTS', userId, clinicId);
     const cacheKey = `ehr:lab-reports:${userId}:${clinicId || 'all'}`;
 
     return this.cacheService.cache(
@@ -1281,7 +1314,7 @@ export class EHRService {
       return tc.labReport.findUnique({ where: { id } as PrismaDelegateArgs } as PrismaDelegateArgs);
     });
     if (!existing) throw new NotFoundException(`Lab report with ID ${id} not found`);
-    if (clinicId && existing.clinicId && existing.clinicId !== clinicId) {
+    if (clinicId && existing.clinicId !== clinicId) {
       throw new NotFoundException(`Lab report with ID ${id} not found`);
     }
 
@@ -1462,6 +1495,7 @@ export class EHRService {
   }
 
   async getRadiologyReports(userId: string, clinicId?: string): Promise<RadiologyReportResponse[]> {
+    this.logPHIAccess('RADIOLOGY_REPORTS', userId, clinicId);
     // Use executeHealthcareRead for optimized query
     const records = await this.databaseService.executeHealthcareRead<RadiologyReportBase[]>(
       async client => {
@@ -1501,7 +1535,7 @@ export class EHRService {
       } as PrismaDelegateArgs);
     });
     if (!existing) throw new NotFoundException(`Radiology report with ID ${id} not found`);
-    if (clinicId && existing.clinicId && existing.clinicId !== clinicId) {
+    if (clinicId && existing.clinicId !== clinicId) {
       throw new NotFoundException(`Radiology report with ID ${id} not found`);
     }
 
@@ -1660,6 +1694,7 @@ export class EHRService {
   }
 
   async getSurgicalRecords(userId: string, clinicId?: string): Promise<SurgicalRecordResponse[]> {
+    this.logPHIAccess('SURGICAL_RECORDS', userId, clinicId);
     // Use executeHealthcareRead for optimized query
     const records = await this.databaseService.executeHealthcareRead<SurgicalRecordBase[]>(
       async client => {
@@ -1697,7 +1732,7 @@ export class EHRService {
       } as PrismaDelegateArgs);
     });
     if (!existing) throw new NotFoundException(`Surgical record with ID ${id} not found`);
-    if (clinicId && existing.clinicId && existing.clinicId !== clinicId) {
+    if (clinicId && existing.clinicId !== clinicId) {
       throw new NotFoundException(`Surgical record with ID ${id} not found`);
     }
 
@@ -1844,6 +1879,7 @@ export class EHRService {
   }
 
   async getVitals(userId: string, type?: string, clinicId?: string) {
+    this.logPHIAccess('VITALS', userId, clinicId, { type });
     // Use executeHealthcareRead for optimized query
     return await this.databaseService.executeHealthcareRead<unknown[]>(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
@@ -2032,6 +2068,7 @@ export class EHRService {
   }
 
   async getAllergies(userId: string, clinicId?: string) {
+    this.logPHIAccess('ALLERGIES', userId, clinicId);
     // Use executeHealthcareRead for optimized query
     return await this.databaseService.executeHealthcareRead<unknown[]>(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
@@ -2063,7 +2100,7 @@ export class EHRService {
       return tc.allergy.findUnique({ where: { id } as PrismaDelegateArgs } as PrismaDelegateArgs);
     });
     if (!existing) throw new NotFoundException(`Allergy record with ID ${id} not found`);
-    if (clinicId && existing.clinicId && existing.clinicId !== clinicId) {
+    if (clinicId && existing.clinicId !== clinicId) {
       throw new NotFoundException(`Allergy record with ID ${id} not found`);
     }
 
@@ -2228,6 +2265,7 @@ export class EHRService {
   }
 
   async getFamilyHistory(userId: string, clinicId?: string): Promise<FamilyHistoryResponse[]> {
+    this.logPHIAccess('FAMILY_HISTORY', userId, clinicId);
     const records = await this.databaseService.executeHealthcareRead<FamilyHistoryBase[]>(
       async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
@@ -2263,7 +2301,7 @@ export class EHRService {
       } as PrismaDelegateArgs);
     });
     if (!existing) throw new NotFoundException(`Family history record with ID ${id} not found`);
-    if (clinicId && existing.clinicId && existing.clinicId !== clinicId) {
+    if (clinicId && existing.clinicId !== clinicId) {
       throw new NotFoundException(`Family history record with ID ${id} not found`);
     }
 
@@ -2339,7 +2377,7 @@ export class EHRService {
     });
     if (!existing) throw new NotFoundException(`Family history record with ID ${id} not found`);
     // 🔒 TENANT ISOLATION
-    if (clinicId && existing.clinicId && existing.clinicId !== clinicId) {
+    if (clinicId && existing.clinicId !== clinicId) {
       throw new NotFoundException(`Family history record with ID ${id} not found`);
     }
 
@@ -2443,6 +2481,7 @@ export class EHRService {
   }
 
   async getMedications(userId: string, activeOnly: boolean = false, clinicId?: string) {
+    this.logPHIAccess('MEDICATIONS', userId, clinicId, { activeOnly });
     // Use executeHealthcareRead for optimized query
     return await this.databaseService.executeHealthcareRead<unknown[]>(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
@@ -2480,7 +2519,7 @@ export class EHRService {
       } as PrismaDelegateArgs);
     });
     if (!existing) throw new NotFoundException(`Medication with ID ${id} not found`);
-    if (clinicId && existing.clinicId && existing.clinicId !== clinicId) {
+    if (clinicId && existing.clinicId !== clinicId) {
       throw new NotFoundException(`Medication with ID ${id} not found`);
     }
 
@@ -2669,6 +2708,7 @@ export class EHRService {
   }
 
   async getImmunizations(userId: string, clinicId?: string): Promise<ImmunizationResponse[]> {
+    this.logPHIAccess('IMMUNIZATIONS', userId, clinicId);
     // Use executeHealthcareRead for optimized query
     const records = (await this.databaseService.executeHealthcareRead<ImmunizationBase[]>(
       async client => {
@@ -2706,7 +2746,7 @@ export class EHRService {
       } as PrismaDelegateArgs);
     });
     if (!existing) throw new NotFoundException(`Immunization record with ID ${id} not found`);
-    if (clinicId && existing.clinicId && existing.clinicId !== clinicId) {
+    if (clinicId && existing.clinicId !== clinicId) {
       throw new NotFoundException(`Immunization record with ID ${id} not found`);
     }
 

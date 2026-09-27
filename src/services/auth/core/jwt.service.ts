@@ -819,7 +819,6 @@ export class JwtAuthService {
   }
 
   private trackDevice(userId: string, deviceFingerprint: string): Promise<void> {
-    return Promise.resolve();
     const userDevices = this.deviceTrackingMap.get(userId) || new Set();
 
     if (userDevices.size >= this.MAX_DEVICES_PER_USER && !userDevices.has(deviceFingerprint)) {
@@ -835,6 +834,7 @@ export class JwtAuthService {
 
     userDevices.add(deviceFingerprint);
     this.deviceTrackingMap.set(userId, userDevices);
+    return Promise.resolve();
   }
 
   private initializeCleanupTasks(): void {
