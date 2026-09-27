@@ -50,7 +50,7 @@ import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { DataResponseDto, SuccessResponseDto } from '@dtos/common-response.dto';
 import { AuthTokens } from '@core/types';
-import { Cache, InvalidateCache, PatientCache } from '@core/decorators';
+import { InvalidateCache, PatientCache } from '@core/decorators';
 import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 
 @ApiTags('auth')
