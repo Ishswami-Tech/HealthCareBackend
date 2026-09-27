@@ -163,7 +163,13 @@ export class UsersController {
   @RequireResourcePermission('profile', 'read', { requireOwnership: true })
   @PatientCache({
     keyTemplate: 'user:{userId}:profile',
-    ttl: 30, // Keep short so newly created Patient records are reflected quickly.
+    // 30s meant every poll faster than that landed on a fully-expired key -
+    // observed at 6-7s response times in production regardless of load,
+    // the same class of bug fixed for dashboard-summary. Freshness after a
+    // profile write doesn't depend on this TTL: AuthController's profile
+    // update path already explicitly invalidates 'user:{userId}:*' /
+    // 'user_profiles' (see auth.controller.ts), so widening this is safe.
+    ttl: 300,
     tags: ['user_profiles', 'users'],
     priority: 'high',
     enableSWR: false,
