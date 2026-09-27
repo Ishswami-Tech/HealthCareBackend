@@ -30,10 +30,17 @@ interface MulterFile {
 
 @Injectable()
 export class PatientsService {
-  /** Dashboard-summary cache TTL — 60s. Low enough to bound staleness on
-   *  missed realtime events, high enough to absorb the dashboard's heavy
-   *  refetch pattern (focus, mount, etc). */
-  private static readonly DASHBOARD_SUMMARY_TTL_SECONDS = 60;
+  /** Dashboard-summary cache TTL — 180s, with a 45s stale-serve window
+   *  (`DASHBOARD_SUMMARY_STALE_SECONDS`). The frontend polls this endpoint
+   *  every 60s whenever the realtime socket is disconnected
+   *  (usePatientDashboardSummary's `refetchInterval`). A TTL equal to that
+   *  poll interval means every scheduled poll lands exactly on a fully
+   *  expired key — SWR never gets to serve stale-and-revalidate-in-background,
+   *  so the full 5-way fan-out (appointments/EHR/prescriptions/invoices/
+   *  payments) runs synchronously on almost every poll. Keeping TTL well
+   *  above the poll interval lets most polls hit the fast stale-serve path. */
+  private static readonly DASHBOARD_SUMMARY_TTL_SECONDS = 180;
+  private static readonly DASHBOARD_SUMMARY_STALE_SECONDS = 45;
 
   constructor(
     private readonly databaseService: DatabaseService,
@@ -754,6 +761,7 @@ export class PatientsService {
       async () => this.composeDashboardSummary(userId, clinicId),
       {
         ttl: PatientsService.DASHBOARD_SUMMARY_TTL_SECONDS,
+        staleTime: PatientsService.DASHBOARD_SUMMARY_STALE_SECONDS,
         tags,
         priority: 'high',
         enableSwr: true,
@@ -802,19 +810,19 @@ export class PatientsService {
 
     const [appointmentsResult, ehrResult, prescriptionsResult, invoicesResult, paymentsResult] =
       await Promise.all([
-        this.safeDashboardCall('appointments', () =>
+        this.timeDashboardCall('appointments', () =>
           this.fetchDashboardAppointments(userId, clinicId)
         ),
-        this.safeDashboardCall('ehr', () =>
+        this.timeDashboardCall('ehr', () =>
           this.ehrService!.getComprehensiveHealthRecord(userId, clinicId)
         ),
-        this.safeDashboardCall('prescriptions', () =>
+        this.timeDashboardCall('prescriptions', () =>
           this.pharmacyService!.findPrescriptionsByPatient(userId)
         ),
-        this.safeDashboardCall('invoices', () =>
+        this.timeDashboardCall('invoices', () =>
           this.billingService!.getUserInvoices(userId, Role.PATIENT, userId, clinicId)
         ),
-        this.safeDashboardCall('payments', () =>
+        this.timeDashboardCall('payments', () =>
           this.billingService!.getUserPayments(userId, Role.PATIENT, userId, clinicId)
         ),
       ]);
@@ -825,15 +833,29 @@ export class PatientsService {
     if (invoicesResult.error) errors['invoices'] = invoicesResult.error;
     if (paymentsResult.error) errors['payments'] = paymentsResult.error;
 
+    const durationsMs = {
+      appointments: appointmentsResult.durationMs,
+      ehr: ehrResult.durationMs,
+      prescriptions: prescriptionsResult.durationMs,
+      invoices: invoicesResult.durationMs,
+      payments: paymentsResult.durationMs,
+    };
+    const slowestSubCall = Object.entries(durationsMs).sort((a, b) => b[1] - a[1])[0];
+
     await this.loggingService.log(
       LogType.SYSTEM,
-      LogLevel.INFO,
+      // Surface the composition timing at WARN whenever the slowest sub-call
+      // alone would already trip the frontend's "Slow API request" threshold
+      // (~2s) — otherwise this is easy to miss among routine INFO noise.
+      slowestSubCall && slowestSubCall[1] > 2000 ? LogLevel.WARN : LogLevel.INFO,
       `[dashboard-summary] Composed for user ${userId}`,
       'PatientsService.composeDashboardSummary',
       {
         userId,
         clinicId,
         subCallErrors: Object.keys(errors),
+        durationsMs,
+        slowestSubCall: slowestSubCall ? `${slowestSubCall[0]}:${slowestSubCall[1]}ms` : undefined,
         hasAppointments:
           Array.isArray(appointmentsResult.data) && appointmentsResult.data.length > 0,
         hasPrescriptions:
@@ -880,6 +902,18 @@ export class PatientsService {
       );
       return { error: message };
     }
+  }
+
+  /** Same as {@link safeDashboardCall}, plus wall-clock duration so callers
+   *  can identify which of the 5 parallel sub-calls dominates a slow
+   *  dashboard-summary composition. */
+  private async timeDashboardCall<T>(
+    name: string,
+    fn: () => Promise<T>
+  ): Promise<{ data?: T; error?: string; durationMs: number }> {
+    const startedAt = Date.now();
+    const result = await this.safeDashboardCall(name, fn);
+    return { ...result, durationMs: Date.now() - startedAt };
   }
 
   /**
