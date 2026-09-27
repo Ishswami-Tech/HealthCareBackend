@@ -49,6 +49,13 @@ export class SessionManagementService implements OnModuleInit {
   private readonly USER_SESSIONS_PREFIX = 'user_sessions:';
   private readonly BLACKLIST_PREFIX = 'blacklist:';
   private readonly CLINIC_SESSIONS_PREFIX = 'clinic_sessions:';
+  // JwtAuthGuard calls updateSessionActivity() on every single authenticated
+  // request, and a single page load fires many requests within seconds
+  // (dashboard-summary, EHR, invoices, appointments, user profile, ...).
+  // Without a floor, that's a cache read + write per request purely to bump
+  // a "last seen" timestamp that doesn't need second-level precision -
+  // measurable overhead multiplied across every authenticated endpoint.
+  private readonly ACTIVITY_UPDATE_THROTTLE_MS = 60_000;
 
   private config!: SessionConfig;
 
@@ -300,6 +307,22 @@ export class SessionManagementService implements OnModuleInit {
       }
 
       const now = new Date();
+
+      // Skip the write (not the read - callers still need a truthy result
+      // to know the session is alive) if activity was already recorded
+      // recently. JwtAuthGuard always passes metadata (ipAddress/userAgent)
+      // on every request, so gating on "metadata present" would never
+      // throttle anything - only skip when the metadata is unchanged from
+      // what's already stored, so a real IP/device change still writes
+      // immediately.
+      const lastActivityMs = session.lastActivity ? new Date(session.lastActivity).getTime() : 0;
+      const metadataUnchanged =
+        !metadata ||
+        Object.entries(metadata).every(([key, value]) => session.metadata?.[key] === value);
+      if (metadataUnchanged && now.getTime() - lastActivityMs < this.ACTIVITY_UPDATE_THROTTLE_MS) {
+        return true;
+      }
+
       session.lastActivity = now;
 
       // Extend session if configured
