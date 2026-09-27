@@ -101,13 +101,16 @@ export class AuthController {
   @Public()
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @Cache({
-    keyTemplate: 'auth:login_attempt:{email}:rate_limit',
-    ttl: 900, // 15 minutes for rate limiting
-    tags: ['auth', 'login_attempts'],
-    priority: 'high',
-    enableSWR: false, // Security: don't serve stale for auth
-  })
+  // Removed @Cache() - this was meant to rate-limit login attempts but
+  // instead created a full authentication bypass: HealthcareCacheInterceptor
+  // replays the cached RESPONSE BODY on a hit (`return of(cachedResult)`,
+  // skipping the handler entirely), and the key was scoped only by
+  // {email} - not by password or outcome. Once any login for an email
+  // succeeded, every subsequent login call for that email within 15
+  // minutes - with ANY password - received the same cached successful
+  // token response. Rate limiting belongs on @RateLimitAPI(), not a
+  // response cache.
+  @RateLimitAPI({ points: 5, duration: 900 }) // 5 attempts per 15 minutes - prevents brute force
   @ApiOperation({
     summary: 'Login user',
     description:
@@ -551,13 +554,11 @@ export class AuthController {
   @Public()
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
-  @Cache({
-    keyTemplate: 'auth:password_reset:{email}:rate_limit',
-    ttl: 3600, // 1 hour rate limiting
-    tags: ['auth', 'password_reset'],
-    priority: 'normal',
-    enableSWR: false,
-  })
+  // Removed @Cache() - same bug class as login(): every repeat call for the
+  // same email within the hour replayed the first response instead of
+  // actually sending a new reset email, and used a response-cache (the
+  // wrong tool) to attempt rate limiting.
+  @RateLimitAPI({ points: 3, duration: 3600 }) // 3 requests per hour
   @ApiOperation({
     summary: 'Request password reset',
     description:
@@ -828,14 +829,10 @@ export class AuthController {
   @Public()
   @Post('request-otp')
   @HttpCode(HttpStatus.OK)
+  // Removed @Cache() - repeat calls within 30 minutes silently replayed the
+  // first "OTP sent" response without ever generating/sending a new OTP.
+  // @RateLimitAPI() below is the actual, correct rate-limiting mechanism.
   @RateLimitAPI({ points: 3, duration: 900 }) // 3 requests per 15 minutes
-  @Cache({
-    keyTemplate: 'auth:otp_request:{contact}:rate_limit',
-    ttl: 1800, // 30 minutes rate limiting
-    tags: ['auth', 'otp_requests'],
-    priority: 'normal',
-    enableSWR: false,
-  })
   @ApiOperation({
     summary: 'Request OTP for passwordless login',
     description:
@@ -916,15 +913,18 @@ export class AuthController {
   @Public()
   @Post('verify-otp')
   @HttpCode(HttpStatus.OK)
+  // Removed @Cache() - CRITICAL: this cache key was scoped only by
+  // {contact}, not by the OTP code or outcome. Once any verify-otp call
+  // for a contact succeeded, HealthcareCacheInterceptor replayed that same
+  // cached SUCCESS response (full auth tokens) for every subsequent
+  // verify-otp call for that contact within 15 minutes - regardless of
+  // what OTP code was submitted. An attacker who knew a victim's contact
+  // could call verify-otp with any wrong code and receive a valid
+  // authenticated session, as long as the victim had verified normally at
+  // any point in the preceding 15 minutes (true after every normal OTP
+  // login). @RateLimitAPI() below is the correct, safe mechanism for
+  // attempt limiting.
   @RateLimitAPI({ points: 5, duration: 900 }) // 5 attempts per 15 minutes
-  @Cache({
-    keyTemplate: 'auth:otp_verify:{contact}:attempts',
-    ttl: 900, // 15 minutes for attempt tracking
-    tags: ['auth', 'otp_verification'],
-    priority: 'high',
-    enableSWR: false,
-    containsPHI: true,
-  })
   @InvalidateCache({
     patterns: ['auth:otp_request:{contact}:*', 'auth:login_attempt:*'],
     tags: ['otp_requests', 'login_attempts'],
