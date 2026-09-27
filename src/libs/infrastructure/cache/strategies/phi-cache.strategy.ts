@@ -41,21 +41,6 @@ export class PHICacheStrategy extends BaseCacheStrategy {
 
     // SWR pattern: Try to get cached value first
     const cached = await this.getCached<T>(key);
-    // Temporary diagnostic: logPHIAccess() below never surfaced in any prior
-    // check despite this class confirmed being the writer (raw, unwrapped
-    // stored shape only matches this strategy's setCached call, not SWR's
-    // {data,timestamp} wrapper) - meaning either logPHIAccess() itself is
-    // silently failing every time (it has its own swallow-all catch), or
-    // getCached() is returning null/a mismatched value right after a
-    // confirmed-successful write moments earlier. This line uses a distinct
-    // message so it's identifiable even if logPHIAccess is the broken one.
-    void this.loggingService.log(
-      LogType.CACHE,
-      LogLevel.WARN,
-      `[PHICacheStrategy] getCached returned ${cached === null ? 'null' : `non-null (${typeof cached})`} for key "${key}"`,
-      'PHICacheStrategy.execute',
-      { key, isNull: cached === null, valueType: typeof cached }
-    );
     if (cached !== null) {
       // Return cached value immediately (stale is OK for PHI)
       // Revalidate in background (fire and forget)
@@ -90,6 +75,20 @@ export class PHICacheStrategy extends BaseCacheStrategy {
   }
 
   protected calculateTTL(options: CacheOperationOptions): number {
+    // This override was silently ignoring every explicit `ttl` passed to
+    // @PatientCache/@Cache with containsPHI:true - since PHICacheStrategy is
+    // selected ahead of SWR whenever containsPHI is set (see
+    // CacheStrategyManager's priority order), any caller that set `ttl`
+    // expecting the base class's `if (options.ttl) return options.ttl`
+    // contract got the complianceLevel-based default instead. Confirmed live:
+    // dashboard-summary's configured 180s and users/profile's configured 30s
+    // (later 300s) both actually ran at the default-case 3600s the whole
+    // time. Respecting an explicit ttl first restores the base contract while
+    // keeping the compliance-level fallback for callers that don't set one.
+    if (options.ttl) {
+      return options.ttl;
+    }
+
     // PHI data has shorter TTL based on compliance level
     switch (options.complianceLevel) {
       case 'restricted':
