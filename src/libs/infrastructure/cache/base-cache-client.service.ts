@@ -294,6 +294,20 @@ export abstract class BaseCacheClientService {
 
   async set(key: string, value: string, ttl?: number): Promise<void> {
     if (!this.client || this.client.status !== 'ready') {
+      // This guard - not any of the several exception handlers upstream - was
+      // the actual reason a write could vanish with zero signal: no client,
+      // or a client mid-reconnect, makes this a silent no-op before any
+      // command is even attempted. Every caller up the stack (BaseCacheStrategy,
+      // CacheService, PHICacheStrategy, DragonflyCacheProvider/RedisService)
+      // was already fixed to log on a thrown error, but none of them can see
+      // a call that returns successfully without ever trying.
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.WARN,
+        `[BaseCacheClientService] set() skipped for key "${key}": client ${!this.client ? 'missing' : `not ready (status=${this.client.status})`}`,
+        'BaseCacheClientService.set',
+        { key, clientStatus: this.client?.status ?? 'no-client' }
+      );
       return;
     }
     try {
@@ -302,8 +316,14 @@ export abstract class BaseCacheClientService {
       } else {
         await this.client.set(key, value);
       }
-    } catch {
-      // Fail silently - cache is not critical
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.WARN,
+        `[BaseCacheClientService] set() threw for key "${key}": ${error instanceof Error ? error.message : String(error)}`,
+        'BaseCacheClientService.set',
+        { key, error: error instanceof Error ? error.stack : String(error) }
+      );
     }
   }
 
