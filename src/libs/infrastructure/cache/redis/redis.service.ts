@@ -1005,8 +1005,19 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
           await this.client.set(key, serializedValue);
         }
       });
-    } catch (_error) {
-      // Fail silently - graceful degradation
+    } catch (error) {
+      // This was the actual point every dashboard-summary cache write died
+      // at, silently: a JSON.stringify (or client) error here was swallowed
+      // before it could ever reach CacheService.cache()'s or
+      // BaseCacheStrategy.setCached()'s own catch blocks, so those callers
+      // always saw set() "succeed" with no signal that nothing was stored.
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.WARN,
+        `[RedisService] set() failed for key "${key}": ${error instanceof Error ? error.message : String(error)}`,
+        'RedisService.set',
+        { key, error: error instanceof Error ? error.stack : String(error) }
+      );
     }
   }
 
