@@ -1409,14 +1409,8 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
         };
       }
 
-      // Check if queue methods are available
-      if (
-        typeof queue.getWaiting !== 'function' ||
-        typeof queue.getActive !== 'function' ||
-        typeof queue.getCompleted !== 'function' ||
-        typeof queue.getFailed !== 'function' ||
-        typeof queue.getDelayed !== 'function'
-      ) {
+      // Check if the queue method is available
+      if (typeof queue.getJobCounts !== 'function') {
         // Return default metrics if queue methods not available
         return {
           queueName,
@@ -1432,31 +1426,32 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
         };
       }
 
-      // Use Promise.allSettled to handle individual queue method failures gracefully
-      const [waitingResult, activeResult, completedResult, failedResult, delayedResult] =
-        await Promise.allSettled([
-          queue.getWaiting(),
-          queue.getActive(),
-          queue.getCompleted(),
-          queue.getFailed(),
-          queue.getDelayed(),
-        ]);
-
-      const waiting = waitingResult.status === 'fulfilled' ? waitingResult.value : ([] as Job[]);
-      const active = activeResult.status === 'fulfilled' ? activeResult.value : ([] as Job[]);
-      const completed =
-        completedResult.status === 'fulfilled' ? completedResult.value : ([] as Job[]);
-      const failed = failedResult.status === 'fulfilled' ? failedResult.value : ([] as Job[]);
-      const delayed = delayedResult.status === 'fulfilled' ? delayedResult.value : ([] as Job[]);
+      // This used to call getWaiting/getActive/getCompleted/getFailed/getDelayed
+      // and only ever read .length off each result - but BullMQ's getXxx()
+      // methods fetch full job objects (an unbounded ZREVRANGE followed by an
+      // individual HGETALL per job returned), purely to throw the data away.
+      // Running on a 5s interval across every queue, this flooded the shared
+      // Redis/Dragonfly connection with hundreds of per-job commands every
+      // tick - the confirmed source of the "Command timed out" cascade
+      // affecting unrelated session/RBAC/cache reads sharing that connection.
+      // getJobCounts() returns the same counts via cheap ZCARD/LLEN-style
+      // commands with no per-job fetch at all.
+      const counts = await queue.getJobCounts(
+        'waiting',
+        'active',
+        'completed',
+        'failed',
+        'delayed'
+      );
 
       const metrics: DetailedQueueMetrics = {
         queueName,
         domain: this.getCurrentDomain(),
-        waiting: Array.isArray(waiting) ? waiting.length : 0,
-        active: Array.isArray(active) ? active.length : 0,
-        completed: Array.isArray(completed) ? completed.length : 0,
-        failed: Array.isArray(failed) ? failed.length : 0,
-        delayed: Array.isArray(delayed) ? delayed.length : 0,
+        waiting: counts['waiting'] ?? 0,
+        active: counts['active'] ?? 0,
+        completed: counts['completed'] ?? 0,
+        failed: counts['failed'] ?? 0,
+        delayed: counts['delayed'] ?? 0,
         throughputPerMinute: 25, // Placeholder - jobs per minute
         averageProcessingTime: 120000, // Placeholder - 2 minutes in milliseconds
         errorRate: this.calculateErrorRate(queueName),
@@ -2366,33 +2361,44 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
       const queue = this.queues.get(queueName);
       if (!queue) return;
 
-      const waiting = await queue.getWaiting();
-      const active = await queue.getActive();
-      const completed = await queue.getCompleted();
-      const failed = await queue.getFailed();
-      const delayed = await queue.getDelayed();
+      // This used to call getWaiting/getActive/getCompleted/getFailed/getDelayed
+      // and only ever read .length - but this method fires on EVERY addJob()
+      // call (fire-and-forget), so every single job enqueued anywhere in the
+      // app was triggering an unbounded per-job fetch (ZREVRANGE + HGETALL
+      // per job) across 5 job states. That's the confirmed source of the
+      // cascading Redis "Command timed out" errors on unrelated session/RBAC
+      // reads sharing the same connection - and it gets worse the busier the
+      // app is, since more jobs enqueued means more of these fetches.
+      // getJobCounts() returns the same counts via cheap ZCARD/LLEN-style
+      // commands with no per-job fetch at all.
+      const counts = await queue.getJobCounts(
+        'waiting',
+        'active',
+        'completed',
+        'failed',
+        'delayed'
+      );
+      const waitingCount = counts['waiting'] ?? 0;
+      const activeCount = counts['active'] ?? 0;
+      const completedCount = counts['completed'] ?? 0;
+      const failedCount = counts['failed'] ?? 0;
+      const delayedCount = counts['delayed'] ?? 0;
       // Note: getPaused() method may not be available in all BullMQ versions
-      const paused: Array<Record<string, unknown>> = []; // Placeholder for paused jobs
+      const pausedCount = 0; // Placeholder for paused jobs
 
       const metrics = {
         totalJobs:
-          waiting.length +
-          active.length +
-          completed.length +
-          failed.length +
-          delayed.length +
-          paused.length,
-        waitingJobs: waiting.length,
-        activeJobs: active.length,
-        completedJobs: completed.length,
-        failedJobs: failed.length,
-        delayedJobs: delayed.length,
-        pausedJobs: paused.length,
-        processedJobs: completed.length + failed.length,
+          waitingCount + activeCount + completedCount + failedCount + delayedCount + pausedCount,
+        waitingJobs: waitingCount,
+        activeJobs: activeCount,
+        completedJobs: completedCount,
+        failedJobs: failedCount,
+        delayedJobs: delayedCount,
+        pausedJobs: pausedCount,
+        processedJobs: completedCount + failedCount,
         throughput: 25, // Placeholder - jobs per minute
         averageProcessingTime: 120000, // Placeholder - 2 minutes in milliseconds
-        errorRate:
-          failed.length > 0 ? (failed.length / (completed.length + failed.length)) * 100 : 0,
+        errorRate: failedCount > 0 ? (failedCount / (completedCount + failedCount)) * 100 : 0,
       };
 
       this.monitoringService.updateMetrics(queueName, this.getCurrentDomain(), metrics);
