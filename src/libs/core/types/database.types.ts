@@ -1890,6 +1890,18 @@ export interface AuditInfo {
   ipAddress?: string;
   userAgent?: string;
   details?: Record<string, unknown>;
+  /**
+   * Opt out of the automatic post-write cache invalidation for this write.
+   * Only for writes whose resourceType is never actually served from cache
+   * (e.g. audit log entries - write-only compliance records, never read
+   * back through this cache layer) - invalidating tags nothing was ever
+   * cached under is pure overhead: the tag index lookup always comes back
+   * empty, which falls through to a full KEYS *:tag:...:* keyspace scan on
+   * every single write. Confirmed via Dragonfly SLOWLOG as the dominant
+   * source of "Command timed out" errors on unrelated session/RBAC reads,
+   * since audit-logged writes happen on nearly every request.
+   */
+  skipCacheInvalidation?: boolean;
 }
 
 /**

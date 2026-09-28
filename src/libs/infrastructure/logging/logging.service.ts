@@ -738,6 +738,11 @@ export class LoggingService {
                       resourceType: 'AUDIT_LOG',
                       resourceId: 'pending',
                       timestamp: new Date(),
+                      // Audit log rows are write-only compliance records,
+                      // never read back through the cache layer, so nothing
+                      // is ever cached under the audit_log/audit_logs tags
+                      // this write would otherwise invalidate on every call.
+                      skipCacheInvalidation: true,
                     }
                   ),
                   new Promise<void>((_, reject) => {

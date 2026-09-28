@@ -807,13 +807,15 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
       // Automatic cache invalidation after write (non-blocking)
       // Invalidates all cache layers to prevent stale data
-      setImmediate(() => {
-        void this.autoInvalidateCacheAfterWrite(
-          auditInfo.resourceType,
-          auditInfo.resourceId,
-          auditInfo.clinicId
-        );
-      });
+      if (!auditInfo.skipCacheInvalidation) {
+        setImmediate(() => {
+          void this.autoInvalidateCacheAfterWrite(
+            auditInfo.resourceType,
+            auditInfo.resourceId,
+            auditInfo.clinicId
+          );
+        });
+      }
 
       return finalResult;
     };

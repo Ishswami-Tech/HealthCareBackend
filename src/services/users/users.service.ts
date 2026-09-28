@@ -1389,6 +1389,8 @@ export class UsersService {
         resourceId: '',
         userRole: 'system',
         details: { action, description },
+        // Audit log rows are write-only, never read back through cache.
+        skipCacheInvalidation: true,
       }
     );
   }
