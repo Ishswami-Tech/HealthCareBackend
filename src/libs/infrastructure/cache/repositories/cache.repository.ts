@@ -246,11 +246,22 @@ export class CacheRepository implements ICacheRepository {
       if (keys.length > 0) {
         total += await provider.delMultiple(keys);
         total += await provider.del(tagKey);
+      } else {
+        // Legacy fallback for any older tag-encoded keys that predate the
+        // sMembers-based tag index - only when the deterministic index has
+        // nothing, since clearByPattern() runs a full KEYS *:tag:...:*
+        // keyspace scan (confirmed via Dragonfly SLOWLOG: 64-143ms per call,
+        // blocking the shared connection). This used to run unconditionally
+        // on every single invalidation call regardless of whether the fast
+        // path above already found and cleared everything - for
+        // frequently-invalidated tags like clinic:* and audit_log:pending
+        // (every write), that meant a KEYS scan on effectively every write
+        // in the app, which was the confirmed source of a cascade of
+        // Redis "Command timed out" errors on unrelated session/RBAC reads
+        // sharing the same connection.
+        const pattern = `*:tag:${tag}:*`;
+        total += await provider.clearByPattern(pattern);
       }
-
-      // Legacy fallback for any older tag-encoded keys.
-      const pattern = `*:tag:${tag}:*`;
-      total += await provider.clearByPattern(pattern);
     }
     return total;
   }
