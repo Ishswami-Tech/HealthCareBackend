@@ -295,60 +295,66 @@ export class JwtAuthGuard implements CanActivate {
       // Get client info
       const clientIp = request.ip || (request.headers['x-forwarded-for'] as string) || 'unknown';
 
-      // Rate limiting enabled for production security
-      if (this.rateLimitService && !this.configService.isDevelopment()) {
-        const rateLimitResult = await this.rateLimitService.checkRateLimit(`${clientIp}:${path}`, {
-          windowMs: 60000, // 1 minute window
-          max: 60, // 60 requests per minute for auth endpoints
-        });
-
-        if (!rateLimitResult.allowed) {
-          void this.loggingService.log(
-            LogType.SECURITY,
-            LogLevel.WARN,
-            'Rate limit exceeded for authentication endpoint',
-            'JwtAuthGuard',
-            {
-              clientIp,
-              path,
-              remaining: rateLimitResult.remaining,
-              resetTime: rateLimitResult.resetTime,
-            }
-          );
-
-          throw new HttpException(
-            {
-              _error: 'Too Many Requests',
-              message: 'Rate limit exceeded. Please try again later.',
-              retryAfter: Math.ceil((rateLimitResult.resetTime.getTime() - Date.now()) / 1000),
-              remaining: rateLimitResult.remaining,
-            },
-            HttpStatus.TOO_MANY_REQUESTS
-          );
-        }
-      }
-
-      // Lockout mechanism enabled in production for security
-      // Check for time-based lockout (enabled for production security)
+      // Rate limiting and lockout status are both keyed off clientIp (not
+      // each other's result), so they can run concurrently instead of as 2
+      // sequential cache round-trips. Order of the *checks* below (rate
+      // limit error takes precedence over lockout error) is unchanged from
+      // before - only the fetching is now concurrent - and both still run
+      // regardless of whether a token is present, so a request with no
+      // token can't skip these protections for free.
       const isProduction =
         !this.configService.isDevelopment() && !this.configService.getEnvBoolean('DEV_MODE', false);
-      if (
+      const shouldCheckRateLimit = !!this.rateLimitService && !this.configService.isDevelopment();
+      const shouldCheckLockout =
         isProduction &&
-        this.rateLimitService &&
-        !this.lockoutBypassPrefixPaths.some(prefix => path.startsWith(prefix))
-      ) {
-        const lockoutStatus = await this.checkLockoutStatus(clientIp);
-        if (lockoutStatus.isLocked) {
-          throw new HttpException(
-            {
-              _error: 'Account Locked',
-              message: `Account temporarily locked due to multiple failed attempts. Try again in ${lockoutStatus.remainingMinutes} minutes.`,
-              lockoutMinutes: lockoutStatus.remainingMinutes,
-              retryAfter: lockoutStatus.remainingMinutes * 60,
-            },
-            HttpStatus.TOO_MANY_REQUESTS
-          );
-        }
+        !!this.rateLimitService &&
+        !this.lockoutBypassPrefixPaths.some(prefix => path.startsWith(prefix));
+
+      const [rateLimitResult, lockoutStatus] = await Promise.all([
+        shouldCheckRateLimit
+          ? this.rateLimitService.checkRateLimit(`${clientIp}:${path}`, {
+              windowMs: 60000, // 1 minute window
+              max: 60, // 60 requests per minute for auth endpoints
+            })
+          : Promise.resolve(null),
+        shouldCheckLockout ? this.checkLockoutStatus(clientIp) : Promise.resolve(null),
+      ]);
+
+      if (rateLimitResult && !rateLimitResult.allowed) {
+        void this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.WARN,
+          'Rate limit exceeded for authentication endpoint',
+          'JwtAuthGuard',
+          {
+            clientIp,
+            path,
+            remaining: rateLimitResult.remaining,
+            resetTime: rateLimitResult.resetTime,
+          }
+        );
+
+        throw new HttpException(
+          {
+            _error: 'Too Many Requests',
+            message: 'Rate limit exceeded. Please try again later.',
+            retryAfter: Math.ceil((rateLimitResult.resetTime.getTime() - Date.now()) / 1000),
+            remaining: rateLimitResult.remaining,
+          },
+          HttpStatus.TOO_MANY_REQUESTS
+        );
+      }
+
+      if (lockoutStatus && lockoutStatus.isLocked) {
+        throw new HttpException(
+          {
+            _error: 'Account Locked',
+            message: `Account temporarily locked due to multiple failed attempts. Try again in ${lockoutStatus.remainingMinutes} minutes.`,
+            lockoutMinutes: lockoutStatus.remainingMinutes,
+            retryAfter: lockoutStatus.remainingMinutes * 60,
+          },
+          HttpStatus.TOO_MANY_REQUESTS
+        );
       }
 
       // Validate security headers and request integrity
@@ -364,10 +370,28 @@ export class JwtAuthGuard implements CanActivate {
       const payload: JwtPayload = await this.verifyToken(token);
       const userId = payload.sub || payload['id'];
 
+      // findUserByIdSafe (deactivation/profile-completion source of truth)
+      // and checkConcurrentSessions both only need userId/payload.sub and
+      // don't depend on each other's result - they used to run strictly
+      // sequentially, adding a full extra DB-or-cache round-trip to every
+      // authenticated request.
+      //
+      // checkConcurrentSessions must still complete before validateSession()
+      // below - which it does, since both are awaited together right here -
+      // preserving the original HIGH-2 FIX: validateSession() can call
+      // restoreSession() and ADD a new entry to the Redis Set, so counting
+      // concurrent sessions must happen first to count only pre-existing
+      // sessions, not the one about to be restored, which previously caused
+      // systematic false-positive 429s on cold cache.
+      const shouldCheckUser = !!this.databaseService && typeof userId === 'string' && !!userId;
+      const [user] = await Promise.all([
+        shouldCheckUser ? this.databaseService.findUserByIdSafe(userId) : Promise.resolve(null),
+        payload.sub ? this.checkConcurrentSessions(payload.sub) : Promise.resolve(undefined),
+      ]);
+
       // Reject deactivated users - invalidate session on next request
       // Also check profile completion using DATABASE as source of truth
-      if (this.databaseService && typeof userId === 'string' && userId) {
-        const user = await this.databaseService.findUserByIdSafe(userId);
+      if (shouldCheckUser) {
         if (user && typeof user === 'object' && 'isActive' in user && user.isActive === false) {
           throw new UnauthorizedException('Account has been deactivated');
         }
@@ -405,25 +429,21 @@ export class JwtAuthGuard implements CanActivate {
         clinicId: payload['clinicId'], // Ensure clinicId is available
       } as JwtPayload;
 
-      // Check concurrent sessions limit BEFORE validating/restoring the session.
-      // HIGH-2 FIX: Previously this ran after validateSession(), which can call
-      // restoreSession() and ADD a new entry to the Redis Set. Running the check
-      // first ensures we count only pre-existing sessions, not the one we are
-      // about to restore, preventing systematic false-positive 429s on cold cache.
-      if (payload.sub) {
-        await this.checkConcurrentSessions(payload.sub);
-      }
-
       // Validate session (may restore from JWT on cold cache)
       const sessionData = await this.validateSession(payload.sub || 'anonymous', request);
 
-      // Update session data
+      // Neither of these gates the request's success (updateSessionData
+      // already swallows its own errors; resetFailedAttempts is pure
+      // bookkeeping) and nothing after this point depends on their result,
+      // so there's no reason to make the caller wait on 2 more cache/DB
+      // round-trips before returning - fire-and-forget instead.
       if (payload.sub) {
-        await this.updateSessionData(payload.sub, sessionData, request);
+        void this.updateSessionData(payload.sub, sessionData, request);
       }
-
-      // Reset failed attempts on successful authentication
-      await this.resetFailedAttempts(clientIp);
+      void this.resetFailedAttempts(clientIp).catch(() => {
+        // Best-effort bookkeeping - a transient cache error here must not
+        // fail an otherwise-valid, already-authenticated request.
+      });
 
       return true;
     } catch (error) {
