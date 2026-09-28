@@ -15,6 +15,7 @@ import { CacheModule } from '@infrastructure/cache/cache.module';
 import { LoggingModule } from '@infrastructure/logging';
 import { EventsModule } from '@infrastructure/events/events.module';
 import { ConfigModule } from '@config/config.module';
+import { QueueModule } from '@queue/src/queue.module';
 import { PaymentService } from './payment.service';
 import { PaymentProviderFactory } from './adapters/factories/payment-provider.factory';
 import { PaymentController } from './payment.controller';
@@ -29,6 +30,7 @@ import { PaymentHandoffTokenModule } from './payment.handoff-token.module';
     EventsModule,
     ConfigModule,
     PaymentHandoffTokenModule,
+    QueueModule, // Cashfree webhook enqueues PAYMENT_PROCESSING jobs instead of blocking inline
   ],
   controllers: [PaymentController],
   providers: [

@@ -51,6 +51,13 @@ export class EventSocketBroadcaster implements OnModuleInit {
     'subscription.',
     'invoice.',
     'communication.',
+    // 'appointment.queue.*' already matched via 'appointment.' above and
+    // reaches clients over the default namespace - but bare 'queue.*'
+    // events (e.g. queue.metrics.updated) didn't match any prefix here, so
+    // they never got bridged. The frontend already listens for
+    // 'queue.metrics.updated' on the same default-namespace socket
+    // (useWebSocketIntegration.ts), it just never received it.
+    'queue.',
   ];
 
   constructor(

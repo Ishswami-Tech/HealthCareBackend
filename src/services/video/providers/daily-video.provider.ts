@@ -34,6 +34,25 @@ type DailyMeetingTokenResponse = {
 @Injectable()
 export class DailyVideoProvider implements IVideoProvider {
   readonly providerName: VideoProviderType = 'daily';
+  // None of the fetch() calls to the Daily.co API below passed a timeout, so
+  // Node's undici fetch has no bound and a slow/degraded Daily API can hang
+  // indefinitely. generateMeetingToken() can chain up to 3-4 of these calls
+  // sequentially (fetchRoom -> createRoom POST -> fetchRoom fallback ->
+  // createMeetingToken), so a single unbounded call could block the whole
+  // request for minutes. This bounds each call independently; a timeout
+  // rejects the same way a network error already did, so callers/fallback
+  // logic are unaffected.
+  private readonly DAILY_FETCH_TIMEOUT_MS = 10000;
+
+  private async fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.DAILY_FETCH_TIMEOUT_MS);
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
 
   constructor(
     @Inject(forwardRef(() => ConfigService))
@@ -96,7 +115,7 @@ export class DailyVideoProvider implements IVideoProvider {
       throw new Error('Daily is not enabled');
     }
 
-    const response = await fetch(
+    const response = await this.fetchWithTimeout(
       `${this.getDailyApiBaseUrl()}/rooms/${encodeURIComponent(roomName)}`,
       {
         headers: {
@@ -134,7 +153,7 @@ export class DailyVideoProvider implements IVideoProvider {
       return existingRoom;
     }
 
-    const response = await fetch(`${this.getDailyApiBaseUrl()}/rooms`, {
+    const response = await this.fetchWithTimeout(`${this.getDailyApiBaseUrl()}/rooms`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${config.apiKey}`,
@@ -177,7 +196,7 @@ export class DailyVideoProvider implements IVideoProvider {
       throw new Error('Daily is not enabled');
     }
 
-    const response = await fetch(`${this.getDailyApiBaseUrl()}/meeting-tokens`, {
+    const response = await this.fetchWithTimeout(`${this.getDailyApiBaseUrl()}/meeting-tokens`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${config.apiKey}`,

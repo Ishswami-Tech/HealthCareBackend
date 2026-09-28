@@ -56,6 +56,9 @@ import {
 } from '@dtos';
 import type { FastifyRequest } from 'fastify';
 import { resolveClinicUUID } from '@utils/clinic.utils';
+import { QueueService } from '@queue/src/queue.service';
+import { JobType, JobPriorityLevel } from '@core/types/queue.types';
+import type { PaymentProcessingJobData } from '@queue/src/queue.processor';
 
 type BillingServiceLike = {
   handlePaymentCallback: (
@@ -91,7 +94,8 @@ export class PaymentController {
     private readonly moduleRef: ModuleRef,
     private readonly loggingService: LoggingService,
     private readonly paymentConfigService: PaymentConfigService,
-    private readonly cacheService: CacheService
+    private readonly cacheService: CacheService,
+    private readonly queueService: QueueService
   ) {}
 
   private getBillingService(): BillingServiceLike {
@@ -690,18 +694,25 @@ export class PaymentController {
       ]);
 
       if (orderId && paymentId && paymentStatus === 'SUCCESS') {
-        await this.withBillingTimeout(
-          this.getBillingService().handlePaymentCallback(
-            resolvedClinicId,
-            paymentId,
-            orderId,
-            PaymentProvider.CASHFREE,
-            {
-              surchargeServiceCharge: surchargeServiceCharge ?? 0,
-              surchargeServiceTax: surchargeServiceTax ?? 0,
-            }
-          )
-        );
+        // Enqueue instead of calling handlePaymentCallback synchronously
+        // in-request: this used to block on an outbound Cashfree status
+        // call plus several sequential DB reads, regularly exceeding the
+        // 10s withBillingTimeout under load and returning HTTP 200 with
+        // success:false - which Cashfree treats as delivered (no retry),
+        // silently dropping the payment confirmation. ensureWebhookNotProcessed
+        // above already guarantees idempotency, so it's safe to ack fast and
+        // let the existing PAYMENT_PROCESSING queue worker do the real work.
+        const jobData: PaymentProcessingJobData = {
+          clinicId: resolvedClinicId,
+          paymentId,
+          orderId,
+          provider: PaymentProvider.CASHFREE,
+          surchargeServiceCharge: surchargeServiceCharge ?? 0,
+          surchargeServiceTax: surchargeServiceTax ?? 0,
+        };
+        await this.queueService.addJob(JobType.PAYMENT_PROCESSING, 'cashfree_webhook', jobData, {
+          priority: JobPriorityLevel.HIGH,
+        });
       }
 
       await this.loggingService.log(

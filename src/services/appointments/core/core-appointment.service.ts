@@ -464,6 +464,19 @@ export class CoreAppointmentService {
               time: timeStr,
               type: createDto.type,
               createdAt: { gte: dedupWindowStart },
+              // Only resurrect an appointment that is still actually payable/active.
+              // Without this filter, a prior abandoned/expired attempt at the same
+              // slot (auto-flipped to EXPIRED by the video-scheduler cron) gets
+              // returned here as if it were a fresh booking, and the frontend then
+              // force-triggers payment against a dead row, failing with
+              // "This appointment is no longer payable."
+              status: {
+                notIn: [
+                  AppointmentStatus.CANCELLED,
+                  AppointmentStatus.EXPIRED,
+                  AppointmentStatus.COMPLETED,
+                ],
+              },
             },
             orderBy: { createdAt: 'desc' },
           });

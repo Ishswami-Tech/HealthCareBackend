@@ -927,7 +927,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       connectionTimeoutMillis?: number;
     } = {
       connectionString,
-      max: 10, // Limit connections per Pool instance
+      max: this.poolSize, // Configurable via DB_POOL_SIZE env var (default 20)
       connectionTimeoutMillis: connectionTimeout,
     };
 

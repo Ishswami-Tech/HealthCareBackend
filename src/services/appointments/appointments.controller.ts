@@ -718,6 +718,24 @@ export class AppointmentsController {
   @Roles(Role.PATIENT)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read')
+  // This was the one appointment-list route in this controller with no
+  // caching at all (contrast with the @PatientCache/@Cache-decorated list
+  // endpoints elsewhere in this file) - every hit went straight to the DB,
+  // even though it's the single most-called endpoint from the patient
+  // dashboard/appointments page. clinicId is intentionally left out of the
+  // key template: it's resolved via ClinicGuard into clinicContext rather
+  // than a route/query param, so the interceptor can't read it here -
+  // {userId} plus the handler-name suffix (added automatically) already
+  // scope the key correctly per patient.
+  @PatientCache({
+    keyTemplate: 'appointments:my:{userId}:{status}:{date}:{startDate}:{endDate}:{page}:{limit}',
+    ttl: 300,
+    tags: ['appointments', 'my_appointments'],
+    priority: 'high',
+    enableSWR: true,
+    containsPHI: true,
+    compress: true,
+  })
   @ApiOperation({
     summary: 'Get current user appointments',
     description:

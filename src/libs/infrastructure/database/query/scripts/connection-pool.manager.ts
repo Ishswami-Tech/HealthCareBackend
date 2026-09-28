@@ -44,6 +44,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
     timestamp: Date;
   }> = [];
   private isProcessingQueue = false;
+  private isHealthCheckRunning = false;
   private healthCheckInterval!: NodeJS.Timeout;
   private slowQueryThreshold = 1000; // 1 second
   // More tolerant circuit breaker in development
@@ -402,6 +403,16 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
     const STARTUP_GRACE_PERIOD = 60000; // 60 seconds grace period during startup (increased)
 
     this.healthCheckInterval = setInterval(() => {
+      // Without this guard, a SELECT 1 that takes longer than the 15s
+      // interval (e.g. during a pool-contention burst from a payment
+      // webhook spike) lets the next tick fire a second concurrent health
+      // check query while the first is still in flight - the likely source
+      // of pg's "client.query() when already executing" deprecation warning
+      // under load.
+      if (this.isHealthCheckRunning) {
+        return;
+      }
+      this.isHealthCheckRunning = true;
       void (async () => {
         try {
           // Check if we're in startup grace period
@@ -556,6 +567,8 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
               { error: (error as Error).stack }
             );
           }
+        } finally {
+          this.isHealthCheckRunning = false;
         }
       })();
     }, 15000); // Every 15 seconds for faster detection under high load

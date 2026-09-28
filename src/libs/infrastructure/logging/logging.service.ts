@@ -602,22 +602,28 @@ export class LoggingService {
       timestamp: timestamp.toISOString(),
     };
 
-    // CRITICAL: Store ALL logs in cache FIRST — this is what feeds the Logger UI.
+    // CRITICAL: Store ALL logs in cache — this is what feeds the Logger UI.
     // No filtering here — every log call is persisted for dashboard visibility.
-    try {
-      if (this.cacheService) {
-        const logJson = JSON.stringify(logEntry);
-        await this.cacheService.rPush('logs', logJson);
-        // Keep last 10000 logs (all types, all levels)
-        await this.cacheService.lTrim('logs', -10000, -1);
-        void this.cleanupExpiredLogCache();
-      }
-    } catch (_cacheError) {
-      const errorMessage = _cacheError instanceof Error ? _cacheError.message : String(_cacheError);
-      const isInitializationError = this.isBootstrapDependencyError(errorMessage);
-      if (!isInitializationError || !this.isInStartupGracePeriod()) {
-        console.error(`[LoggingService] Failed to store log in cache: ${errorMessage}`);
-      }
+    // Fire-and-forget: this used to be awaited here, meaning every single
+    // log() call (and log() is called 4-8 times per DB query by the query
+    // middlewares) blocked its caller on 2 sequential cache round-trips
+    // before the level filter below even ran. The cache write itself still
+    // happens (dashboard visibility is unchanged) - it just no longer holds
+    // up whoever called log().
+    if (this.cacheService) {
+      const logJson = JSON.stringify(logEntry);
+      void this.cacheService
+        .rPush('logs', logJson)
+        .then(() => this.cacheService?.lTrim('logs', -10000, -1))
+        .then(() => this.cleanupExpiredLogCache())
+        .catch((_cacheError: unknown) => {
+          const errorMessage =
+            _cacheError instanceof Error ? _cacheError.message : String(_cacheError);
+          const isInitializationError = this.isBootstrapDependencyError(errorMessage);
+          if (!isInitializationError || !this.isInStartupGracePeriod()) {
+            console.error(`[LoggingService] Failed to store log in cache: ${errorMessage}`);
+          }
+        });
     }
 
     // Level-gated operations below: terminal output, metrics, notifications.

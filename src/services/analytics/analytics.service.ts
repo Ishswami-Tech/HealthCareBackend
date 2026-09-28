@@ -145,8 +145,17 @@ export class AnalyticsService {
   }
 
   private getDateRange(period: string): { from: Date; to: Date } {
-    const to = new Date();
-    const from = new Date();
+    // Round "now" to a 5-minute bucket instead of using millisecond-precision
+    // Date.now(). Callers (e.g. appointment-analytics.service.ts) bake
+    // `to.toISOString()` straight into a cache key, so a fresh timestamp on
+    // every call meant every analytics cache lookup was a guaranteed miss -
+    // this was the dominant contributor to the persistently low cache hit
+    // rate. Bucketing to 5 minutes (matching the "short" cache strategy's
+    // 300s TTL) lets repeated calls within the same window share a cache
+    // key without materially changing what "now" means for a dashboard range.
+    const bucketMs = 5 * 60 * 1000;
+    const to = new Date(Math.floor(Date.now() / bucketMs) * bucketMs);
+    const from = new Date(to);
 
     switch (period) {
       case 'day':

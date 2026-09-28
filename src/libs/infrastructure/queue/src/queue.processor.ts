@@ -29,6 +29,7 @@ import { EmailTemplate } from '@core/types/common.types';
 import type { NotificationData } from '@core/types/appointment.types';
 import type { InvoicePDFData } from '@core/types/billing.types';
 import type { EmailContext } from '@core/types';
+import type { PaymentProvider } from '@core/types/payment.types';
 import { getVideoConsultationDelegate } from '@core/types/video-database.types';
 import { formatDateInIST, formatDateKeyInIST, nowIso } from '../../../utils/date-time.util';
 
@@ -37,6 +38,28 @@ import { formatDateInIST, formatDateKeyInIST, nowIso } from '../../../utils/date
 type InvoicePDFServiceType = {
   generateInvoicePDF: (data: InvoicePDFData) => Promise<{ filePath: string; fileName: string }>;
   getPublicInvoiceUrl: (fileName: string) => string;
+};
+
+// Type-only import to avoid a circular dependency between the queue module
+// and the billing service (mirrors the same 'BILLING_SERVICE' moduleRef
+// pattern already used in payment.controller.ts).
+type BillingServiceLike = {
+  handlePaymentCallback: (
+    clinicId: string,
+    paymentId: string,
+    orderId: string,
+    provider?: PaymentProvider,
+    surchargeData?: { surchargeServiceCharge: number; surchargeServiceTax: number }
+  ) => Promise<unknown>;
+};
+
+export type PaymentProcessingJobData = {
+  clinicId: string;
+  paymentId: string;
+  orderId: string;
+  provider?: PaymentProvider;
+  surchargeServiceCharge?: number;
+  surchargeServiceTax?: number;
 };
 
 type EmailJobPayload = {
@@ -113,6 +136,17 @@ export class QueueProcessor {
     }
     try {
       return this.moduleRef.get(WhatsAppService, { strict: false });
+    } catch {
+      return null;
+    }
+  }
+
+  private getBillingService(): BillingServiceLike | null {
+    if (!this.moduleRef) {
+      return null;
+    }
+    try {
+      return this.moduleRef.get<BillingServiceLike>('BILLING_SERVICE', { strict: false });
     } catch {
       return null;
     }
@@ -1017,7 +1051,7 @@ export class QueueProcessor {
     }
   }
 
-  processPaymentProcessing(job: Job<JobData>): { success: boolean } {
+  async processPaymentProcessing(job: Job<JobData>): Promise<{ success: boolean }> {
     try {
       void this.loggingService.log(
         LogType.QUEUE,
@@ -1026,7 +1060,33 @@ export class QueueProcessor {
         'QueueProcessor',
         { jobId: safeStringify(job.id), data: safeStringify(job.data) }
       );
-      // Offloads heavy payment verification/processing
+
+      // This used to be a stub that logged and returned success without
+      // doing anything - webhook handlers (e.g. Cashfree) were calling
+      // billingService.handlePaymentCallback() synchronously inline instead
+      // of actually using this queue, hitting a 10s timeout under load.
+      // Now that this job type does real work, webhook handlers can enqueue
+      // here and return a fast ack instead of blocking the HTTP response.
+      const jobData = job.data as unknown as PaymentProcessingJobData;
+      if (jobData?.clinicId && jobData?.paymentId && jobData?.orderId) {
+        const billingService = this.getBillingService();
+        if (!billingService) {
+          throw new Error('BILLING_SERVICE is not available to process payment job');
+        }
+        await billingService.handlePaymentCallback(
+          jobData.clinicId,
+          jobData.paymentId,
+          jobData.orderId,
+          jobData.provider,
+          jobData.surchargeServiceCharge !== undefined || jobData.surchargeServiceTax !== undefined
+            ? {
+                surchargeServiceCharge: jobData.surchargeServiceCharge ?? 0,
+                surchargeServiceTax: jobData.surchargeServiceTax ?? 0,
+              }
+            : undefined
+        );
+      }
+
       return { success: true };
     } catch (error) {
       void this.loggingService.log(

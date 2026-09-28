@@ -26,6 +26,13 @@ import {
 @Injectable()
 export class WhatsAppService {
   private readonly TEMPLATE_LANGUAGE_CODE = 'en_US';
+  // HttpService's own default is 30s. WhatsApp sends can chain a template
+  // call followed by a direct-text fallback call, so without a tighter
+  // per-call bound here a single WhatsApp notification (receipt,
+  // subscription confirmation, etc.) can block its caller for up to ~60s.
+  // This does not change any success/failure contract - a timeout still
+  // rejects the same way a network error would.
+  private readonly WHATSAPP_SEND_TIMEOUT_MS = 10000;
 
   constructor(
     @Inject(forwardRef(() => ConfigService))
@@ -450,6 +457,7 @@ export class WhatsAppService {
             Authorization: `Bearer ${this.whatsAppConfig.apiKey}`,
             'Content-Type': 'application/json',
           },
+          timeout: this.WHATSAPP_SEND_TIMEOUT_MS,
         }
       );
 
@@ -577,6 +585,7 @@ export class WhatsAppService {
             Authorization: `Bearer ${this.whatsAppConfig.apiKey}`,
             'Content-Type': 'application/json',
           },
+          timeout: this.WHATSAPP_SEND_TIMEOUT_MS,
         }
       );
 
@@ -631,6 +640,7 @@ export class WhatsAppService {
             Authorization: `Bearer ${this.whatsAppConfig.apiKey}`,
             'Content-Type': 'application/json',
           },
+          timeout: this.WHATSAPP_SEND_TIMEOUT_MS,
         }
       );
 
@@ -665,6 +675,7 @@ export class WhatsAppService {
             Authorization: `Bearer ${this.whatsAppConfig.apiKey}`,
             'Content-Type': 'application/json',
           },
+          timeout: this.WHATSAPP_SEND_TIMEOUT_MS,
         }
       );
 

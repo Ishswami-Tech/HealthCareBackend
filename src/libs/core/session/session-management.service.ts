@@ -250,14 +250,27 @@ export class SessionManagementService implements OnModuleInit {
   }
 
   /**
+   * Fetch session data directly from cache with no expiry/blacklist checks.
+   * invalidateSession() must use this instead of getSession() - getSession()
+   * calls invalidateSession() when a session is expired, so if invalidateSession
+   * called back into getSession() the two could recurse indefinitely whenever
+   * the cache still returns an expired entry (e.g. a del() that silently no-ops).
+   * @param sessionId - Session identifier
+   * @returns Raw session data or null if not cached
+   */
+  private async getSessionRaw(sessionId: string): Promise<SessionData | null> {
+    const sessionKey = this.getSessionKey(sessionId);
+    return this.cacheService.get<SessionData>(sessionKey);
+  }
+
+  /**
    * Get session with blacklist and expiry checks
    * @param sessionId - Session identifier
    * @returns Session data or null if not found/invalid
    */
   async getSession(sessionId: string): Promise<SessionData | null> {
     try {
-      const sessionKey = this.getSessionKey(sessionId);
-      const sessionData = await this.cacheService.get<SessionData>(sessionKey);
+      const sessionData = await this.getSessionRaw(sessionId);
 
       if (!sessionData) {
         return null;
@@ -374,7 +387,7 @@ export class SessionManagementService implements OnModuleInit {
    */
   async invalidateSession(sessionId: string): Promise<boolean> {
     try {
-      const session = await this.getSession(sessionId);
+      const session = await this.getSessionRaw(sessionId);
       if (!session) {
         return false;
       }

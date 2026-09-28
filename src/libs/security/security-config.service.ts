@@ -258,12 +258,28 @@ export class SecurityConfigService {
 
     const scriptSrc = [
       "'self'",
+      // Swagger UI (served under /api in production) bootstraps itself via
+      // an inline <script> tag and needs 'unsafe-eval' for its bundled
+      // parser - this doc-comment already claimed these were included, but
+      // this array never actually had them. That mismatch only surfaced
+      // once configureHelmet() was wired into main.ts as a standalone call
+      // this session (it was previously dead code, never actually applied).
+      "'unsafe-inline'",
+      "'unsafe-eval'",
       'https://accounts.google.com',
       'https://apis.google.com',
       'https://www.googleapis.com',
+      // Cloudflare's analytics/bot-protection beacon, auto-injected when a
+      // domain is proxied through Cloudflare - not something this app
+      // controls or can move to a nonce, so it must be allow-listed.
+      'https://static.cloudflareinsights.com',
     ] as readonly string[];
 
-    const styleSrc = ["'self'", 'https://fonts.googleapis.com'] as readonly string[];
+    const styleSrc = [
+      "'self'",
+      "'unsafe-inline'", // Swagger UI's bundled CSS is injected inline
+      'https://fonts.googleapis.com',
+    ] as readonly string[];
 
     const imgSrc = ["'self'", 'data:', 'https:', 'blob:'] as readonly string[];
 
