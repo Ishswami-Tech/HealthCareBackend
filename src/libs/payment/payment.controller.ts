@@ -1897,10 +1897,17 @@ export class PaymentController {
 
   /**
    * Get clinic payment configuration
+   *
+   * Also used by patient/receptionist/pharmacist checkout flows (PaymentButton)
+   * to discover which providers are actually enabled for this clinic instead of
+   * hardcoding a static list on the frontend — so it must stay readable by the
+   * roles that trigger a payment, not just clinic admins. The response never
+   * includes raw credentials (see mapConfigToResponse), only enabled/hasCredentials
+   * flags, so widening read access here doesn't leak secrets.
    */
   @Get('config/:clinicId')
   @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.PATIENT, Role.RECEPTIONIST, Role.PHARMACIST)
   @ApiOperation({ summary: 'Get clinic payment provider configuration' })
   @ApiResponse({
     status: 200,
