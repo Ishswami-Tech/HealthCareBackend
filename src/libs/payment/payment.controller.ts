@@ -1819,6 +1819,20 @@ export class PaymentController {
       // Only return success if payment is truly completed
       const isSuccessful = paymentResultStatus === 'completed';
 
+      // The replay lock (acquired in verifyHandoffToken) is otherwise only
+      // released in the catch block below (thrown exceptions). A cancelled
+      // or failed payment status is a NORMAL return here, not an exception -
+      // without this, the lock stays held for the token's full remaining
+      // TTL, so any legitimate retry (frontend re-polling after a user
+      // cancels the provider checkout, a page refresh, etc.) hits
+      // "Payment handoff token replay detected" and gets permanently stuck
+      // with no way to distinguish a genuine retry from an actual replay
+      // attack. Only release on a non-success outcome - a completed payment
+      // should NOT be replayable.
+      if (!isSuccessful) {
+        await this.handoffTokenService.releaseReplayToken(verifiedPayload.jti);
+      }
+
       await this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
