@@ -7,7 +7,28 @@ import { LoggingService } from '@infrastructure/logging';
 import { EmailService } from '@communication/channels/email/email.service';
 import { EmailTemplatesService } from '@communication/channels/email/email-templates.service';
 import { LogType, LogLevel, AppointmentStatus, PaymentStatus } from '@core/types';
+import type { AppointmentWithRelations } from '@core/types';
 import { formatCurrencyFromMinorUnits } from '@utils/currency.util';
+import { resolvePaidConfirmationExpiresAt } from './billing-payment-finalisation.util';
+
+/**
+ * Appointment statuses that are over. A payment that completes after the appointment reached one
+ * of them must not change it: handlePaymentCallback refuses to confirm an expired hold for the
+ * same reason (the slot may already be rebooked), and this listener has to agree.
+ */
+const SETTLED_APPOINTMENT_STATUSES: ReadonlySet<string> = new Set([
+  String(AppointmentStatus.EXPIRED),
+  String(AppointmentStatus.CANCELLED),
+  String(AppointmentStatus.COMPLETED),
+  String(AppointmentStatus.NO_SHOW),
+]);
+
+/** Statuses a completed payment may advance (PENDING → SCHEDULED, SCHEDULED → CONFIRMED). */
+const PAYABLE_APPOINTMENT_STATUSES: readonly AppointmentStatus[] = [
+  AppointmentStatus.PENDING,
+  AppointmentStatus.SCHEDULED,
+  AppointmentStatus.FOLLOW_UP_SCHEDULED,
+];
 
 /**
  * Email address that receives an internal notification every time a
@@ -380,11 +401,6 @@ export class BillingEventsListener {
     try {
       // Only process if payment is for an appointment and status is completed
       if (payload.appointmentId && payload.status === 'completed') {
-        await this.billingService.preparePayoutForAppointmentPayment(
-          payload.paymentId,
-          resolvedClinicId
-        );
-
         const appointmentId = payload.appointmentId;
         const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
 
@@ -403,6 +419,22 @@ export class BillingEventsListener {
         );
 
         if (appointment) {
+          // A payment that lands after the booking was released (hold expired, cancelled, already
+          // done) must not revive the appointment: its slot may have been given to someone else.
+          // handlePaymentCallback already refuses to confirm an expired hold; this is the same
+          // rule for the listener. The booking stays released and no payout is prepared.
+          const priorStatus = String(appointment.status || '').toUpperCase();
+          if (SETTLED_APPOINTMENT_STATUSES.has(priorStatus)) {
+            await this.flagLateSettlement({
+              appointmentId,
+              paymentId: payload.paymentId,
+              clinicId: resolvedClinicId,
+              amount: payload.amount,
+              appointmentStatus: priorStatus,
+            });
+            return;
+          }
+
           await this.loggingService.log(
             LogType.APPOINTMENT,
             LogLevel.INFO,
@@ -418,61 +450,36 @@ export class BillingEventsListener {
             }
           );
 
-          await this.databaseService.executeHealthcareWrite(
-            async client => {
-              // VIDEO_CALL appointments start in PENDING with a payment
-              // window. Now that payment has succeeded, transition them
-              // through SCHEDULED → CONFIRMED in two steps so the UI can
-              // tell apart "payment received, awaiting doctor confirmation"
-              // from "fully confirmed by the clinic". We also clear
-              // `paymentExpiresAt` so the auto-cancel scheduler ignores
-              // this row going forward.
-              //
-              // IN_PERSON appointments skip PENDING (they use the clinic's
-              // subscription model), so for them we go straight to CONFIRMED
-              // exactly like the legacy flow did.
-              const currentAppointmentStatus = String(appointment.status || '').toUpperCase();
-              const isPendingPaymentState =
-                currentAppointmentStatus === String(AppointmentStatus.PENDING) ||
-                currentAppointmentStatus === 'PENDING_PAYMENT' ||
-                currentAppointmentStatus === 'AWAITING_PAYMENT';
-
-              const nextStatus = isPendingPaymentState
-                ? AppointmentStatus.SCHEDULED
-                : AppointmentStatus.CONFIRMED;
-
-              const appointmentDelegate = (
-                client as unknown as {
-                  appointment: {
-                    update: (args: {
-                      where: { id: string };
-                      data: { status: string; paymentExpiresAt: null };
-                    }) => Promise<unknown>;
-                  };
-                }
-              ).appointment;
-
-              return await appointmentDelegate.update({
-                where: { id: appointmentId },
-                data: {
-                  status: nextStatus,
-                  paymentExpiresAt: null,
-                },
-              });
-            },
-            {
-              userId: 'system',
-              clinicId: resolvedClinicId,
-              resourceType: 'APPOINTMENT',
-              operation: 'UPDATE',
-              resourceId: appointmentId,
-              userRole: 'system',
-              details: {
-                reason: 'Payment completed',
+          const firstWriteApplied = await this.applyPaidStatusTransition(
+            appointment,
+            resolvedClinicId,
+            payload.paymentId
+          );
+          if (!firstWriteApplied) {
+            // The conditional write matched nothing: the row changed after the read above (for
+            // example the scheduler expired the hold in between). Re-check before going on.
+            const latestStatus = await this.readAppointmentStatus(
+              appointmentId,
+              appointment.clinicId
+            );
+            if (latestStatus && SETTLED_APPOINTMENT_STATUSES.has(latestStatus)) {
+              await this.flagLateSettlement({
+                appointmentId,
                 paymentId: payload.paymentId,
-                transition: 'PENDING→SCHEDULED',
-              },
+                clinicId: resolvedClinicId,
+                amount: payload.amount,
+                appointmentStatus: latestStatus,
+              });
+              return;
             }
+          }
+
+          // The appointment was really settled by this payment (it was not released), so the
+          // payout can be prepared now - never for a late settlement, which returned above:
+          // a visit that never takes place must not get a PAYOUT_PENDING record.
+          await this.billingService.preparePayoutForAppointmentPayment(
+            payload.paymentId,
+            resolvedClinicId
           );
 
           // After settling the appointment to SCHEDULED, immediately
@@ -486,36 +493,10 @@ export class BillingEventsListener {
             settledAppointment &&
             String(settledAppointment.status).toUpperCase() === String(AppointmentStatus.SCHEDULED)
           ) {
-            await this.databaseService.executeHealthcareWrite(
-              async client => {
-                const appointmentDelegate = (
-                  client as unknown as {
-                    appointment: {
-                      update: (args: {
-                        where: { id: string };
-                        data: { status: string };
-                      }) => Promise<unknown>;
-                    };
-                  }
-                ).appointment;
-                return await appointmentDelegate.update({
-                  where: { id: appointmentId },
-                  data: { status: AppointmentStatus.CONFIRMED },
-                });
-              },
-              {
-                userId: 'system',
-                clinicId: resolvedClinicId,
-                resourceType: 'APPOINTMENT',
-                operation: 'UPDATE',
-                resourceId: appointmentId,
-                userRole: 'system',
-                details: {
-                  reason: 'Auto-confirm after payment',
-                  paymentId: payload.paymentId,
-                  transition: 'SCHEDULED→CONFIRMED',
-                },
-              }
+            await this.confirmScheduledAppointment(
+              settledAppointment,
+              resolvedClinicId,
+              payload.paymentId
             );
           }
 
@@ -682,6 +663,229 @@ export class BillingEventsListener {
     }
   }
 
+  /**
+   * Release the payment hold on the appointment and, while it is still in the booking flow, move
+   * it one step forward (PENDING → SCHEDULED, otherwise → CONFIRMED).
+   *
+   * The write is conditional on the status: a row that has meanwhile left the booking flow
+   * matches nothing and is left alone. Returns whether a row was written.
+   */
+  private async applyPaidStatusTransition(
+    appointment: AppointmentWithRelations,
+    clinicId: string,
+    paymentId: string
+  ): Promise<boolean> {
+    // VIDEO_CALL appointments start in PENDING with a payment window. Now that payment has
+    // succeeded, transition them through SCHEDULED → CONFIRMED in two steps so the UI can tell
+    // apart "payment received, awaiting doctor confirmation" from "fully confirmed by the
+    // clinic". We also clear `paymentExpiresAt` so the auto-cancel scheduler ignores this row
+    // going forward.
+    //
+    // IN_PERSON appointments skip PENDING (they use the clinic's subscription model), so for
+    // them we go straight to CONFIRMED exactly like the legacy flow did.
+    const currentStatus = String(appointment.status || '').toUpperCase();
+    const isPendingPaymentState =
+      currentStatus === String(AppointmentStatus.PENDING) ||
+      currentStatus === 'PENDING_PAYMENT' ||
+      currentStatus === 'AWAITING_PAYMENT';
+    const nextStatus = isPendingPaymentState
+      ? AppointmentStatus.SCHEDULED
+      : AppointmentStatus.CONFIRMED;
+
+    // Only a row still in the booking flow advances. An already CONFIRMED (or in-progress) row
+    // keeps its status and only has its payment hold released: re-sending CONFIRMED made the
+    // Prisma middleware re-stamp `confirmationExpiresAt = now + window` over the expiry
+    // handlePaymentCallback computed from the visit's own start, so a video visit paid today for
+    // tomorrow expired tonight.
+    const canAdvance =
+      isPendingPaymentState || PAYABLE_APPOINTMENT_STATUSES.some(s => String(s) === currentStatus);
+
+    const data: {
+      paymentExpiresAt: null;
+      status?: string;
+      confirmationExpiresAt?: Date;
+    } = { paymentExpiresAt: null };
+    if (canAdvance) {
+      data.status = nextStatus;
+      if (nextStatus === AppointmentStatus.CONFIRMED) {
+        // Explicit expiry, for the middleware reason above.
+        data.confirmationExpiresAt = resolvePaidConfirmationExpiresAt(appointment);
+      }
+    }
+    const status = canAdvance
+      ? { in: [...PAYABLE_APPOINTMENT_STATUSES] }
+      : { notIn: [...SETTLED_APPOINTMENT_STATUSES] };
+
+    const result = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const appointmentDelegate = (
+          client as unknown as {
+            appointment: {
+              updateMany: (args: {
+                where: {
+                  id: string;
+                  clinicId: string;
+                  status: { in: string[] } | { notIn: string[] };
+                };
+                data: {
+                  paymentExpiresAt: null;
+                  status?: string;
+                  confirmationExpiresAt?: Date;
+                };
+              }) => Promise<{ count: number }>;
+            };
+          }
+        ).appointment;
+
+        return await appointmentDelegate.updateMany({
+          where: { id: appointment.id, clinicId: appointment.clinicId, status },
+          data,
+        });
+      },
+      {
+        userId: 'system',
+        clinicId,
+        resourceType: 'APPOINTMENT',
+        operation: 'UPDATE',
+        resourceId: appointment.id,
+        userRole: 'system',
+        details: {
+          reason: 'Payment completed',
+          paymentId,
+          transition: canAdvance ? `${currentStatus}→${nextStatus}` : 'payment hold released',
+        },
+      }
+    );
+    return result.count > 0;
+  }
+
+  /**
+   * SCHEDULED → CONFIRMED right after a payment settled the appointment. Conditional on the row
+   * still being SCHEDULED, so it can never overwrite a status that moved on in the meantime.
+   */
+  private async confirmScheduledAppointment(
+    appointment: AppointmentWithRelations,
+    clinicId: string,
+    paymentId: string
+  ): Promise<void> {
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const appointmentDelegate = (
+          client as unknown as {
+            appointment: {
+              updateMany: (args: {
+                where: { id: string; clinicId: string; status: string };
+                data: { status: string; confirmationExpiresAt: Date | null };
+              }) => Promise<{ count: number }>;
+            };
+          }
+        ).appointment;
+        return await appointmentDelegate.updateMany({
+          where: {
+            id: appointment.id,
+            clinicId: appointment.clinicId,
+            status: AppointmentStatus.SCHEDULED,
+          },
+          data: {
+            status: AppointmentStatus.CONFIRMED,
+            // Explicit: without this, the Prisma middleware's
+            // `Date.now() + window` fallback stamps the expiry
+            // relative to confirmation time rather than the
+            // appointment's own scheduled start — for advance
+            // bookings (paid hours/days before the visit) that
+            // produces an expiry already in the past, so the
+            // scheduler auto-expires a valid, paid appointment
+            // the moment it's picked up as a candidate.
+            confirmationExpiresAt: resolvePaidConfirmationExpiresAt(appointment),
+          },
+        });
+      },
+      {
+        userId: 'system',
+        clinicId,
+        resourceType: 'APPOINTMENT',
+        operation: 'UPDATE',
+        resourceId: appointment.id,
+        userRole: 'system',
+        details: {
+          reason: 'Auto-confirm after payment',
+          paymentId,
+          transition: 'SCHEDULED→CONFIRMED',
+        },
+      }
+    );
+  }
+
+  private async readAppointmentStatus(
+    appointmentId: string,
+    clinicId: string
+  ): Promise<string | null> {
+    const row = await this.databaseService.executeHealthcareRead<{ status: unknown } | null>(
+      async client =>
+        (
+          client as unknown as {
+            appointment: {
+              findFirst: (args: {
+                where: { id: string; clinicId: string };
+                select: { status: true };
+              }) => Promise<{ status: unknown } | null>;
+            };
+          }
+        ).appointment.findFirst({
+          where: { id: appointmentId, clinicId },
+          select: { status: true },
+        })
+    );
+    return row ? String(row.status).toUpperCase() : null;
+  }
+
+  /**
+   * A COMPLETED payment arrived for an appointment that is already EXPIRED, CANCELLED, COMPLETED
+   * or NO_SHOW. The appointment is deliberately left as it is (its slot may have been released
+   * and rebooked) and no payout is prepared. There are no refunds for visits that never take
+   * place, so this only logs and emits the event (admin-visible); it never refunds, never
+   * persists a refund flag and never throws.
+   */
+  private async flagLateSettlement(details: {
+    appointmentId: string;
+    paymentId: string;
+    clinicId: string;
+    amount?: number | undefined;
+    appointmentStatus: string;
+  }): Promise<void> {
+    try {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        `Completed payment received for an appointment that is already ${details.appointmentStatus}; appointment left unchanged and no payout prepared`,
+        'BillingEventsListener',
+        {
+          appointmentId: details.appointmentId,
+          paymentId: details.paymentId,
+          clinicId: details.clinicId,
+          appointmentStatus: details.appointmentStatus,
+          amount: details.amount,
+        }
+      );
+      await this.eventService.emit('billing.payment.late_settlement', {
+        clinicId: details.clinicId,
+        paymentId: details.paymentId,
+        appointmentId: details.appointmentId,
+        appointmentStatus: details.appointmentStatus,
+        ...(details.amount !== undefined ? { amount: details.amount } : {}),
+        reason: `Completed payment received for an appointment that was already ${details.appointmentStatus}`,
+      });
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        `Failed to flag late settlement: ${error instanceof Error ? error.message : String(error)}`,
+        'BillingEventsListener',
+        { appointmentId: details.appointmentId, paymentId: details.paymentId }
+      );
+    }
+  }
+
   private async resolveClinicId(payload: {
     appointmentId?: string | undefined;
     appointment?: { clinicId?: string | undefined } | undefined;
@@ -802,16 +1006,26 @@ export class BillingEventsListener {
     }
   }
 
+  /**
+   * EventService wraps every emit in an envelope (`{ eventId, clinicId?, payload: <data> }`), so
+   * the ids sit in `payload.payload` (and `clinicId` is top level for enterprise emits only). The
+   * flat shape is still accepted. Marking a payout ready is idempotent (a payout that is already
+   * READY or SUCCESS is left alone), so a repeated event - both completion routes firing, or the
+   * enterprise and plain emits - is harmless.
+   */
   @OnEvent('appointment.completed')
-  async handleAppointmentCompleted(payload: { appointmentId: string; clinicId: string }) {
+  async handleAppointmentCompleted(payload: {
+    appointmentId?: string;
+    clinicId?: string;
+    payload?: { appointmentId?: string; clinicId?: string };
+  }) {
+    const appointmentId = payload?.appointmentId ?? payload?.payload?.appointmentId;
+    const clinicId = payload?.clinicId ?? payload?.payload?.clinicId;
     try {
-      if (!payload?.appointmentId || !payload?.clinicId) {
+      if (!appointmentId || !clinicId) {
         return;
       }
-      await this.billingService.markPayoutReadyForCompletedAppointment(
-        payload.appointmentId,
-        payload.clinicId
-      );
+      await this.billingService.markPayoutReadyForCompletedAppointment(appointmentId, clinicId);
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
@@ -819,8 +1033,8 @@ export class BillingEventsListener {
         `Failed to mark payout ready after appointment completion: ${error instanceof Error ? error.message : String(error)}`,
         'BillingEventsListener',
         {
-          appointmentId: payload?.appointmentId,
-          clinicId: payload?.clinicId,
+          appointmentId,
+          clinicId,
           error: error instanceof Error ? error.stack : undefined,
         }
       );

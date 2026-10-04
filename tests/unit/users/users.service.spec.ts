@@ -8,16 +8,18 @@ import type { UserResponseDto } from '@dtos/user.dto';
 import { CreateUserDto, UpdateUserDto } from '@dtos/user.dto';
 
 describe('UsersService', () => {
-  function createService(overrides: {
-    db?: Record<string, jest.Mock>;
-    cache?: Record<string, jest.Mock>;
-    logging?: Record<string, jest.Mock>;
-    event?: Record<string, jest.Mock>;
-    patients?: Record<string, jest.Mock>;
-    rbac?: Record<string, jest.Mock>;
-    auth?: Record<string, jest.Mock>;
-    errors?: Record<string, jest.Mock>;
-  } = {}) {
+  function createService(
+    overrides: {
+      db?: Record<string, jest.Mock>;
+      cache?: Record<string, jest.Mock>;
+      logging?: Record<string, jest.Mock>;
+      event?: Record<string, jest.Mock>;
+      patients?: Record<string, jest.Mock>;
+      rbac?: Record<string, jest.Mock>;
+      auth?: Record<string, jest.Mock>;
+      errors?: Record<string, jest.Mock>;
+    } = {}
+  ) {
     const db = overrides.db || {
       executeHealthcareRead: jest.fn(),
       executeHealthcareWrite: jest.fn(),
@@ -56,7 +58,7 @@ describe('UsersService', () => {
       patients as any,
       rbac as any,
       auth as any,
-      errors as any,
+      errors as any
     );
   }
 
@@ -115,7 +117,7 @@ describe('UsersService', () => {
       expect(db.executeHealthcareRead).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ role: Role.DOCTOR }),
-        }),
+        })
       );
     });
 
@@ -139,7 +141,7 @@ describe('UsersService', () => {
       expect(db.executeHealthcareRead).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.not.objectContaining({ clinics: expect.anything() }),
-        }),
+        })
       );
     });
   });
@@ -168,7 +170,9 @@ describe('UsersService', () => {
 
     it('should throw when user not found', async () => {
       const errors = {
-        userNotFound: jest.fn((id: string) => { throw new Error(`User ${id} not found`); }),
+        userNotFound: jest.fn((id: string) => {
+          throw new Error(`User ${id} not found`);
+        }),
         validationError: jest.fn(() => new Error('Validation error')),
         clinicNotFound: jest.fn(() => new Error('Clinic not found')),
       };
@@ -187,9 +191,7 @@ describe('UsersService', () => {
 
       const service = createService({ db, cache, errors });
 
-      await expect(
-        (service as any).findOne('nonexistent', 'clinic-1')
-      ).rejects.toThrow();
+      await expect((service as any).findOne('nonexistent', 'clinic-1')).rejects.toThrow();
     });
 
     it('should never expose password in response', async () => {
@@ -266,7 +268,12 @@ describe('UsersService', () => {
       };
 
       const service = createService({ db, cache });
-      const result = await (service as any).update('user-123', { firstName: 'Updated' } as UpdateUserDto, 'user-123', 'clinic-1');
+      const result = await (service as any).update(
+        'user-123',
+        { firstName: 'Updated' } as UpdateUserDto,
+        'user-123',
+        'clinic-1'
+      );
 
       expect(result.firstName).toBe('Updated');
     });
@@ -295,7 +302,7 @@ describe('UsersService', () => {
       expect(db.executeHealthcareWrite).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 'user-123' },
-        }),
+        })
       );
     });
 
@@ -313,7 +320,9 @@ describe('UsersService', () => {
         del: jest.fn(),
       };
       const errors = {
-        userNotFound: jest.fn((id: string) => { throw new Error(`User ${id} not found`); }),
+        userNotFound: jest.fn((id: string) => {
+          throw new Error(`User ${id} not found`);
+        }),
         validationError: jest.fn(() => new Error('Validation error')),
         clinicNotFound: jest.fn(() => new Error('Clinic not found')),
       };
@@ -384,7 +393,7 @@ describe('UsersService', () => {
       expect(db.executeHealthcareRead).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ role: Role.DOCTOR }),
-        }),
+        })
       );
     });
   });

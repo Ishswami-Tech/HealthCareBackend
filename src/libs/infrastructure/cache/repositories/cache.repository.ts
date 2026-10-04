@@ -11,11 +11,22 @@ import type {
   IAdvancedCacheProvider,
   CacheOperationOptions,
 } from '@core/types';
+import { LogType, LogLevel } from '@core/types';
+import type { LoggerLike } from '@core/types';
 import { CacheStrategyManager } from '@infrastructure/cache/strategies/cache-strategy.manager';
 import { CacheMiddlewareChain } from '@infrastructure/cache/middleware/cache-middleware.chain';
 import { CacheVersioningService } from '@infrastructure/cache/services/cache-versioning.service';
 import { CacheKeyFactory } from '@infrastructure/cache/factories/cache-key.factory';
 import { CacheProviderFactory } from '@infrastructure/cache/providers/cache-provider.factory';
+import {
+  canDeleteKeysStrictly,
+  canExtendExpiry,
+  isProtectedKey,
+} from '@infrastructure/cache/utils/protected-keys.util';
+import { DELETE_BATCH_SIZE } from '@infrastructure/cache/utils/pattern-delete.util';
+
+/** Slack added to an entry's TTL so its tag-index set outlives the entry. */
+const TAG_SET_TTL_PADDING_SECONDS = 60;
 
 /**
  * Cache repository implementation
@@ -34,7 +45,10 @@ export class CacheRepository implements ICacheRepository {
     @Inject(forwardRef(() => CacheVersioningService))
     private readonly versioningService: CacheVersioningService,
     @Inject(CacheKeyFactory)
-    private readonly keyFactory: CacheKeyFactory
+    private readonly keyFactory: CacheKeyFactory,
+    // String token (not LoggingService) to avoid circular-import issues in infra boot code
+    @Inject('LOGGING_SERVICE')
+    private readonly loggingService: LoggerLike
   ) {
     // Don't initialize provider in constructor - lazy load on first use
     // This prevents initialization errors when providers aren't ready yet
@@ -93,12 +107,42 @@ export class CacheRepository implements ICacheRepository {
         try {
           const tagKey = this.getTagIndexKey(tag);
           await provider.sAdd(tagKey, versionedKey);
-          await provider.expire(tagKey, ttl + 60);
-        } catch {
-          // Cache tag bookkeeping must never fail the source operation.
+          await this.extendTagSetExpiry(provider, tagKey, ttl + TAG_SET_TTL_PADDING_SECONDS);
+        } catch (error) {
+          // Cache tag bookkeeping must never fail the source operation, but a missing index
+          // entry means the entry cannot be invalidated by tag, so say so.
+          this.logBookkeepingFailure('Failed to register cache tag', tag, error);
         }
       })
     );
+  }
+
+  /**
+   * A tag set is shared by every entry registered under the tag, and those entries have
+   * different TTLs. The set must live as long as its longest-lived member, so its expiry is only
+   * ever raised: letting the last registration decide (the old `EXPIRE tagKey ttl+60`) let a
+   * short-lived entry shrink the set and orphan the long-lived ones.
+   */
+  private async extendTagSetExpiry(
+    provider: ICacheProvider,
+    tagKey: string,
+    seconds: number
+  ): Promise<void> {
+    if (canExtendExpiry(provider)) {
+      await provider.extendExpiry(tagKey, seconds);
+      return;
+    }
+    const current = await provider.ttl(tagKey);
+    if (current === -1 || current < seconds) {
+      await provider.expire(tagKey, seconds);
+    }
+  }
+
+  private logBookkeepingFailure(message: string, tag: string, error: unknown): void {
+    void this.loggingService.log(LogType.CACHE, LogLevel.WARN, message, 'CacheRepository', {
+      tag,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 
   /**
@@ -234,36 +278,60 @@ export class CacheRepository implements ICacheRepository {
   }
 
   /**
-   * Invalidate by tags
+   * Invalidate by tags.
+   *
+   * Members are deleted in bounded chunks and removed from the tag set only after their chunk was
+   * deleted successfully, so a failure part-way leaves the undeleted keys indexed for the next
+   * invalidation instead of orphaning them. Removing exactly the processed members (rather than
+   * deleting the whole set) also keeps entries registered while we were deleting.
+   *
+   * There is deliberately no keyspace-scan fallback for tags without an index: nothing writes
+   * tag-encoded key names any more, and a `*:tag:<tag>:*` scan per empty tag was both expensive
+   * and able to match the index sets of tags named `<tag>:...`.
    */
   async invalidateByTags(tags: readonly string[]): Promise<number> {
     let total = 0;
     const provider = this.getAdvancedCacheProvider();
-    for (const tag of tags) {
-      const tagKey = this.getTagIndexKey(tag);
-      const keys = await provider.sMembers(tagKey);
-
-      if (keys.length > 0) {
-        total += await provider.delMultiple(keys);
-        total += await provider.del(tagKey);
-      } else {
-        // Legacy fallback for any older tag-encoded keys that predate the
-        // sMembers-based tag index - only when the deterministic index has
-        // nothing, since clearByPattern() runs a full KEYS *:tag:...:*
-        // keyspace scan (confirmed via Dragonfly SLOWLOG: 64-143ms per call,
-        // blocking the shared connection). This used to run unconditionally
-        // on every single invalidation call regardless of whether the fast
-        // path above already found and cleared everything - for
-        // frequently-invalidated tags like clinic:* and audit_log:pending
-        // (every write), that meant a KEYS scan on effectively every write
-        // in the app, which was the confirmed source of a cascade of
-        // Redis "Command timed out" errors on unrelated session/RBAC reads
-        // sharing the same connection.
-        const pattern = `*:tag:${tag}:*`;
-        total += await provider.clearByPattern(pattern);
-      }
+    for (const tag of new Set(tags)) {
+      total += await this.invalidateTag(provider, tag);
     }
     return total;
+  }
+
+  private async invalidateTag(provider: IAdvancedCacheProvider, tag: string): Promise<number> {
+    const tagKey = this.getTagIndexKey(tag);
+    const members = await provider.sMembers(tagKey);
+    const protectedMembers = members.filter(isProtectedKey);
+    if (protectedMembers.length > 0) {
+      // Never delete security state through a tag; drop the stale index entries instead.
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.WARN,
+        'Cache tag invalidation skipped keys in protected namespaces',
+        'CacheRepository',
+        { tag, skipped: protectedMembers.length }
+      );
+      await provider.sRem(tagKey, ...protectedMembers);
+    }
+
+    const deletable = members.filter(member => !isProtectedKey(member));
+    let deleted = 0;
+    for (let index = 0; index < deletable.length; index += DELETE_BATCH_SIZE) {
+      const chunk = deletable.slice(index, index + DELETE_BATCH_SIZE);
+      deleted += await this.deleteTagMembers(provider, chunk);
+      await provider.sRem(tagKey, ...chunk);
+    }
+    return deleted;
+  }
+
+  /** Throws when the delete fails (when the provider can tell), so the caller keeps the index. */
+  private deleteTagMembers(
+    provider: IAdvancedCacheProvider,
+    keys: readonly string[]
+  ): Promise<number> {
+    return canDeleteKeysStrictly(provider)
+      ? provider.deleteKeysStrict(keys)
+      : provider.delMultiple(keys);
   }
 
   /**

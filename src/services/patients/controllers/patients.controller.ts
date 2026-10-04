@@ -133,6 +133,8 @@ export class PatientsController {
       ...(dto.dateOfBirth != null && { dateOfBirth: dto.dateOfBirth }),
       ...(dto.gender != null && { gender: dto.gender as 'MALE' | 'FEMALE' | 'OTHER' }),
       ...(dto.bloodGroup != null && { bloodGroup: dto.bloodGroup }),
+      ...(dto.occupation != null && { occupation: dto.occupation }),
+      ...(dto.maritalStatus != null && { maritalStatus: dto.maritalStatus }),
       ...(dto.height != null && { height: dto.height }),
       ...(dto.weight != null && { weight: dto.weight }),
       ...(dto.allergies != null && { allergies: dto.allergies }),
@@ -176,20 +178,135 @@ export class PatientsController {
       throw new BadRequestException('Clinic ID not found in context');
     }
 
-    const patientRecord = await this.patientsService.getPatientRecordForClinic(patientId, clinicId);
-    if (!patientRecord) {
-      throw new ForbiddenException('Patient does not belong to your clinic');
-    }
+    // Clinic membership of the patient and PATIENT ownership (own record or an ACTIVE
+    // dependent's) are enforced in PatientsService.uploadPatientDocument (403).
 
-    const requestRole = (req.user?.role as Role | undefined) || Role.PATIENT;
-    if (requestRole === Role.PATIENT && patientRecord.userId !== userId) {
-      throw new ForbiddenException('You can only upload documents to your own record');
-    }
+    // Multipart text fields arrive on req.body either as plain strings or as
+    // fastify-multipart field objects ({ value }). Only the raw trimmed text is read
+    // here; the allowlist / length rules live in the service so they also apply to
+    // any other caller (400 on violation).
+    const body = ((req as unknown as { body?: Record<string, unknown> }).body || {}) as Record<
+      string,
+      unknown
+    >;
+    const readField = (name: string): string | undefined => {
+      const raw = Array.isArray(body[name]) ? (body[name] as unknown[])[0] : body[name];
+      if (typeof raw === 'string') return raw.trim() || undefined;
+      if (raw && typeof raw === 'object' && 'value' in (raw as Record<string, unknown>)) {
+        const v = (raw as { value?: unknown }).value;
+        return typeof v === 'string' ? v.trim() || undefined : undefined;
+      }
+      return undefined;
+    };
+    const category = readField('category');
+    const description = readField('description');
 
-    return await this.patientsService.uploadPatientDocument(patientId, file, {
+    return await this.patientsService.uploadPatientDocument(
+      patientId,
+      file,
+      {
+        userId,
+        userRole: req.user?.role || Role.PATIENT,
+        operation: 'CREATE',
+        resourceType: 'HEALTH_RECORD',
+        clinicId,
+      },
+      {
+        ...(category ? { category } : {}),
+        ...(description ? { description } : {}),
+      }
+    );
+  }
+
+  /**
+   * Replace the profile photo of the patient whose User.id is `:id` (multipart field
+   * `file`: JPEG / PNG / WebP / HEIC, max 5 MB). PATIENT: own photo only; staff: patients
+   * of their clinic. 400 wrong type, 413 too large, 403 someone else's profile. The
+   * response `profilePicture` is a presigned URL (15 minutes); profile reads re-sign it.
+   */
+  @Post(':id/profile-photo')
+  @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('profile', 'update')
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Upload / replace a patient profile photo' })
+  @ApiBody({
+    schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } },
+  })
+  @ApiResponse({ status: 201, description: 'Photo stored; returns a presigned URL' })
+  async uploadProfilePhoto(
+    @Param('id') userId: string,
+    @FastifyFile() file: MulterFile | null,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    if (!file) {
+      throw new BadRequestException('File is required');
+    }
+    const actorId = req.user?.id || req.user?.sub;
+    const clinicId = req.clinicContext?.clinicId;
+    if (!actorId || !clinicId) {
+      throw new BadRequestException('User or clinic not found in request');
+    }
+    return await this.patientsService.uploadProfilePhoto(userId, file, {
+      userId: actorId,
+      userRole: req.user?.role || Role.PATIENT,
+      operation: 'UPDATE',
+      resourceType: 'USER',
+      clinicId,
+    });
+  }
+
+  // PATIENT: own record / ACTIVE dependent, all clinics. Staff: clinical role + the
+  // medical-records:read permission, request-clinic documents only (both checked in
+  // PatientsService.listPatientDocuments). NOTE: RECEPTIONIST DOES hold
+  // medical-records:read in rbac.service.ts; it is kept out only by this @Roles list AND
+  // by the explicit role allow-list inside the service, so widening @Roles alone cannot
+  // expose documents.
+  @Get(':id/documents')
+  @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN)
+  @ApiOperation({ summary: 'List patient documents' })
+  @ApiResponse({ status: 200, description: 'Documents retrieved successfully' })
+  async listDocuments(@Param('id') patientId: string, @Request() req: ClinicAuthenticatedRequest) {
+    const userId = req.user?.id || req.user?.sub;
+    if (!userId) {
+      throw new BadRequestException('User ID not found in request');
+    }
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) {
+      throw new BadRequestException('Clinic ID not found in context');
+    }
+    return await this.patientsService.listPatientDocuments(patientId, {
       userId,
       userRole: req.user?.role || Role.PATIENT,
-      operation: 'CREATE',
+      operation: 'READ',
+      resourceType: 'HEALTH_RECORD',
+      clinicId,
+    });
+  }
+
+  // PATIENT: only own (or ACTIVE dependent's) documents they uploaded. Staff: clinical
+  // role + medical-records:delete (checked in PatientsService.deletePatientDocument,
+  // which also denies every non-clinical role such as RECEPTIONIST explicitly).
+  @Delete(':id/documents/:documentId')
+  @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN)
+  @ApiOperation({ summary: 'Delete a patient document' })
+  @ApiResponse({ status: 200, description: 'Document deleted successfully' })
+  async deleteDocument(
+    @Param('id') patientId: string,
+    @Param('documentId') documentId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const userId = req.user?.id || req.user?.sub;
+    if (!userId) {
+      throw new BadRequestException('User ID not found in request');
+    }
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) {
+      throw new BadRequestException('Clinic ID not found in context');
+    }
+    return await this.patientsService.deletePatientDocument(patientId, documentId, {
+      userId,
+      userRole: req.user?.role || Role.PATIENT,
+      operation: 'DELETE',
       resourceType: 'HEALTH_RECORD',
       clinicId,
     });
@@ -403,6 +520,7 @@ export class PatientsController {
     if (dto.area != null) updates['area'] = dto.area;
     if (dto.district != null) updates['district'] = dto.district;
     if (dto.occupation != null) updates['occupation'] = dto.occupation;
+    if (dto.maritalStatus != null) updates['maritalStatus'] = dto.maritalStatus;
     if (dto.organization != null) updates['organization'] = dto.organization;
 
     if (role === Role.RECEPTIONIST) {

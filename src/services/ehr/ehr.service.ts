@@ -1,5 +1,24 @@
-import { nowIso } from '@utils/date-time.util';
-import { Injectable, NotFoundException, Inject, forwardRef, Optional } from '@nestjs/common';
+import { nowIso, formatDateKeyInIST } from '@utils/date-time.util';
+import {
+  buildDoseLog,
+  dosesPerDay,
+  doseKey,
+  enumerateDays,
+  DEFAULT_ADHERENCE_RANGE_DAYS,
+  MAX_ADHERENCE_RANGE_DAYS,
+  type DoseLogEntry,
+  type ScheduledMedication,
+} from './medication-schedule.util';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+  Inject,
+  forwardRef,
+  Optional,
+} from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import {
   MedicalRecordResponse,
@@ -16,7 +35,19 @@ import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events/event.service';
 import { QueueService } from '@queue/src/queue.service';
+import {
+  assertPatientMayAccess,
+  isPatientRole,
+  type PatientAccessActor,
+} from '@core/guards/patient-self-access.guard';
 import { JobType } from '@core/types/queue.types';
+import {
+  buildDocumentStorageName,
+  extractStoredFileRef,
+  PHI_FILE_FOLDERS,
+  resolveAttributionDoctorId,
+  validateDocumentFile,
+} from '@services/patients/patient-document.util';
 import { LogLevel, LogType, type IEventService, isEventService } from '@core/types';
 // Legacy queue constants removed — uses JobType.LAB_REPORT / JobType.IMAGING via HEALTHCARE_QUEUE
 
@@ -52,6 +83,7 @@ import {
   EHRAISummaryDto,
   CreatePrescriptionDto,
   BulkEHRImportDto,
+  PATIENT_MEDICAL_RECORD_TYPES,
 } from '@dtos/ehr.dto';
 import type {
   MedicalHistoryResponse,
@@ -78,6 +110,56 @@ import type {
   FamilyHistoryBase,
   LifestyleAssessmentBase,
 } from '@core/types/ehr.types';
+
+/**
+ * `HealthRecord` row as the medical-record mappers read it. The Prisma model has NO
+ * `updatedAt` column (only `createdAt`), so `updatedAt` is optional here and the
+ * response falls back to `createdAt`.
+ */
+interface HealthRecordRow {
+  id: string;
+  patientId: string;
+  clinicId: string;
+  recordType: string;
+  title: string;
+  content?: string;
+  fileUrl?: string;
+  fileSize?: number;
+  mimeType?: string;
+  doctorId: string;
+  notes?: string;
+  uploadedBy?: string;
+  createdAt: Date;
+  updatedAt?: Date | null;
+}
+
+/** How many days back a patient may still mark a dose as taken. */
+const MAX_DOSE_BACKFILL_DAYS = 14;
+
+interface DoseLogRow {
+  medicationId: string;
+  doseDate: Date;
+  doseIndex: number;
+  takenAt: Date;
+}
+
+export interface MedicationAdherenceResponse {
+  totalActive: number;
+  medications: MedicationBase[];
+  range: { startDate: string; endDate: string };
+  adherencePercentage: number | null;
+  scheduledDoses: number;
+  takenDoses: number;
+  missedDoses: number;
+  doseLog: DoseLogEntry[];
+}
+
+/** `dayKey` (YYYY-MM-DD) moved by `days` calendar days. */
+function shiftDayKey(dayKey: string, days: number): string {
+  const date = new Date(`${dayKey}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
 
 @Injectable()
 export class EHRService {
@@ -400,10 +482,12 @@ export class EHRService {
   /**
    * Generates an AI-powered summary of the patient's health records
    * @param patientId The ID of the patient (user)
+   * @param clinicId Validated clinic of the caller; scopes every record read so the
+   *   summary can never aggregate another clinic's data
    * @returns AI-generated summary and recommendations
    */
-  async getEHRAISummary(patientId: string): Promise<EHRAISummaryDto> {
-    const records = await this.getComprehensiveHealthRecord(patientId);
+  async getEHRAISummary(patientId: string, clinicId?: string): Promise<EHRAISummaryDto> {
+    const records = await this.getComprehensiveHealthRecord(patientId, clinicId);
 
     // AI Logic Simulation: In a production environment, this would call an LLM (e.g., OpenAI, Vertex AI)
     // passing the aggregated health records as context.
@@ -540,15 +624,56 @@ export class EHRService {
     });
   }
 
-  async invalidateUserEHRCache(userId: string) {
+  async invalidateUserEHRCache(userId: string, clinicId?: string) {
     // Service-level caches are tagged `ehr:{userId}`; the controller-level
     // @PatientCache entries (medical-history, comprehensive record, vitals,
     // allergies, ...) are tagged `user:{userId}`. Both must be cleared or a
     // write followed by a read returns the pre-write list.
-    await Promise.all([
-      this.cacheService.invalidateCacheByTag(`ehr:${userId}`),
-      this.cacheService.invalidateCacheByTag(`user:${userId}`),
+    //
+    // The clinic-wide reads (ehr-clinic.controller.ts: patient list, summary,
+    // analytics, search, critical alerts) are tagged per clinic (`clinic:<id>`,
+    // `clinic_ehr:<id>`, `patient_records:<id>`, `patient_summary:<id>`,
+    // `alerts:<id>`). A new allergy or vital must reach them too, for every
+    // clinic the patient belongs to (the callers only pass the user id, so the
+    // clinic is looked up when it is not given). Tags are per clinic on purpose:
+    // one clinic's EHR write must not flush another clinic's lists.
+    let clinicIds: string[] = clinicId ? [clinicId] : [];
+    if (!clinicId) {
+      try {
+        const memberships = await this.databaseService.executeHealthcareRead(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.userRole.findMany({
+            where: { userId, isActive: true, clinicId: { not: null } } as PrismaDelegateArgs,
+            select: { clinicId: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        });
+        clinicIds = [
+          ...new Set(
+            memberships.flatMap(membership => (membership.clinicId ? [membership.clinicId] : []))
+          ),
+        ];
+      } catch (error) {
+        void this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Could not resolve the patient clinics for EHR cache invalidation; clinic-wide lists stay stale until their TTL expires',
+          'EHRService.invalidateUserEHRCache',
+          { userId, error: error instanceof Error ? error.message : String(error) }
+        );
+      }
+    }
+    const clinicTags = clinicIds.flatMap(id => [
+      `clinic:${id}`,
+      `clinic_ehr:${id}`,
+      `patient_records:${id}`,
+      `patient_summary:${id}`,
+      `alerts:${id}`,
     ]);
+    await Promise.all(
+      [`ehr:${userId}`, `user:${userId}`, ...clinicTags].map(tag =>
+        this.cacheService.invalidateCacheByTag(tag)
+      )
+    );
   }
 
   // ============ Medical History ============
@@ -562,6 +687,7 @@ export class EHRService {
           clinicId?: string;
           condition: string;
           notes?: string;
+          status?: string;
           date: Date;
         } = {
           userId: data.userId,
@@ -570,6 +696,9 @@ export class EHRService {
         };
         if (data.clinicId) {
           createData.clinicId = data.clinicId;
+        }
+        if (data.status) {
+          createData.status = data.status;
         }
         if (data.notes) {
           createData.notes = data.notes;
@@ -678,10 +807,14 @@ export class EHRService {
         const updateData: {
           condition?: string;
           notes?: string;
+          status?: string;
           date?: Date;
         } = {};
         if (data.condition) {
           updateData.condition = data.condition;
+        }
+        if (data.status) {
+          updateData.status = data.status;
         }
         if (data.notes) {
           updateData.notes = data.notes;
@@ -739,7 +872,7 @@ export class EHRService {
     const typedRecord = record as { userId: string; clinicId?: string | null };
 
     // 🔒 TENANT ISOLATION: Validate record belongs to clinic before deleting
-    if (clinicId && typedRecord.clinicId && typedRecord.clinicId !== clinicId) {
+    if (clinicId && typedRecord.clinicId !== clinicId) {
       throw new NotFoundException(`Medical history record with ID ${id} not found`);
     }
 
@@ -771,7 +904,116 @@ export class EHRService {
 
   // ============ Medical Records (General File-Based Records) ============
 
-  async createMedicalRecord(data: CreateMedicalRecordInput): Promise<MedicalRecordResponse> {
+  /**
+   * Patient (Patient.id + User.id) for `identifier`, which may be either of the two ids
+   * (EHR routes use them interchangeably), restricted to patients who belong to
+   * `clinicId` when one is given. "Belongs" mirrors the clinic patient list: the user's
+   * primary clinic, a clinic membership / active role there, or an appointment there.
+   * Null when unknown or not of that clinic.
+   */
+  async resolvePatient(
+    identifier: string,
+    clinicId?: string
+  ): Promise<{ id: string; userId: string } | null> {
+    if (!identifier) {
+      return null;
+    }
+    return await this.databaseService.executeHealthcareRead<{ id: string; userId: string } | null>(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        const clinicScope = clinicId
+          ? {
+              OR: [
+                { user: { primaryClinicId: clinicId } },
+                { user: { clinics: { some: { id: clinicId } } } },
+                { user: { userRoles: { some: { clinicId, isActive: true } } } },
+                { appointments: { some: { clinicId } } },
+              ],
+            }
+          : {};
+        const row = (await typedClient.patient.findFirst({
+          where: {
+            AND: [{ OR: [{ id: identifier }, { userId: identifier }] }, clinicScope],
+          } as PrismaDelegateArgs,
+          select: { id: true, userId: true } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs)) as { id: string; userId: string } | null;
+        return row ? { id: row.id, userId: row.userId } : null;
+      }
+    );
+  }
+
+  /**
+   * `HealthRecord.doctorId` is a FK to Doctor.id: use the one supplied, else the
+   * uploader's own doctor profile. There is no "system" doctor.
+   */
+  private async resolveRecordDoctorId(data: CreateMedicalRecordInput): Promise<string> {
+    if (data.doctorId) {
+      return data.doctorId;
+    }
+    const doctor = await this.databaseService.executeHealthcareRead<{ id: string } | null>(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return (await typedClient.doctor.findUnique({
+          where: { userId: data.uploadedBy } as PrismaDelegateArgs,
+          select: { id: true } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs)) as { id: string } | null;
+      }
+    );
+    if (!doctor) {
+      throw new BadRequestException('doctorId is required: the uploader has no doctor profile');
+    }
+    return doctor.id;
+  }
+
+  /**
+   * A PATIENT may only add a record to THEIR OWN chart (not a dependent's), only of a
+   * patient-appropriate type, and it is attributed to the doctor resolved the same way
+   * as patient document uploads (never a doctor the client names).
+   */
+  private async resolveSelfRecordDoctorId(
+    patient: { id: string; userId: string },
+    data: CreateMedicalRecordInput,
+    actor: PatientAccessActor
+  ): Promise<string> {
+    if (patient.userId !== actor.userId) {
+      throw new ForbiddenException('Patients can only add records to their own chart');
+    }
+    if (!PATIENT_MEDICAL_RECORD_TYPES.includes(data.type)) {
+      throw new ForbiddenException(
+        `Patients can only add ${PATIENT_MEDICAL_RECORD_TYPES.join(' or ')} records`
+      );
+    }
+    const doctorId = await resolveAttributionDoctorId(
+      this.databaseService,
+      patient.id,
+      actor.userId,
+      data.clinicId
+    );
+    if (!doctorId) {
+      throw new BadRequestException(
+        'No doctor is linked to your record in this clinic yet. Book a visit before adding records.'
+      );
+    }
+    return doctorId;
+  }
+
+  async createMedicalRecord(
+    data: CreateMedicalRecordInput,
+    actor?: PatientAccessActor
+  ): Promise<MedicalRecordResponse> {
+    // HealthRecord.patientId is a FK to Patient.id, but clients send the patient's
+    // User.id or Patient.id. Resolve the patient entity and require it to belong to the
+    // clinic before anything is inserted (404 for unknown AND foreign patients, so the
+    // endpoint is no oracle for other clinics' patients).
+    const patient = await this.resolvePatient(data.userId, data.clinicId);
+    if (!patient) {
+      throw new NotFoundException(`Patient ${data.userId} not found`);
+    }
+    const doctorId =
+      actor && isPatientRole(actor.role)
+        ? await this.resolveSelfRecordDoctorId(patient, data, actor)
+        : await this.resolveRecordDoctorId(data);
+
     const record = await this.databaseService.executeHealthcareWrite(
       async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
@@ -779,8 +1021,8 @@ export class EHRService {
         };
         return await typedClient.healthRecord.create({
           data: {
-            patientId: data.userId,
-            doctorId: data.doctorId || 'system',
+            patientId: patient.id,
+            doctorId,
             clinicId: data.clinicId || '',
             recordType: data.type,
             title: data.title,
@@ -800,60 +1042,41 @@ export class EHRService {
         operation: 'CREATE',
         resourceId: '',
         userRole: 'system',
-        details: { userId: data.userId, type: data.type, title: data.title },
+        details: {
+          userId: patient.userId,
+          patientId: patient.id,
+          type: data.type,
+          title: data.title,
+        },
       }
     );
 
-    const rawRecord = record as unknown as {
-      id: string;
-      patientId: string;
-      clinicId: string;
-      recordType: string;
-      title: string;
-      content?: string;
-      notes?: string;
-      fileUrl?: string;
-      doctorId: string;
-      uploadedBy?: string;
-      createdAt: Date;
-      updatedAt: Date;
-    };
+    const rawRecord = record as unknown as HealthRecordRow;
 
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Medical record created',
       'EHRService',
-      { recordId: rawRecord.id, userId: data.userId, type: data.type }
+      { recordId: rawRecord.id, userId: patient.userId, type: data.type }
     );
 
     await this.eventService.emit('ehr.medical_record.created', {
       recordId: rawRecord.id,
-      userId: data.userId,
+      userId: patient.userId,
       type: data.type,
     });
 
-    await this.invalidateUserEHRCache(data.userId);
+    // Read caches are tagged by whichever id the client used (User.id or Patient.id).
+    await this.invalidateUserEHRCache(patient.userId);
+    if (patient.id !== patient.userId) {
+      await this.invalidateUserEHRCache(patient.id);
+    }
 
     return this.buildMedicalRecordResponse(rawRecord);
   }
 
-  private buildMedicalRecordResponse(r: {
-    id: string;
-    patientId: string;
-    clinicId: string;
-    recordType: string;
-    title: string;
-    content?: string;
-    fileUrl?: string;
-    fileSize?: number;
-    mimeType?: string;
-    doctorId: string;
-    notes?: string;
-    uploadedBy?: string;
-    createdAt: Date;
-    updatedAt: Date;
-  }): MedicalRecordResponse {
+  private buildMedicalRecordResponse(r: HealthRecordRow): MedicalRecordResponse {
     const result = {
       id: r.id,
       userId: r.patientId,
@@ -862,7 +1085,8 @@ export class EHRService {
       title: r.title || '',
       doctorId: r.doctorId,
       createdAt: r.createdAt.toISOString(),
-      updatedAt: r.updatedAt.toISOString(),
+      // HealthRecord has no `updatedAt` column: a record is as old as its creation.
+      updatedAt: (r.updatedAt ?? r.createdAt).toISOString(),
     };
     if (r.content) (result as MedicalRecordResponse).content = r.content;
     if (r.fileUrl) (result as MedicalRecordResponse).fileUrl = r.fileUrl;
@@ -880,6 +1104,43 @@ export class EHRService {
     filters?: MedicalRecordFilters
   ): Promise<MedicalRecordResponse[]> {
     this.logPHIAccess('MEDICAL_RECORDS', userId, clinicId);
+    // `userId` is the patient's User.id or Patient.id (the access guard accepts both);
+    // HealthRecord.patientId is a Patient.id, so resolve the entity first.
+    const patient = await this.resolvePatient(userId);
+    if (!patient) {
+      return [];
+    }
+    const records = await this.loadMedicalRecords(patient.id, clinicId, filters);
+    return await Promise.all(records.map(record => this.withSignedFileUrl(record)));
+  }
+
+  /**
+   * Medical-record files are stored private; the stored `fileUrl` is swapped for a
+   * short-lived presigned GET URL in the same field so clients need no change.
+   * Local-disk URLs, foreign URLs and presign failures keep the stored value.
+   *
+   * The signature is bound to the row: the object key must contain the record id (EHR
+   * uploads) or the patient id (patient uploads attached as GENERAL_DOCUMENT rows), so
+   * a stored URL that points at somebody else's object is never presigned. `userId` of
+   * the response is the HealthRecord's Patient.id.
+   */
+  private async withSignedFileUrl(record: MedicalRecordResponse): Promise<MedicalRecordResponse> {
+    if (!record.fileUrl) {
+      return record;
+    }
+    return {
+      ...record,
+      fileUrl: await this.staticAssetService.resolveSignedUrl(record.fileUrl, undefined, {
+        boundTo: [record.id, record.userId],
+      }),
+    };
+  }
+
+  private async loadMedicalRecords(
+    userId: string,
+    clinicId?: string,
+    filters?: MedicalRecordFilters
+  ): Promise<MedicalRecordResponse[]> {
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
         healthRecord: {
@@ -922,22 +1183,7 @@ export class EHRService {
         skip: filters?.offset || 0,
       } as PrismaDelegateArgs);
 
-      const rawRecords = records as unknown as Array<{
-        id: string;
-        patientId: string;
-        clinicId: string;
-        recordType: string;
-        title: string;
-        content?: string;
-        fileUrl?: string;
-        fileSize?: number;
-        mimeType?: string;
-        doctorId: string;
-        notes?: string;
-        uploadedBy?: string;
-        createdAt: Date;
-        updatedAt: Date;
-      }>;
+      const rawRecords = records as unknown as HealthRecordRow[];
 
       return rawRecords.map(r =>
         this.buildMedicalRecordResponse(r)
@@ -945,8 +1191,33 @@ export class EHRService {
     });
   }
 
-  async getMedicalRecordById(id: string, clinicId?: string): Promise<MedicalRecordResponse | null> {
-    this.logPHIAccess('MEDICAL_RECORD', 'unknown', clinicId, { recordId: id });
+  /**
+   * Loads one medical record. When `viewer` is a PATIENT the record must belong
+   * to them (or to an ACTIVE dependent they are the primary patient of),
+   * otherwise a 403 is thrown: RbacGuard lets any role holding
+   * `medical-records:read` through, so ownership has to be enforced here after
+   * the record is loaded. Staff behaviour is unchanged (clinic-scoped lookup).
+   */
+  async getMedicalRecordById(
+    id: string,
+    clinicId?: string,
+    viewer?: PatientAccessActor
+  ): Promise<MedicalRecordResponse | null> {
+    this.logPHIAccess('MEDICAL_RECORD', viewer?.userId ?? 'unknown', clinicId, { recordId: id });
+    const row = await this.loadMedicalRecordRow(id, clinicId);
+    if (!row) {
+      return null;
+    }
+    // Ownership is decided on the RAW row, before any response mapping, so a non-owner
+    // always gets a 403 and can never turn a mapping problem into a 500.
+    await assertPatientMayAccess(this.databaseService, viewer, row.patientId);
+    return await this.withSignedFileUrl(this.buildMedicalRecordResponse(row));
+  }
+
+  private async loadMedicalRecordRow(
+    id: string,
+    clinicId?: string
+  ): Promise<HealthRecordRow | null> {
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
         healthRecord: { findFirst: (args: PrismaDelegateArgs) => Promise<unknown> };
@@ -961,43 +1232,7 @@ export class EHRService {
         where: where as PrismaDelegateArgs,
       } as PrismaDelegateArgs);
 
-      if (!record) return null;
-
-      const typedRecord = record as unknown as {
-        id: string;
-        patientId: string;
-        clinicId: string;
-        recordType: string;
-        title: string;
-        content?: string;
-        fileUrl?: string;
-        fileSize?: number;
-        mimeType?: string;
-        doctorId: string;
-        notes?: string;
-        uploadedBy?: string;
-        createdAt: Date;
-        updatedAt: Date;
-      };
-
-      const response = {
-        id: typedRecord.id,
-        userId: typedRecord.patientId,
-        clinicId: typedRecord.clinicId,
-        type: typedRecord.recordType as MedicalRecordResponse['type'],
-        title: typedRecord.title || '',
-        doctorId: typedRecord.doctorId,
-        createdAt: typedRecord.createdAt.toISOString(),
-        updatedAt: typedRecord.updatedAt.toISOString(),
-      } as unknown as MedicalRecordResponse;
-      if (typedRecord.content) response.content = typedRecord.content;
-      if (typedRecord.fileUrl) response.fileUrl = typedRecord.fileUrl;
-      if (typedRecord.fileSize !== undefined && typedRecord.fileSize !== null)
-        response.fileSize = typedRecord.fileSize;
-      if (typedRecord.mimeType) response.mimeType = typedRecord.mimeType;
-      if (typedRecord.notes) response.notes = typedRecord.notes;
-      if (typedRecord.uploadedBy) response.uploadedBy = typedRecord.uploadedBy;
-      return response;
+      return record ? (record as unknown as HealthRecordRow) : null;
     });
   }
 
@@ -1079,53 +1314,103 @@ export class EHRService {
 
     await this.invalidateUserEHRCache(existing.userId);
 
+    // The row is gone: do not leave its PHI object behind (best effort, logged).
+    await this.discardStoredFile(existing.fileUrl, id, existing.clinicId, 'record deleted');
+
     return true;
   }
 
+  /**
+   * Attaches a file to a medical record (staff only, see the controller's @Roles).
+   *
+   * - the file is validated first: empty -> 400, > 10 MB -> 413, a type outside
+   *   PDF / JPEG / PNG / WebP / HEIC (declared type AND file signature) -> 400
+   * - tenant isolation: only records of the caller's clinic can receive a file
+   * - the object is stored PRIVATE; the response carries a short-lived presigned URL
+   * - a storage failure -> 500 with nothing written; a failed DB write removes the
+   *   object again so no orphan is left behind
+   */
   async uploadMedicalRecordFile(
     recordId: string,
     fileBuffer: Buffer,
-    _fileName: string,
-    mimeType: string
+    fileName: string,
+    mimeType: string,
+    clinicId?: string
   ): Promise<{ record: MedicalRecordResponse; fileUrl: string; fileKey: string } | null> {
-    const existing = await this.getMedicalRecordById(recordId);
-    if (!existing) return null;
+    const validated = validateDocumentFile({
+      buffer: fileBuffer,
+      mimetype: mimeType,
+      originalname: fileName,
+    });
 
-    const extension = mimeType.split('/').pop() || 'bin';
-    const storageFileName = `medical-record/${existing.userId}/${recordId}-${Date.now()}.${extension}`;
+    // 🔒 TENANT ISOLATION: staff may only attach files to records of their own clinic
+    const existing = await this.getMedicalRecordById(recordId, clinicId);
+    if (!existing) return null;
 
     const asset = await this.staticAssetService.uploadFile(
       fileBuffer,
-      storageFileName,
+      buildDocumentStorageName(existing.id, validated.extension),
       AssetType.MEDICAL_RECORD,
-      mimeType,
+      validated.mimeType,
       false
     );
+    if (!asset.success || !asset.url) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Medical record file upload was not stored',
+        'EHRService',
+        { recordId, clinicId: existing.clinicId, error: asset.error }
+      );
+      throw new InternalServerErrorException('Could not store the file. Please try again.');
+    }
+    const storedUrl = asset.url;
 
-    await this.databaseService.executeHealthcareWrite(
-      async client => {
-        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-          healthRecord: { update: (args: PrismaDelegateArgs) => Promise<unknown> };
-        };
+    try {
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+            healthRecord: { update: (args: PrismaDelegateArgs) => Promise<unknown> };
+          };
 
-        return await typedClient.healthRecord.update({
-          where: { id: recordId } as PrismaDelegateArgs,
-          data: {
-            fileUrl: asset.url,
-            fileSize: fileBuffer.length,
-            mimeType,
-          } as PrismaDelegateArgs,
-        } as PrismaDelegateArgs);
-      },
-      {
-        userId: existing.userId,
-        clinicId: existing.clinicId,
-        resourceType: 'MEDICAL_RECORD',
-        operation: 'UPDATE',
-        resourceId: recordId,
-        userRole: 'system',
-        details: { action: 'upload_file', assetKey: asset.key },
-      }
+          return await typedClient.healthRecord.update({
+            where: { id: recordId } as PrismaDelegateArgs,
+            data: {
+              fileUrl: storedUrl,
+              fileSize: validated.size,
+              mimeType: validated.mimeType,
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        },
+        {
+          userId: existing.userId,
+          clinicId: existing.clinicId,
+          resourceType: 'MEDICAL_RECORD',
+          operation: 'UPDATE',
+          resourceId: recordId,
+          userRole: 'system',
+          details: { action: 'upload_file', assetKey: asset.key },
+        }
+      );
+    } catch (error) {
+      // The RELATIVE key / `/storage/...` reference, never `asset.localPath` (an absolute
+      // disk path is not an object key).
+      await this.discardUploadedObject(
+        asset.key ?? extractStoredFileRef(storedUrl, PHI_FILE_FOLDERS) ?? undefined,
+        recordId,
+        existing.clinicId,
+        'row could not be written'
+      );
+      throw error;
+    }
+
+    // The new file is stored and the row points at it: remove the file it replaced.
+    await this.discardStoredFile(
+      existing.fileUrl,
+      recordId,
+      existing.clinicId,
+      'file replaced',
+      asset.key
     );
 
     await this.eventService.emit('ehr.medical_record.file_uploaded', {
@@ -1134,28 +1419,59 @@ export class EHRService {
       fileKey: asset.key,
     });
 
-    const updatedRecord: MedicalRecordResponse = {
-      id: existing.id,
-      userId: existing.userId,
-      clinicId: existing.clinicId,
-      type: existing.type,
-      title: existing.title,
-      doctorId: existing.doctorId,
-      createdAt: existing.createdAt,
-      updatedAt: existing.updatedAt,
-      fileUrl: asset.url,
-      fileSize: fileBuffer.length,
-      mimeType,
-    } as unknown as MedicalRecordResponse;
+    const fileUrl = await this.staticAssetService.resolveSignedUrl(storedUrl, undefined, {
+      boundTo: [recordId, existing.userId],
+    });
     return {
-      record: updatedRecord,
-      fileUrl: asset.url,
-      fileKey: asset.key,
-    } as unknown as {
-      record: MedicalRecordResponse;
-      fileUrl: string;
-      fileKey: string;
+      record: { ...existing, fileUrl, fileSize: validated.size, mimeType: validated.mimeType },
+      fileUrl,
+      fileKey: asset.key ?? '',
     };
+  }
+
+  /**
+   * Removes a stored object by its RELATIVE reference (object key or `/storage/...`
+   * URL, never an absolute disk path); never throws. A failed removal is logged as an
+   * orphaned PHI file.
+   */
+  private async discardUploadedObject(
+    ref: string | undefined,
+    recordId: string,
+    clinicId: string,
+    reason = 'row could not be written'
+  ): Promise<void> {
+    if (!ref) {
+      return;
+    }
+    const removed = await this.staticAssetService.deleteAsset(ref).catch(() => false);
+    if (!removed) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'Orphaned medical record file could not be removed from storage',
+        'EHRService',
+        { recordId, clinicId, storageRef: ref, reason }
+      );
+    }
+  }
+
+  /**
+   * Removes the file a record's stored (or presigned) `fileUrl` points at, when it is
+   * one of ours (`documents/` or `medical-records/`). `keepRef` is never removed.
+   * Best effort: never throws.
+   */
+  private async discardStoredFile(
+    fileUrl: string | undefined,
+    recordId: string,
+    clinicId: string,
+    reason: string,
+    keepRef?: string
+  ): Promise<void> {
+    const ref = extractStoredFileRef(fileUrl, PHI_FILE_FOLDERS);
+    if (!ref || ref === keepRef) {
+      return;
+    }
+    await this.discardUploadedObject(ref, recordId, clinicId, reason);
   }
 
   // ============ Lab Reports ============
@@ -1168,6 +1484,10 @@ export class EHRService {
           userId: string;
           testName: string;
           result: string;
+          clinicId?: string;
+          doctorId?: string;
+          notes?: string;
+          status?: string;
           unit?: string;
           normalRange?: string;
           fileUrl?: string;
@@ -1179,6 +1499,20 @@ export class EHRService {
           result: data.result,
           date: new Date(data.date),
         };
+        // clinicId / doctorId / notes / status were silently dropped before, so a new
+        // report had no clinic and was invisible to the clinic-scoped list and update.
+        if (data.clinicId) {
+          createData.clinicId = data.clinicId;
+        }
+        if (data.doctorId) {
+          createData.doctorId = data.doctorId;
+        }
+        if (data.notes) {
+          createData.notes = data.notes;
+        }
+        if (data.status) {
+          createData.status = data.status;
+        }
         if (data.unit) {
           createData.unit = data.unit;
         }
@@ -1325,8 +1659,16 @@ export class EHRService {
           result?: string;
           unit?: string;
           normalRange?: string;
+          status?: string;
+          notes?: string;
           date?: Date;
         } = {};
+        if (data.status) {
+          updateData.status = data.status;
+        }
+        if (data.notes) {
+          updateData.notes = data.notes;
+        }
         if (data.testName) {
           updateData.testName = data.testName;
         }
@@ -1368,7 +1710,7 @@ export class EHRService {
     return this.transformLabReport(typedReport);
   }
 
-  async deleteLabReport(id: string, _clinicId?: string): Promise<void> {
+  async deleteLabReport(id: string, clinicId?: string): Promise<void> {
     // Use executeHealthcareRead first to get record for cache invalidation
     const report = await this.databaseService.executeHealthcareRead<{
       userId: string;
@@ -1388,6 +1730,10 @@ export class EHRService {
     if (!report) throw new NotFoundException(`Lab report with ID ${id} not found`);
 
     const typedReport = report as { userId: string; clinicId?: string | null };
+    // 🔒 TENANT ISOLATION: a record from another clinic is reported as not found
+    if (clinicId && typedReport.clinicId !== clinicId) {
+      throw new NotFoundException(`Lab report with ID ${id} not found`);
+    }
     // Use executeHealthcareWrite for delete with audit logging
     await this.databaseService.executeHealthcareWrite<unknown>(
       async client => {
@@ -1608,7 +1954,7 @@ export class EHRService {
 
     const typedReport = report as { userId: string; clinicId?: string | null };
     // 🔒 TENANT ISOLATION
-    if (clinicId && typedReport.clinicId && typedReport.clinicId !== clinicId) {
+    if (clinicId && typedReport.clinicId !== clinicId) {
       throw new NotFoundException(`Radiology report with ID ${id} not found`);
     }
     // Use executeHealthcareWrite for delete with audit logging
@@ -1805,7 +2151,7 @@ export class EHRService {
 
     const typedRecord = record as { userId: string; clinicId?: string | null };
     // 🔒 TENANT ISOLATION
-    if (clinicId && typedRecord.clinicId && typedRecord.clinicId !== clinicId) {
+    if (clinicId && typedRecord.clinicId !== clinicId) {
       throw new NotFoundException(`Surgical record with ID ${id} not found`);
     }
     // Use executeHealthcareWrite for delete with audit logging
@@ -1914,7 +2260,7 @@ export class EHRService {
       } as PrismaDelegateArgs);
     });
     if (!vital) throw new NotFoundException(`Vital record with ID ${id} not found`);
-    if (clinicId && vital.clinicId && vital.clinicId !== clinicId) {
+    if (clinicId && vital.clinicId !== clinicId) {
       throw new NotFoundException(`Vital record with ID ${id} not found`);
     }
 
@@ -1982,7 +2328,7 @@ export class EHRService {
 
     const typedVital = vital as { userId: string; clinicId?: string | null };
     // 🔒 TENANT ISOLATION
-    if (clinicId && typedVital.clinicId && typedVital.clinicId !== clinicId) {
+    if (clinicId && typedVital.clinicId !== clinicId) {
       throw new NotFoundException(`Vital record with ID ${id} not found`);
     }
     // Use executeHealthcareWrite for delete with audit logging
@@ -2175,7 +2521,7 @@ export class EHRService {
 
     const typedAllergy = allergy as { userId: string; clinicId?: string | null };
     // 🔒 TENANT ISOLATION
-    if (clinicId && typedAllergy.clinicId && typedAllergy.clinicId !== clinicId) {
+    if (clinicId && typedAllergy.clinicId !== clinicId) {
       throw new NotFoundException(`Allergy record with ID ${id} not found`);
     }
     // Use executeHealthcareWrite for delete with audit logging
@@ -2608,7 +2954,7 @@ export class EHRService {
 
     const typedMedication = medication as { userId: string; clinicId?: string | null };
     // 🔒 TENANT ISOLATION
-    if (clinicId && typedMedication.clinicId && typedMedication.clinicId !== clinicId) {
+    if (clinicId && typedMedication.clinicId !== clinicId) {
       throw new NotFoundException(`Medication record with ID ${id} not found`);
     }
     // Use executeHealthcareWrite for delete with audit logging
@@ -2831,7 +3177,7 @@ export class EHRService {
 
     const typedImmunization = immunization as { userId: string; clinicId?: string | null };
     // 🔒 TENANT ISOLATION
-    if (clinicId && typedImmunization.clinicId && typedImmunization.clinicId !== clinicId) {
+    if (clinicId && typedImmunization.clinicId !== clinicId) {
       throw new NotFoundException(`Immunization record with ID ${id} not found`);
     }
     // Use executeHealthcareWrite for delete with audit logging
@@ -2908,30 +3254,180 @@ export class EHRService {
     };
   }
 
+  /**
+   * Adherence for `userId` over an IST day range (default: the last 7 days, at most 90).
+   * `totalActive` / `medications` keep their old meaning (active medications). The dose
+   * log lists every scheduled dose of every medication that overlaps the range, derived
+   * from the prescription frequency: TAKEN when the patient logged it, MISSED when its
+   * day is over and it was not logged, PENDING for today and later. The percentage is
+   * taken / (taken + missed), or null when no dose was due yet.
+   */
   async getMedicationAdherence(
     userId: string,
+    clinicId?: string,
+    range?: { startDate?: string | undefined; endDate?: string | undefined }
+  ): Promise<MedicationAdherenceResponse> {
+    this.logPHIAccess('MEDICATION_ADHERENCE', userId, clinicId);
+    const today = formatDateKeyInIST(new Date());
+    const endDay = range?.endDate ? formatDateKeyInIST(range.endDate) : today;
+    const startDay = range?.startDate
+      ? formatDateKeyInIST(range.startDate)
+      : shiftDayKey(endDay, -(DEFAULT_ADHERENCE_RANGE_DAYS - 1));
+    if (!startDay || !endDay || startDay > endDay) {
+      throw new BadRequestException('startDate must be on or before endDate');
+    }
+    const days = enumerateDays(startDay, endDay);
+    if (days.length > MAX_ADHERENCE_RANGE_DAYS) {
+      throw new BadRequestException(
+        `The adherence range is limited to ${MAX_ADHERENCE_RANGE_DAYS} days`
+      );
+    }
+
+    const { medications, logs } = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        medication: { findMany: (args: PrismaDelegateArgs) => Promise<MedicationBase[]> };
+        medicationDoseLog: { findMany: (args: PrismaDelegateArgs) => Promise<DoseLogRow[]> };
+      };
+      const rangeStart = new Date(`${startDay}T00:00:00.000Z`);
+      const overlapping = await typedClient.medication.findMany({
+        where: {
+          userId,
+          ...(clinicId && { clinicId }),
+          startDate: { lte: new Date(`${endDay}T23:59:59.999Z`) },
+          OR: [{ endDate: null }, { endDate: { gte: rangeStart } }],
+        } as PrismaDelegateArgs,
+        orderBy: { startDate: 'asc' } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+      const doseLogs = await typedClient.medicationDoseLog.findMany({
+        where: {
+          userId,
+          doseDate: { gte: rangeStart, lte: new Date(`${endDay}T00:00:00.000Z`) },
+        } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+      return { medications: overlapping, logs: doseLogs };
+    });
+
+    const taken = new Map<string, Date>(
+      logs.map(log => [
+        doseKey(log.medicationId, log.doseDate.toISOString().slice(0, 10), log.doseIndex),
+        log.takenAt,
+      ])
+    );
+    const scheduled: ScheduledMedication[] = medications
+      // A switched-off medication is only scheduled until its end date; one without an
+      // end date has no known stop day, so it is skipped.
+      .filter(med => med.isActive || med.endDate)
+      .map(med => ({
+        id: med.id,
+        name: med.name,
+        frequency: med.frequency,
+        startDay: formatDateKeyInIST(med.startDate),
+        endDay: med.endDate ? formatDateKeyInIST(med.endDate) : null,
+      }));
+    const { doseLog, summary } = buildDoseLog({ medications: scheduled, days, today, taken });
+    const active = medications.filter(med => med.isActive);
+
+    return {
+      totalActive: active.length,
+      medications: active,
+      range: { startDate: startDay, endDate: endDay },
+      adherencePercentage: summary.adherencePercentage,
+      scheduledDoses: summary.scheduledDoses,
+      takenDoses: summary.takenDoses,
+      missedDoses: summary.missedDoses,
+      doseLog,
+    };
+  }
+
+  /**
+   * The patient marks one dose of one of their medications as taken (or removes the
+   * mark). Idempotent per (medication, day, dose slot). The caller must own the
+   * medication (self or an ACTIVE dependent); the day cannot be in the future, before
+   * the medication started, after it ended or more than 14 days back.
+   */
+  async markMedicationDose(
+    medicationId: string,
+    dto: { date?: string | undefined; doseIndex: number; taken?: boolean | undefined },
+    actor: PatientAccessActor,
     clinicId?: string
-  ): Promise<{ totalActive: number; medications: MedicationBase[] }> {
-    // Use executeHealthcareRead for optimized query
-    const medications = await this.databaseService.executeHealthcareRead<MedicationBase[]>(
+  ): Promise<{ medicationId: string; date: string; doseIndex: number; taken: boolean }> {
+    const medication = await this.databaseService.executeHealthcareRead<MedicationBase | null>(
       async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-          medication: { findMany: (args: PrismaDelegateArgs) => Promise<MedicationBase[]> };
+          medication: { findUnique: (args: PrismaDelegateArgs) => Promise<MedicationBase | null> };
         };
-        return await typedClient.medication.findMany({
-          where: {
-            userId,
-            isActive: true,
-            ...(clinicId && { clinicId }),
-          } as PrismaDelegateArgs,
+        return await typedClient.medication.findUnique({
+          where: { id: medicationId } as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
       }
     );
+    if (!medication || (clinicId && medication.clinicId && medication.clinicId !== clinicId)) {
+      throw new NotFoundException(`Medication ${medicationId} not found`);
+    }
+    await assertPatientMayAccess(this.databaseService, actor, medication.userId);
 
-    return {
-      totalActive: medications.length,
-      medications,
+    const today = formatDateKeyInIST(new Date());
+    const day = dto.date ? formatDateKeyInIST(dto.date) : today;
+    const startDay = formatDateKeyInIST(medication.startDate);
+    const endDay = medication.endDate ? formatDateKeyInIST(medication.endDate) : null;
+    if (!day || day > today) {
+      throw new BadRequestException('A dose cannot be marked for a future day');
+    }
+    if (day < shiftDayKey(today, -MAX_DOSE_BACKFILL_DAYS)) {
+      throw new BadRequestException(
+        `Doses can only be marked for the last ${MAX_DOSE_BACKFILL_DAYS} days`
+      );
+    }
+    if (day < startDay || (endDay !== null && day > endDay)) {
+      throw new BadRequestException('That day is outside the medication course');
+    }
+    const perDay = dosesPerDay(medication.frequency);
+    if (dto.doseIndex >= perDay) {
+      throw new BadRequestException(`This medication has ${perDay} dose(s) a day`);
+    }
+
+    const taken = dto.taken !== false;
+    const uniqueKey = {
+      medicationId,
+      doseDate: new Date(`${day}T00:00:00.000Z`),
+      doseIndex: dto.doseIndex,
     };
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          medicationDoseLog: {
+            upsert: (args: PrismaDelegateArgs) => Promise<unknown>;
+            deleteMany: (args: PrismaDelegateArgs) => Promise<unknown>;
+          };
+        };
+        if (taken) {
+          return await typedClient.medicationDoseLog.upsert({
+            where: { medicationId_doseDate_doseIndex: uniqueKey } as PrismaDelegateArgs,
+            create: {
+              ...uniqueKey,
+              userId: medication.userId,
+              clinicId: medication.clinicId ?? clinicId ?? null,
+            } as PrismaDelegateArgs,
+            update: {} as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        }
+        return await typedClient.medicationDoseLog.deleteMany({
+          where: uniqueKey as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId: actor.userId,
+        clinicId: medication.clinicId ?? clinicId ?? '',
+        resourceType: 'MEDICATION_DOSE',
+        operation: taken ? 'UPSERT' : 'DELETE',
+        resourceId: medicationId,
+        userRole: actor.role ?? 'PATIENT',
+        details: { date: day, doseIndex: dto.doseIndex, taken },
+      }
+    );
+
+    await this.invalidateUserEHRCache(medication.userId, medication.clinicId ?? clinicId);
+    return { medicationId, date: day, doseIndex: dto.doseIndex, taken };
   }
 
   // ============ Clinic-Wide EHR Access (Multi-Role Support) ============
@@ -4268,7 +4764,7 @@ export class EHRService {
       },
       {
         ttl: 300,
-        tags: [`clinic:${clinicId}`, 'alerts'],
+        tags: [`clinic:${clinicId}`, `alerts:${clinicId}`],
         priority: 'high',
         containsPHI: true,
       }
@@ -4288,6 +4784,7 @@ export class EHRService {
       date: Date;
       doctorId?: string | null;
       notes?: string | null;
+      status?: string | null;
       createdAt: Date;
       updatedAt: Date;
     };
@@ -4299,6 +4796,7 @@ export class EHRService {
           ? typedRecord.clinicId
           : '',
       condition: typedRecord.condition,
+      status: typedRecord.status || 'ACTIVE',
       diagnosis:
         typedRecord.diagnosis && typeof typedRecord.diagnosis === 'string'
           ? typedRecord.diagnosis
@@ -4331,6 +4829,7 @@ export class EHRService {
       doctorId?: string | null;
       labName?: string | null;
       notes?: string | null;
+      status?: string | null;
       fileUrl?: string | null;
       fileKey?: string | null;
       createdAt: Date;
@@ -4343,6 +4842,7 @@ export class EHRService {
         typedRecord.clinicId && typeof typedRecord.clinicId === 'string'
           ? typedRecord.clinicId
           : '',
+      status: typedRecord.status || 'COMPLETED',
       testName: typedRecord.testName,
       result: typedRecord.result,
       unit: typedRecord.unit && typeof typedRecord.unit === 'string' ? typedRecord.unit : '',

@@ -1,6 +1,8 @@
 import {
   Controller,
   Get,
+  Put,
+  Body,
   Param,
   Query,
   UseGuards,
@@ -9,10 +11,13 @@ import {
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { EHRService } from '@services/ehr/ehr.service';
+import { EHRWorkspaceService, type WorkspaceActor } from '@services/ehr/ehr-workspace.service';
+import { PatientAppointmentsQueryDto, UpsertCarePlanDto } from '@dtos/ehr.dto';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { ClinicGuard } from '@core/guards/clinic.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
+import { PatientSelfAccessGuard } from '@core/guards/patient-self-access.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
 import { PatientCache, Cache } from '@core/decorators';
@@ -23,9 +28,27 @@ import type { ClinicEHRRecordFilters } from '@core/types/ehr.types';
 
 @ApiTags('ehr')
 @Controller('ehr/clinic')
-@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+// PatientSelfAccessGuard: GET comprehensive/:userId is open to PATIENT, who must only be
+// able to read their own (or an ACTIVE dependent's) record, not any user id.
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard, PatientSelfAccessGuard)
 export class EHRClinicController {
-  constructor(private readonly ehrService: EHRService) {}
+  constructor(
+    private readonly ehrService: EHRService,
+    private readonly workspaceService: EHRWorkspaceService
+  ) {}
+
+  /** Validated clinic of the caller; every workspace route is clinic-scoped (fail closed). */
+  private requireClinicId(req: ClinicAuthenticatedRequest): string {
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) {
+      throw new ForbiddenException('Clinic context is required');
+    }
+    return clinicId;
+  }
+
+  private actorOf(req: ClinicAuthenticatedRequest): WorkspaceActor {
+    return { userId: req.user?.id ?? req.user?.sub ?? '', role: req.user?.role };
+  }
 
   // ============ Comprehensive Patient Records ============
 
@@ -42,7 +65,7 @@ export class EHRClinicController {
   @PatientCache({
     keyTemplate: 'ehr:clinic:comprehensive:{userId}:{clinicId}',
     ttl: 1800, // 30 minutes
-    tags: ['ehr', 'clinic_ehr', 'user:{userId}', 'clinic:{clinicId}'],
+    tags: ['ehr', 'clinic_ehr:{clinicId}', 'user:{userId}', 'clinic:{clinicId}'],
     containsPHI: true,
     compress: true,
     enableSWR: true,
@@ -73,7 +96,7 @@ export class EHRClinicController {
     keyTemplate:
       'ehr:clinic:{clinicId}:patients:records:{recordType}:{hasCondition}:{hasAllergy}:{onMedication}:{dateFrom}:{dateTo}',
     ttl: 900, // 15 minutes
-    tags: ['ehr', 'clinic_ehr', 'clinic:{clinicId}', 'patient_records'],
+    tags: ['ehr', 'clinic_ehr:{clinicId}', 'clinic:{clinicId}', 'patient_records:{clinicId}'],
     enableSWR: true,
     containsPHI: true,
   })
@@ -119,7 +142,7 @@ export class EHRClinicController {
   @Cache({
     keyTemplate: 'ehr:clinic:{clinicId}:analytics',
     ttl: 300, // 5 minutes (analytics change frequently)
-    tags: ['ehr', 'clinic_ehr', 'analytics', 'clinic:{clinicId}'],
+    tags: ['ehr', 'clinic_ehr:{clinicId}', 'analytics', 'clinic:{clinicId}'],
     enableSWR: true,
   })
   @RateLimitAPI()
@@ -151,7 +174,7 @@ export class EHRClinicController {
   @Cache({
     keyTemplate: 'ehr:clinic:{clinicId}:patients:summary',
     ttl: 900, // 15 minutes
-    tags: ['ehr', 'clinic_ehr', 'clinic:{clinicId}', 'patient_summary'],
+    tags: ['ehr', 'clinic_ehr:{clinicId}', 'clinic:{clinicId}', 'patient_summary:{clinicId}'],
     enableSWR: true,
     containsPHI: true,
   })
@@ -184,7 +207,7 @@ export class EHRClinicController {
   @Cache({
     keyTemplate: 'ehr:clinic:{clinicId}:search:{q}:{types}',
     ttl: 300, // 5 minutes (search results may change)
-    tags: ['ehr', 'clinic_ehr', 'clinic:{clinicId}', 'search'],
+    tags: ['ehr', 'clinic_ehr:{clinicId}', 'clinic:{clinicId}', 'search'],
     enableSWR: true,
     containsPHI: true,
   })
@@ -213,7 +236,7 @@ export class EHRClinicController {
   @Cache({
     keyTemplate: 'ehr:clinic:{clinicId}:alerts:critical',
     ttl: 60, // 1 minute (critical alerts change frequently)
-    tags: ['ehr', 'clinic_ehr', 'clinic:{clinicId}', 'alerts'],
+    tags: ['ehr', 'clinic_ehr:{clinicId}', 'clinic:{clinicId}', 'alerts:{clinicId}'],
     enableSWR: true,
     containsPHI: true,
   })
@@ -230,5 +253,82 @@ export class EHRClinicController {
       throw new ForbiddenException('Cannot access alerts from a different clinic');
     }
     return this.ehrService.getClinicCriticalAlerts(validatedClinicId);
+  }
+
+  // ============ EHR Workspace (single patient) ============
+  // Clinical staff of the caller's clinic only. `:patientId` is the Patient.id or the
+  // User.id; a patient of another clinic is a 404 (no oracle). Reads are audited.
+
+  @Get('patients/:patientId')
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.NURSE, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('medical-records', 'read')
+  @RateLimitAPI()
+  async getWorkspacePatient(
+    @Param('patientId') patientId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    return this.workspaceService.getWorkspacePatient(
+      patientId,
+      this.requireClinicId(req),
+      this.actorOf(req)
+    );
+  }
+
+  @Get('patients/:patientId/appointments')
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.NURSE, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('medical-records', 'read')
+  @RateLimitAPI()
+  async getPatientAppointments(
+    @Param('patientId') patientId: string,
+    @Query() query: PatientAppointmentsQueryDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    return this.workspaceService.listPatientAppointments(
+      patientId,
+      this.requireClinicId(req),
+      this.actorOf(req),
+      query
+    );
+  }
+
+  // PATIENT may read their own care plan (PatientSelfAccessGuard rejects any other
+  // `:patientId`); only doctors and clinic admins may change it.
+  @Get('patients/:patientId/care-plan')
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.PATIENT,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN
+  )
+  @RequireResourcePermission('medical-records', 'read', { requireOwnership: true })
+  @RateLimitAPI()
+  async getCarePlan(
+    @Param('patientId') patientId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    return this.workspaceService.getCarePlan(
+      patientId,
+      this.requireClinicId(req),
+      this.actorOf(req)
+    );
+  }
+
+  @Put('patients/:patientId/care-plan')
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('ehr', 'update')
+  @RateLimitAPI()
+  async upsertCarePlan(
+    @Param('patientId') patientId: string,
+    @Body() dto: UpsertCarePlanDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    return this.workspaceService.upsertCarePlan(
+      patientId,
+      this.requireClinicId(req),
+      dto,
+      this.actorOf(req)
+    );
   }
 }

@@ -42,7 +42,8 @@ export class BillingMethods extends DatabaseMethodsBase {
       return await prisma.invoice.findUnique({
         where: { id },
         include: {
-          subscription: true,
+          // `plan` so the clients can show the plan name on a subscription invoice.
+          subscription: { include: { plan: true } },
           payments: true,
         },
       });
@@ -57,7 +58,7 @@ export class BillingMethods extends DatabaseMethodsBase {
       return await prisma.invoice.findMany({
         where,
         include: {
-          subscription: true,
+          subscription: { include: { plan: true } },
           payments: true,
         },
       });

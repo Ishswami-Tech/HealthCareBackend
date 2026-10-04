@@ -69,20 +69,56 @@ export function getVideoActiveWindowMinutes(): number {
 }
 
 /**
+ * How many minutes before the scheduled start a video visit can be joined.
+ *
+ * One source of truth for the join gate and for the sentence shown to users,
+ * so backend, web and mobile state the same number.
+ *
+ * Defaults to 15 minutes.
+ */
+export function getVideoEarlyJoinMinutes(): number {
+  const raw = getEnv('VIDEO_EARLY_JOIN_MINUTES');
+  const parsed = raw ? Number(raw) : NaN;
+  if (Number.isFinite(parsed) && parsed >= 0) {
+    return Math.min(Math.floor(parsed), 120);
+  }
+  return 15;
+}
+
+/**
  * Get video provider type
+ *
+ * Daily is the production provider, so it is also the default when VIDEO_PROVIDER is unset or
+ * not a recognised value. The Cloudflare and Google Meet providers stay available by setting
+ * VIDEO_PROVIDER explicitly.
+ *
  * @returns 'cloudflare' | 'daily' | 'google-meet'
  */
 export function getVideoProvider(): 'cloudflare' | 'daily' | 'google-meet' {
   if (!isVideoEnabled()) {
-    return 'cloudflare'; // Default fallback
+    return 'daily'; // Default fallback
   }
 
-  const provider = getEnvWithDefault('VIDEO_PROVIDER', 'cloudflare').toLowerCase();
+  const provider = getEnvWithDefault('VIDEO_PROVIDER', 'daily').trim().toLowerCase();
   if (provider === 'cloudflare' || provider === 'daily' || provider === 'google-meet') {
     return provider;
   }
 
-  return 'cloudflare'; // Default to Cloudflare Realtime (primary)
+  return 'daily'; // Default to Daily (primary)
+}
+
+/**
+ * Daily room privacy.
+ *
+ * Fail closed: only the exact value 'public' (after trimming whitespace) creates or keeps
+ * public rooms. An unset, empty, misspelled or otherwise unexpected DAILY_PRIVACY resolves to
+ * 'private', which makes Daily require a meeting token to join. Both web and mobile clients
+ * join with the token minted by the backend, so private rooms are the production setting.
+ *
+ * @returns 'public' only when DAILY_PRIVACY is explicitly 'public', otherwise 'private'
+ */
+export function getDailyPrivacy(): 'public' | 'private' {
+  return getEnv('DAILY_PRIVACY')?.trim() === 'public' ? 'public' : 'private';
 }
 
 /**
@@ -122,7 +158,7 @@ export const videoConfig = (): VideoProviderConfig => {
     enabled: enabled && Boolean(getEnv('DAILY_API_KEY')) && Boolean(getEnv('DAILY_DOMAIN')),
     webhookEnabled: getEnvBoolean('DAILY_WEBHOOK_ENABLED', false),
     statusUrl: getEnvWithDefault('DAILY_STATUS_URL', 'https://status.daily.co/'),
-    privacy: getEnvWithDefault('DAILY_PRIVACY', 'public') === 'private' ? 'private' : 'public',
+    privacy: getDailyPrivacy(),
     roomDurationMinutes: Math.max(
       15,
       parseInt(getEnvWithDefault('DAILY_ROOM_DURATION_MINUTES', '120'), 10) || 120

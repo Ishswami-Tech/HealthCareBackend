@@ -1,4 +1,4 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, HttpStatus } from '@nestjs/common';
 import { OAuth2Client } from 'google-auth-library';
 import { ConfigService } from '@config/config.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -19,7 +19,8 @@ import {
   buildConsultationSession,
   buildTokenResponse,
   upsertConsultationRecord,
-  setConsultationStatus,
+  markConsultationActive,
+  markConsultationEnded,
 } from './video-provider.helpers';
 
 type GoogleMeetSpaceResponse = {
@@ -122,7 +123,7 @@ export class GoogleMeetProvider implements IVideoProvider {
       throw new HealthcareError(
         ErrorCode.DATABASE_RECORD_NOT_FOUND,
         `Appointment ${appointmentId} not found`,
-        undefined,
+        HttpStatus.NOT_FOUND,
         { appointmentId },
         'GoogleMeetProvider.generateMeetingToken'
       );
@@ -186,9 +187,8 @@ export class GoogleMeetProvider implements IVideoProvider {
       });
     }
 
-    const session = await setConsultationStatus(this.databaseService, appointmentId, 'ACTIVE', {
-      startTime: new Date(),
-    });
+    // startTime is stamped once; a repeat start never resets it or revives a finished call.
+    const session = await markConsultationActive(this.databaseService, appointmentId);
     if (!session) {
       throw new Error(`Failed to start consultation for appointment ${appointmentId}`);
     }
@@ -200,11 +200,15 @@ export class GoogleMeetProvider implements IVideoProvider {
     _userId: string,
     _userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
   ): Promise<VideoConsultationSession> {
-    const session = await setConsultationStatus(this.databaseService, appointmentId, 'ENDED', {
-      endTime: new Date(),
-    });
+    const session = await markConsultationEnded(this.databaseService, appointmentId);
     if (!session) {
-      throw new Error(`Consultation session not found for appointment ${appointmentId}`);
+      throw new HealthcareError(
+        ErrorCode.DATABASE_RECORD_NOT_FOUND,
+        `Consultation session not found for appointment ${appointmentId}`,
+        HttpStatus.NOT_FOUND,
+        { appointmentId },
+        'GoogleMeetProvider.endConsultation'
+      );
     }
     return buildConsultationSession(session, this.providerName);
   }

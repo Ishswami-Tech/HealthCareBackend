@@ -334,6 +334,11 @@ export interface CheckIn {
   deviceInfo?: Record<string, unknown> | null;
   createdAt: Date;
   updatedAt: Date;
+  /**
+   * True when the appointment was already checked in by a concurrent or repeated request, so
+   * this call changed nothing. Callers use it to skip re-emitting check-in events.
+   */
+  alreadyCheckedIn?: boolean;
 }
 
 /**
@@ -341,6 +346,8 @@ export interface CheckIn {
  */
 export interface CreateCheckInLocationDto {
   clinicId: string;
+  /** ClinicLocation this QR point belongs to (appointments reference ClinicLocation ids). */
+  locationId?: string;
   locationName: string;
   coordinates: { lat: number; lng: number };
   radius: number; // in meters
@@ -366,6 +373,22 @@ export interface ProcessCheckInDto {
   coordinates?: { lat: number; lng: number };
   deviceInfo?: Record<string, unknown>;
   qrCode?: string;
+}
+
+/**
+ * How strictly a check-in verifies that the patient is physically at the clinic.
+ * - `required`: coordinates must be present, valid and within the allowed distance (PATIENT force check-in).
+ * - `if-supplied`: validate against the location geofence only when coordinates were sent (QR scan / manual code).
+ * - `skip`: no coordinate checks (staff check-in).
+ */
+export type CheckInPresenceMode = 'required' | 'if-supplied' | 'skip';
+
+/**
+ * Who is checking the patient in, and how presence is verified.
+ */
+export interface ProcessCheckInOptions {
+  actor?: { userId: string; role?: string | undefined };
+  presence?: CheckInPresenceMode;
 }
 
 /**
@@ -1312,6 +1335,12 @@ export interface VideoCall {
   meetingUrl?: string | undefined;
   participants: string[];
   settings: VideoCallSettings;
+  /** Display helpers resolved from the linked appointment (history view). */
+  doctorName?: string | undefined;
+  patientName?: string | undefined;
+  appointmentDate?: string | undefined;
+  appointmentTime?: string | undefined;
+  appointmentStatus?: string | undefined;
 }
 
 /**
@@ -1345,6 +1374,8 @@ export interface QueueEntryData {
   checkedInAt?: string;
   estimatedWaitTime?: number;
   position?: number;
+  /** Stable per doctor/day/clinic ticket number assigned once at check-in (in-person only). */
+  tokenNumber?: number;
   confirmedAt?: string;
   startedAt?: string;
   actualWaitTime?: number;

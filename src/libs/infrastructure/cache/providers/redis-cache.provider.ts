@@ -137,8 +137,28 @@ export class RedisCacheProvider implements IAdvancedCacheProvider {
     await this.redisService.multi(commands);
   }
 
+  /**
+   * Deletes every key matching the glob through the shared pattern delete (SCAN, batched UNLINK,
+   * correct key prefix handling). Protected security namespaces are never deleted. Throws when
+   * the delete failed.
+   */
   async clearByPattern(pattern: string): Promise<number> {
     return this.redisService.clearCache(pattern);
+  }
+
+  /** Admin tooling only: like clearByPattern, but also removes protected namespaces. */
+  async clearByPatternAllowProtected(pattern: string): Promise<number> {
+    return this.redisService.clearCache(pattern, { allowProtected: true });
+  }
+
+  /** Bulk delete that THROWS on failure, for callers that must not lose their index of the keys. */
+  async deleteKeysStrict(keys: readonly string[]): Promise<number> {
+    return this.redisService.deleteKeysStrict(keys);
+  }
+
+  /** Raises a key's TTL to at least `seconds`; never shortens it. */
+  async extendExpiry(key: string, seconds: number): Promise<number> {
+    return this.redisService.extendExpiry(key, seconds);
   }
 
   async ping(): Promise<string> {

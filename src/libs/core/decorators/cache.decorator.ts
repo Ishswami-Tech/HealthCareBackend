@@ -267,6 +267,8 @@ export const ShortCache = (ttl: number = 60): MethodDecorator =>
  * stable data that doesn't change frequently.
  *
  * @param ttl - Cache TTL in seconds (default: 3600)
+ * @param tags - Extra cache tags (`{placeholder}`s allowed) so the entry can be invalidated by
+ *   the writes that change its data; `long-cache` alone is reached by nothing
  * @returns Decorator function that sets long cache metadata
  *
  * @example
@@ -281,11 +283,11 @@ export const ShortCache = (ttl: number = 60): MethodDecorator =>
  * }
  * ```
  */
-export const LongCache = (ttl: number = 3600): MethodDecorator =>
+export const LongCache = (ttl: number = 3600, tags: readonly string[] = []): MethodDecorator =>
   SetMetadata(CACHE_KEY, {
     enabled: true,
     ttl,
-    tags: ['long-cache'],
+    tags: ['long-cache', ...tags],
   });
 
 /**
@@ -348,6 +350,14 @@ export const NoCache = (): MethodDecorator =>
 /**
  * Cache invalidation decorator for healthcare operations
  *
+ * Invalidation runs only after the handler SUCCEEDED, and every pattern is reduced to what the
+ * caller may touch before it runs (see planInvalidationPatterns in the HTTP cache interceptor):
+ * the caller's clinic (`clinic:{clinicId}:...`) and `user:<id>:...` keys. A pattern that is global
+ * (`clinic:*`, `appointments:*` without a clinic, `*`) is rewritten into the caller's clinic or
+ * refused, and patterns naming security namespaces (`auth:*`, `user_sessions:*`, ...) are always
+ * refused. Declare patterns with `{clinicId}` / `{userId}` placeholders; use `tags` for anything
+ * that must also reach entries outside the clinic prefix.
+ *
  * @param options - Cache invalidation options
  * @returns Decorator function that sets cache invalidation metadata
  */
@@ -373,7 +383,7 @@ export const InvalidatePatientCache = (
   return InvalidateCache({
     ...options,
     invalidatePatient: true,
-    patterns: [...(options.patterns ?? []), 'patient:*'],
+    patterns: [...(options.patterns ?? []), 'clinic:{clinicId}:patient:*'],
   });
 };
 
@@ -388,7 +398,11 @@ export const InvalidateAppointmentCache = (
 ) => {
   return InvalidateCache({
     ...options,
-    patterns: [...(options.patterns ?? []), 'appointment:*', '*:appointments'],
+    patterns: [
+      ...(options.patterns ?? []),
+      'clinic:{clinicId}:appointment:*',
+      'clinic:{clinicId}:appointments:*',
+    ],
     tags: options.tags ? [...options.tags, 'appointment_data'] : ['appointment_data'],
   });
 };
@@ -405,7 +419,7 @@ export const InvalidateClinicCache = (
   return InvalidateCache({
     ...options,
     invalidateClinic: true,
-    patterns: [...options.patterns, 'clinic:*', '*:clinic:*'],
+    patterns: [...options.patterns, 'clinic:{clinicId}:*'],
   });
 };
 

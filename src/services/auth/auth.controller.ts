@@ -3,12 +3,15 @@ import {
   Post,
   Body,
   Get,
+  Delete,
+  Param,
   Query,
   UseGuards,
   Request,
   HttpCode,
   HttpStatus,
   Res,
+  UnauthorizedException,
 } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 import {
@@ -30,6 +33,11 @@ import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { Public } from '@core/decorators/public.decorator';
 import { SessionManagementService } from '@core/session/session-management.service';
 import { JwtAuthService } from './core/jwt.service';
+import {
+  listUserSessionViews,
+  revokeOwnSession,
+  type UserSessionView,
+} from './core/session-view.util';
 import type { FastifyRequestWithUser } from '@core/types/guard.types';
 import {
   LoginDto,
@@ -50,7 +58,7 @@ import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { DataResponseDto, SuccessResponseDto } from '@dtos/common-response.dto';
 import { AuthTokens } from '@core/types';
-import { InvalidateCache, PatientCache } from '@core/decorators';
+import { InvalidateCache } from '@core/decorators';
 import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 
 @ApiTags('auth')
@@ -404,8 +412,12 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @Post('logout')
   @HttpCode(HttpStatus.OK)
+  // Patterns are limited to the caller's own keys. `auth:*` and `user_sessions:*` used to be
+  // listed here; they match every identity's lockout / attempt counters and session indexes
+  // (`auth:lockout:<id>`, `auth:attempts:<id>`, `user_sessions:<id>`), which a logout must never
+  // wipe. The cache layer now refuses those namespaces for every invalidation.
   @InvalidateCache({
-    patterns: ['user:{userId}:*', 'user_sessions:*', 'auth:*'],
+    patterns: ['user:{userId}:*'],
     tags: ['user_sessions', 'auth'],
   })
   @ApiBearerAuth()
@@ -1199,32 +1211,38 @@ export class AuthController {
     );
   }
 
+  // Read live from the session store (no response cache): a list that still shows a session the
+  // user just revoked is a security screen lying to them.
   @UseGuards(JwtAuthGuard)
   @Get('sessions')
-  @PatientCache({
-    keyTemplate: 'user:{userId}:sessions',
-    ttl: 600, // 10 minutes
-    tags: ['user_sessions', 'auth'],
-    priority: 'normal',
-    enableSWR: true,
-    containsPHI: true,
-    compress: true,
-  })
   @ApiOperation({
     summary: 'Get user sessions',
-    description: 'Retrieve all active sessions for the authenticated user. Cached for performance.',
+    description:
+      'Active sessions of the authenticated user from the session store; the current session is flagged with isCurrent and listed first.',
     operationId: 'getUserSessions',
   })
   @ApiResponse({
     status: 200,
     description: 'Sessions retrieved successfully',
-    type: DataResponseDto<never[]>,
+    type: DataResponseDto<UserSessionView[]>,
     schema: {
       example: {
         status: 'success',
         message: 'Sessions retrieved successfully',
         timestamp: '2024-01-01T00:00:00.000Z',
-        data: [],
+        data: [
+          {
+            id: 'sess_abc',
+            deviceInfo: { userAgent: 'Mozilla/5.0 ...', deviceId: null },
+            ipAddress: '192.168.1.10',
+            clinicId: 'clinic-uuid',
+            isActive: true,
+            isCurrent: true,
+            createdAt: '2024-01-01T00:00:00.000Z',
+            lastActivity: '2024-01-01T00:10:00.000Z',
+            expiresAt: '2024-01-02T00:00:00.000Z',
+          },
+        ],
       },
     },
   })
@@ -1240,20 +1258,46 @@ export class AuthController {
       },
     },
   })
-  getUserSessions(@Request() _req: FastifyRequestWithUser): DataResponseDto<never[]> {
-    try {
-      // This would typically get user sessions from the session service
-      // For now, return a placeholder response
-      const sessions: never[] = [];
+  async getUserSessions(
+    @Request() req: FastifyRequestWithUser
+  ): Promise<DataResponseDto<UserSessionView[]>> {
+    const userId = this.requireUserId(req);
+    const sessions = await this.sessionService.getUserSessions(userId);
+    return new DataResponseDto(
+      listUserSessionViews(sessions, req.user?.sessionId),
+      'Sessions retrieved successfully'
+    );
+  }
 
-      return new DataResponseDto(sessions, 'Sessions retrieved successfully');
-    } catch (_error) {
-      if (_error instanceof HealthcareError) {
-        this.errors.handleError(_error, 'AuthController');
-        throw _error;
-      }
-      throw _error;
+  /** Alias of `DELETE /user/sessions/:id` for clients that keep session calls under /auth. */
+  @UseGuards(JwtAuthGuard)
+  @Delete('sessions/:id')
+  @ApiOperation({
+    summary: 'Revoke one of my sessions',
+    description:
+      'Invalidates a session that belongs to the authenticated user. Another user’s session (or an unknown id) is reported as not found.',
+    operationId: 'revokeOwnSession',
+  })
+  @ApiResponse({ status: 200, description: 'Session revoked' })
+  @ApiResponse({ status: 404, description: 'Session not found (or not yours)' })
+  async revokeSession(
+    @Param('id') sessionId: string,
+    @Request() req: FastifyRequestWithUser
+  ): Promise<DataResponseDto<{ sessionId: string; revoked: boolean; wasCurrent: boolean }>> {
+    const userId = this.requireUserId(req);
+    const result = await revokeOwnSession(this.sessionService, userId, sessionId);
+    return new DataResponseDto(
+      { ...result, wasCurrent: req.user?.sessionId === sessionId },
+      'Session revoked'
+    );
+  }
+
+  private requireUserId(req: FastifyRequestWithUser): string {
+    const userId = req.user?.sub ?? req.user?.id;
+    if (!userId) {
+      throw new UnauthorizedException('User ID not found in token');
     }
+    return userId;
   }
 
   @Public()

@@ -37,6 +37,7 @@ import {
 } from '@config/environment/utils';
 import { LoggingInterceptor } from '@infrastructure/logging/logging.interceptor';
 import { IoAdapter } from '@nestjs/platform-socket.io';
+import type { Server, ServerOptions } from 'socket.io';
 import cluster from 'cluster';
 import * as os from 'os';
 import { SocketConnection, WorkerProcess } from '@core/types';
@@ -342,7 +343,7 @@ async function _setupWebSocketAdapter(
           }
         }
 
-        createIOServer(port: number, options?: Record<string, unknown>): unknown {
+        createIOServer(port: number, options?: ServerOptions): Server {
           // Use same CORS configuration as SecurityConfigService for consistency (DRY principle)
           // Use ConfigService (which uses dotenv) for environment variable access
           const corsConfig = configService?.getCorsConfig();
@@ -374,7 +375,7 @@ async function _setupWebSocketAdapter(
                 }
               : corsOrigins;
 
-          const serverRaw: unknown = super.createIOServer(port, {
+          const serverRaw: Server = super.createIOServer(port, {
             ...(options || {}),
             cors: {
               origin: socketCorsOrigin,
@@ -417,8 +418,8 @@ async function _setupWebSocketAdapter(
             maxHttpBufferSize: 1e6,
             allowUpgrades: true,
             cookie: false,
-          });
-          const server = serverRaw as {
+          } as ServerOptions);
+          const server = serverRaw as unknown as {
             adapter?: (adapter: unknown) => void;
             of?: (path: string) => {
               on?: (event: string, handler: (socket: SocketConnection) => void) => void;
@@ -507,7 +508,7 @@ async function _setupWebSocketAdapter(
             });
           }
 
-          return server;
+          return serverRaw;
         }
       }
 

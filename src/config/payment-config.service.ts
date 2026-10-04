@@ -58,11 +58,17 @@ export class PaymentConfigService implements OnModuleInit {
 
       // Try cache first
       const cached = await this.cacheService.get(cacheKey);
-      if (cached) {
+      if (cached && typeof cached === 'object' && 'payment' in cached) {
         const config = cached as ClinicPaymentConfig;
         // Decrypt credentials
         const decryptedCachedConfig = await this.decryptConfig(config);
         return this.mergePaymentConfigWithDefaults(decryptedCachedConfig, defaultConfig);
+      }
+      if (cached) {
+        // Cache held something that isn't a valid ClinicPaymentConfig (e.g. a
+        // truncated write that round-tripped as a raw string) — drop it and
+        // fall through to a fresh DB fetch instead of crashing below.
+        await this.cacheService.delete(cacheKey);
       }
 
       // Fetch from database
@@ -587,13 +593,35 @@ export class PaymentConfigService implements OnModuleInit {
    * Decrypt credentials in configuration
    */
   private async decryptConfig(config: ClinicPaymentConfig): Promise<ClinicPaymentConfig> {
+    if (!config?.payment) {
+      // Defends against a corrupted/unexpected cache value (e.g. a provider's
+      // JSON.parse fallback returning the raw string on a truncated write) —
+      // without this guard, decrypted.payment.primary below throws "Cannot
+      // read properties of undefined (reading 'primary')" for the caller.
+      return config;
+    }
+
     if (!this.credentialEncryption) {
       // If encryption service is not available, return config as-is (credentials may already be decrypted)
       // This allows the service to work even if CommunicationConfigModule is not imported
       return config;
     }
 
-    const decrypted = { ...config };
+    // Deep-copy payment/primary/fallback before mutating credentials below —
+    // `{ ...config }` only shallow-copies, so decrypted.payment was the SAME
+    // object as config.payment, meaning the decrypted plaintext credentials
+    // got written back onto the caller's object and then serialized into the
+    // cache by getClinicConfig(), storing decrypted secrets at rest instead
+    // of the encrypted form.
+    const clonedFallback = (config.payment.fallback || []).map(entry => ({ ...entry }));
+    const decrypted: ClinicPaymentConfig = {
+      ...config,
+      payment: {
+        ...config.payment,
+        ...(config.payment.primary ? { primary: { ...config.payment.primary } } : {}),
+        fallback: clonedFallback,
+      },
+    };
 
     // Decrypt payment credentials
     if (
@@ -607,14 +635,12 @@ export class PaymentConfigService implements OnModuleInit {
     }
 
     // Decrypt fallback credentials
-    if (decrypted.payment.fallback) {
-      for (const fallback of decrypted.payment.fallback) {
-        if (fallback.credentials && 'encrypted' in fallback.credentials) {
-          const decryptedCreds = await this.credentialEncryption.decryptObject<
-            Record<string, string>
-          >(fallback.credentials.encrypted);
-          fallback.credentials = decryptedCreds;
-        }
+    for (const fallback of clonedFallback) {
+      if (fallback.credentials && 'encrypted' in fallback.credentials) {
+        const decryptedCreds = await this.credentialEncryption.decryptObject<
+          Record<string, string>
+        >(fallback.credentials.encrypted);
+        fallback.credentials = decryptedCreds;
       }
     }
 

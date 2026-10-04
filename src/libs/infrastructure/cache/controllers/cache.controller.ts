@@ -255,6 +255,14 @@ export class CacheController {
     description: 'Whether to reset cache statistics',
     example: false,
   })
+  @ApiQuery({
+    name: 'includeProtected',
+    type: 'boolean',
+    required: false,
+    description:
+      'Also delete protected namespaces (sessions, lockouts, JWT blacklist, PHI audit trail, rate limits, locks, tag indexes). Off by default: those are skipped and a warning is logged.',
+    example: false,
+  })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Cache cleared successfully',
@@ -277,20 +285,23 @@ export class CacheController {
   async manageCacheEntries(
     @Query('pattern') pattern?: string,
     @Query('resetStats', new DefaultValuePipe(false), ParseBoolPipe)
-    resetStats?: boolean
+    resetStats?: boolean,
+    @Query('includeProtected', new DefaultValuePipe(false), ParseBoolPipe)
+    includeProtected?: boolean
   ): Promise<{ cleared: number; message: string }> {
     try {
       await this.loggingService.log(
         LogType.CACHE,
-        LogLevel.INFO,
+        includeProtected ? LogLevel.WARN : LogLevel.INFO,
         'Cache entries management requested',
         'CacheController',
-        { pattern, resetStats }
+        { pattern, resetStats, includeProtected: includeProtected === true }
       );
 
+      const clearOptions = { includeProtected: includeProtected === true };
       const clearedCount = pattern
-        ? await this.cacheService.clearCache(pattern)
-        : await this.cacheService.clearAllCache();
+        ? await this.cacheService.clearCache(pattern, clearOptions)
+        : await this.cacheService.clearAllCache(clearOptions);
 
       if (resetStats) {
         await this.cacheService.resetCacheStats();

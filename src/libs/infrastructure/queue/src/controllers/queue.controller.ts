@@ -4,12 +4,15 @@ import {
   Controller,
   Delete,
   Get,
+  Inject,
+  Optional,
   Param,
   Patch,
   Post,
   Query,
   Req,
   UseGuards,
+  forwardRef,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Job } from 'bullmq';
@@ -33,6 +36,7 @@ import { HEALTHCARE_QUEUE } from '../queue.constants';
 import { JobType } from '@core/types/queue.types';
 import type { DetailedQueueMetrics } from '@core/types/queue.types';
 import { AppointmentQueueService } from '../services/appointment-queue.service';
+import { DatabaseService } from '@infrastructure/database/database.service';
 import { formatDateKeyInIST, nowIso } from '../../../../utils/date-time.util';
 
 interface QueueQuery {
@@ -114,6 +118,70 @@ interface QueueEntryLike {
   position?: number;
   queuePosition?: number;
   totalInQueue?: number;
+  /** Stable per doctor/day ticket number (in-person consultation lane only). */
+  tokenNumber?: number | null;
+  /** Minutes the patient has waited so far (checked-in -> started, or -> now while waiting). */
+  waitTime?: number | null;
+  estimatedWaitTime?: number | null;
+  confirmedAt?: string;
+  priority?: number;
+  laneType?: string;
+  primaryDoctorId?: string;
+  assignedDoctorId?: string;
+  /** True while the owning doctor's queue is paused. */
+  paused?: boolean;
+  /** Read-time enrichment from the appointment row (never stored in the queue). */
+  patientName?: string;
+  doctorName?: string;
+  scheduledDate?: string | null;
+  scheduledTime?: string | null;
+  paymentStatus?: string | null;
+}
+
+/** Stored queue entry fields operationalEntry passes through (the cache keeps them as JSON). */
+interface StoredQueueEntryExtras {
+  tokenNumber?: unknown;
+  estimatedWaitTime?: unknown;
+  confirmedAt?: unknown;
+  priority?: unknown;
+  laneType?: unknown;
+  primaryDoctorId?: unknown;
+  assignedDoctorId?: unknown;
+}
+
+/** Appointment fields the queue rows are decorated with at read time. */
+interface QueueAppointmentDecoration {
+  id: string;
+  date: Date | string | null;
+  time: string | null;
+  patient: { user: { name: string | null; firstName: string | null; lastName: string | null } };
+  doctor: { user: { name: string | null; firstName: string | null; lastName: string | null } };
+  payment: { status: string } | null;
+}
+
+/** Flat per-location (or clinic-wide) counters the queue page cards read. */
+interface QueueStatsSummary {
+  totalInQueue: number;
+  totalWaiting: number;
+  inProgress: number;
+  completedToday: number;
+  averageWaitTime: number;
+}
+
+interface MyQueuePosition {
+  appointmentId: string;
+  doctorId: string;
+  locationId: string | null;
+  status: string;
+  /** 1-based position in this doctor's live queue. */
+  position: number;
+  /** Stable ticket number assigned at in-person check-in (null if the entry predates tokens). */
+  tokenNumber: number | null;
+  patientsAhead: number;
+  totalInQueue: number;
+  nowServing: boolean;
+  estimatedWaitTime: number;
+  checkedInAt: string | null;
 }
 
 interface QueueConfigBody {
@@ -201,9 +269,15 @@ type QueueDashboardQueueSummary = {
 @ApiBearerAuth()
 export class QueueController {
   constructor(
+    @Inject(AppointmentQueueService)
     private readonly appointmentQueueService: AppointmentQueueService,
+    @Inject(QueueService)
     private readonly queueService: QueueService,
-    private readonly queueMonitoringService: QueueMonitoringService
+    @Inject(QueueMonitoringService)
+    private readonly queueMonitoringService: QueueMonitoringService,
+    @Optional()
+    @Inject(forwardRef(() => DatabaseService))
+    private readonly databaseService?: DatabaseService
   ) {}
 
   @Get()
@@ -219,7 +293,11 @@ export class QueueController {
     Role.CLINIC_LOCATION_HEAD,
     Role.PATIENT
   )
-  @ApiOperation({ summary: 'List queue entries' })
+  @ApiOperation({
+    summary: 'List queue entries',
+    description:
+      'doctorId may be the Doctor.id or the doctor User id (the queue is keyed by Doctor.id). Rows carry patientName, doctorName, tokenNumber, scheduledDate/Time, waitTime and paymentStatus; patients see no identifiers.',
+  })
   async listQueue(
     @Query() query: QueueQuery,
     @Req() req: ClinicAuthenticatedRequest
@@ -229,27 +307,34 @@ export class QueueController {
     const queueDate = this.safeDate(query.date || this.today());
 
     if (query.doctorId) {
+      // The web passes the doctor's User id; the queue lives under Doctor.id.
+      const doctorId = await this.resolveDoctorProfileId(query.doctorId, clinicId);
+      const doctorQuery: QueueQuery = { ...query, doctorId };
       const doctorQueue = await this.appointmentQueueService.getDoctorQueue(
-        query.doctorId,
+        doctorId,
         clinicId,
         queueDate,
         domain
       );
+      const paused = await this.isQueuePaused(clinicId, doctorId, queueDate, domain);
       const data = doctorQueue.queue
         .map((entry, index) =>
           this.operationalEntry(
             entry as unknown as QueueEntryLike,
             index + 1,
-            doctorQueue.queue.length
+            doctorQueue.queue.length,
+            paused
           )
         )
-        .filter(entry => this.matchEntry(entry, query));
+        .filter(entry => this.matchEntry(entry, doctorQuery));
       return {
         success: true,
-        data,
+        data: this.visibleEntries(await this.decorateEntries(data), req),
         meta: {
           clinicId,
           domain,
+          doctorId,
+          paused,
           total: data.length,
           source: 'operational-queue',
           date: queueDate,
@@ -262,19 +347,21 @@ export class QueueController {
       queueDate,
       domain
     );
+    const pausedOwners = await this.pausedOwners(clinicId, queueDate, domain, clinicQueue);
     const data = clinicQueue
       .map((entry, index) =>
         this.operationalEntry(
           entry as unknown as QueueEntryLike,
           Number(entry.position || index + 1),
-          clinicQueue.length
+          clinicQueue.length,
+          pausedOwners.has(entry.queueOwnerId || entry.doctorId)
         )
       )
       .filter(entry => this.matchEntry(entry, query));
     const limit = query.limit ? Math.max(1, Number(query.limit)) : 100;
     return {
       success: true,
-      data: data.slice(0, limit),
+      data: this.visibleEntries(await this.decorateEntries(data.slice(0, limit)), req),
       meta: {
         clinicId,
         domain,
@@ -283,6 +370,84 @@ export class QueueController {
         date: queueDate,
         ...this.queueDashboardMeta(),
       },
+    };
+  }
+
+  /**
+   * GET /queue/me — the calling patient's own live queue entry for today.
+   * GET /queue anonymises entries for patients (no ids), so this is the only way a
+   * patient can find their own token/position. Optional `appointmentId` narrows it.
+   */
+  @Get('me')
+  @Roles(Role.PATIENT)
+  @ApiOperation({ summary: "Caller's own live queue position (patient)" })
+  async getMyQueuePosition(
+    @Query('appointmentId') appointmentId: string | undefined,
+    @Req() req: ClinicAuthenticatedRequest
+  ): Promise<{ success: true; data: MyQueuePosition | null; meta: Record<string, unknown> }> {
+    const clinicId = this.requireClinicId(req);
+    const userId = this.asString(req.user?.sub) || this.asString(req.user?.id);
+    if (!userId) throw new BadRequestException('User context is required');
+
+    const patientIds = new Set<string>([userId]);
+    const profileId = await this.resolvePatientProfileId(userId);
+    if (profileId) patientIds.add(profileId);
+
+    const queueDate = this.today();
+    const clinicQueue = await this.appointmentQueueService.getClinicQueue(
+      clinicId,
+      queueDate,
+      'clinic'
+    );
+    const done = new Set(['COMPLETED', 'CANCELLED', 'NO_SHOW']);
+    const isActive = (status?: string) => !done.has(String(status || '').toUpperCase());
+    const mine = clinicQueue.filter(
+      entry =>
+        patientIds.has(entry.patientId) &&
+        (!appointmentId || entry.appointmentId === appointmentId) &&
+        isActive(entry.status)
+    );
+    const entry = mine[0];
+    const meta = { clinicId, date: queueDate, source: 'operational-queue' };
+    if (!entry) return { success: true, data: null, meta };
+
+    // Position within the same doctor's (queue owner's) list, in clinic queue order.
+    const ownerId = entry.queueOwnerId || entry.doctorId;
+    const ownerQueue = clinicQueue.filter(
+      item => (item.queueOwnerId || item.doctorId) === ownerId && isActive(item.status)
+    );
+    const index = Math.max(
+      0,
+      ownerQueue.findIndex(item => item.appointmentId === entry.appointmentId)
+    );
+    const inProgress = ownerQueue.filter(
+      item => String(item.status || '').toUpperCase() === 'IN_PROGRESS'
+    );
+    const status = String(entry.status || 'WAITING').toUpperCase();
+    const patientsAhead =
+      status === 'IN_PROGRESS'
+        ? 0
+        : ownerQueue
+            .slice(0, index)
+            .filter(item => String(item.status || '').toUpperCase() !== 'IN_PROGRESS').length;
+    const avgConsultMinutes = 15;
+
+    return {
+      success: true,
+      data: {
+        appointmentId: entry.appointmentId,
+        doctorId: entry.doctorId,
+        locationId: entry.locationId || null,
+        status,
+        position: index + 1,
+        tokenNumber: typeof entry.tokenNumber === 'number' ? entry.tokenNumber : null,
+        patientsAhead,
+        totalInQueue: ownerQueue.length,
+        nowServing: inProgress.length > 0,
+        estimatedWaitTime: status === 'IN_PROGRESS' ? 0 : patientsAhead * avgConsultMinutes,
+        checkedInAt: entry.checkedInAt || null,
+      },
+      meta,
     };
   }
 
@@ -433,6 +598,10 @@ export class QueueController {
   @Patch(':entryId/transfer')
   @Roles(
     Role.NURSE,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.THERAPIST,
+    Role.COUNSELOR,
     Role.RECEPTIONIST,
     Role.CLINIC_ADMIN,
     Role.SUPER_ADMIN,
@@ -580,6 +749,7 @@ export class QueueController {
   @Get('stats')
   @Roles(
     Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
     Role.NURSE,
     Role.THERAPIST,
     Role.COUNSELOR,
@@ -588,21 +758,55 @@ export class QueueController {
     Role.SUPER_ADMIN,
     Role.CLINIC_LOCATION_HEAD
   )
-  @ApiOperation({ summary: 'Queue stats' })
+  @ApiOperation({
+    summary: 'Queue stats',
+    description:
+      "Flat counters for today's live queue (totalInQueue, totalWaiting, inProgress, completedToday, averageWaitTime). locationId narrows to one location; omitted, or equal to the clinic id, means clinic-wide. The legacy nested `stats` block is kept.",
+  })
   async getQueueStats(
-    @Query('locationId') locationId: string,
+    @Query('locationId') locationId: string | undefined,
     @Query('domain') domain: string | undefined,
     @Req() req: ClinicAuthenticatedRequest
-  ): Promise<{ success: true; data: unknown }> {
-    this.requireString(locationId, 'locationId');
+  ): Promise<{ success: true; data: QueueStatsSummary & Record<string, unknown> }> {
     const clinicId = this.requireClinicId(req);
-    const data = await this.appointmentQueueService.getLocationQueueStats(
-      locationId,
+    // The location-head page sends the clinic id in `locationId`; treat it as "whole clinic".
+    const scopedLocationId =
+      locationId && locationId.trim() && locationId.trim() !== clinicId
+        ? locationId.trim()
+        : undefined;
+
+    const clinicQueue = await this.appointmentQueueService.getClinicQueue(
       clinicId,
+      this.today(),
       'clinic'
     );
+    const entries = scopedLocationId
+      ? clinicQueue.filter(entry => entry.locationId === scopedLocationId)
+      : clinicQueue;
+    const summary = this.summarizeQueue(entries);
 
-    return { success: true, data };
+    const legacy = scopedLocationId
+      ? await this.appointmentQueueService.getLocationQueueStats(
+          scopedLocationId,
+          clinicId,
+          'clinic'
+        )
+      : {
+          locationId: null,
+          domain: 'clinic',
+          stats: {
+            totalWaiting: summary.totalWaiting,
+            averageWaitTime: summary.averageWaitTime,
+            efficiency:
+              summary.completedToday > 0
+                ? (summary.completedToday / (summary.completedToday + summary.totalWaiting)) * 100
+                : 0,
+            utilization: Math.min((summary.totalWaiting / 50) * 100, 100),
+            completedCount: summary.completedToday,
+          },
+        };
+
+    return { success: true, data: { ...legacy, ...summary, clinicId, date: this.today() } };
   }
 
   @Get('history')
@@ -659,6 +863,10 @@ export class QueueController {
   @Get('filters')
   @Roles(
     Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.THERAPIST,
+    Role.COUNSELOR,
     Role.RECEPTIONIST,
     Role.CLINIC_ADMIN,
     Role.SUPER_ADMIN,
@@ -1606,7 +1814,57 @@ export class QueueController {
     return true;
   }
 
-  private operationalEntry(entry: QueueEntryLike, position: number, total: number): QueueEntryLike {
+  /**
+   * Patients may see the clinic queue's shape (tokens, positions, statuses) but never
+   * other patients' identifiers, notes or raw payloads. Staff roles get full entries.
+   */
+  private visibleEntries(
+    entries: QueueEntryLike[],
+    req: ClinicAuthenticatedRequest
+  ): QueueEntryLike[] {
+    if (this.currentUserRole(req) !== String(Role.PATIENT)) return entries;
+    return entries.map(
+      ({
+        patientId: _p,
+        appointmentId: _a,
+        notes: _n,
+        raw: _r,
+        id: _i,
+        entryId: _e,
+        patientName: _pn,
+        paymentStatus: _ps,
+        ...rest
+      }) => ({
+        ...rest,
+        id: `queue-${rest.position ?? 0}`,
+      })
+    );
+  }
+
+  /**
+   * Minutes waited so far: from check-in to the consultation start, or to now while still waiting.
+   * Null when the entry has no usable check-in time.
+   */
+  private waitMinutes(checkedInAt: string, startedAt: string, status: string): number | null {
+    const checkedIn = checkedInAt ? new Date(checkedInAt).getTime() : NaN;
+    if (!Number.isFinite(checkedIn)) return null;
+    const normalizedStatus = status.toUpperCase();
+    const started = startedAt ? new Date(startedAt).getTime() : NaN;
+    const until = Number.isFinite(started) && normalizedStatus !== 'WAITING' ? started : Date.now();
+    return Math.max(0, Math.round((until - checkedIn) / 60_000));
+  }
+
+  private asNumber(value: unknown): number | undefined {
+    return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  }
+
+  private operationalEntry(
+    entry: QueueEntryLike,
+    position: number,
+    total: number,
+    paused = false
+  ): QueueEntryLike {
+    const stored = entry as QueueEntryLike & StoredQueueEntryExtras;
     const appointmentId = this.pick(entry.appointmentId, entry.patientId);
     const patientId = this.pick(entry.patientId, entry.appointmentId);
     const doctorId = this.pick(entry.doctorId);
@@ -1616,8 +1874,17 @@ export class QueueController {
     const startedAt = this.pick(entry.startedAt);
     const completedAt = this.pick(entry.completedAt);
     const notes = this.pick(entry.notes);
+    const status = this.pick(entry.status, 'WAITING');
+    const tokenNumber = this.asNumber(stored.tokenNumber);
+    const estimatedWaitTime = this.asNumber(stored.estimatedWaitTime);
+    const priority = this.asNumber(stored.priority);
+    const confirmedAt = this.pick(this.asString(stored.confirmedAt));
+    const laneType = this.pick(this.asString(stored.laneType));
+    const primaryDoctorId = this.pick(this.asString(stored.primaryDoctorId));
+    const assignedDoctorId = this.pick(this.asString(stored.assignedDoctorId), doctorId);
     return {
       id: appointmentId,
+      entryId: this.pick(entry.entryId, appointmentId),
       jobType: this.pick(entry.jobType, 'appointment'),
       jobFamily: this.pick(
         entry.jobFamily,
@@ -1646,10 +1913,19 @@ export class QueueController {
         ? { appointmentMode: this.pick(entry.appointmentMode) }
         : {}),
       queueOwnerId: this.pick(entry.queueOwnerId, entry.doctorId),
-      status: this.pick(entry.status, 'WAITING'),
+      status,
       position,
       queuePosition: position,
       totalInQueue: total,
+      tokenNumber: tokenNumber ?? null,
+      waitTime: this.waitMinutes(checkedInAt, startedAt, status),
+      estimatedWaitTime: estimatedWaitTime ?? null,
+      paused,
+      ...(priority !== undefined ? { priority } : {}),
+      ...(laneType ? { laneType } : {}),
+      ...(primaryDoctorId ? { primaryDoctorId } : {}),
+      ...(assignedDoctorId ? { assignedDoctorId } : {}),
+      ...(confirmedAt ? { confirmedAt } : {}),
       ...(locationId ? { locationId } : {}),
       ...(checkedInAt ? { checkedInAt } : {}),
       ...(startedAt ? { startedAt } : {}),
@@ -1657,6 +1933,169 @@ export class QueueController {
       ...(notes ? { notes } : {}),
       raw: entry.raw || {},
     };
+  }
+
+  /**
+   * Names, scheduled slot and payment state come from the appointment rows, read once per
+   * response for the whole page (the queue cache stores ids only). Entries whose appointment is
+   * not found are returned unchanged; a database hiccup never hides the queue itself.
+   */
+  private async decorateEntries(entries: QueueEntryLike[]): Promise<QueueEntryLike[]> {
+    const ids = [...new Set(entries.map(entry => entry.appointmentId).filter(Boolean))] as string[];
+    if (ids.length === 0 || !this.databaseService) return entries;
+
+    let rows: QueueAppointmentDecoration[];
+    try {
+      rows = await this.databaseService.executeHealthcareRead(async client => {
+        const delegate = (client as unknown as Record<string, unknown>)['appointment'] as {
+          findMany: (args: {
+            where: { id: { in: string[] } };
+            select: Record<string, unknown>;
+          }) => Promise<QueueAppointmentDecoration[]>;
+        };
+        return delegate.findMany({
+          where: { id: { in: ids } },
+          select: {
+            id: true,
+            date: true,
+            time: true,
+            patient: {
+              select: { user: { select: { name: true, firstName: true, lastName: true } } },
+            },
+            doctor: {
+              select: { user: { select: { name: true, firstName: true, lastName: true } } },
+            },
+            payment: { select: { status: true } },
+          },
+        });
+      });
+    } catch {
+      return entries;
+    }
+
+    const byId = new Map(rows.map(row => [row.id, row]));
+    return entries.map(entry => {
+      const row = entry.appointmentId ? byId.get(entry.appointmentId) : undefined;
+      if (!row) return entry;
+      return {
+        ...entry,
+        patientName: this.displayName(row.patient?.user, 'Patient'),
+        doctorName: this.displayName(row.doctor?.user, 'Doctor'),
+        scheduledDate: row.date ? formatDateKeyInIST(row.date) : null,
+        scheduledTime: row.time ?? null,
+        paymentStatus: row.payment?.status ?? null,
+      };
+    });
+  }
+
+  private displayName(
+    user: { name: string | null; firstName: string | null; lastName: string | null } | undefined,
+    fallback: string
+  ): string {
+    const fromParts = [user?.firstName, user?.lastName]
+      .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+      .join(' ')
+      .trim();
+    return user?.name?.trim() || fromParts || fallback;
+  }
+
+  private summarizeQueue(
+    entries: readonly { status: string; checkedInAt?: string }[]
+  ): QueueStatsSummary {
+    const done = new Set(['COMPLETED', 'CANCELLED', 'NO_SHOW', 'EXPIRED']);
+    let totalWaiting = 0;
+    let inProgress = 0;
+    let completedToday = 0;
+    let waitSum = 0;
+    let waitCount = 0;
+    for (const entry of entries) {
+      const status = String(entry.status || '').toUpperCase();
+      if (status === 'WAITING' || status === 'CONFIRMED') {
+        totalWaiting += 1;
+        const waited = this.waitMinutes(entry.checkedInAt || '', '', status);
+        if (waited !== null) {
+          waitSum += waited;
+          waitCount += 1;
+        }
+      } else if (status === 'IN_PROGRESS') {
+        inProgress += 1;
+      } else if (status === 'COMPLETED') {
+        completedToday += 1;
+      }
+    }
+    return {
+      totalInQueue: entries.filter(entry => !done.has(String(entry.status || '').toUpperCase()))
+        .length,
+      totalWaiting,
+      inProgress,
+      completedToday,
+      averageWaitTime: waitCount > 0 ? Math.round(waitSum / waitCount) : 0,
+    };
+  }
+
+  private async isQueuePaused(
+    clinicId: string,
+    ownerId: string,
+    date: string,
+    domain: string
+  ): Promise<boolean> {
+    try {
+      const status = await this.appointmentQueueService.getQueuePauseStatus(
+        ownerId,
+        clinicId,
+        date,
+        domain
+      );
+      return status === 'PAUSED';
+    } catch {
+      return false;
+    }
+  }
+
+  private async pausedOwners(
+    clinicId: string,
+    date: string,
+    domain: string,
+    entries: readonly { queueOwnerId?: string; doctorId: string }[]
+  ): Promise<Set<string>> {
+    const owners = [...new Set(entries.map(entry => entry.queueOwnerId || entry.doctorId))].filter(
+      Boolean
+    );
+    const flags = await Promise.all(
+      owners.map(async owner => [owner, await this.isQueuePaused(clinicId, owner, date, domain)])
+    );
+    return new Set(flags.filter(([, paused]) => paused).map(([owner]) => owner as string));
+  }
+
+  /**
+   * The queue is keyed by Doctor.id while the web sends the doctor's User id. Either is accepted;
+   * an id that is not a doctor of this clinic is used verbatim (and matches no queue).
+   */
+  private async resolveDoctorProfileId(idOrUserId: string, clinicId: string): Promise<string> {
+    if (!this.databaseService) return idOrUserId;
+    try {
+      const doctor = await this.databaseService.executeHealthcareRead(async client => {
+        const delegate = (client as unknown as Record<string, unknown>)['doctor'] as {
+          findFirst: (args: {
+            where: {
+              OR: Array<{ id: string } | { userId: string }>;
+              clinics: { some: { clinicId: string } };
+            };
+            select: { id: true };
+          }) => Promise<{ id: string } | null>;
+        };
+        return delegate.findFirst({
+          where: {
+            OR: [{ id: idOrUserId }, { userId: idOrUserId }],
+            clinics: { some: { clinicId } },
+          },
+          select: { id: true },
+        });
+      });
+      return doctor?.id ?? idOrUserId;
+    } catch {
+      return idOrUserId;
+    }
   }
 
   private jobEntry(job: Job, position: number, total: number, clinicId: string): QueueEntryLike {
@@ -1796,6 +2235,24 @@ export class QueueController {
   private pick(...values: Array<string | undefined>): string {
     const v = values.find(item => typeof item === 'string' && item.trim().length > 0);
     return v?.trim() || '';
+  }
+
+  private async resolvePatientProfileId(userId: string): Promise<string | null> {
+    if (!this.databaseService) return null;
+    try {
+      const patient = await this.databaseService.executeHealthcareRead(async client => {
+        const delegate = (client as unknown as Record<string, unknown>)['patient'] as {
+          findFirst: (args: {
+            where: { userId: string };
+            select: { id: true };
+          }) => Promise<{ id: string } | null>;
+        };
+        return delegate.findFirst({ where: { userId }, select: { id: true } });
+      });
+      return patient?.id ?? null;
+    } catch {
+      return null;
+    }
   }
 
   private asString(value: unknown): string | undefined {

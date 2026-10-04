@@ -1,5 +1,5 @@
 import { nowIso } from '@utils/date-time.util';
-import { Injectable, Logger, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -10,8 +10,14 @@ import * as crypto from 'crypto';
 import { NotFoundException } from '@nestjs/common';
 
 import type { AppointmentQRCodeData, ConfirmationResult } from '@core/types/appointment.types';
+import {
+  isInPersonAppointmentType,
+  isVideoCallAppointmentType,
+} from '@core/types/appointment-guards.types';
 import { EHRService } from '@services/ehr/ehr.service';
+import { CheckInLocationService } from '@services/appointments/plugins/therapy/check-in-location.service';
 import type { TreatmentPlanDto } from '@dtos/appointment.dto';
+import type { PluginCaller } from '../base/plugin-caller';
 
 // Re-export types for backward compatibility (with alias for QRCodeData)
 export type { ConfirmationResult };
@@ -25,11 +31,42 @@ interface ClinicalMedication {
 }
 type ClinicalMedicationInput = string | ClinicalMedication;
 
+/** Shown when the clinic confirmation / check-in plugin is pointed at a video appointment. */
+export const VIDEO_CONFIRMATION_REJECTION_MESSAGE =
+  'Video appointments are confirmed by payment, not by clinic confirmation or check-in';
+
+/** Statuses a clinic arrival / confirmation can still be recorded from. */
+const CONFIRMABLE_STATUSES: ReadonlySet<string> = new Set<string>(['SCHEDULED', 'CONFIRMED']);
+
+/** A completion needs a visit under way; an already completed one only re-runs the EHR side effects. */
+const COMPLETION_CONTEXT_STATUSES: ReadonlySet<string> = new Set<string>([
+  'IN_PROGRESS',
+  'COMPLETED',
+]);
+
+/**
+ * What a plugin operation is allowed to touch. `clinicId` is the clinic the request was validated
+ * for (ClinicGuard): every read and write is filtered by it. It is undefined only for a
+ * SUPER_ADMIN without a clinic header (global scope) and for trusted server-side callers.
+ */
+export interface ConfirmationScope {
+  readonly clinicId?: string | undefined;
+  readonly caller?: PluginCaller | undefined;
+}
+
+interface AppointmentContext {
+  id: string;
+  clinicId: string;
+  status: string;
+  type: string;
+  locationId: string | null;
+  patientId: string;
+}
+
 @Injectable()
 export class AppointmentConfirmationService {
   private readonly logger = new Logger(AppointmentConfirmationService.name);
   private readonly QR_CACHE_TTL = 3600; // 1 hour
-  private readonly CONFIRMATION_CACHE_TTL = 1800; // 30 minutes
 
   constructor(
     @Inject(ConfigService) private readonly configService: ConfigService,
@@ -37,14 +74,23 @@ export class AppointmentConfirmationService {
     private readonly loggingService: LoggingService,
     private readonly databaseService: DatabaseService,
     private readonly qrService: QrService,
-    private readonly ehrService: EHRService
+    private readonly ehrService: EHRService,
+    @Inject(forwardRef(() => CheckInLocationService))
+    private readonly checkInLocationService: CheckInLocationService
   ) {}
 
-  async generateCheckInQR(appointmentId: string, domain: string): Promise<unknown> {
+  async generateCheckInQR(
+    appointmentId: string,
+    domain: string,
+    scope: ConfirmationScope = {}
+  ): Promise<unknown> {
     const startTime = Date.now();
     const cacheKey = `qr:checkin:${appointmentId}:${domain}`;
 
     try {
+      // The appointment must exist in the caller's clinic before a QR (or a cached one) is handed out.
+      await this.getAppointmentContext(appointmentId, scope);
+
       // Try to get from cache first
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
@@ -110,7 +156,12 @@ export class AppointmentConfirmationService {
     }
   }
 
-  async processCheckIn(qrData: string, appointmentId: string, domain: string): Promise<unknown> {
+  async processCheckIn(
+    qrData: string,
+    appointmentId: string,
+    domain: string,
+    scope: ConfirmationScope = {}
+  ): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -130,7 +181,7 @@ export class AppointmentConfirmationService {
       }
 
       // Process check-in
-      await this.performCheckIn(appointmentId, domain);
+      await this.performCheckIn(appointmentId, domain, scope);
 
       // Invalidate QR cache
       await this.cacheService.del(`qr:checkin:${appointmentId}:${domain}`);
@@ -167,26 +218,17 @@ export class AppointmentConfirmationService {
     }
   }
 
-  async confirmAppointment(appointmentId: string, domain: string): Promise<unknown> {
+  async confirmAppointment(
+    appointmentId: string,
+    domain: string,
+    scope: ConfirmationScope = {}
+  ): Promise<unknown> {
     const startTime = Date.now();
-    const cacheKey = `confirmation:${appointmentId}:${domain}`;
 
     try {
-      // Check if already confirmed
-      const cached = await this.cacheService.get(cacheKey);
-      if (cached) {
-        return JSON.parse(cached as string);
-      }
-
-      // Perform confirmation logic
-      const confirmationResult = await this.performConfirmation(appointmentId, domain);
-
-      // Cache confirmation
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(confirmationResult),
-        this.CONFIRMATION_CACHE_TTL
-      );
+      // A confirmation is a write, never served from a result cache: a cached answer could be for
+      // another clinic's appointment or for one that has been cancelled since.
+      const confirmationResult = await this.performConfirmation(appointmentId, domain, scope);
 
       void this.loggingService.log(
         LogType.APPOINTMENT,
@@ -223,6 +265,7 @@ export class AppointmentConfirmationService {
       medications?: ClinicalMedicationInput[] | undefined;
       clinicId?: string | undefined;
       userId?: string | undefined;
+      caller?: PluginCaller | undefined;
     }
   ): Promise<unknown> {
     const startTime = Date.now();
@@ -267,11 +310,18 @@ export class AppointmentConfirmationService {
     }
   }
 
-  async generateConfirmationQR(appointmentId: string, domain: string): Promise<unknown> {
+  async generateConfirmationQR(
+    appointmentId: string,
+    domain: string,
+    scope: ConfirmationScope = {}
+  ): Promise<unknown> {
     const startTime = Date.now();
     const cacheKey = `qr:confirmation:${appointmentId}:${domain}`;
 
     try {
+      // The appointment must exist in the caller's clinic before a QR (or a cached one) is handed out.
+      await this.getAppointmentContext(appointmentId, scope);
+
       // Try to get from cache first
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
@@ -390,10 +440,12 @@ export class AppointmentConfirmationService {
     }
   }
 
-  async invalidateQRCache(appointmentId: string): Promise<unknown> {
+  async invalidateQRCache(appointmentId: string, scope: ConfirmationScope = {}): Promise<unknown> {
     const startTime = Date.now();
 
     try {
+      await this.getAppointmentContext(appointmentId, scope);
+
       // Invalidate all QR caches for this appointment
       const patterns = [`qr:checkin:${appointmentId}:*`, `qr:confirmation:${appointmentId}:*`];
 
@@ -464,37 +516,53 @@ export class AppointmentConfirmationService {
     }
   }
 
-  private async performCheckIn(appointmentId: string, domain: string): Promise<unknown> {
-    const now = new Date();
-    const appointment = await this.getAppointmentContext(appointmentId);
+  /**
+   * Clinic arrival for an in-person appointment through the one check-in implementation every
+   * entry point shares (`CheckInLocationService.processCheckIn`): atomic SCHEDULED -> CONFIRMED
+   * with a CheckIn row, plan coverage, the same-IST-day rule, and an entry in the doctor's live
+   * queue (verified and repaired on retry). A bare status update would confirm the appointment
+   * without ever queueing it. Video appointments are refused: payment confirms those.
+   */
+  private async confirmInPersonArrival(
+    appointmentId: string,
+    scope: ConfirmationScope
+  ): Promise<AppointmentContext> {
+    const appointment = await this.getAppointmentContext(appointmentId, scope);
 
-    await this.databaseService.executeHealthcareWrite(
-      async client => {
-        const typedClient = client as unknown as {
-          appointment: {
-            update: (args: unknown) => Promise<unknown>;
-          };
-        };
+    if (isVideoCallAppointmentType(appointment.type)) {
+      throw new BadRequestException(VIDEO_CONFIRMATION_REJECTION_MESSAGE);
+    }
+    if (!isInPersonAppointmentType(appointment.type)) {
+      throw new BadRequestException(
+        'Only in-person appointments can be confirmed through clinic check-in'
+      );
+    }
+    if (!CONFIRMABLE_STATUSES.has(String(appointment.status).toUpperCase())) {
+      throw new BadRequestException('Appointment can no longer be checked in');
+    }
+    if (!appointment.locationId) {
+      throw new BadRequestException('This appointment has no clinic location to check in at');
+    }
 
-        await typedClient.appointment.update({
-          where: { id: appointmentId },
-          data: {
-            status: 'CONFIRMED',
-            checkedInAt: now,
-            updatedAt: now,
-          },
-        });
-      },
+    await this.checkInLocationService.processCheckIn(
       {
-        userId: 'system',
-        clinicId: appointment.clinicId,
-        resourceType: 'APPOINTMENT',
-        operation: 'UPDATE',
-        resourceId: appointmentId,
-        userRole: 'system',
-        details: { status: 'CONFIRMED', domain },
-      }
+        appointmentId,
+        locationId: appointment.locationId,
+        patientId: appointment.patientId,
+      },
+      appointment.clinicId,
+      { ...(scope.caller ? { actor: scope.caller } : {}), presence: 'skip' }
     );
+
+    return appointment;
+  }
+
+  private async performCheckIn(
+    appointmentId: string,
+    domain: string,
+    scope: ConfirmationScope
+  ): Promise<unknown> {
+    const appointment = await this.confirmInPersonArrival(appointmentId, scope);
 
     return {
       success: true,
@@ -505,36 +573,12 @@ export class AppointmentConfirmationService {
     };
   }
 
-  private async performConfirmation(appointmentId: string, domain: string): Promise<unknown> {
-    const now = new Date();
-    const appointment = await this.getAppointmentContext(appointmentId);
-
-    await this.databaseService.executeHealthcareWrite(
-      async client => {
-        const typedClient = client as unknown as {
-          appointment: {
-            update: (args: unknown) => Promise<unknown>;
-          };
-        };
-
-        await typedClient.appointment.update({
-          where: { id: appointmentId },
-          data: {
-            status: 'CONFIRMED',
-            updatedAt: now,
-          },
-        });
-      },
-      {
-        userId: 'system',
-        clinicId: appointment.clinicId,
-        resourceType: 'APPOINTMENT',
-        operation: 'UPDATE',
-        resourceId: appointmentId,
-        userRole: 'system',
-        details: { status: 'CONFIRMED', domain },
-      }
-    );
+  private async performConfirmation(
+    appointmentId: string,
+    domain: string,
+    scope: ConfirmationScope
+  ): Promise<unknown> {
+    const appointment = await this.confirmInPersonArrival(appointmentId, scope);
 
     return {
       success: true,
@@ -555,9 +599,27 @@ export class AppointmentConfirmationService {
       medications?: ClinicalMedicationInput[] | undefined;
       clinicId?: string | undefined;
       userId?: string | undefined;
+      caller?: PluginCaller | undefined;
     }
   ): Promise<unknown> {
-    const appointment = await this.getAppointmentContext(appointmentId);
+    const appointment = await this.getAppointmentContext(appointmentId, {
+      clinicId: clinicalData?.clinicId,
+      caller: clinicalData?.caller,
+    });
+    const currentStatus = String(appointment.status).toUpperCase();
+    if (!COMPLETION_CONTEXT_STATUSES.has(currentStatus)) {
+      throw new BadRequestException('Only an appointment that is in progress can be completed');
+    }
+    // Video completion carries doctor / payment rules that live in the appointment completion
+    // flow. That flow claims the COMPLETED status first and only then calls this method for the
+    // EHR side effects, so a video visit that is still IN_PROGRESS here would be a shortcut
+    // around those rules.
+    if (isVideoCallAppointmentType(appointment.type) && currentStatus === 'IN_PROGRESS') {
+      throw new BadRequestException(
+        'Video appointments are completed through the appointment completion flow'
+      );
+    }
+
     const normalizedMedications = clinicalData?.medications
       ?.map((medication: ClinicalMedicationInput) => this.normalizeClinicalMedication(medication))
       .filter(
@@ -601,12 +663,16 @@ export class AppointmentConfirmationService {
       async client => {
         const typedClient = client as unknown as {
           appointment: {
-            update: (args: unknown) => Promise<unknown>;
+            updateMany: (args: unknown) => Promise<{ count: number }>;
           };
         };
 
-        await typedClient.appointment.update({
-          where: { id: appointmentId },
+        // Conditional: only a visit that is actually in progress can be completed, and only in the
+        // clinic it was read from. An unconditional update turned a CANCELLED / EXPIRED / NO_SHOW
+        // row into COMPLETED. When the caller has already claimed the completion (status is
+        // COMPLETED) this matches nothing.
+        await typedClient.appointment.updateMany({
+          where: { id: appointmentId, clinicId: appointment.clinicId, status: 'IN_PROGRESS' },
           data: {
             status: 'COMPLETED',
             completedAt: now,
@@ -615,7 +681,7 @@ export class AppointmentConfirmationService {
         });
       },
       {
-        userId: clinicalData?.userId || 'system',
+        userId: clinicalData?.caller?.userId || clinicalData?.userId || 'system',
         clinicId: appointment.clinicId,
         resourceType: 'APPOINTMENT',
         operation: 'UPDATE',
@@ -640,25 +706,31 @@ export class AppointmentConfirmationService {
     };
   }
 
-  private async getAppointmentContext(appointmentId: string): Promise<{
-    id: string;
-    clinicId: string;
-    status: string;
-  }> {
+  /**
+   * Read the appointment a plugin operation acts on, filtered by the clinic the request was
+   * validated for. Another clinic's appointment is indistinguishable from a missing one (404).
+   */
+  private async getAppointmentContext(
+    appointmentId: string,
+    scope: ConfirmationScope
+  ): Promise<AppointmentContext> {
     const appointment = await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as {
         appointment: {
-          findFirst: (args: unknown) => Promise<{
-            id: string;
-            clinicId: string;
-            status: string;
-          } | null>;
+          findFirst: (args: unknown) => Promise<AppointmentContext | null>;
         };
       };
 
       return await typedClient.appointment.findFirst({
-        where: { id: appointmentId },
-        select: { id: true, clinicId: true, status: true },
+        where: { id: appointmentId, ...(scope.clinicId ? { clinicId: scope.clinicId } : {}) },
+        select: {
+          id: true,
+          clinicId: true,
+          status: true,
+          type: true,
+          locationId: true,
+          patientId: true,
+        },
       });
     });
 

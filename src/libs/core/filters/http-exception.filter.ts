@@ -461,7 +461,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
       return {};
     }
 
-    const sanitized: Record<string, unknown> = { ...(body as Record<string, unknown>) };
+    const sanitized: Record<string, unknown> = this.toLogSafe(
+      { ...(body as Record<string, unknown>) },
+      0
+    ) as Record<string, unknown>;
 
     // Remove sensitive fields
     const sensitiveFields: readonly string[] = [
@@ -486,6 +489,53 @@ export class HttpExceptionFilter implements ExceptionFilter {
     });
 
     return sanitized;
+  }
+
+  /**
+   * Copies a request body into a plain, depth-limited, JSON-safe structure.
+   * Multipart requests carry uploaded-file objects with circular references and
+   * file content; those are replaced by placeholders so the error log entry is
+   * never lost to a serialisation failure and file bytes are never logged.
+   *
+   * @param value - The value to copy
+   * @param depth - Current recursion depth
+   * @returns A JSON-safe copy
+   * @private
+   */
+  private toLogSafe(value: unknown, depth: number): unknown {
+    if (value === null || value === undefined) {
+      return value;
+    }
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      return value;
+    }
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+    if (typeof value !== 'object') {
+      return '[Unsupported]';
+    }
+    if (Buffer.isBuffer(value)) {
+      return `[Buffer ${value.length} bytes]`;
+    }
+    if (typeof (value as { toBuffer?: unknown }).toBuffer === 'function') {
+      return '[Uploaded file]';
+    }
+    if (depth >= 3) {
+      return '[Object]';
+    }
+    if (Array.isArray(value)) {
+      return value.slice(0, 20).map((item: unknown) => this.toLogSafe(item, depth + 1));
+    }
+    const prototype: unknown = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      return '[Object]';
+    }
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .slice(0, 50)
+        .map(([key, item]) => [key, this.toLogSafe(item, depth + 1)])
+    );
   }
 
   /**

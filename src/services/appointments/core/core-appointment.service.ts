@@ -1,4 +1,12 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  forwardRef,
+  HttpException,
+  ForbiddenException,
+  BadRequestException,
+  ConflictException,
+} from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 
 // Infrastructure Services
@@ -14,9 +22,19 @@ import { HealthcareErrorsService } from '@core/errors';
 
 // Core Services
 import { ConflictResolutionService } from './conflict-resolution.service';
-import type { TimeSlot } from '@core/types/appointment.types';
 import { AppointmentWorkflowEngine } from './appointment-workflow-engine.service';
 import { BusinessRulesEngine } from './business-rules-engine.service';
+import {
+  assertUpdateFieldsAllowed,
+  buildAppointmentUpdateData,
+  getGenericStatusChangeRefusal,
+} from './appointment-state-contract';
+import {
+  appointmentSlotKind,
+  findConflictingSlotKind,
+  loadDoctorDayAppointments,
+  slotConflictMessage,
+} from './appointment-slot-conflict.util';
 
 // DTOs and Types
 import {
@@ -50,9 +68,6 @@ import { startOfIstDay, endOfIstDay } from '@utils/clock.util';
 // CoreAppointmentMetrics is an alias for AppointmentMetricsData
 export type CoreAppointmentMetrics = AppointmentMetricsData;
 
-// AppointmentTimeSlot is imported from database types
-import type { AppointmentTimeSlot } from '@core/types/database.types';
-
 // Use centralized types from database service
 import type {
   AppointmentBase as Appointment,
@@ -61,13 +76,23 @@ import type {
   Clinic,
 } from '@core/types/database.types';
 import { getVideoConsultationDelegate } from '@core/types/video-database.types';
-import type { AppointmentUpdateInput } from '@core/types/input.types';
 import type {
   PrismaTransactionClientWithDelegates,
   PrismaDelegateArgs,
 } from '@core/types/prisma.types';
 
 export type AppointmentData = Appointment;
+
+/** The appointment columns the generic update decides on. */
+interface AppointmentUpdateRow {
+  id: string;
+  clinicId: string;
+  patientId: string;
+  doctorId: string;
+  type: string;
+  status: string;
+  metadata?: unknown;
+}
 export type PatientData = Patient;
 export type DoctorData = Doctor;
 export type ClinicData = Clinic;
@@ -299,6 +324,7 @@ export class CoreAppointmentService {
         doctorId: string | null;
         doctorUserId: string | null;
         locationId: string | null;
+        familyMemberId: string | null;
       }>(async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
 
@@ -308,6 +334,28 @@ export class CoreAppointmentService {
           } as PrismaDelegateArgs,
           select: { id: true, userId: true } as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
+
+        // Optional "who is this for": the dependent must be an active family
+        // member of the booking patient (never another family's member).
+        const rawFamilyMemberId = createDto.familyMemberId;
+        const familyMember =
+          rawFamilyMemberId && patient?.id
+            ? await (
+                client as unknown as {
+                  familyMember: {
+                    findFirst: (args: PrismaDelegateArgs) => Promise<{ id: string } | null>;
+                  };
+                }
+              ).familyMember.findFirst({
+                where: {
+                  id: rawFamilyMemberId,
+                  patientId: patient.id,
+                  isActive: true,
+                  deletedAt: null,
+                } as PrismaDelegateArgs,
+                select: { id: true } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs)
+            : null;
 
         const doctor = await typedClient.doctor.findFirst({
           where: {
@@ -332,6 +380,7 @@ export class CoreAppointmentService {
           doctorId: doctor?.id ?? null,
           doctorUserId: doctor?.userId ?? null,
           locationId: location?.id ?? null,
+          familyMemberId: familyMember?.id ?? null,
         };
       });
 
@@ -381,6 +430,17 @@ export class CoreAppointmentService {
         };
       }
 
+      if (createDto.familyMemberId && !resolvedIds.familyMemberId) {
+        return {
+          success: false,
+          error: 'VALIDATION_ERROR',
+          message: 'Family member not found for this patient',
+          metadata: {
+            processingTime: Date.now() - startTime,
+          },
+        };
+      }
+
       // 4. Check for scheduling conflicts. The conflict check (read) and the
       // eventual insert further below are not atomic on their own — two
       // concurrent booking requests for the same doctor/slot (different
@@ -402,43 +462,8 @@ export class CoreAppointmentService {
       }
 
       try {
-        const existingAppointments = await this.getExistingTimeSlots(
-          resolvedIds.doctorId,
-          context.clinicId,
-          appointmentDate
-        );
-
-        const conflictResult = await this.conflictResolutionService.resolveSchedulingConflict(
-          {
-            patientId: resolvedIds.patientId,
-            doctorId: resolvedIds.doctorId,
-            clinicId: context.clinicId,
-            requestedTime: appointmentDate,
-            duration: createDto.duration,
-            priority: this.mapPriority(createDto.priority || AppointmentPriority.NORMAL),
-            serviceType: createDto.type,
-            ...(createDto.notes && { notes: createDto.notes }),
-          },
-          this.convertToTimeSlots(existingAppointments, resolvedIds.doctorId, context.clinicId),
-          { allowOverlap: false, suggestAlternatives: true }
-        );
-
-        if (!conflictResult.canSchedule && conflictResult.conflicts.length > 0) {
-          return {
-            success: false,
-            error: 'SCHEDULING_CONFLICT',
-            message: 'Appointment time conflicts with existing schedule',
-            metadata: {
-              processingTime: Date.now() - startTime,
-              conflicts: conflictResult.conflicts,
-              alternatives: conflictResult.alternatives,
-            },
-          };
-        }
-
-        // 4. Create appointment with enhanced metadata
-        // Normalize the supplied slot before persisting so date-only inputs do not
-        // collapse to midnight UTC and surface as 05:30 in IST.
+        // The slot as IST wall-clock, the way it is stored and compared. Normalizing it keeps
+        // date-only inputs from collapsing to midnight UTC and surfacing as 05:30 in IST.
         const appointmentDateTime = this.resolveAppointmentDateTime(createDto);
         const { date: dateStr, time: timeStr } = this.getISTDateAndTime(appointmentDateTime);
 
@@ -502,6 +527,22 @@ export class CoreAppointmentService {
             message: 'An active appointment already exists for this slot.',
             metadata: { processingTime: Date.now() - startTime },
           };
+        }
+
+        // 4b. Doctor slot rule, read fresh inside the booking lock: one doctor may hold a video
+        // visit and an in-clinic visit in the same slot, never two of the same kind. It runs after
+        // the idempotency lookup above so a patient's own payment retry still finds its row.
+        const dayAppointments = await loadDoctorDayAppointments(this.databaseService, {
+          doctorId: resolvedIds.doctorId,
+          clinicId: context.clinicId,
+          dayKey: dateStr,
+        });
+        const conflictingKind = findConflictingSlotKind(dayAppointments, {
+          type: createDto.type,
+          time: timeStr,
+        });
+        if (conflictingKind) {
+          throw new ConflictException(slotConflictMessage(conflictingKind));
         }
 
         if (isVideoCallAppointmentType(createDto.type)) {
@@ -573,6 +614,12 @@ export class CoreAppointmentService {
         }
         // Remove appointmentDate as it's not part of AppointmentCreateInput
         delete appointmentData['appointmentDate'];
+        // createAppointmentSafe builds a relation-style create input, so the
+        // validated dependent is linked through the relation, not the scalar FK.
+        delete appointmentData['familyMemberId'];
+        if (resolvedIds.familyMemberId) {
+          appointmentData['familyMember'] = { connect: { id: resolvedIds.familyMemberId } };
+        }
 
         // Cast to AppointmentCreateInput - appointmentData has all required fields from createDto
         const appointment = (await this.databaseService.createAppointmentSafe(
@@ -664,13 +711,18 @@ export class CoreAppointmentService {
           message: 'Appointment created successfully',
           metadata: {
             processingTime,
-            warnings: conflictResult.warnings || [],
+            warnings: [],
           },
         };
       } finally {
         await this.cacheService.releaseLock(bookingLockKey);
       }
     } catch (error) {
+      // A slot the doctor already holds is an answer for the client (409), not an internal failure.
+      if (error instanceof ConflictException) {
+        throw error;
+      }
+
       const processingTime = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       void this.loggingService.log(
@@ -872,7 +924,110 @@ export class CoreAppointmentService {
   }
 
   /**
-   * Update appointment with validation and conflict resolution
+   * The appointment columns the generic update decides on, read fresh (never from a cache) and
+   * scoped to the caller's clinic.
+   */
+  private async loadAppointmentForUpdate(
+    appointmentId: string,
+    clinicId: string
+  ): Promise<AppointmentUpdateRow | null> {
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const delegate = client['appointment'] as unknown as {
+        findFirst: (args: PrismaDelegateArgs) => Promise<AppointmentUpdateRow | null>;
+      };
+      return await delegate.findFirst({
+        where: { id: appointmentId, clinicId },
+        select: {
+          id: true,
+          clinicId: true,
+          patientId: true,
+          doctorId: true,
+          type: true,
+          status: true,
+          metadata: true,
+        },
+      } as PrismaDelegateArgs);
+    });
+  }
+
+  /** The updated appointment with the relations the callers (events, API response) expect. */
+  private async loadUpdatedAppointment(
+    appointmentId: string,
+    clinicId: string
+  ): Promise<AppointmentData | null> {
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const delegate = client['appointment'] as unknown as {
+        findFirst: (args: PrismaDelegateArgs) => Promise<AppointmentData | null>;
+      };
+      return await delegate.findFirst({
+        where: { id: appointmentId, clinicId },
+        include: {
+          patient: { include: { user: true } },
+          doctor: { include: { user: true } },
+          clinic: true,
+        },
+      } as PrismaDelegateArgs);
+    });
+  }
+
+  /**
+   * Writes the update scoped to the clinic and, when the status changes, only while the row still
+   * has the status the transition was validated against. Returns false when the row moved on in
+   * the meantime (a doctor completing a visit the scheduler is about to expire, say): the newer
+   * state wins and nothing is overwritten.
+   */
+  private async applyAppointmentUpdate(
+    appointmentId: string,
+    updateData: Record<string, unknown>,
+    expectedStatus: string | undefined,
+    context: AppointmentContext
+  ): Promise<boolean> {
+    const writtenAt = new Date();
+    const result = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        return await (
+          client as unknown as {
+            appointment: {
+              updateMany: (args: {
+                where: Record<string, unknown>;
+                data: Record<string, unknown>;
+              }) => Promise<{ count: number }>;
+            };
+          }
+        ).appointment.updateMany({
+          where: {
+            id: appointmentId,
+            clinicId: context.clinicId,
+            ...(expectedStatus !== undefined ? { status: expectedStatus } : {}),
+          },
+          data: { ...updateData, updatedAt: writtenAt },
+        });
+      },
+      {
+        userId: context.userId,
+        userRole: context.role,
+        clinicId: context.clinicId,
+        operation: 'UPDATE_APPOINTMENT',
+        resourceType: 'APPOINTMENT',
+        resourceId: appointmentId,
+        timestamp: writtenAt,
+        details: { fields: Object.keys(updateData), previousStatus: expectedStatus ?? null },
+      }
+    );
+    return result.count > 0;
+  }
+
+  /**
+   * Update an appointment's non-structural fields and, where the rules allow it, its status.
+   *
+   * This is the one generic update every route ends up in, so the rules live here:
+   * - an allowlist of fields per caller (see appointment-state-contract): never the date, doctor,
+   *   clinic, patient, type, payment state or timestamps; those have their own flows;
+   * - the status rules of the state contract (no completing, starting or confirming around the
+   *   dedicated flows; only SYSTEM expires an in-progress visit);
+   * - a clinic-scoped, status-conditional write.
+   * Refusals of the caller's request are HTTP errors (400 / 403); a transition the state table does
+   * not allow, or a row that changed underneath, is reported as an unsuccessful result.
    */
   async updateAppointment(
     appointmentId: string,
@@ -881,13 +1036,16 @@ export class CoreAppointmentService {
   ): Promise<AppointmentResult> {
     const startTime = Date.now();
 
-    try {
-      // 1. Get existing appointment
-      // Get appointments using unified database service
-      const existingAppointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+    assertUpdateFieldsAllowed(updateDto, context.role);
 
-      // Enforce strict isolation: Appointment must belong to current clinic context
-      if (!existingAppointment || existingAppointment.clinicId !== context.clinicId) {
+    try {
+      // 1. Fresh, clinic-scoped read. Another clinic's appointment is simply not found.
+      const existingAppointment = await this.loadAppointmentForUpdate(
+        appointmentId,
+        context.clinicId
+      );
+
+      if (!existingAppointment) {
         return {
           success: false,
           error: 'APPOINTMENT_NOT_FOUND',
@@ -896,124 +1054,91 @@ export class CoreAppointmentService {
         };
       }
 
-      // 2. Validate status transitions
-      if (
-        updateDto.status &&
-        !this.workflowEngine.isValidStatusTransition(existingAppointment.status, updateDto.status)
-      ) {
-        return {
-          success: false,
-          error: 'INVALID_STATUS_TRANSITION',
-          message: `Cannot transition from ${existingAppointment.status} to ${updateDto.status}`,
-          metadata: { processingTime: Date.now() - startTime },
-        };
-      }
+      // 2. Status: one equal to the current status is a no-op, anything else must satisfy the
+      //    product rules and then the transition table.
+      const requestedStatus = updateDto.status ? String(updateDto.status).toUpperCase() : undefined;
+      const statusChange =
+        requestedStatus !== undefined &&
+        requestedStatus !== String(existingAppointment.status).toUpperCase()
+          ? requestedStatus
+          : undefined;
 
-      // 3. Check for scheduling conflicts if date/time is being changed
-      if (updateDto.appointmentDate && existingAppointment.doctorId) {
-        const newAppointmentDate = new Date(updateDto.appointmentDate);
-        const { date: newDateStr } = this.getISTDateAndTime(newAppointmentDate);
+      if (statusChange !== undefined) {
+        const refusal = getGenericStatusChangeRefusal({
+          currentStatus: existingAppointment.status,
+          targetStatus: statusChange,
+          appointmentType: existingAppointment.type,
+          role: context.role,
+        });
+        if (refusal) {
+          throw refusal.httpStatus === 403
+            ? new ForbiddenException(refusal.message)
+            : new BadRequestException(refusal.message);
+        }
 
-        const existingAppointments = await this.getExistingTimeSlots(
-          existingAppointment.doctorId,
-          existingAppointment.clinicId,
-          new Date(`${newDateStr}T00:00:00.000+05:30`)
-        );
-
-        const updateDtoWithNotes = updateDto as Record<string, unknown>;
-        const notesValue = updateDtoWithNotes['notes'] as string | undefined;
-        const conflictResult = await this.conflictResolutionService.resolveSchedulingConflict(
-          {
-            patientId: existingAppointment.patientId,
-            doctorId: existingAppointment.doctorId,
-            clinicId: existingAppointment.clinicId,
-            requestedTime: newAppointmentDate,
-            duration: updateDto.duration || existingAppointment.duration,
-            priority: 'regular',
-            serviceType: existingAppointment.type,
-            // notes property exists in UpdateAppointmentDto (line 355)
-            ...(notesValue && { notes: notesValue }),
-          },
-          this.convertToTimeSlots(
-            existingAppointments,
-            existingAppointment.doctorId,
-            existingAppointment.clinicId
-          ),
-          { allowOverlap: false, suggestAlternatives: true }
-        );
-
-        if (!conflictResult.canSchedule) {
+        if (
+          !this.workflowEngine.isValidStatusTransition(existingAppointment.status, statusChange)
+        ) {
           return {
             success: false,
-            error: 'SCHEDULING_CONFLICT',
-            message: 'Updated appointment time conflicts with existing schedule',
-            metadata: {
-              processingTime: Date.now() - startTime,
-              conflicts: conflictResult.conflicts,
-            },
+            error: 'INVALID_STATUS_TRANSITION',
+            message: `Cannot transition from ${existingAppointment.status} to ${statusChange}`,
+            metadata: { processingTime: Date.now() - startTime },
           };
         }
       }
 
-      // 4. Update appointment
-      // Handle date conversion properly for exactOptionalPropertyTypes.
-      // `reason` is part of the status DTO, but it is not a column on the
-      // Appointment model. Map it onto the canonical appointment fields so
-      // Prisma never receives an unknown property.
-      const updateData: Record<string, unknown> = { ...updateDto };
-      const updateDtoRecord = updateDto as Record<string, unknown>;
-      const updateReason =
-        typeof updateDtoRecord['reason'] === 'string'
-          ? String(updateDtoRecord['reason']).trim()
-          : '';
-      delete updateData['reason'];
-      if (updateReason) {
-        if (
-          updateDto.status === AppointmentStatus.EXPIRED ||
-          updateDto.status === AppointmentStatus.CANCELLED
-        ) {
-          updateData['cancellationReason'] = updateReason;
-        } else if (!updateDto.notes) {
-          updateData['notes'] = updateReason;
+      // 3. Update, built field by field from the allowlisted request.
+      const updateData = buildAppointmentUpdateData({
+        updateDto,
+        existing: existingAppointment,
+        statusChange,
+      });
+
+      if (Object.keys(updateData).length > 0) {
+        const applied = await this.applyAppointmentUpdate(
+          appointmentId,
+          updateData,
+          statusChange !== undefined ? existingAppointment.status : undefined,
+          context
+        );
+        if (!applied) {
+          return {
+            success: false,
+            error: 'APPOINTMENT_CONFLICT',
+            message: 'The appointment was changed by someone else. Reload it and try again.',
+            metadata: { processingTime: Date.now() - startTime },
+          };
         }
       }
-      if (updateDto.appointmentDate) {
-        const appointmentDateTime = this.resolveAppointmentDateTime(
-          updateDto as CreateAppointmentDto & { time?: string }
-        );
-        const { date: dateStr, time: timeStr } = this.getISTDateAndTime(appointmentDateTime);
-        updateData['date'] = new Date(`${dateStr}T00:00:00.000+05:30`);
-        updateData['time'] = timeStr;
-        // Remove appointmentDate as it's not part of AppointmentUpdateInput
-        delete updateData['appointmentDate'];
-      } else {
-        // Ensure appointmentDate is not in updateData
-        delete updateData['appointmentDate'];
+
+      const updatedAppointment = await this.loadUpdatedAppointment(appointmentId, context.clinicId);
+      if (!updatedAppointment) {
+        return {
+          success: false,
+          error: 'APPOINTMENT_NOT_FOUND',
+          message: 'Appointment not found',
+          metadata: { processingTime: Date.now() - startTime },
+        };
       }
-      // Cast to AppointmentUpdateInput - the Record<string, unknown> is compatible
-      // since AppointmentUpdateInput has all optional properties
-      const updatedAppointment = (await this.databaseService.updateAppointmentSafe(
-        appointmentId,
-        updateData as unknown as AppointmentUpdateInput
-      )) as AppointmentData;
 
       // Cast for AppointmentResult compatibility
       const updatedAppointmentResult = updatedAppointment as unknown as Record<string, unknown>;
 
-      // 5. Update workflow if status changed
-      if (updateDto.status && String(updateDto.status) !== String(existingAppointment.status)) {
+      // 4. Update workflow if status changed
+      if (statusChange !== undefined) {
         this.workflowEngine.transitionStatus(
           appointmentId,
           existingAppointment.status,
-          updateDto.status,
+          statusChange,
           context.userId
         );
       }
 
-      // 6. Queue background operations
+      // 5. Queue background operations
       await this.queueBackgroundOperations(updatedAppointment, context, 'UPDATE');
 
-      // 7. Emit events
+      // 6. Emit events
       await this.eventService.emit('appointment.updated', {
         appointmentId: updatedAppointment.id,
         clinicId: updatedAppointment.clinicId,
@@ -1025,7 +1150,7 @@ export class CoreAppointmentService {
         context,
       });
 
-      // 8. HIPAA audit log
+      // 7. HIPAA audit log
       await this.hipaaAuditLog('UPDATE_APPOINTMENT', context, {
         appointmentId: updatedAppointment.id,
         patientId: updatedAppointment.patientId,
@@ -1033,7 +1158,7 @@ export class CoreAppointmentService {
         changes: updateDto,
       });
 
-      // 9. Invalidate cache
+      // 8. Invalidate cache
       await this.invalidateAppointmentCache(context.clinicId);
 
       const processingTime = Date.now() - startTime;
@@ -1044,6 +1169,11 @@ export class CoreAppointmentService {
         metadata: { processingTime },
       };
     } catch (error) {
+      // A refusal of the caller's request is an answer for the client, not an internal failure.
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
       const processingTime = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       void this.loggingService.log(
@@ -1310,41 +1440,6 @@ export class CoreAppointmentService {
     return email || fallback;
   }
 
-  /**
-   * Convert appointment time slots to conflict resolution TimeSlot format
-   */
-  private convertToTimeSlots(
-    appointments: AppointmentTimeSlot[],
-    doctorId: string,
-    clinicId: string
-  ): TimeSlot[] {
-    return appointments.map(appointment => {
-      const startTime =
-        parseIstDateTime(appointment.date, appointment.time) ?? new Date(appointment.date);
-      const endTime = new Date(startTime.getTime() + appointment.duration * 60000); // duration in minutes
-
-      return {
-        startTime,
-        endTime,
-        doctorId,
-        clinicId,
-        isAvailable: false, // These are existing appointments, so not available
-        appointmentId: appointment.id,
-        bufferMinutes: 15, // Default buffer
-      };
-    });
-  }
-
-  private getExistingTimeSlots(
-    doctorId: string,
-    clinicId: string,
-    date: Date
-  ): Promise<AppointmentTimeSlot[]> {
-    // Using prisma directly instead of databaseService
-
-    return this.databaseService.findAppointmentTimeSlotsSafe(doctorId, clinicId, date);
-  }
-
   private buildAppointmentWhereClause(
     filters: AppointmentFilterDto,
     context: AppointmentContext
@@ -1575,8 +1670,9 @@ export class CoreAppointmentService {
   private async invalidateAppointmentCache(clinicId: string): Promise<void> {
     try {
       const patterns = [
-        `healthcare:clinic:${clinicId}:appointments:list:*`,
-        `healthcare:clinic:${clinicId}:appointments:*`,
+        // Leading `*` reaches both the key-factory keys (`healthcare:clinic:<id>:appointments:…`)
+        // and the HTTP cache interceptor's clinic-scoped keys (`clinic:<id>:appointments:…`).
+        `*clinic:${clinicId}:appointments:*`,
         `healthcare:appointment:*`,
         `metrics:${clinicId}:*`,
         `doctor:*:clinic:${clinicId}:*availability*`, // Matches enhanced key pattern
@@ -2113,6 +2209,7 @@ export class CoreAppointmentService {
       // findAppointmentsSafe should return AppointmentWithRelations[], but handle edge cases
       type AppointmentItem = Record<string, unknown> & {
         id?: string;
+        type?: string;
         time?: string;
         duration?: string | number;
         status?: string;
@@ -2128,6 +2225,14 @@ export class CoreAppointmentService {
         const data = (appointmentsResult as { data: unknown }).data;
         appointments = Array.isArray(data) ? (data as AppointmentItem[]) : [];
       }
+
+      // A doctor may hold a video visit and an in-clinic visit in the same slot, so only
+      // appointments of the requested kind occupy it (every non-video type is in-clinic). The
+      // booking and reschedule checks apply the same rule.
+      const requestedSlotKind = appointmentSlotKind(_context?.appointmentType);
+      appointments = appointments.filter(
+        apt => appointmentSlotKind(apt.type) === requestedSlotKind
+      );
 
       // DEBUG: Log appointments for video slots issue
       void this.loggingService.log(
@@ -2224,7 +2329,7 @@ export class CoreAppointmentService {
             return aptStartMinutes < slotEndMinutes && aptEndMinutes > currentMinutes;
           });
 
-          // Mark slot as unavailable if booked (regardless of appointment type)
+          // Mark slot as unavailable if an appointment of the same kind holds it
           // Video filtering happens earlier - if we reach here, slot is within video window
           if (isBooked) {
             slotsByTime.set(time, {
@@ -2338,9 +2443,6 @@ export class CoreAppointmentService {
     }
   }
 
-  /**
-   * Map AppointmentPriority enum to conflict resolution priority values
-   */
   private extractAppointmentSettings(settings: unknown): Record<string, unknown> {
     if (typeof settings !== 'object' || settings === null || Array.isArray(settings)) {
       return {};
@@ -2490,21 +2592,6 @@ export class CoreAppointmentService {
     const windowStart = this.timeToMinutes(window.start);
     const windowEnd = this.timeToMinutes(window.end);
     return slotStart >= windowStart && slotEnd <= windowEnd;
-  }
-
-  private mapPriority(priority: AppointmentPriority): 'emergency' | 'vip' | 'regular' | 'followup' {
-    switch (priority) {
-      case AppointmentPriority.EMERGENCY:
-        return 'emergency';
-      case AppointmentPriority.URGENT:
-      case AppointmentPriority.HIGH:
-        return 'vip';
-      case AppointmentPriority.LOW:
-        return 'followup';
-      case AppointmentPriority.NORMAL:
-      default:
-        return 'regular';
-    }
   }
 
   // ─── Idempotent status transitions ──────────────────────────

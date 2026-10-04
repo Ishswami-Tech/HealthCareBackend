@@ -123,3 +123,6 @@ storage/
 devops-output*.txt
 devops_status*.txt
 deploy_status*.txt
+
+# jest ts-jest emit dir
+dist-test/

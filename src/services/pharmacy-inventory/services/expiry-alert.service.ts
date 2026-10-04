@@ -207,8 +207,19 @@ export class ExpiryAlertService {
     const affectedProductIds = new Set<string>();
 
     for (const batch of expiredBatches) {
-      await this.db.prisma.$transaction(async tx => {
+      const didWriteOff = await this.db.prisma.$transaction(async tx => {
         const typedClient = tx as unknown as PrismaTransactionClientWithDelegates;
+        const quantity = batch.quantityOnHand ?? 0;
+
+        // Claim the exact quantity we read: a concurrent write-off or dispense
+        // makes this match zero rows, and the batch is skipped, never double counted.
+        const claim = await typedClient.stockBatch.updateMany({
+          where: { id: batch.id, clinicId, quantityOnHand: quantity },
+          data: { quantityOnHand: 0 },
+        });
+        if (claim.count !== 1) {
+          return false;
+        }
 
         await typedClient.stockMovement.create({
           data: {
@@ -216,24 +227,23 @@ export class ExpiryAlertService {
             batchId: batch.id,
             clinicId,
             movementType: MovementType.EXPIRED_WRITE_OFF,
-            quantity: -(batch.quantityOnHand ?? 0),
+            quantity: -quantity,
             reason: `Batch expired on ${batch.expiryDate.toISOString().split('T')[0]}`,
             referenceType: 'EXPIRED_WRITE_OFF',
             recordedById: userId,
           },
         });
 
-        await typedClient.stockBatch.update({
-          where: { id: batch.id },
-          data: { quantityOnHand: 0 },
+        await typedClient.medicine.updateMany({
+          where: { id: batch.productId, clinicId },
+          data: { stock: { decrement: quantity } },
         });
-
-        await typedClient.medicine.update({
-          where: { id: batch.productId },
-          data: { stock: { decrement: batch.quantityOnHand ?? 0 } },
-        });
+        return true;
       });
 
+      if (!didWriteOff) {
+        continue;
+      }
       writtenOff++;
       affectedProductIds.add(batch.productId);
     }

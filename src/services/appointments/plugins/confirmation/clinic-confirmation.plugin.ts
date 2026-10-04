@@ -1,7 +1,11 @@
 import { nowIso } from '@utils/date-time.util';
 import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
-import { AppointmentConfirmationService } from './appointment-confirmation.service';
+import {
+  AppointmentConfirmationService,
+  type ConfirmationScope,
+} from './appointment-confirmation.service';
+import { parsePluginCaller } from '../base/plugin-caller';
 import { LoggingService } from '@infrastructure/logging';
 import type { PrescriptionMedicationDto } from '@dtos/ehr.dto';
 import type { TreatmentPlanDto } from '@dtos/appointment.dto';
@@ -12,7 +16,10 @@ interface ConfirmationPluginData {
   qrData?: string | undefined;
   doctorId?: string | undefined;
   clinicId?: string | undefined;
+  /** For markAppointmentCompleted: the PATIENT's user id (the owner of the prescription). */
   userId?: string | undefined;
+  /** Authenticated caller bound by the plugin controller; never taken from the request body. */
+  caller?: unknown;
   diagnosis?: string | undefined;
   treatmentPlan?: TreatmentPlanDto | undefined;
   medications?: PrescriptionMedicationDto[] | undefined;
@@ -39,13 +46,23 @@ export class ClinicConfirmationPlugin extends BaseAppointmentPlugin {
       operation: pluginData.operation,
     });
 
-    // Delegate to existing confirmation service - no functionality change
+    // Every operation acts inside the clinic the request was validated for and as the
+    // authenticated caller. `userId` is not the actor here (completion uses it for the patient).
+    const scope: ConfirmationScope = {
+      clinicId: pluginData.clinicId,
+      caller: parsePluginCaller(pluginData.caller),
+    };
+
     switch (pluginData.operation) {
       case 'generateCheckInQR':
         if (!pluginData.appointmentId) {
           throw new Error('Missing required field appointmentId for generateCheckInQR');
         }
-        return await this.confirmationService.generateCheckInQR(pluginData.appointmentId, 'clinic');
+        return await this.confirmationService.generateCheckInQR(
+          pluginData.appointmentId,
+          'clinic',
+          scope
+        );
 
       case 'processCheckIn':
         if (!pluginData.qrData || !pluginData.appointmentId) {
@@ -54,7 +71,8 @@ export class ClinicConfirmationPlugin extends BaseAppointmentPlugin {
         return await this.confirmationService.processCheckIn(
           pluginData.qrData,
           pluginData.appointmentId,
-          'clinic'
+          'clinic',
+          scope
         );
 
       case 'confirmAppointment':
@@ -63,7 +81,8 @@ export class ClinicConfirmationPlugin extends BaseAppointmentPlugin {
         }
         return await this.confirmationService.confirmAppointment(
           pluginData.appointmentId,
-          'clinic'
+          'clinic',
+          scope
         );
 
       case 'markAppointmentCompleted':
@@ -81,6 +100,7 @@ export class ClinicConfirmationPlugin extends BaseAppointmentPlugin {
               medications: pluginData.medications,
               clinicId: pluginData.clinicId,
               userId: pluginData.userId,
+              caller: scope.caller,
             }
           );
         }
@@ -106,7 +126,8 @@ export class ClinicConfirmationPlugin extends BaseAppointmentPlugin {
         }
         return await this.confirmationService.generateConfirmationQR(
           pluginData.appointmentId,
-          'clinic'
+          'clinic',
+          scope
         );
 
       case 'verifyAppointmentQR':
@@ -123,7 +144,7 @@ export class ClinicConfirmationPlugin extends BaseAppointmentPlugin {
         if (!pluginData.appointmentId) {
           throw new Error('Missing required field appointmentId for invalidateQRCache');
         }
-        return await this.confirmationService.invalidateQRCache(pluginData.appointmentId);
+        return await this.confirmationService.invalidateQRCache(pluginData.appointmentId, scope);
 
       default:
         await this.logPluginError('Unknown confirmation operation', {

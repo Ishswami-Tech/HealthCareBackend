@@ -319,6 +319,7 @@ export class CommunicationService implements OnModuleInit {
               continue;
             }
 
+            const inboxFields = this.buildInboxFields(request);
             const notification = await this.databaseService.executeWrite(
               async prisma => {
                 const client = this.databaseService['toTransactionClient'](prisma);
@@ -333,6 +334,10 @@ export class CommunicationService implements OnModuleInit {
                         deliveryStatus: string;
                         channel: string;
                         clinicId: string | null;
+                        title: string | null;
+                        category: string;
+                        data: Record<string, unknown>;
+                        appointmentId: string | null;
                       };
                     }) => Promise<{ id: string }>;
                   };
@@ -345,6 +350,7 @@ export class CommunicationService implements OnModuleInit {
                     status: 'PENDING',
                     deliveryStatus: 'PENDING',
                     channel: finalChannels[0] || 'email',
+                    ...inboxFields,
                     clinicId:
                       request.metadata &&
                       typeof request.metadata === 'object' &&
@@ -1006,6 +1012,69 @@ export class CommunicationService implements OnModuleInit {
   /**
    * Map channel to notification type
    */
+  /**
+   * In-app inbox columns derived from the request: the heading, the coarse category the clients
+   * filter on, a JSON-safe deep-link payload and the linked appointment (read from `data` or
+   * `data.metadata` / `metadata`, which is where the event listener puts it).
+   */
+  buildInboxFields(request: CommunicationRequest): {
+    title: string | null;
+    category: string;
+    data: Record<string, unknown>;
+    appointmentId: string | null;
+  } {
+    const data = this.toJsonSafeRecord(request.data);
+    const nested = this.toJsonSafeRecord(data['metadata']);
+    const metadata = this.toJsonSafeRecord(request.metadata);
+    const appointmentId = [
+      data['appointmentId'],
+      nested['appointmentId'],
+      metadata['appointmentId'],
+    ]
+      .map(value => (typeof value === 'string' ? value.trim() : ''))
+      .find(value => value.length > 0);
+
+    return {
+      title: request.title?.trim() ? request.title.trim() : null,
+      category: this.mapCategoryToInboxCategory(request.category),
+      data: {
+        ...data,
+        ...(appointmentId ? { appointmentId } : {}),
+      },
+      appointmentId: appointmentId ?? null,
+    };
+  }
+
+  private toJsonSafeRecord(value: unknown): Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return {};
+    }
+    try {
+      return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+
+  private mapCategoryToInboxCategory(category: CommunicationCategory | undefined): string {
+    switch (category) {
+      case CommunicationCategory.APPOINTMENT:
+        return 'APPOINTMENT';
+      case CommunicationCategory.REMINDER:
+        return 'REMINDER';
+      case CommunicationCategory.PRESCRIPTION:
+        return 'PRESCRIPTION';
+      case CommunicationCategory.BILLING:
+        return 'BILLING';
+      case CommunicationCategory.EHR_RECORD:
+        return 'EHR';
+      case CommunicationCategory.CHAT:
+        return 'CHAT';
+      default:
+        return 'SYSTEM';
+    }
+  }
+
   private mapChannelToNotificationType(
     channel: CommunicationChannel
   ): 'EMAIL' | 'SMS' | 'PUSH_NOTIFICATION' {

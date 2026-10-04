@@ -1,4 +1,4 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, HttpStatus } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { LoggingService } from '@infrastructure/logging';
 import { DatabaseService } from '@infrastructure/database/database.service';
@@ -19,20 +19,43 @@ import {
   buildConsultationSession,
   buildTokenResponse,
   upsertConsultationRecord,
-  setConsultationStatus,
+  markConsultationActive,
+  markConsultationEnded,
+  type RoomTerminatingVideoProvider,
 } from './video-provider.helpers';
+
+/** Room names are `daily-appointment-<appointmentId UUID>-<12 hex hash>` (see buildStableRoomName). */
+const ROOM_NAME_APPOINTMENT_ID_PATTERN =
+  /^daily-appointment-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-[0-9a-f]{12}$/i;
+
+/** The appointment id inside a Daily room name, or '' when the name is not one of ours. */
+export function parseAppointmentIdFromRoomName(roomName: string): string {
+  return ROOM_NAME_APPOINTMENT_ID_PATTERN.exec(roomName)?.[1] ?? '';
+}
 
 type DailyRoomResponse = {
   name?: string;
   url?: string;
+  privacy?: string;
 };
+
+type DailyConfig = NonNullable<VideoProviderConfig['daily']>;
+
+/** Upper bound on remembered room names so a long-lived process cannot grow the set forever. */
+const MAX_PRIVACY_RECONCILED_ROOMS = 5000;
+
+/**
+ * After a failed privacy update (429, timeout, 5xx) the room stays joinable without a token, so
+ * the update is retried - but not on every token request, which would hammer a degraded Daily API.
+ */
+const PRIVACY_RETRY_AFTER_FAILURE_MS = 60_000;
 
 type DailyMeetingTokenResponse = {
   token?: string;
 };
 
 @Injectable()
-export class DailyVideoProvider implements IVideoProvider {
+export class DailyVideoProvider implements IVideoProvider, RoomTerminatingVideoProvider {
   readonly providerName: VideoProviderType = 'daily';
   // None of the fetch() calls to the Daily.co API below passed a timeout, so
   // Node's undici fetch has no bound and a slow/degraded Daily API can hang
@@ -43,6 +66,15 @@ export class DailyVideoProvider implements IVideoProvider {
   // rejects the same way a network error already did, so callers/fallback
   // logic are unaffected.
   private readonly DAILY_FETCH_TIMEOUT_MS = 10000;
+  private publicRoomWarningLogged = false;
+  // Rooms whose privacy update SUCCEEDED in this process. Room names are deterministic per
+  // appointment, so an existing room is looked up on every token request; this keeps a successful
+  // privacy update to one Daily call per room per process.
+  private readonly privacyReconciledRooms = new Set<string>();
+  // Rooms whose privacy update FAILED, with the time before which it is not attempted again.
+  private readonly privacyRetryNotBefore = new Map<string, number>();
+  // Rooms with a privacy update on the wire right now (concurrent token requests share it).
+  private readonly privacyUpdatesInFlight = new Set<string>();
 
   private async fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
     const controller = new AbortController();
@@ -100,6 +132,28 @@ export class DailyVideoProvider implements IVideoProvider {
     return `${baseUrl.replace(/\/+$/, '')}/${encodeURIComponent(roomName)}`;
   }
 
+  /**
+   * Public Daily rooms can be joined by anyone who learns the room URL (meeting tokens only add
+   * owner rights). DAILY_PRIVACY defaults to 'private', so this only fires when someone sets
+   * DAILY_PRIVACY=public explicitly. It warns - once per process - instead of overriding them.
+   */
+  private warnIfPublicRoomsInProduction(config: { privacy: 'public' | 'private' }): void {
+    if (this.publicRoomWarningLogged || config.privacy !== 'public') {
+      return;
+    }
+    if (!this.configService.isProduction()) {
+      return;
+    }
+    this.publicRoomWarningLogged = true;
+    void this.loggingService.log(
+      LogType.SECURITY,
+      LogLevel.WARN,
+      "Daily rooms are being created with privacy 'public' in production. Anyone with a room URL can join a consultation without a meeting token. Remove DAILY_PRIVACY=public (private is the default) to require tokens.",
+      'DailyVideoProvider.createRoom',
+      { privacy: config.privacy }
+    );
+  }
+
   private getDailyApiBaseUrl(): string {
     const config = this.getDailyConfig();
     if (!config || !config.enabled) {
@@ -133,10 +187,123 @@ export class DailyVideoProvider implements IVideoProvider {
     }
 
     const payload = (await response.json()) as DailyRoomResponse;
+    await this.ensureRoomPrivacy(roomName, payload.privacy, config);
     return {
       roomName: payload.name || roomName,
       roomUrl: payload.url || '',
     };
+  }
+
+  private rememberPrivacyReconciledRoom(roomName: string): void {
+    if (this.privacyReconciledRooms.size >= MAX_PRIVACY_RECONCILED_ROOMS) {
+      // Set iterates in insertion order, so the first value is the oldest room.
+      const oldest = this.privacyReconciledRooms.values().next();
+      if (!oldest.done) {
+        this.privacyReconciledRooms.delete(oldest.value);
+      }
+    }
+    this.privacyReconciledRooms.add(roomName);
+    this.privacyRetryNotBefore.delete(roomName);
+  }
+
+  private rememberPrivacyUpdateFailure(roomName: string): void {
+    if (this.privacyRetryNotBefore.size >= MAX_PRIVACY_RECONCILED_ROOMS) {
+      // Map iterates in insertion order, so the first key is the oldest failure.
+      const oldest = this.privacyRetryNotBefore.keys().next();
+      if (!oldest.done) {
+        this.privacyRetryNotBefore.delete(oldest.value);
+      }
+    }
+    this.privacyRetryNotBefore.set(roomName, Date.now() + PRIVACY_RETRY_AFTER_FAILURE_MS);
+  }
+
+  /** True while a recent failed update means the next attempt has to wait. */
+  private isPrivacyUpdateBackedOff(roomName: string): boolean {
+    const notBefore = this.privacyRetryNotBefore.get(roomName);
+    return notBefore !== undefined && Date.now() < notBefore;
+  }
+
+  /**
+   * Rooms are looked up by a deterministic name and reused, so a room created while
+   * DAILY_PRIVACY was 'public' stays joinable by anyone with its URL. When the configured
+   * privacy is 'private' and an existing room reports anything else, switch it to private.
+   *
+   * Best effort: a room is only remembered as reconciled AFTER Daily accepted the update, so one
+   * 429, timeout or 5xx does not leave it public for the rest of the process - a failed update is
+   * retried on a later token request once PRIVACY_RETRY_AFTER_FAILURE_MS has passed. It uses the
+   * same timeout as every other Daily call and logs a failure instead of throwing: a failed
+   * update must never block a patient or doctor from joining. A room is never downgraded to
+   * public.
+   */
+  private async ensureRoomPrivacy(
+    roomName: string,
+    currentPrivacy: string | undefined,
+    config: DailyConfig
+  ): Promise<void> {
+    if (config.privacy !== 'private' || currentPrivacy === 'private') {
+      return;
+    }
+    if (
+      this.privacyReconciledRooms.has(roomName) ||
+      this.privacyUpdatesInFlight.has(roomName) ||
+      this.isPrivacyUpdateBackedOff(roomName)
+    ) {
+      return;
+    }
+    this.privacyUpdatesInFlight.add(roomName);
+
+    try {
+      // Only `privacy` is sent: omitting `properties` leaves the room's other settings untouched.
+      const response = await this.fetchWithTimeout(
+        `${this.getDailyApiBaseUrl()}/rooms/${encodeURIComponent(roomName)}`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${config.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ privacy: 'private' }),
+        }
+      );
+
+      if (!response.ok) {
+        this.rememberPrivacyUpdateFailure(roomName);
+        this.logPrivacyUpdateFailure(roomName, currentPrivacy, `status ${response.status}`);
+        return;
+      }
+
+      this.rememberPrivacyReconciledRoom(roomName);
+      void this.loggingService.log(
+        LogType.SECURITY,
+        LogLevel.INFO,
+        "Existing Daily room switched to privacy 'private'",
+        'DailyVideoProvider.ensureRoomPrivacy',
+        { roomName, previousPrivacy: currentPrivacy ?? 'unknown' }
+      );
+    } catch (error: unknown) {
+      this.rememberPrivacyUpdateFailure(roomName);
+      this.logPrivacyUpdateFailure(
+        roomName,
+        currentPrivacy,
+        error instanceof Error ? error.message : 'unknown error'
+      );
+    } finally {
+      this.privacyUpdatesInFlight.delete(roomName);
+    }
+  }
+
+  private logPrivacyUpdateFailure(
+    roomName: string,
+    currentPrivacy: string | undefined,
+    reason: string
+  ): void {
+    void this.loggingService.log(
+      LogType.SECURITY,
+      LogLevel.WARN,
+      `Could not switch existing Daily room to privacy 'private' (${reason}); it stays joinable without a meeting token until a retry succeeds`,
+      'DailyVideoProvider.ensureRoomPrivacy',
+      { roomName, previousPrivacy: currentPrivacy ?? 'unknown' }
+    );
   }
 
   private async createRoom(
@@ -152,6 +319,8 @@ export class DailyVideoProvider implements IVideoProvider {
     if (existingRoom) {
       return existingRoom;
     }
+
+    this.warnIfPublicRoomsInProduction(config);
 
     const response = await this.fetchWithTimeout(`${this.getDailyApiBaseUrl()}/rooms`, {
       method: 'POST',
@@ -207,7 +376,7 @@ export class DailyVideoProvider implements IVideoProvider {
           room_name: roomName,
           exp: Math.floor(Date.now() / 1000) + config.roomDurationMinutes * 60,
           user_name: userInfo.displayName || 'Participant',
-          user_id: userId.slice(0, 36),
+          ...(userId ? { user_id: userId.slice(0, 36) } : {}),
           is_owner: userRole !== 'patient',
           enable_screenshare: true,
           start_video_off: false,
@@ -247,7 +416,7 @@ export class DailyVideoProvider implements IVideoProvider {
       throw new HealthcareError(
         ErrorCode.DATABASE_RECORD_NOT_FOUND,
         `Appointment ${appointmentId} not found`,
-        undefined,
+        HttpStatus.NOT_FOUND,
         { appointmentId },
         'DailyVideoProvider.generateMeetingToken'
       );
@@ -306,20 +475,21 @@ export class DailyVideoProvider implements IVideoProvider {
 
   async startConsultation(
     appointmentId: string,
-    _userId: string,
-    _userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
+    userId: string,
+    userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
   ): Promise<VideoConsultationSession> {
     const existing = await this.getConsultationSession(appointmentId);
     if (!existing) {
-      await this.generateMeetingToken(appointmentId, '', 'doctor', {
-        displayName: 'Doctor',
+      // Creates the Daily room + VideoConsultation row. Use the real caller so the
+      // Daily meeting-token request never carries an empty user_id.
+      await this.generateMeetingToken(appointmentId, userId, userRole, {
+        displayName: userRole === 'patient' ? 'Patient' : 'Doctor',
         email: '',
       });
     }
 
-    const session = await setConsultationStatus(this.databaseService, appointmentId, 'ACTIVE', {
-      startTime: new Date(),
-    });
+    // startTime is stamped once; a repeat start never resets it or revives a finished call.
+    const session = await markConsultationActive(this.databaseService, appointmentId);
     if (!session) {
       throw new Error(`Failed to start consultation for appointment ${appointmentId}`);
     }
@@ -331,13 +501,46 @@ export class DailyVideoProvider implements IVideoProvider {
     _userId: string,
     _userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
   ): Promise<VideoConsultationSession> {
-    const session = await setConsultationStatus(this.databaseService, appointmentId, 'ENDED', {
-      endTime: new Date(),
-    });
+    const session = await markConsultationEnded(this.databaseService, appointmentId);
     if (!session) {
-      throw new Error(`Consultation session not found for appointment ${appointmentId}`);
+      throw new HealthcareError(
+        ErrorCode.DATABASE_RECORD_NOT_FOUND,
+        `Consultation session not found for appointment ${appointmentId}`,
+        HttpStatus.NOT_FOUND,
+        { appointmentId },
+        'DailyVideoProvider.endConsultation'
+      );
     }
     return buildConsultationSession(session, this.providerName);
+  }
+
+  /**
+   * Delete the Daily room: everyone in it is ejected at once and the room link stops working.
+   * A room that Daily no longer knows (404) counts as already terminated. Same 10 second timeout
+   * as every other Daily call; a refusal or an outage rejects so the caller can tell the admin.
+   */
+  async terminateRoom(roomName: string): Promise<void> {
+    const config = this.getDailyConfig();
+    if (!config || !config.enabled) {
+      throw new Error('Daily is not enabled');
+    }
+
+    const response = await this.fetchWithTimeout(
+      `${this.getDailyApiBaseUrl()}/rooms/${encodeURIComponent(roomName)}`,
+      {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+      }
+    );
+
+    if (!response.ok && response.status !== 404) {
+      throw new Error(`Daily room delete failed with status ${response.status}`);
+    }
+
+    this.privacyReconciledRooms.delete(roomName);
+    this.privacyRetryNotBefore.delete(roomName);
   }
 
   async getConsultationSession(appointmentId: string): Promise<VideoConsultationSession | null> {
@@ -376,18 +579,15 @@ export class DailyVideoProvider implements IVideoProvider {
 
   async listActiveSessions(): Promise<VideoConsultationSession[]> {
     const config = this.getDailyConfig();
-    if (!config?.enabled || !config.apiKey || !config.domain) {
+    if (!config?.enabled || !config.apiKey) {
       return [];
     }
 
-    const apiKey = config.apiKey;
-    const domain = config.domain;
-    const apiUrl = domain.replace(/\/$/, '') + '/rooms';
-
-    const response = await fetch(apiUrl, {
+    // Same API base, auth and 10 second timeout as every other Daily REST call.
+    const response = await this.fetchWithTimeout(`${this.getDailyApiBaseUrl()}/rooms`, {
       method: 'GET',
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${config.apiKey}`,
         'Content-Type': 'application/json',
       },
     });
@@ -417,7 +617,7 @@ export class DailyVideoProvider implements IVideoProvider {
 
     return rooms.map(room => {
       const roomId = room.name || '';
-      const extractedAppointmentId = /-([0-9a-f]{12})$/.exec(roomId)?.[1] || '';
+      const extractedAppointmentId = parseAppointmentIdFromRoomName(roomId);
 
       return {
         id: roomId,

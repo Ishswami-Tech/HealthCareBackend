@@ -305,6 +305,31 @@ function main() {
 
     // Clean output
     fs.rmSync(path.join(process.cwd(), 'dist'), { recursive: true, force: true });
+    // @swc/core >= 1.16 materialises its native binary into a cache directory and refuses any
+    // directory whose ancestor chain grants write/delete rights to other accounts. On Windows the
+    // default root (%LOCALAPPDATA%\swc) fails that check whenever an app-container SID has rights on
+    // AppData\Local, and drive roots fail because of Authenticated Users. A directory directly under
+    // the user profile passes, so point SWC there unless the caller already chose a root. The
+    // directory is created with inheritance removed (user, SYSTEM, Administrators only) when missing.
+    if (process.platform === 'win32' && !process.env.SWC_NATIVE_BINDING_CACHE) {
+      const profileDir = process.env.USERPROFILE;
+      if (profileDir) {
+        const swcCacheDir = path.join(profileDir, '.swc-native-cache');
+        if (!fs.existsSync(swcCacheDir)) {
+          fs.mkdirSync(swcCacheDir, { recursive: true });
+          try {
+            const owner = process.env.USERNAME || '';
+            execSync(
+              `icacls "${swcCacheDir}" /inheritance:r /grant:r "${owner}:(OI)(CI)F" /grant:r "SYSTEM:(OI)(CI)F" /grant:r "Administrators:(OI)(CI)F"`,
+              { stdio: 'ignore' }
+            );
+          } catch {
+            logWarning('Could not tighten the SWC native cache ACL; SWC may refuse the cache');
+          }
+        }
+        process.env.SWC_NATIVE_BINDING_CACHE = swcCacheDir;
+      }
+    }
     const buildResult = runCommand(
       `${envPrefix} swc src -d dist --copy-files --strip-leading-paths --config-file .swcrc`,
       `Building for ${environment} environment`

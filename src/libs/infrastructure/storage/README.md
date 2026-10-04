@@ -97,6 +97,31 @@ const downloadUrl = await this.storageService.getSignedUrl(
 return { downloadUrl };
 ```
 
+### Example 3: Private documents served via presigned URLs
+
+Patient documents (`documents/`) and medical-record files (`medical-records/`) are
+uploaded **private** (`uploadFile(..., isPublic = false)`, no public-read ACL). The
+stored `fileUrl` is never handed to clients directly; resolve it first:
+
+```typescript
+// own-bucket object -> presigned GET URL, valid 15 minutes (PRIVATE_ASSET_URL_TTL_SECONDS)
+// local-disk URL (/storage/...), S3 off, foreign host, other folder -> returned unchanged
+// presign failure -> stored URL + a warning (the URL itself is never logged); never throws
+const url = await this.staticAssetService.resolveSignedUrl(record.fileUrl);
+
+// Lower-level: presign a known object key (throws when S3 is disabled)
+const signed = await this.staticAssetService.getSignedDownloadUrl(key, 300);
+```
+
+Only URLs that point into the configured bucket under `documents/` or
+`medical-records/` are ever presigned (`S3StorageService.resolveOwnedObjectKey`);
+a tampered or client-supplied URL cannot make the API sign an arbitrary object.
+Objects uploaded before this change are still `public-read` until their ACL is reset
+to private (`aws s3api put-object-acl --acl private --bucket <bucket> --key <key>
+--endpoint-url <S3_ENDPOINT>`); presigned URLs work for them too. Private uploads send
+no ACL, so they work with or without the bucket's "Block public ACLs" setting; only
+genuinely public assets (e.g. QR codes) need public ACLs to be allowed.
+
 ---
 
 ## Related Documentation

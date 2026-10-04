@@ -6,6 +6,7 @@ import {
   Param,
   Delete,
   Put,
+  Patch,
   Query,
   UseGuards,
   Request,
@@ -49,7 +50,7 @@ export class ClinicLocationController {
   @RequireResourcePermission('clinics', 'create')
   @InvalidateClinicCache({
     tags: ['clinic_locations', 'clinic:{clinicId}'],
-    patterns: ['clinic_locations:*', 'clinic_location:*'],
+    patterns: ['clinic_locations:{clinicId}:*', 'clinic_location:{clinicId}:*'],
   })
   @ApiOperation({ summary: 'Create a new clinic location' })
   @ApiBody({ type: CreateClinicLocationDto })
@@ -68,6 +69,11 @@ export class ClinicLocationController {
     return await this.locationService.createClinicLocation(
       {
         ...createLocationDto,
+        // Optional on the DTO, required (possibly empty) strings on the create input.
+        zipCode: createLocationDto.zipCode ?? '',
+        phone: createLocationDto.phone ?? '',
+        email: createLocationDto.email ?? '',
+        timezone: createLocationDto.timezone ?? 'Asia/Kolkata',
         clinicId,
         locationId: `LOC-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         workingHours:
@@ -88,6 +94,9 @@ export class ClinicLocationController {
     Role.CLINIC_LOCATION_HEAD,
     Role.DOCTOR,
     Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.THERAPIST,
+    Role.COUNSELOR,
     Role.RECEPTIONIST,
     Role.PATIENT
   )
@@ -130,7 +139,10 @@ export class ClinicLocationController {
     Role.PATIENT
   )
   @CacheDecorator({
-    keyTemplate: 'clinic_location:{id}',
+    // The clinic is part of the key: this controller has no ClinicGuard, so a key without it would
+    // replay one clinic's location to a request addressed to another clinic (the handler's
+    // clinic-ownership check does not run on a hit).
+    keyTemplate: 'clinic_location:{clinicId}:{id}',
     ttl: 1800, // 30 minutes
     tags: ['clinic_locations', 'clinic_location:{id}'],
     enableSWR: true,
@@ -157,7 +169,7 @@ export class ClinicLocationController {
   @RequireResourcePermission('clinics', 'update')
   @InvalidateClinicCache({
     tags: ['clinic_locations', 'clinic:{clinicId}', 'clinic_location:{id}'],
-    patterns: ['clinic_locations:*', 'clinic_location:*'],
+    patterns: ['clinic_locations:{clinicId}:*', 'clinic_location:{clinicId}:*'],
   })
   @ApiOperation({ summary: 'Update a clinic location' })
   @ApiBody({ type: UpdateClinicLocationDto })
@@ -202,12 +214,36 @@ export class ClinicLocationController {
     return await this.locationService.updateLocation(id, updateData, userId);
   }
 
+  /** PATCH alias of PUT :id (the web sends PATCH); same body, roles, permission and cache busting. */
+  @Patch(':id')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.CLINIC_LOCATION_HEAD)
+  @RequireResourcePermission('clinics', 'update')
+  @InvalidateClinicCache({
+    tags: ['clinic_locations', 'clinic:{clinicId}', 'clinic_location:{id}'],
+    patterns: ['clinic_locations:{clinicId}:*', 'clinic_location:{clinicId}:*'],
+  })
+  @ApiOperation({ summary: 'Update a clinic location (PATCH alias of PUT)' })
+  @ApiBody({ type: UpdateClinicLocationDto })
+  @ApiResponse({ status: 200, description: 'The location has been successfully updated.' })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  @ApiResponse({ status: 404, description: 'Location not found.' })
+  @ApiParam({ name: 'clinicId', description: 'ID of the clinic' })
+  @ApiParam({ name: 'id', description: 'ID of the location' })
+  async patch(
+    @Param('id') id: string,
+    @Param('clinicId', ClinicIdPipe) clinicId: string,
+    @Body() updateLocationDto: UpdateClinicLocationDto,
+    @Request() req: { user?: { id?: string; sub?: string } }
+  ): Promise<ClinicLocationResponseDto> {
+    return this.update(id, clinicId, updateLocationDto, req);
+  }
+
   @Put(':id/working-hours')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.CLINIC_LOCATION_HEAD, Role.RECEPTIONIST)
   @RequireResourcePermission('clinics', 'update')
   @InvalidateClinicCache({
     tags: ['clinic_locations', 'clinic:{clinicId}', 'clinic_location:{id}'],
-    patterns: ['clinic_locations:*', 'clinic_location:*'],
+    patterns: ['clinic_locations:{clinicId}:*', 'clinic_location:{clinicId}:*'],
   })
   @ApiOperation({ summary: 'Update clinic location working hours' })
   @ApiBody({
@@ -248,7 +284,7 @@ export class ClinicLocationController {
   @RequireResourcePermission('clinics', 'delete')
   @InvalidateClinicCache({
     tags: ['clinic_locations', 'clinic:{clinicId}', 'clinic_location:{id}'],
-    patterns: ['clinic_locations:*', 'clinic_location:*'],
+    patterns: ['clinic_locations:{clinicId}:*', 'clinic_location:{clinicId}:*'],
   })
   @ApiOperation({ summary: 'Delete a clinic location' })
   @ApiResponse({

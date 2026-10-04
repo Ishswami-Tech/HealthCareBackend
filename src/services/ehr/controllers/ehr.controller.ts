@@ -13,6 +13,7 @@ import {
   Request,
   ForbiddenException,
   BadRequestException,
+  NotFoundException,
 } from '@nestjs/common';
 import { EHRService } from '@services/ehr/ehr.service';
 import {
@@ -39,6 +40,9 @@ import {
   CreateMedicalRecordDto,
   UpdateMedicalRecordDto,
   MedicalRecordFilterDto,
+  MedicationAdherenceQueryDto,
+  MarkMedicationDoseDto,
+  normaliseMedicalRecordType,
 } from '@dtos/ehr.dto';
 import type {
   MedicalHistoryResponse,
@@ -56,6 +60,7 @@ import { RolesGuard } from '@core/guards/roles.guard';
 import { ClinicGuard } from '@core/guards/clinic.guard';
 import { ProfileCompletionGuard } from '@core/guards/profile-completion.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
+import { PatientSelfAccessGuard } from '@core/guards/patient-self-access.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
 import { RequiresProfileCompletion } from '@core/decorators/profile-completion.decorator';
@@ -64,36 +69,25 @@ import { PatientCache } from '@core/decorators';
 import { Role } from '@core/types/enums.types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 
-// Fastify file upload decorator (matches patients.controller pattern)
-import { createParamDecorator, ExecutionContext } from '@nestjs/common';
-
-export interface MulterFile {
-  filename: string;
-  buffer: Buffer;
-  mimetype: string;
-  originalname: string;
-  size: number;
-}
-
-export const FastifyFile = createParamDecorator(
-  (_data: unknown, ctx: ExecutionContext): MulterFile => {
-    const req = ctx.switchToHttp().getRequest<import('fastify').FastifyRequest>();
-    const items = req.files as unknown as unknown[];
-    if (!items || items.length === 0) return null as unknown as MulterFile;
-    const item = items[0] as Record<string, unknown>;
-    return {
-      filename: (item['filename'] as string) ?? 'upload',
-      buffer: (item['file'] as { buffer?: Buffer } | undefined)?.buffer ?? Buffer.from([]),
-      mimetype: (item['mimetype'] as string) ?? 'application/octet-stream',
-      originalname: (item['originalname'] as string) ?? 'upload',
-      size: (item['file'] as { buffer?: Buffer } | undefined)?.buffer?.length ?? 0,
-    };
-  }
-);
+// `@fastify/multipart` runs with attachFieldsToBody (the file is on `req.body.file`),
+// not as `req.files`; this decorator reads it from there.
+import {
+  FastifyFile,
+  type MulterFile,
+} from '@services/patient-visits/utils/fastify-file.decorator';
 
 @ApiTags('ehr')
 @Controller('ehr')
-@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard, ProfileCompletionGuard)
+@UseGuards(
+  JwtAuthGuard,
+  RolesGuard,
+  ClinicGuard,
+  RbacGuard,
+  // PATIENT callers may only address `:userId` / `:patientId` routes with their own
+  // id or the id of an ACTIVE dependent (RbacGuard alone lets any PATIENT through).
+  PatientSelfAccessGuard,
+  ProfileCompletionGuard
+)
 @RequiresProfileCompletion()
 export class EHRController {
   constructor(private readonly ehrService: EHRService) {}
@@ -137,12 +131,14 @@ export class EHRController {
     Role.SUPER_ADMIN
   )
   @RequireResourcePermission('ehr', 'read', { requireOwnership: true })
-  async getEHRAISummary(@Param('patientId') patientId: string): Promise<EHRAISummaryDto> {
-    // Summary might cross-reference, but usually we want comprehensive.
-    // Keeping as is for now unless specifically requested, or adding clinicId if available?
-    // The service method getEHRAISummary wasn't updated in previous step (I missed it or it wasn't there).
-    // I'll leave it for now or check if getEHRAISummary calls getComprehensiveHealthRecord internaly?
-    return this.ehrService.getEHRAISummary(patientId);
+  async getEHRAISummary(
+    @Param('patientId') patientId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<EHRAISummaryDto> {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context. PATIENT callers
+    // are limited to their own / dependents' ids by PatientSelfAccessGuard.
+    const clinicId = req.clinicContext?.clinicId;
+    return this.ehrService.getEHRAISummary(patientId, clinicId);
   }
 
   @Post('prescriptions')
@@ -751,16 +747,22 @@ export class EHRController {
   @Put('immunizations/:id')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'update')
-  async updateImmunization(@Param('id') id: string, @Body() updateDto: UpdateImmunizationDto) {
-    return this.ehrService.updateImmunization(id, updateDto);
+  async updateImmunization(
+    @Param('id') id: string,
+    @Body() updateDto: UpdateImmunizationDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    return this.ehrService.updateImmunization(id, updateDto, clinicId);
   }
 
   @Delete('immunizations/:id')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'delete')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async deleteImmunization(@Param('id') id: string) {
-    await this.ehrService.deleteImmunization(id);
+  async deleteImmunization(@Param('id') id: string, @Request() req: ClinicAuthenticatedRequest) {
+    const clinicId = req.clinicContext?.clinicId;
+    await this.ehrService.deleteImmunization(id, clinicId);
   }
 
   // ============ Analytics ============
@@ -798,7 +800,7 @@ export class EHRController {
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'read', { requireOwnership: true })
   @PatientCache({
-    keyTemplate: 'ehr:analytics:medication-adherence:{userId}',
+    keyTemplate: 'ehr:analytics:medication-adherence:{userId}:{startDate}:{endDate}',
     ttl: 300, // 5 minutes (analytics change frequently)
     tags: ['ehr', 'analytics', 'medication_adherence', 'user:{userId}'],
     containsPHI: true,
@@ -807,18 +809,51 @@ export class EHRController {
   })
   async getMedicationAdherence(
     @Param('userId') userId: string,
+    @Query() query: MedicationAdherenceQueryDto,
     @Request() req: ClinicAuthenticatedRequest
   ) {
     // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
     const clinicId = req.clinicContext?.clinicId;
-    return this.ehrService.getMedicationAdherence(userId, clinicId);
+    return this.ehrService.getMedicationAdherence(userId, clinicId, query);
+  }
+
+  /**
+   * PATIENT marks one dose of their own medication as taken (`taken: false` undoes it).
+   * Idempotent per (medication, day, dose). 403 for another patient's medication.
+   */
+  @Post('medications/:id/doses')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.PATIENT)
+  @RequireResourcePermission('medications', 'log')
+  async markMedicationDose(
+    @Param('id') id: string,
+    @Body() dto: MarkMedicationDoseDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const userId = req.user?.id ?? req.user?.sub;
+    if (!userId) throw new ForbiddenException('User not found in token');
+    return this.ehrService.markMedicationDose(
+      id,
+      dto,
+      { userId, role: req.user?.role },
+      req.clinicContext?.clinicId
+    );
   }
 
   // ============ Medical Records ============
 
+  // PATIENT: own chart only, type LAB_TEST / GENERAL_DOCUMENT (aliases LAB_REPORT / OTHER),
+  // doctor attribution resolved server-side (see EHRService.createMedicalRecord).
   @Post('medical-records')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.NURSE, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN,
+    Role.PATIENT
+  )
   @RequireResourcePermission('medical-records', 'create')
   async createMedicalRecord(
     @Body() createDto: CreateMedicalRecordDto,
@@ -826,19 +861,24 @@ export class EHRController {
   ) {
     const clinicId = req.clinicContext?.clinicId;
     if (!clinicId) throw new ForbiddenException('Clinic context required for EHR writes');
-    const uploaderId = req.user?.id ?? createDto.uploadedBy;
+    const isPatient = req.user?.role === Role.PATIENT;
+    const uploaderId = req.user?.id ?? (isPatient ? undefined : createDto.uploadedBy);
     if (!uploaderId) throw new BadRequestException('uploadedBy is required');
     const recordData: CreateMedicalRecordInput = {
       userId: createDto.userId,
       clinicId,
-      type: createDto.type,
+      type: normaliseMedicalRecordType(createDto.type),
       title: createDto.title,
       uploadedBy: uploaderId,
     };
-    if (createDto.doctorId) recordData.doctorId = createDto.doctorId;
+    // A patient never names the attributed doctor.
+    if (createDto.doctorId && !isPatient) recordData.doctorId = createDto.doctorId;
     if (createDto.content) recordData.content = createDto.content;
     if (createDto.notes) recordData.notes = createDto.notes;
-    return this.ehrService.createMedicalRecord(recordData);
+    return this.ehrService.createMedicalRecord(
+      recordData,
+      isPatient ? { userId: uploaderId, role: req.user?.role } : undefined
+    );
   }
 
   @Get('medical-records/patient/:patientId')
@@ -879,7 +919,13 @@ export class EHRController {
   @RequireResourcePermission('medical-records', 'read')
   async getMedicalRecordById(@Param('id') id: string, @Request() req: ClinicAuthenticatedRequest) {
     const clinicId = req.clinicContext?.clinicId;
-    return this.ehrService.getMedicalRecordById(id, clinicId);
+    // The record's owner is only known after loading it, so PATIENT ownership
+    // (self or ACTIVE dependent) is enforced inside the service.
+    const viewerUserId = req.user?.id ?? req.user?.sub;
+    return this.ehrService.getMedicalRecordById(id, clinicId, {
+      userId: viewerUserId ?? '',
+      role: req.user?.role,
+    });
   }
 
   @Put('medical-records/:id')
@@ -903,19 +949,36 @@ export class EHRController {
     return { success: result };
   }
 
+  /**
+   * Multipart field `file`: PDF / JPEG / PNG / WebP / HEIC, at most 10 MB.
+   * 400 empty or unsupported file, 413 too large, 404 unknown record (or a record
+   * of another clinic), 500 when the file could not be stored. The response
+   * `fileUrl` is a presigned URL that expires after 15 minutes.
+   */
   @Post('medical-records/:id/upload')
   @HttpCode(HttpStatus.OK)
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.NURSE, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'update')
-  async uploadMedicalRecordFile(@Param('id') id: string, @FastifyFile() file: MulterFile) {
+  async uploadMedicalRecordFile(
+    @Param('id') id: string,
+    @FastifyFile() file: MulterFile | null,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
     if (!file) {
       throw new BadRequestException('File is required for upload');
     }
-    return this.ehrService.uploadMedicalRecordFile(
+    // 🔒 TENANT ISOLATION: only records of the caller's clinic can receive a file
+    const clinicId = req.clinicContext?.clinicId;
+    const uploaded = await this.ehrService.uploadMedicalRecordFile(
       id,
       file.buffer,
       file.originalname,
-      file.mimetype
+      file.mimetype,
+      clinicId
     );
+    if (!uploaded) {
+      throw new NotFoundException(`Medical record with ID ${id} not found`);
+    }
+    return uploaded;
   }
 }

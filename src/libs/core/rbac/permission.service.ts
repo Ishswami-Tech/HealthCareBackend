@@ -971,6 +971,18 @@ export class PermissionService {
           action: '*',
           description: 'Full inventory access',
         },
+        {
+          name: 'Manage Pharmacy Purchase Orders',
+          resource: 'pharmacy_purchase_order',
+          action: '*',
+          description: 'Create, list, read and send pharmacy purchase orders',
+        },
+        {
+          name: 'Manage Pharmacy Inventory Batches',
+          resource: 'pharmacy_inventory',
+          action: '*',
+          description: 'Stock batches, movements, FEFO dispense, expiry alerts and reorder rules',
+        },
 
         // Medications Permissions
         {

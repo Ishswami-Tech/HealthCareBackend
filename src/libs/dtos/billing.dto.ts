@@ -249,7 +249,12 @@ export class CreateInvoiceDto {
   @IsString()
   userId!: string;
 
-  @IsNotEmpty({ message: 'Clinic ID is required' })
+  /**
+   * On `POST /billing/invoices` the controller overwrites this with the guard-validated clinic of
+   * the caller (a body value that names another clinic is refused); it is only required for
+   * internal callers that build the DTO themselves.
+   */
+  @IsOptional()
   @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   clinicId!: string;
 
@@ -536,6 +541,14 @@ export class CreateInPersonSubscriptionAppointmentDto {
   @IsOptional()
   @IsEnum(AppointmentType, { message: 'Type must be a valid appointment type' })
   type?: AppointmentType;
+
+  /**
+   * Optional dependent this visit is for. The core create path verifies it is an active family
+   * member of the booking patient (never another family's member) and stores it on the appointment.
+   */
+  @IsOptional()
+  @IsUUID('4', { message: 'Family member ID must be a valid UUID' })
+  familyMemberId?: string;
 }
 
 export class BillingPlanResponseDto {

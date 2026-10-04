@@ -15,6 +15,8 @@ import {
   ArrayMinSize,
   ArrayMaxSize,
   Matches,
+  Allow,
+  MaxLength,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -406,6 +408,15 @@ export class CreateAppointmentDto {
   @IsUUID('4', { message: 'Location ID must be a valid UUID' })
   locationId?: string;
 
+  @ApiPropertyOptional({
+    example: 'family-member-uuid-123',
+    description:
+      'Family member (dependent of the booking patient) this appointment is for. Omit when the appointment is for the patient themselves.',
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'Family member ID must be a valid UUID' })
+  familyMemberId?: string;
+
   @ApiProperty({
     example: '2024-01-15T10:00:00.000Z',
     description: 'Appointment date and time',
@@ -583,6 +594,15 @@ export class AppointmentServiceMetadataDto {
     description: 'Per-appointment fee used when the selected mode requires direct payment',
   })
   videoConsultationFee?: number;
+
+  @ApiPropertyOptional({
+    example: 300,
+    description:
+      'In-person fee for this service when the catalog defines one. In-clinic visits are usually ' +
+      'subscription-included and the fee is doctor-specific: read `consultationFee` from ' +
+      'GET /clinics/:id/doctors instead when this is unset.',
+  })
+  consultationFee?: number;
 }
 
 export class AppointmentServiceCatalogResponseDto {
@@ -639,6 +659,7 @@ export class UpdateAppointmentDto {
     description: 'New appointment priority level',
     enum: AppointmentPriority,
   })
+  @IsOptional()
   @IsEnum(AppointmentPriority, {
     message: 'Priority must be a valid priority level',
   })
@@ -870,6 +891,89 @@ export class AppointmentResponseDto {
   @IsOptional()
   @IsDateString({}, { message: 'Invoice paid at must be a valid date string' })
   invoicePaidAt?: string | null;
+
+  @ApiPropertyOptional({
+    example: 'General Consultation',
+    description: 'Service label resolved from the treatment catalog (falls back to treatmentType)',
+  })
+  @IsOptional()
+  @IsString({ message: 'Service must be a string' })
+  service?: string;
+
+  @ApiPropertyOptional({
+    example: 500,
+    description:
+      'Amount the visit is billed at (payment amount, then invoice total); same as paymentAmount',
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Fee must be a number' })
+  fee?: number | null;
+
+  @ApiPropertyOptional({
+    example: 7,
+    description:
+      "Stable ticket number from the doctor's live queue (in-person visits checked in today only)",
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Token number must be a number' })
+  tokenNumber?: number | null;
+
+  @ApiPropertyOptional({
+    example: 3,
+    description: "1-based position in the doctor's live queue (today's checked-in visits only)",
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Queue position must be a number' })
+  queuePosition?: number | null;
+
+  @ApiPropertyOptional({
+    example: 30,
+    description: "Estimated wait in minutes from the live queue (today's checked-in visits only)",
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Estimated wait time must be a number' })
+  estimatedWaitTime?: number | null;
+
+  @ApiPropertyOptional({ example: '+919876543210', description: 'Patient phone (flattened)' })
+  @IsOptional()
+  @IsString({ message: 'Patient phone must be a string' })
+  patientPhone?: string | null;
+
+  @ApiPropertyOptional({ example: 'FEMALE', description: 'Patient gender (flattened)' })
+  @IsOptional()
+  @IsString({ message: 'Patient gender must be a string' })
+  patientGender?: string | null;
+
+  @ApiPropertyOptional({ example: 42, description: 'Patient age in years (from date of birth)' })
+  @IsOptional()
+  @IsNumber({}, { message: 'Patient age must be a number' })
+  patientAge?: number | null;
+
+  @ApiPropertyOptional({
+    example: false,
+    description: 'True when the booking metadata marks the visit as a walk-in',
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'isWalkIn must be a boolean' })
+  isWalkIn?: boolean;
+
+  @ApiPropertyOptional({
+    example: 15,
+    description:
+      'Minutes before the scheduled start a video visit can be joined (VIDEO_EARLY_JOIN_MINUTES)',
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Video early join minutes must be a number' })
+  videoEarlyJoinMinutes?: number;
+
+  @ApiPropertyOptional({
+    example: 300,
+    description:
+      'Minutes after the scheduled start a video visit stays joinable (VIDEO_ACTIVE_WINDOW_MINUTES)',
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Video active window minutes must be a number' })
+  videoActiveWindowMinutes?: number;
 
   @ApiPropertyOptional({
     example: 'GENERAL_CONSULTATION',
@@ -1341,6 +1445,29 @@ export class RejectVideoProposalDto {
 // =============================================
 
 /**
+ * Device coordinates (WGS84). Finite numbers only, so a NaN or a string can never slip into a
+ * geofence comparison (every comparison with NaN is false, which used to read as "inside").
+ */
+export class GeoCoordinatesDto {
+  @ApiProperty({ description: 'Latitude in degrees', example: 19.076, minimum: -90, maximum: 90 })
+  @IsNumber({ allowNaN: false, allowInfinity: false }, { message: 'lat must be a finite number' })
+  @Min(-90, { message: 'lat must be between -90 and 90' })
+  @Max(90, { message: 'lat must be between -90 and 90' })
+  lat!: number;
+
+  @ApiProperty({
+    description: 'Longitude in degrees',
+    example: 72.8777,
+    minimum: -180,
+    maximum: 180,
+  })
+  @IsNumber({ allowNaN: false, allowInfinity: false }, { message: 'lng must be a finite number' })
+  @Min(-180, { message: 'lng must be between -180 and 180' })
+  @Max(180, { message: 'lng must be between -180 and 180' })
+  lng!: number;
+}
+
+/**
  * Data Transfer Object for scanning location QR code
  * @class ScanLocationQRDto
  * @description Contains QR code data and optional geofencing information for location-based check-in
@@ -1363,15 +1490,13 @@ export class ScanLocationQRDto {
   qrCode!: string;
 
   @ApiPropertyOptional({
-    description: 'Optional patient coordinates for geofencing validation',
+    description:
+      'Optional patient coordinates ({ lat, lng }) for geofencing validation. The server validates them for patients (finite numbers, inside the location geofence) and ignores them for staff, who never need to prove where they are.',
     required: false,
   })
   @IsOptional()
-  @IsObject({ message: 'Coordinates must be an object' })
-  coordinates?: {
-    lat: number;
-    lng: number;
-  };
+  @Allow()
+  coordinates?: Record<string, number>;
 
   @ApiPropertyOptional({
     description: 'Optional device information',
@@ -1652,6 +1777,18 @@ export class CompleteAppointmentDto {
   followUpInstructions?: string;
 
   @ApiPropertyOptional({
+    description:
+      'Follow-up notes written by the clinician (web "complete visit" form). Used as the follow-up ' +
+      'plan instructions when followUpInstructions is not sent.',
+    required: false,
+    maxLength: 2000,
+  })
+  @IsOptional()
+  @IsString({ message: 'Follow-up notes must be a string' })
+  @MaxLength(2000, { message: 'Follow-up notes cannot exceed 2000 characters' })
+  followUpNotes?: string;
+
+  @ApiPropertyOptional({
     description: 'Follow-up priority',
     enum: FOLLOW_UP_PRIORITY_LEVELS,
     required: false,
@@ -1679,6 +1816,88 @@ export class CompleteAppointmentDto {
   @IsArray({ message: 'Restrictions must be an array' })
   @IsString({ each: true, message: 'Each restriction must be a string' })
   restrictions?: string[];
+}
+
+/**
+ * Body of POST /appointments/:id/mark-no-show (thin alias of PATCH :id/status NO_SHOW).
+ * @class MarkNoShowDto
+ */
+export class MarkNoShowDto {
+  @ApiPropertyOptional({
+    description: 'Why the patient is marked as a no-show',
+    example: 'Patient did not arrive within 30 minutes',
+    maxLength: 500,
+  })
+  @IsOptional()
+  @IsString({ message: 'Reason must be a string' })
+  @MaxLength(500, { message: 'Reason cannot exceed 500 characters' })
+  reason?: string;
+
+  @ApiPropertyOptional({ description: 'Internal notes', maxLength: 1000 })
+  @IsOptional()
+  @IsString({ message: 'Notes must be a string' })
+  @MaxLength(1000, { message: 'Notes cannot exceed 1000 characters' })
+  notes?: string;
+}
+
+/**
+ * One status bucket of the daily summary.
+ * @class AppointmentStatusCountDto
+ */
+export class AppointmentStatusCountDto {
+  @ApiProperty({ enum: AppointmentStatus, example: AppointmentStatus.COMPLETED })
+  status!: string;
+
+  @ApiProperty({ example: 12 })
+  count!: number;
+}
+
+/**
+ * GET /appointments/summary/daily response: a doctor's (or the clinic's) day at a glance.
+ * @class AppointmentDailySummaryDto
+ */
+export class AppointmentDailySummaryDto {
+  @ApiProperty({ example: '2026-10-04', description: 'First day of the range (IST, inclusive)' })
+  startDate!: string;
+
+  @ApiProperty({ example: '2026-10-04', description: 'Last day of the range (IST, inclusive)' })
+  endDate!: string;
+
+  @ApiPropertyOptional({
+    description: 'Doctor the summary is scoped to (Doctor.id); omitted for a clinic-wide summary',
+  })
+  doctorId?: string;
+
+  @ApiProperty({ example: 18 })
+  totalAppointments!: number;
+
+  @ApiProperty({ example: 12 })
+  completed!: number;
+
+  @ApiProperty({ example: 2 })
+  noShows!: number;
+
+  @ApiProperty({ example: 1 })
+  cancelled!: number;
+
+  @ApiProperty({ example: 3, description: 'SCHEDULED / CONFIRMED / IN_PROGRESS visits still open' })
+  pending!: number;
+
+  @ApiProperty({
+    example: 4500,
+    description:
+      'Sum of paid payment amounts of the appointments in the range (payment currency units)',
+  })
+  revenue!: number;
+
+  @ApiProperty({
+    example: 14,
+    description: 'Average consultation length in minutes (completedAt - startedAt); 0 when unknown',
+  })
+  averageConsultationMin!: number;
+
+  @ApiProperty({ type: () => [AppointmentStatusCountDto] })
+  appointmentStatusBreakdown!: AppointmentStatusCountDto[];
 }
 
 /**
@@ -2498,4 +2717,112 @@ export class AssistantDoctorCoverageResponseDto {
     description: 'Assistant doctor coverage configuration persisted for the clinic',
   })
   entries!: AssistantDoctorCoverageAssignmentDto[];
+}
+
+/**
+ * Force check-in request body.
+ *
+ * `coordinates` is deliberately NOT shape-validated here: a PATIENT must be at the clinic, and a
+ * missing, malformed or out-of-range position must produce the same single rejection as a position
+ * that is too far away (see check-in-presence.util.ts), not a different validation error per case.
+ * Staff do not need coordinates. There is no locationId: the appointment's own location decides.
+ */
+export class ForceCheckInDto {
+  @ApiProperty({
+    description: 'Reason for the check-in override (kept in the audit trail)',
+    example: 'Patient arrived late due to traffic',
+  })
+  @IsString({ message: 'Reason must be a string' })
+  @IsNotEmpty({ message: 'Override reason is required for audit logging' })
+  @MaxLength(500, { message: 'Reason must be at most 500 characters' })
+  reason!: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Optional ClinicLocation id (staff only, must match the appointment location). Ignored for patients.',
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'Location ID must be a valid UUID' })
+  locationId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Device coordinates ({ lat, lng }). Required for PATIENT callers, who must be within 200 meters of the clinic.',
+  })
+  @IsOptional()
+  @Allow()
+  coordinates?: Record<string, number>;
+
+  @ApiPropertyOptional({ description: 'Optional device information' })
+  @IsOptional()
+  @IsObject({ message: 'Device info must be an object' })
+  deviceInfo?: Record<string, unknown>;
+}
+
+/**
+ * Create a check-in location (QR point) for the caller's clinic.
+ */
+export class CreateCheckInLocationRequestDto {
+  @ApiProperty({ example: 'Main Reception' })
+  @IsString({ message: 'Location name must be a string' })
+  @IsNotEmpty({ message: 'Location name is required' })
+  @MaxLength(120, { message: 'Location name must be at most 120 characters' })
+  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  locationName!: string;
+
+  @ApiProperty({ type: () => GeoCoordinatesDto })
+  @ValidateNested()
+  @Type(() => GeoCoordinatesDto)
+  coordinates!: GeoCoordinatesDto;
+
+  @ApiProperty({ example: 50, description: 'Geofencing radius in meters' })
+  @IsNumber(
+    { allowNaN: false, allowInfinity: false },
+    { message: 'Radius must be a finite number' }
+  )
+  @Min(1, { message: 'Radius must be at least 1 meter' })
+  @Max(5000, { message: 'Radius must be at most 5000 meters' })
+  radius!: number;
+
+  @ApiPropertyOptional({
+    description:
+      'ClinicLocation id this QR point belongs to, so patient check-in can match appointments.',
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'Location ID must be a valid UUID' })
+  locationId?: string;
+}
+
+/**
+ * Update a check-in location. Only the supplied fields change.
+ */
+export class UpdateCheckInLocationRequestDto {
+  @ApiPropertyOptional({ example: 'Main Reception' })
+  @IsOptional()
+  @IsString({ message: 'Location name must be a string' })
+  @IsNotEmpty({ message: 'Location name cannot be empty' })
+  @MaxLength(120, { message: 'Location name must be at most 120 characters' })
+  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  locationName?: string;
+
+  @ApiPropertyOptional({ type: () => GeoCoordinatesDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => GeoCoordinatesDto)
+  coordinates?: GeoCoordinatesDto;
+
+  @ApiPropertyOptional({ example: 50 })
+  @IsOptional()
+  @IsNumber(
+    { allowNaN: false, allowInfinity: false },
+    { message: 'Radius must be a finite number' }
+  )
+  @Min(1, { message: 'Radius must be at least 1 meter' })
+  @Max(5000, { message: 'Radius must be at most 5000 meters' })
+  radius?: number;
+
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  @IsBoolean({ message: 'isActive must be a boolean' })
+  isActive?: boolean;
 }

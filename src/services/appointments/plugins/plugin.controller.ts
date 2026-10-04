@@ -1,5 +1,16 @@
 import { nowIso } from '@utils/date-time.util';
-import { Controller, Get, Post, Body, Param, Logger, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Logger,
+  UseGuards,
+  Request,
+  ForbiddenException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
 import { EnterprisePluginManager } from '@core/plugin-interface';
 import { PluginConfigService } from './config/plugin-config.service';
@@ -8,11 +19,80 @@ import type { PluginOperationResult, BasePlugin } from '@core/types';
 import type { PluginConfig } from './config/plugin-config.service';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
+import { ClinicGuard } from '@core/guards/clinic.guard';
+import { ClinicRoute } from '@core/decorators/clinic-route.decorator';
+import type { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
 import { Cache } from '@core/decorators';
 import { Role } from '@core/types/enums.types';
+import { PLUGIN_CALLER_KEY } from './base/plugin-caller';
+import { toVideoCallerRole } from '@services/video/video-access.helpers';
+import { isVideoPluginFeature } from './video/clinic-video.plugin';
+
+/**
+ * Plugin operations run inside a user-initiated request, so the clinic they act on is the one
+ * ClinicGuard validated for this caller, never a `clinicId` the request body carries. (Video
+ * operations authorize the caller against the appointment's clinic with it.) A SUPER_ADMIN
+ * without an X-Clinic-ID header has no validated clinic and keeps global scope.
+ */
+function withValidatedClinic(data: unknown, clinicId: string | undefined): unknown {
+  if (!clinicId || typeof data !== 'object' || data === null || Array.isArray(data)) {
+    return data;
+  }
+  return { ...(data as Record<string, unknown>), clinicId };
+}
+
+/**
+ * The data a plugin receives: the validated clinic plus the authenticated caller.
+ *
+ * Identity written into the request body is never trusted. Every operation gets the caller from
+ * the JWT under the reserved `caller` key (overwriting a body-supplied one). Video operations
+ * additionally have `userId`, `userRole` (mapped to the video role) and `rawRole` replaced by the
+ * caller's own, so a clinic admin cannot act as the treating doctor or as the booking patient by
+ * posting their user id / role.
+ *
+ * @throws UnauthorizedException a video operation without an authenticated user
+ * @throws ForbiddenException a video operation by a role that has no video participant role
+ */
+function withValidatedCaller(
+  data: unknown,
+  feature: string,
+  request: ClinicAuthenticatedRequest
+): unknown {
+  const scoped = withValidatedClinic(data, request.clinicContext?.clinicId);
+  const isVideoOperation = isVideoPluginFeature(feature);
+  const userId = request.user?.id || request.user?.sub;
+  const role = request.user?.role;
+
+  if (!userId || !role) {
+    if (isVideoOperation) {
+      throw new UnauthorizedException('An authenticated user is required for video operations');
+    }
+    return scoped;
+  }
+  if (typeof scoped !== 'object' || scoped === null || Array.isArray(scoped)) {
+    return scoped;
+  }
+
+  const bound: Record<string, unknown> = {
+    ...(scoped as Record<string, unknown>),
+    [PLUGIN_CALLER_KEY]: { userId, role: String(role) },
+  };
+
+  if (isVideoOperation) {
+    const videoRole = toVideoCallerRole(role);
+    if (!videoRole) {
+      throw new ForbiddenException('Your role cannot take part in video consultations');
+    }
+    bound['userId'] = userId;
+    bound['userRole'] = videoRole;
+    bound['rawRole'] = String(role);
+  }
+  return bound;
+}
+
 @ApiTags('appointment plugins')
 @Controller('appointments/plugins')
 @ApiBearerAuth()
@@ -152,6 +232,8 @@ export class AppointmentPluginController {
   }
 
   @Post('execute')
+  @ClinicRoute()
+  @UseGuards(ClinicGuard)
   @RequireResourcePermission('plugins', 'execute')
   @ApiOperation({
     summary: 'Execute plugin operation',
@@ -170,18 +252,21 @@ export class AppointmentPluginController {
       feature: string;
       operation: string;
       data: unknown;
-    }
+    },
+    @Request() req: ClinicAuthenticatedRequest
   ) {
     const startTime = Date.now();
+    const { domain, feature, operation, data } = body;
+    // A rejected identity is a request error (401 / 403), not a plugin failure: it stays outside
+    // the try block below, which turns plugin errors into a `success: false` body.
+    const operationData = withValidatedCaller(data, feature, req);
 
     try {
-      const { domain, feature, operation, data } = body;
-
       const result = await this.enterprisePluginManager.executePluginOperation(
         domain,
         feature,
         operation,
-        data
+        operationData
       );
 
       const duration = Date.now() - startTime;
@@ -231,6 +316,8 @@ export class AppointmentPluginController {
   }
 
   @Post('execute-batch')
+  @ClinicRoute()
+  @UseGuards(ClinicGuard)
   @RequireResourcePermission('plugins', 'execute')
   @ApiOperation({
     summary: 'Execute multiple plugin operations',
@@ -250,13 +337,20 @@ export class AppointmentPluginController {
         operation: string;
         data: unknown;
       }>;
-    }
+    },
+    @Request() req: ClinicAuthenticatedRequest
   ) {
     const startTime = Date.now();
 
     try {
+      // Bind every operation's identity before any of them runs, so one rejected operation
+      // never leaves the others half executed.
+      const preparedOperations = body.operations.map(op => ({
+        ...op,
+        data: withValidatedCaller(op.data, op.feature, req),
+      }));
       const results = await Promise.all(
-        body.operations.map(op =>
+        preparedOperations.map(op =>
           this.enterprisePluginManager.executePluginOperation(
             op.domain,
             op.feature,

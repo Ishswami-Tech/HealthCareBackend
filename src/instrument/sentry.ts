@@ -71,9 +71,23 @@ export function initSentry(): boolean {
     environment,
     ...(process.env['SENTRY_RELEASE'] ? { release: process.env['SENTRY_RELEASE'] } : {}),
     tracesSampleRate,
-    // Do not attach default PII (IP, cookies, request headers). The exception
-    // filter forwards a scrubbed context explicitly instead.
-    sendDefaultPii: false,
+    // Do not attach default PII (user info, cookies, headers, bodies, query
+    // params, DB/queue payloads, local variables). Sentry v11 replaced
+    // `sendDefaultPii` with `dataCollection`, whose defaults collect most of
+    // this, so every category is switched off explicitly. The exception filter
+    // forwards a scrubbed context explicitly instead.
+    dataCollection: {
+      userInfo: false,
+      cookies: false,
+      httpHeaders: false,
+      httpBodies: [],
+      urlQueryParams: false,
+      graphQL: { document: false, variables: false },
+      genAI: { inputs: false, outputs: false },
+      databaseQueryData: false,
+      queues: false,
+      stackFrameVariables: false,
+    },
     maxBreadcrumbs: 50,
   });
 

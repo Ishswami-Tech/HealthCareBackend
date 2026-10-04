@@ -2,7 +2,34 @@ import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { VideoService } from '@services/video/video.service';
 import { VideoConsultationTracker } from '@services/video/video-consultation-tracker.service';
+import type { VideoCallerContext, VideoCallerRole } from '@services/video/video-access.helpers';
 import { LoggingService } from '@infrastructure/logging';
+
+/**
+ * Features of the clinic video plugin. The plugin manager resolves a plugin by feature name, so a
+ * request that names one of these reaches `ClinicVideoPlugin`, whatever its `domain` says.
+ */
+export const VIDEO_PLUGIN_FEATURES: readonly string[] = [
+  'video-calls',
+  'consultation-rooms',
+  'recording',
+  'screen-sharing',
+  'medical-imaging',
+  'real-time-tracking',
+  'hipaa-compliance',
+];
+
+export function isVideoPluginFeature(feature: unknown): boolean {
+  return typeof feature === 'string' && VIDEO_PLUGIN_FEATURES.includes(feature);
+}
+
+/** Roles accepted for a video operation (same set the video layer works with). */
+const VIDEO_CALLER_ROLES: readonly VideoCallerRole[] = [
+  'patient',
+  'doctor',
+  'receptionist',
+  'clinic_admin',
+];
 
 /**
  * Interface for video plugin data validation
@@ -12,10 +39,22 @@ export interface VideoPluginData {
   appointmentId?: string;
   patientId?: string;
   doctorId?: string;
+  /**
+   * Clinic the caller is acting in. Required for the join / start / end operations: VideoService
+   * authorizes the caller against the appointment's clinic with it. Callers must supply the
+   * clinic validated by ClinicGuard (req.clinicContext.clinicId), never a request-body value.
+   */
   clinicId?: string;
   callId?: string;
+  /**
+   * Acting user. Operations that run inside a user-initiated request must carry the authenticated
+   * user (the plugin controller overwrites whatever the request body claimed).
+   */
   userId?: string;
-  userRole?: 'patient' | 'doctor';
+  /** Video role of the acting user, mapped from the authenticated platform role. */
+  userRole?: VideoCallerRole;
+  /** Platform role of the acting user before mapping (for example CLINIC_ADMIN). */
+  rawRole?: string;
   displayName?: { name: string; email: string; avatar?: string };
   sessionNotes?: string;
   issueType?: string;
@@ -41,15 +80,7 @@ export interface VideoPluginData {
 export class ClinicVideoPlugin extends BaseAppointmentPlugin {
   readonly name = 'clinic-video-plugin';
   readonly version = '1.0.0';
-  readonly features = [
-    'video-calls',
-    'consultation-rooms',
-    'recording',
-    'screen-sharing',
-    'medical-imaging',
-    'real-time-tracking',
-    'hipaa-compliance',
-  ];
+  readonly features = [...VIDEO_PLUGIN_FEATURES];
 
   /**
    * Creates an instance of ClinicVideoPlugin
@@ -105,14 +136,16 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
               displayName: videoData.displayName?.name || 'User',
               email: '',
               // ...(videoData.avatar && { avatar: videoData.avatar }),
-            }
+            },
+            this.requireCallerContext(videoData)
           );
 
         case 'startConsultationSession':
           return await this.videoService.startConsultation(
             videoData.appointmentId!,
             videoData.userId!,
-            videoData.userRole!
+            videoData.userRole!,
+            this.requireCallerContext(videoData)
           );
 
         case 'endConsultationSession':
@@ -120,7 +153,8 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
             videoData.appointmentId!,
             videoData.userId!,
             videoData.userRole!,
-            videoData.sessionNotes
+            videoData.sessionNotes,
+            this.requireCallerContext(videoData)
           );
 
         case 'getConsultationStatus':
@@ -150,7 +184,7 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
           return await this.consultationTracker.trackParticipantJoined(
             videoData.appointmentId!,
             videoData.userId!,
-            videoData.userRole!,
+            this.toTrackedParticipantRole(videoData.userRole),
             videoData.deviceInfo
           );
 
@@ -158,7 +192,7 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
           return await this.consultationTracker.trackParticipantLeft(
             videoData.appointmentId!,
             videoData.userId!,
-            videoData.userRole!
+            this.toTrackedParticipantRole(videoData.userRole)
           );
 
         case 'updateConnectionQuality':
@@ -220,9 +254,9 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
 
       // Current consultation operations
       createConsultationRoom: ['appointmentId', 'patientId', 'doctorId', 'clinicId'],
-      generateJoinToken: ['appointmentId', 'userId', 'userRole', 'displayName'],
-      startConsultationSession: ['appointmentId', 'userId', 'userRole'],
-      endConsultationSession: ['appointmentId', 'userId'],
+      generateJoinToken: ['appointmentId', 'userId', 'userRole', 'displayName', 'clinicId'],
+      startConsultationSession: ['appointmentId', 'userId', 'userRole', 'clinicId'],
+      endConsultationSession: ['appointmentId', 'userId', 'clinicId'],
       getConsultationStatus: ['appointmentId'],
       reportTechnicalIssue: ['appointmentId', 'userId', 'issueType', 'description'],
 
@@ -260,6 +294,27 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
   }
 
   /**
+   * The caller context VideoService needs to authorize join / start / end. The clinic is the one
+   * the request was validated for, and the raw platform role is the authenticated user's own (the
+   * plugin controller sets both; without one the participant role stands in, which never claims a
+   * SUPER_ADMIN / system bypass). A missing clinic fails closed instead of being sent on.
+   */
+  private requireCallerContext(videoData: VideoPluginData): VideoCallerContext {
+    if (!videoData.clinicId) {
+      throw new Error(`clinicId is required for the ${videoData.operation} video operation`);
+    }
+    return {
+      clinicId: videoData.clinicId,
+      rawRole: videoData.rawRole ?? String(videoData.userRole ?? ''),
+    };
+  }
+
+  /** The consultation tracker only distinguishes the patient from the clinical side. */
+  private toTrackedParticipantRole(role: VideoCallerRole | undefined): 'patient' | 'doctor' {
+    return role === 'patient' ? 'patient' : 'doctor';
+  }
+
+  /**
    * Validates if the provided data is valid video plugin data
    *
    * @param data - The data to validate
@@ -285,6 +340,7 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
       'clinicId',
       'callId',
       'userId',
+      'rawRole',
       'sessionNotes',
       'issueType',
       'description',
@@ -301,7 +357,7 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
     // Check userRole if present
     if (
       obj['userRole'] !== undefined &&
-      !['patient', 'doctor'].includes(obj['userRole'] as string)
+      !VIDEO_CALLER_ROLES.includes(obj['userRole'] as VideoCallerRole)
     ) {
       return false;
     }

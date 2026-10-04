@@ -33,6 +33,8 @@ model User {
   country                    String?
   zipCode                    String?
   occupation                 String?
+  maritalStatus              String?
+  bloodGroup                 String?
   organization               String?
   emergencyContact           String?
   isVerified                 Boolean                   @default(false)
@@ -109,6 +111,7 @@ model User {
   emailSuppressions          EmailSuppressionList[]
   whatsappSuppressions       WhatsAppSuppressionList[]
   communicationTemplates     CommunicationTemplate[]
+  healthLibraryPosts         HealthLibraryPost[]
   clinicExpenses             ClinicExpense[]
   ipdVitalsRecorded          VitalsFlowsheet[]         @relation("IpdVitalsRecordedBy")
   ipdMedicationsAdministered BedsideMedication[]       @relation("IpdMedicationAdministeredBy")
@@ -201,9 +204,13 @@ model Clinic {
   emailSuppressions            EmailSuppressionList[]
   whatsappSuppressions         WhatsAppSuppressionList[]
   suppliers                    Supplier[]
+  stockBatches                 StockBatch[]
+  stockTransfersOut            StockTransfer[]                     @relation("StockTransferSource")
+  stockTransfersIn             StockTransfer[]                     @relation("StockTransferDestination")
   clinicExpenses               ClinicExpense[]
   insuranceClaims              InsuranceClaim[]
   communicationTemplates       CommunicationTemplate[]
+  healthLibraryPosts           HealthLibraryPost[]
   wards                        Ward[]
   beds                         Bed[]
   admissions                   Admission[]
@@ -704,6 +711,14 @@ model Doctor {
   rating                       Float?                              @default(0.0)
   isAvailable                  Boolean                             @default(true)
   workingHours                 Json?
+  videoConsultationFee         Float?
+  slotDurationMinutes          Int?
+  videoConsultationEnabled     Boolean                             @default(true)
+  inPersonConsultationEnabled  Boolean                             @default(true)
+  licenseNumber                String?
+  languages                    String[]                            @default([])
+  education                    String?
+  certifications               String[]                            @default([])
   createdAt                    DateTime                            @default(now())
   appointments                 Appointment[]
   appointmentTemplates         AppointmentTemplate[]
@@ -1170,26 +1185,36 @@ model Therapy {
 }
 
 model Prescription {
-  id         String             @id @default(uuid())
-  patientId  String
-  doctorId   String
-  date       DateTime           @default(now())
-  status     PrescriptionStatus @default(PENDING)
-  diagnosis  String?
-  notes      String?
-  clinicId   String
-  locationId String?
+  id                 String             @id @default(uuid())
+  patientId          String
+  doctorId           String
+  date               DateTime           @default(now())
+  status             PrescriptionStatus @default(PENDING)
+  diagnosis          String?
+  notes              String?
+  clinicId           String
+  locationId         String?
   // Optional link to the OPD visit the prescription was written in (plain
   // string FK), so pharmacy bills group under the visit in Bill History.
-  visitId    String?
-  doctor     Doctor             @relation(fields: [doctorId], references: [id])
-  patient    Patient            @relation(fields: [patientId], references: [id])
-  location   ClinicLocation?    @relation(fields: [locationId], references: [id])
-  items      PrescriptionItem[]
+  visitId            String?
+  // Optional link to the Appointment the prescription was written for (plain
+  // string FK) - drives the visit type shown at the pharmacy desk.
+  appointmentId      String?
+  // Human readable per-clinic number, e.g. RX-20261004-A1B2C3D4 (see
+  // buildPrescriptionNumber in pharmacy.service.ts).
+  prescriptionNumber String?
+  // Last day the prescription may be dispensed (WB8 / B5); null = no expiry.
+  validUntil         DateTime?
+  doctor             Doctor             @relation(fields: [doctorId], references: [id])
+  patient            Patient            @relation(fields: [patientId], references: [id])
+  location           ClinicLocation?    @relation(fields: [locationId], references: [id])
+  items              PrescriptionItem[]
 
+  @@unique([clinicId, prescriptionNumber])
   @@index([clinicId])
   @@index([locationId])
   @@index([visitId])
+  @@index([appointmentId])
 }
 
 model PrescriptionItem {
@@ -1206,6 +1231,8 @@ model PrescriptionItem {
   dosage                   String?
   frequency                String?
   duration                 String?
+  // Free-text usage instructions, e.g. "after food" (WB8 / B5).
+  instructions             String?
   clinicId                 String
   medicine                 Medicine?    @relation(fields: [medicineId], references: [id])
   prescription             Prescription @relation(fields: [prescriptionId], references: [id])
@@ -1228,13 +1255,175 @@ model Medicine {
   expiryDate        DateTime?
   minStockThreshold Int                @default(10)
   supplierId        String?
+  // Dosage form chosen in the UI (TABLET, SYRUP, ...). `type` stays the DB
+  // classification enum; see resolveMedicineTypeInput in pharmacy.dto.ts.
+  category          String?
+  unit              String?
+  batchNumber       String?
+  notes             String?
+  // Soft delete: medicines with dispense history are never hard deleted.
+  isActive          Boolean            @default(true)
+  deletedAt         DateTime?
   prescriptionItems PrescriptionItem[]
+  stockBatches      StockBatch[]
   location          ClinicLocation?    @relation(fields: [locationId], references: [id])
   supplier          Supplier?          @relation(fields: [supplierId], references: [id])
 
   @@index([clinicId])
   @@index([locationId])
   @@index([supplierId])
+}
+
+// ---------------------------------------------------------------------------
+// Pharmacy inventory (batch level stock). Medicine.stock remains the total
+// on-hand (batched + legacy un-batched units); StockBatch is the FEFO breakdown.
+// Enum-like columns are plain strings validated by the TS enums in
+// core/types/enums.types.ts (MovementType, TransferStatus, ReorderStrategy,
+// AlertType). A CHECK constraint in the migration keeps quantityOnHand >= 0.
+// ---------------------------------------------------------------------------
+model StockBatch {
+  id               String          @id @default(uuid())
+  productId        String
+  clinicId         String
+  lotNumber        String
+  manufactureDate  DateTime
+  expiryDate       DateTime
+  quantityReceived Int
+  quantityOnHand   Int
+  costPrice        Float?
+  medicineName     String?
+  createdById      String
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  medicine         Medicine        @relation(fields: [productId], references: [id])
+  clinic           Clinic          @relation(fields: [clinicId], references: [id])
+  movements        StockMovement[]
+
+  @@unique([clinicId, productId, lotNumber])
+  @@index([clinicId, productId, expiryDate])
+  @@index([clinicId, expiryDate])
+}
+
+model StockMovement {
+  id            String     @id @default(uuid())
+  productId     String
+  batchId       String
+  clinicId      String
+  movementType  String
+  // Signed: negative = stock leaves the batch, positive = stock enters it.
+  quantity      Int
+  reason        String?
+  referenceId   String?
+  referenceType String?
+  recordedById  String
+  createdAt     DateTime   @default(now())
+  batch         StockBatch @relation(fields: [batchId], references: [id])
+
+  @@index([clinicId, productId, createdAt])
+  @@index([batchId])
+  @@index([clinicId, referenceType, referenceId])
+}
+
+model StockTransfer {
+  id                  String              @id @default(uuid())
+  sourceClinicId      String
+  destinationClinicId String
+  status              String              @default("DRAFT")
+  notes               String?
+  createdById         String
+  dispatchedAt        DateTime?
+  receivedAt          DateTime?
+  receivedById        String?
+  cancelledAt         DateTime?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  items               StockTransferItem[]
+  sourceClinic        Clinic              @relation("StockTransferSource", fields: [sourceClinicId], references: [id])
+  destinationClinic   Clinic              @relation("StockTransferDestination", fields: [destinationClinicId], references: [id])
+
+  @@index([sourceClinicId, status])
+  @@index([destinationClinicId, status])
+}
+
+model StockTransferItem {
+  id            String        @id @default(uuid())
+  transferId    String
+  productId     String
+  sourceBatchId String
+  quantity      Int
+  transfer      StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+
+  @@index([transferId])
+}
+
+model ReorderRule {
+  id                String   @id @default(uuid())
+  productId         String
+  clinicId          String
+  strategy          String
+  reorderPoint      Int
+  orderQuantity     Int?
+  minLevel          Int?
+  maxLevel          Int?
+  preferredSupplier String?
+  isActive          Boolean  @default(true)
+  createdById       String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([clinicId, productId, isActive])
+}
+
+model StockAlert {
+  id         String    @id @default(uuid())
+  clinicId   String
+  productId  String
+  alertType  String
+  batchId    String?
+  message    String
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([clinicId, resolvedAt, createdAt])
+  @@index([clinicId, productId, alertType])
+}
+
+model PurchaseOrder {
+  id                   String              @id @default(uuid())
+  poNumber             String
+  clinicId             String
+  supplierId           String
+  status               PurchaseOrderStatus @default(DRAFT)
+  notes                String?
+  expectedDeliveryDate DateTime?
+  sentAt               DateTime?
+  receivedAt           DateTime?
+  // Rupees, always computed from integer paise (see purchase-order.service.ts).
+  totalAmount          Float               @default(0)
+  createdById          String
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  items                PurchaseOrderItem[]
+
+  @@unique([clinicId, poNumber])
+  @@index([clinicId, status])
+  @@index([supplierId])
+}
+
+model PurchaseOrderItem {
+  id               String        @id @default(uuid())
+  purchaseOrderId  String
+  // Medicine.id (plain string FK, validated against the clinic on create)
+  productId        String
+  description      String?
+  quantity         Int
+  receivedQuantity Int           @default(0)
+  unitPrice        Float?
+  lineTotal        Float         @default(0)
+  purchaseOrder    PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  @@index([purchaseOrderId])
+  @@index([productId])
 }
 
 model Supplier {
@@ -1502,12 +1691,22 @@ model Notification {
   failureReason   String?
   deliveryReceipt Json? // Provider-specific delivery receipt
   channel         String? // 'email', 'sms', 'push', 'socket', 'whatsapp'
+  // In-app inbox fields (web bell + mobile notifications screen): heading, coarse category
+  // (APPOINTMENT / PRESCRIPTION / REMINDER / BILLING / EHR / CHAT / SYSTEM), deep-link payload
+  // (appointmentId, prescriptionId, route, ...), linked appointment and when it was read.
+  title           String?
+  category        String?
+  data            Json?
+  appointmentId   String?
+  readAt          DateTime?
   user            User                      @relation(fields: [userId], references: [id])
   deliveryLogs    NotificationDeliveryLog[]
 
   @@index([clinicId])
   @@index([userId, deliveryStatus])
   @@index([deliveryStatus])
+  @@index([userId, createdAt])
+  @@index([appointmentId])
 }
 
 model NotificationPreference {
@@ -1668,17 +1867,21 @@ model AuditLog {
 }
 
 model Review {
-  id        String   @id @default(uuid())
-  rating    Int      @default(0)
-  comment   String?
-  patientId String
-  doctorId  String
-  clinicId  String
-  createdAt DateTime @default(now())
-  doctor    Doctor   @relation(fields: [doctorId], references: [id])
-  patient   Patient  @relation(fields: [patientId], references: [id])
+  id            String   @id @default(uuid())
+  rating        Int      @default(0)
+  comment       String?
+  patientId     String
+  doctorId      String
+  clinicId      String
+  // One review per appointment (NULL for legacy rows and video-flow reviews, which
+  // are deduplicated via appointment.metadata.consultationRating instead).
+  appointmentId String?  @unique
+  createdAt     DateTime @default(now())
+  doctor        Doctor   @relation(fields: [doctorId], references: [id])
+  patient       Patient  @relation(fields: [patientId], references: [id])
 
   @@index([clinicId])
+  @@index([doctorId, clinicId, createdAt])
 }
 
 model Product {
@@ -1734,6 +1937,8 @@ model MedicalHistory {
   treatment String?
   doctorId  String?
   notes     String?
+  // ACTIVE | CHRONIC | RESOLVED (validated in the EHR DTOs)
+  status    String   @default("ACTIVE")
   date      DateTime
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1758,6 +1963,8 @@ model LabReport {
   notes       String?
   fileUrl     String?
   fileKey     String?
+  // PENDING | IN_PROGRESS | COMPLETED | REVIEWED (validated in the EHR DTOs)
+  status      String   @default("COMPLETED")
   date        DateTime
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -3192,6 +3399,14 @@ enum MedicineType {
   HERBAL
 }
 
+enum PurchaseOrderStatus {
+  DRAFT
+  SENT
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
 enum PrescriptionStatus {
   PENDING
   PARTIAL
@@ -3327,4 +3542,102 @@ model SystemSetting {
   updatedAt    DateTime @updatedAt
 
   @@map("system_settings")
+}
+
+enum HealthLibraryTab {
+  ARTICLES
+  GUIDES
+  PRACTICES
+  COURSES
+}
+
+enum HealthLibraryMediaType {
+  ARTICLE
+  VIDEO
+}
+
+enum HealthLibraryStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+/// Clinic-authored wellness content (articles & videos) shown to patients in
+/// the mobile app's Health Library. Authored by DOCTOR / RECEPTIONIST /
+/// CLINIC_ADMIN staff, always starts as DRAFT and is explicitly published.
+model HealthLibraryPost {
+  id                   String                 @id @default(uuid())
+  clinicId             String
+  authorId             String
+  tab                  HealthLibraryTab       @default(ARTICLES)
+  mediaType            HealthLibraryMediaType @default(ARTICLE)
+  status               HealthLibraryStatus    @default(DRAFT)
+  title                String
+  category             String
+  readTime             String?
+  summary              String
+  coverImageUrl        String?
+  coverImageKey        String?
+  videoUrl             String?
+  videoDurationSeconds Int?
+  sections             Json?
+  whenToSeeDoctor      String?
+  viewCount            Int                    @default(0)
+  publishedAt          DateTime?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+  deletedAt            DateTime?
+  clinic               Clinic                 @relation(fields: [clinicId], references: [id])
+  author               User                   @relation(fields: [authorId], references: [id])
+
+  @@index([clinicId, status, tab, publishedAt(sort: Desc)])
+  @@index([clinicId, status, publishedAt])
+  @@index([authorId])
+  @@map("health_library_posts")
+}
+
+// EHR workspace care plan: one living plan per patient per clinic (Patient.id).
+// Plain string FKs (no @relation), like PatientVisit, so no relation fields are
+// needed on Patient / Clinic.
+model CarePlan {
+  id             String    @id @default(uuid())
+  clinicId       String
+  patientId      String
+  title          String    @default("Care plan")
+  // ACTIVE | COMPLETED | ARCHIVED
+  status         String    @default("ACTIVE")
+  summary        String?
+  // [{ "text": string, "done": boolean }]
+  goals          Json      @default("[]")
+  interventions  Json      @default("[]")
+  dietNotes      String?
+  lifestyleNotes String?
+  nextReviewDate DateTime?
+  createdById    String
+  updatedById    String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([clinicId, patientId])
+  @@index([patientId])
+  @@map("care_plans")
+}
+
+// One row per dose the patient marked as taken. Missed doses are derived (a
+// scheduled dose of a past day with no row). Idempotent per dose slot.
+model MedicationDoseLog {
+  id           String   @id @default(uuid())
+  medicationId String
+  userId       String
+  clinicId     String?
+  // Calendar day in IST (stored as a DATE)
+  doseDate     DateTime @db.Date
+  // 0-based dose slot within the day
+  doseIndex    Int
+  takenAt      DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  @@unique([medicationId, doseDate, doseIndex])
+  @@index([userId, doseDate])
+  @@map("medication_dose_logs")
 }

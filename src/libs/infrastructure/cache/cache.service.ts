@@ -34,9 +34,14 @@ import { CacheHealthMonitorService } from '@infrastructure/cache/services/cache-
 import { CacheErrorHandler } from '@core/errors/cache-error.handler';
 import { CacheOptionsBuilder } from '@infrastructure/cache/builders/cache-options.builder';
 import { CacheProviderFactory } from '@infrastructure/cache/providers/cache-provider.factory';
+import { canClearProtectedPatterns } from '@infrastructure/cache/utils/protected-keys.util';
+import { escapeGlobLiteral } from '@infrastructure/cache/utils/pattern-delete.util';
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
 
 // Multi-Layer Cache (L1) - Optional
 import { InMemoryCacheService } from '@infrastructure/cache/layers/in-memory-cache.service';
+import { decryptPHIValue } from '@infrastructure/cache/utils/phi-encryption.util';
 
 // Types
 import type { CacheOperationOptions, HealthcareCacheConfig } from '@core/types';
@@ -54,6 +59,12 @@ import type { LoggerLike } from '@core/types';
  * - Provider-agnostic: works with Redis, Dragonfly, or any cache provider
  * - Follows SOLID principles
  */
+/** One independent step of a multi-part invalidation (a failure must not stop the others). */
+interface InvalidationStep {
+  readonly label: string;
+  readonly run: () => Promise<number>;
+}
+
 @Injectable()
 export class CacheService implements OnModuleInit, OnModuleDestroy {
   private static readonly CACHE_INVALIDATION_CHANNEL = 'cache:invalidation';
@@ -499,7 +510,18 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     }
 
     // L2: Check distributed cache
-    const l2Value = await this.cacheRepository.get<T>(key);
+    // PHI entries are written through cache()/PHICacheStrategy, which encrypts
+    // the value (see phi-encryption.util.ts) before it reaches the provider.
+    // This plain get() path bypasses that strategy on the way out, so without
+    // decrypting here it returns the raw "enc:v1:..." ciphertext string as if
+    // it were T — every caller of a HIPAA-compliant cached read (e.g.
+    // findUserByIdSafe) silently got back an undecryptable string instead of
+    // the record once the entry was cached. decryptPHIValue is a safe no-op
+    // for non-PHI values (passes through non-strings, JSON.parses plain
+    // strings, only decrypts the "enc:v1:" prefix), so applying it
+    // unconditionally here is safe for every caller of get().
+    const rawL2Value = await this.cacheRepository.get<T>(key);
+    const l2Value = rawL2Value !== null ? decryptPHIValue<T>(rawL2Value) : null;
 
     // Populate L1 if L2 hit
     if (l2Value !== null && this.enableL1 && this.l1CacheService) {
@@ -586,9 +608,27 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return deleted;
   }
 
+  /**
+   * Deletes the entries matching `pattern` (a glob over the logical key names).
+   *
+   * Never throws: this facade is called from request paths that ignore the result, so a failed
+   * delete is logged at ERROR with the pattern and reported as 0 instead of failing the request.
+   * Protected security namespaces (sessions, lockouts, audit trail, ...) are never deleted.
+   */
   async invalidateCacheByPattern(pattern: string): Promise<number> {
-    // Invalidate L2 (distributed cache)
-    const count = await this.cacheRepository.invalidateByPattern(pattern);
+    let count = 0;
+    try {
+      // Invalidate L2 (distributed cache)
+      count = await this.cacheRepository.invalidateByPattern(pattern);
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.ERROR,
+        'Cache pattern invalidation failed; entries may be stale until their TTL expires',
+        'CacheService.invalidateCacheByPattern',
+        { pattern, error: error instanceof Error ? error.message : String(error) }
+      );
+    }
 
     // L1 doesn't support pattern matching, so clear it entirely
     // This is acceptable since L1 is small and fast to rebuild
@@ -613,9 +653,25 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return this.invalidateCacheByPattern(pattern);
   }
 
+  /**
+   * Deletes the entries registered under `tag`. Like the pattern variant it never throws; a
+   * failure is logged at ERROR and the tag index keeps the keys that were not deleted, so the
+   * next invalidation of the tag retries them.
+   */
   async invalidateCacheByTag(tag: string): Promise<number> {
-    // Invalidate L2 (distributed cache)
-    const count = await this.cacheRepository.invalidateByTags([tag]);
+    let count = 0;
+    try {
+      // Invalidate L2 (distributed cache)
+      count = await this.cacheRepository.invalidateByTags([tag]);
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.ERROR,
+        'Cache tag invalidation failed; entries may be stale until their TTL expires',
+        'CacheService.invalidateCacheByTag',
+        { tag, error: error instanceof Error ? error.message : String(error) }
+      );
+    }
 
     // L1 doesn't support tags, so clear it entirely
     if (this.enableL1 && this.l1CacheService) {
@@ -628,9 +684,10 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   }
 
   async invalidatePatientCache(patientId: string, clinicId?: string): Promise<number> {
+    // Ids are interpolated into globs: escape them so an id can never widen the pattern.
     const pattern = clinicId
-      ? this.keyFactory.patient(patientId, clinicId, '*')
-      : this.keyFactory.patient(patientId, undefined, '*');
+      ? this.keyFactory.patient(escapeGlobLiteral(patientId), escapeGlobLiteral(clinicId), '*')
+      : this.keyFactory.patient(escapeGlobLiteral(patientId), undefined, '*');
     let count = await this.invalidateCacheByPattern(pattern);
 
     // Also invalidate by patient tags to ensure mapping caches (like getPatientByUserId) are cleared
@@ -643,8 +700,8 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
   async invalidateDoctorCache(doctorId: string, clinicId?: string): Promise<number> {
     const pattern = clinicId
-      ? this.keyFactory.doctor(doctorId, clinicId, '*')
-      : this.keyFactory.doctor(doctorId, undefined, '*');
+      ? this.keyFactory.doctor(escapeGlobLiteral(doctorId), escapeGlobLiteral(clinicId), '*')
+      : this.keyFactory.doctor(escapeGlobLiteral(doctorId), undefined, '*');
     return this.invalidateCacheByPattern(pattern);
   }
 
@@ -654,7 +711,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     doctorId?: string,
     clinicId?: string
   ): Promise<number> {
-    const patterns = [this.keyFactory.appointment(appointmentId, '*')];
+    const patterns = [this.keyFactory.appointment(escapeGlobLiteral(appointmentId), '*')];
     // Core tags every appointment write tags its cache entries with (see
     // appointments.controller.ts) — invalidating only `appointment:${id}` and
     // `clinic:${id}` left list/detail/upcoming views stale until TTL expiry.
@@ -668,13 +725,19 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     ];
 
     if (clinicId) {
-      patterns.push(this.keyFactory.clinic(clinicId, 'appointments:list:*'));
-      patterns.push(this.keyFactory.clinic(clinicId, 'appointments:*'));
+      patterns.push(this.keyFactory.clinic(escapeGlobLiteral(clinicId), 'appointments:list:*'));
+      patterns.push(this.keyFactory.clinic(escapeGlobLiteral(clinicId), 'appointments:*'));
       tags.push(`clinic:${clinicId}`, 'clinic_appointments');
     }
 
     if (patientId) {
-      patterns.push(this.keyFactory.patient(patientId, clinicId, '*'));
+      patterns.push(
+        this.keyFactory.patient(
+          escapeGlobLiteral(patientId),
+          clinicId ? escapeGlobLiteral(clinicId) : undefined,
+          '*'
+        )
+      );
       // The patient dashboard summary (PatientsService.getDashboardSummary) is tagged
       // `user:${patientId}` and composes appointment data — without this, completing
       // or cancelling an appointment left the dashboard's appointment fields stale
@@ -700,18 +763,30 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return invalidated;
   }
 
+  /**
+   * The upcoming-appointments reads (GET /appointments/upcoming and
+   * /appointments/user/:userId/upcoming) store their entries under a key that carries the
+   * clinic, caller, role and handler after the user id, so an exact
+   * `appointments:upcoming:<userId>` pattern can never match them. They register the
+   * `upcoming_appointments` tag, which is what is invalidated here (plus `user:<id>` for
+   * service-level entries tagged with the user).
+   */
   async invalidateUpcomingAppointmentsCache(userId: string): Promise<number> {
-    const key = this.keyFactory.fromTemplate('appointments:upcoming:{userId}', { userId });
-    const count = await this.invalidateCacheByPattern(key);
+    let count = await this.invalidateCacheByTag('upcoming_appointments');
+    count += await this.invalidateCacheByTag(`user:${userId}`);
     return count;
   }
 
   /**
    * This method removes all video-specific cache entries associated with a given appointmentId
    *
-   * Cache patterns invalidated:
-   * - video:consultation:status:{appointmentId}:*
-   * - video:consultation:details:{appointmentId}:*
+   * Invalidated:
+   * - tag `appointment:{appointmentId}` (registered by every video read route:
+   *   consultation status, recording, participants, analytics)
+   * - pattern `*video:consultation:status:{appointmentId}:*` and the `details` twin. Entries
+   *   written by the HealthcareCacheInterceptor look like
+   *   `clinic:<clinicId>:video:consultation:status:<id>:<handler>[:<actor>]:q-<digest>`, so the
+   *   pattern needs the leading `*` to reach the clinic prefix.
    *
    * @param appointmentId - The ID of the appointment whose video caches should be invalidated
    * @returns true on success, false on failure
@@ -739,33 +814,23 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
         { appointmentId }
       );
 
-      // Define video-specific cache key patterns
-      const cachePatterns = [
-        `video:consultation:status:${appointmentId}:*`,
-        `video:consultation:details:${appointmentId}:*`,
+      // The tag index is the deterministic path (it does not depend on key layout); the
+      // video-specific patterns (leading `*` for the clinic prefix) are the belt and braces.
+      const tag = `appointment:${appointmentId}`;
+      const steps: readonly InvalidationStep[] = [
+        { label: `tag ${tag}`, run: (): Promise<number> => this.invalidateCacheByTag(tag) },
+        ...[
+          `*video:consultation:status:${escapeGlobLiteral(appointmentId)}:*`,
+          `*video:consultation:details:${escapeGlobLiteral(appointmentId)}:*`,
+        ].map(pattern => ({
+          label: `pattern ${pattern}`,
+          run: (): Promise<number> => this.invalidateCacheByPattern(pattern),
+        })),
       ];
 
       let totalInvalidated = 0;
-
-      // Invalidate each cache pattern
-      for (const pattern of cachePatterns) {
-        try {
-          const invalidatedCount = await this.invalidateCacheByPattern(pattern);
-          totalInvalidated += invalidatedCount;
-        } catch (patternError) {
-          await this.loggingService.log(
-            LogType.CACHE,
-            LogLevel.WARN,
-            `Failed to invalidate video cache pattern: ${pattern}`,
-            'CacheService',
-            {
-              appointmentId,
-              pattern,
-              error: patternError instanceof Error ? patternError.message : String(patternError),
-            }
-          );
-          // Continue with next pattern even if one fails
-        }
+      for (const step of steps) {
+        totalInvalidated += await this.runVideoInvalidationStep(appointmentId, step);
       }
 
       await this.loggingService.log(
@@ -793,9 +858,38 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /** One failing step must not stop the remaining video invalidations (payment flow). */
+  private async runVideoInvalidationStep(
+    appointmentId: string,
+    step: InvalidationStep
+  ): Promise<number> {
+    try {
+      return await step.run();
+    } catch (stepError) {
+      await this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.WARN,
+        `Failed to invalidate video cache ${step.label}`,
+        'CacheService',
+        {
+          appointmentId,
+          step: step.label,
+          error: stepError instanceof Error ? stepError.message : String(stepError),
+        }
+      );
+      return 0;
+    }
+  }
+
+  /**
+   * GET /appointments/my-appointments stores its entries under a key that carries the caller,
+   * clinic, filter digest and handler, so an exact `appointments:my:<userId>` pattern can never
+   * match them. That read registers the `appointments` and `my_appointments` tags;
+   * `patient_appointments` is what the write routes invalidate and is kept for entries
+   * written under it.
+   */
   async invalidateMyAppointmentsCache(userId: string): Promise<number> {
-    const key = this.keyFactory.fromTemplate('appointments:my:{userId}', { userId });
-    let count = await this.invalidateCacheByPattern(key);
+    let count = await this.invalidateCacheByTag('my_appointments');
     count += await this.invalidateCacheByTag('patient_appointments');
     count += await this.invalidateCacheByTag('appointments');
     count += await this.invalidateCacheByTag(`user:${userId}`);
@@ -803,12 +897,13 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   }
 
   async invalidateClinicCache(clinicId: string): Promise<number> {
+    const id = escapeGlobLiteral(clinicId);
     const patterns = [
-      this.keyFactory.clinic(clinicId, '*'),
-      `clinic:${clinicId}:*`,
-      `clinic_locations:${clinicId}:*`,
-      `location:list:${clinicId}:*`,
-      `location:${clinicId}:*`,
+      this.keyFactory.clinic(id, '*'),
+      `clinic:${id}:*`,
+      `clinic_locations:${id}:*`,
+      `location:list:${id}:*`,
+      `location:${id}:*`,
     ];
 
     let invalidated = 0;
@@ -987,8 +1082,14 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async clearAllCache(): Promise<number> {
-    const cleared = await this.getProvider().clearAllCache();
+  /**
+   * Admin tooling. By default sessions, lockouts, the audit trail, rate limiter state and the tag
+   * indexes are NOT cleared. `includeProtected` is the explicit opt-in to clear those as well.
+   */
+  async clearAllCache(options: { readonly includeProtected?: boolean } = {}): Promise<number> {
+    const cleared = options.includeProtected
+      ? await this.clearProtectedByPattern('*')
+      : await this.getProvider().clearAllCache();
     if (this.enableL1 && this.l1CacheService) {
       this.l1CacheService.clear();
     }
@@ -998,15 +1099,36 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return cleared;
   }
 
-  async clearCache(pattern?: string): Promise<number> {
-    const cleared = await this.getProvider().clearByPattern(pattern || '*');
+  /** Admin tooling; see {@link clearAllCache} for `includeProtected`. Throws when the delete fails. */
+  async clearCache(
+    pattern?: string,
+    options: { readonly includeProtected?: boolean } = {}
+  ): Promise<number> {
+    const effectivePattern = pattern || '*';
+    const cleared = options.includeProtected
+      ? await this.clearProtectedByPattern(effectivePattern)
+      : await this.getProvider().clearByPattern(effectivePattern);
     if (this.enableL1 && this.l1CacheService) {
       this.l1CacheService.clear();
     }
     if (cleared > 0) {
-      await this.broadcastCacheInvalidation('pattern', pattern || '*');
+      await this.broadcastCacheInvalidation('pattern', effectivePattern);
     }
     return cleared;
+  }
+
+  private async clearProtectedByPattern(pattern: string): Promise<number> {
+    const provider = this.getProvider();
+    if (!canClearProtectedPatterns(provider)) {
+      throw new HealthcareError(
+        ErrorCode.CACHE_OPERATION_FAILED,
+        'The active cache provider cannot clear protected cache namespaces',
+        undefined,
+        { pattern },
+        'CacheService.clearProtectedByPattern'
+      );
+    }
+    return provider.clearByPatternAllowProtected(pattern);
   }
 
   async resetCacheStats(): Promise<void> {

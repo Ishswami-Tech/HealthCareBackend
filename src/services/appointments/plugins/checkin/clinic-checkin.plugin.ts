@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { CheckInService } from './check-in.service';
+import { resolvePluginActor } from '../base/plugin-caller';
 import type { CheckInData } from '@core/types/appointment.types';
 import { LoggingService } from '@logging';
 
@@ -8,6 +9,10 @@ interface CheckInPluginData {
   operation: string;
   appointmentId?: string;
   userId?: string;
+  /** Platform role of `userId`, supplied by an internal caller that knows it. */
+  userRole?: string;
+  /** Authenticated caller bound by the plugin controller (takes precedence over userId/userRole). */
+  caller?: unknown;
   clinicId?: string;
   locationId?: string;
   doctorId?: string;
@@ -86,9 +91,12 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
           throw new Error('CheckInService does not expose processCheckIn');
         }
 
+        // The actor drives the ownership / receptionist-location rules and the time window; a call
+        // that carries no identity is treated like a patient for the window (fail closed).
         return await this.checkInService.processCheckIn(
           pluginData.appointmentId,
-          pluginData.clinicId
+          pluginData.clinicId,
+          resolvePluginActor(pluginData)
         );
 
       case 'getPatientQueuePosition':

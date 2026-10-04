@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
+import {
+  CHECK_IN_WINDOW_AFTER_MINUTES,
+  CHECK_IN_WINDOW_BEFORE_MINUTES,
+} from '@services/appointments/core/check-in-presence.util';
 
 export interface PluginConfig {
   enabled: boolean;
@@ -101,7 +105,13 @@ export class PluginConfigService {
             qrEnabled: getConfig('CLINIC_CONFIRMATION_QR_ENABLED', true),
             qrExpiration: getConfig('CLINIC_CONFIRMATION_QR_EXPIRATION', 300),
             autoCheckIn: getConfig('CLINIC_AUTO_CHECKIN', false),
-            checkInWindow: getConfig('CLINIC_CHECKIN_WINDOW', 15),
+            // Same product rule as the check-in service (check-in-presence.util): minutes before
+            // the appointment and minutes after it, on the same IST day.
+            checkInWindow: getConfig('CLINIC_CHECKIN_WINDOW', CHECK_IN_WINDOW_BEFORE_MINUTES),
+            checkInWindowAfter: getConfig(
+              'CLINIC_CHECKIN_WINDOW_AFTER',
+              CHECK_IN_WINDOW_AFTER_MINUTES
+            ),
           },
           features: ['qr-generation', 'check-in', 'confirmation', 'completion'],
           domain: 'healthcare',

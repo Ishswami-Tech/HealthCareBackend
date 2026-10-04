@@ -22,6 +22,7 @@ import { isCacheEnabled, getCacheProvider } from '@config/cache.config';
 // Internal imports - Infrastructure
 import { LogType, LogLevel } from '@core/types';
 import { BaseCacheClientService } from '@cache/base-cache-client.service';
+import { listKeysByPattern } from '@infrastructure/cache/utils/pattern-delete.util';
 
 // Internal imports - Core
 import { HealthcareError } from '@core/errors';
@@ -1051,8 +1052,11 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
     return this.retryOperation(() => this.client.exists(key));
   }
 
+  /** Logical key names (see BaseCacheClientService.keys), retried on transient failures. */
   async keys(pattern: string): Promise<string[]> {
-    return this.retryOperation(() => this.client.keys(pattern));
+    return this.retryOperation(() =>
+      listKeysByPattern(this.client, this.PRODUCTION_CONFIG.keyPrefix, pattern)
+    );
   }
 
   async ttl(key: string): Promise<number> {
@@ -1257,6 +1261,11 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
     };
   }
 
+  /**
+   * Clears the cache through the shared pattern delete (SCAN, batched UNLINK, correct key prefix
+   * handling). Security and bookkeeping namespaces (sessions, lockouts, audit trail, tag indexes,
+   * stats, ...) are skipped by the deny-list in clearCache.
+   */
   async clearAllCache(): Promise<number> {
     await this.loggingService.log(
       LogType.CACHE,
@@ -1265,60 +1274,7 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
       'CacheService',
       {}
     );
-
-    try {
-      // Get all keys
-      const keys = await this.keys('*');
-
-      if (keys.length === 0) {
-        return 0;
-      }
-
-      // Filter out system keys
-      const keysToDelete = keys.filter(
-        key =>
-          !key.startsWith('cache:stats') &&
-          !key.startsWith('security:events') &&
-          !key.startsWith('system:')
-      );
-
-      if (keysToDelete.length === 0) {
-        return 0;
-      }
-
-      // Delete keys in batches to avoid blocking
-      const BATCH_SIZE = 1000;
-      let deletedCount = 0;
-
-      for (let i = 0; i < keysToDelete.length; i += BATCH_SIZE) {
-        const batch = keysToDelete.slice(i, i + BATCH_SIZE);
-        if (batch.length > 0) {
-          const count = await this.retryOperation(() => this.client.del(...batch));
-          deletedCount += count;
-        }
-      }
-
-      await this.loggingService.log(
-        LogType.CACHE,
-        LogLevel.DEBUG,
-        'Cleared keys from cache',
-        'CacheService',
-        { deletedCount }
-      );
-      return deletedCount;
-    } catch (_error) {
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        'Error clearing all cache',
-        'CacheService',
-        {
-          error: _error instanceof Error ? _error.message : String(_error),
-          stack: _error instanceof Error ? _error.stack : undefined,
-        }
-      );
-      throw _error;
-    }
+    return this.clearCache('*');
   }
 
   async resetCacheStats(): Promise<void> {
@@ -1664,64 +1620,6 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
   }
 
   /**
-   * Override clearCache to add logging and batch processing
-   */
-  async clearCache(pattern?: string): Promise<number> {
-    await this.loggingService.log(
-      LogType.CACHE,
-      LogLevel.INFO,
-      'Clearing cache with pattern',
-      'CacheService',
-      { pattern: pattern || 'ALL' }
-    );
-
-    try {
-      if (!pattern) {
-        return await this.clearAllCache();
-      }
-
-      const keys = await this.keys(pattern);
-      if (keys.length === 0) {
-        return 0;
-      }
-
-      // Delete keys in batches
-      const BATCH_SIZE = 1000;
-      let deletedCount = 0;
-
-      for (let i = 0; i < keys.length; i += BATCH_SIZE) {
-        const batch = keys.slice(i, i + BATCH_SIZE);
-        if (batch.length > 0) {
-          const count = await this.retryOperation(() => this.client.del(...batch));
-          deletedCount += count;
-        }
-      }
-
-      await this.loggingService.log(
-        LogType.CACHE,
-        LogLevel.DEBUG,
-        'Cleared keys matching pattern',
-        'CacheService',
-        { deletedCount, pattern }
-      );
-      return deletedCount;
-    } catch (_error) {
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        'Error clearing cache with pattern',
-        'CacheService',
-        {
-          pattern,
-          error: _error instanceof Error ? _error.message : String(_error),
-          stack: _error instanceof Error ? _error.stack : undefined,
-        }
-      );
-      throw _error;
-    }
-  }
-
-  /**
    * Unified caching service that handles all caching operations.
    * This is the main method to use for all caching needs with built-in SWR.
    *
@@ -1936,52 +1834,17 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
   }
 
   /**
-   * Invalidate multiple cache keys by pattern.
+   * Invalidate multiple cache keys by pattern (e.g., "user:*").
    *
-   * @param pattern - Pattern to match keys for invalidation (e.g., "user:*")
+   * Delegates to the shared pattern delete in BaseCacheClientService, so it prefixes the glob
+   * correctly, walks the keyspace with SCAN, batches the deletes and never touches protected
+   * (security) namespaces. Throws if the delete itself failed.
+   *
+   * @param pattern - Pattern to match keys for invalidation
    * @returns Number of keys invalidated
    */
   async invalidateCacheByPattern(pattern: string): Promise<number> {
-    try {
-      const keys = await this.keys(pattern);
-      if (keys.length === 0) {
-        return 0;
-      }
-
-      // Delete keys in batches
-      const BATCH_SIZE = 1000;
-      let invalidatedCount = 0;
-
-      for (let i = 0; i < keys.length; i += BATCH_SIZE) {
-        const batch = keys.slice(i, i + BATCH_SIZE);
-        if (batch.length > 0) {
-          const count = await this.retryOperation(() => this.client.del(...batch));
-          invalidatedCount += count;
-        }
-      }
-
-      await this.loggingService.log(
-        LogType.CACHE,
-        LogLevel.DEBUG,
-        'Invalidated keys matching pattern',
-        'CacheService',
-        { invalidatedCount, pattern }
-      );
-      return invalidatedCount;
-    } catch (_error) {
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        'Failed to invalidate cache by pattern',
-        'CacheService',
-        {
-          pattern,
-          error: _error instanceof Error ? _error.message : String(_error),
-          stack: _error instanceof Error ? _error.stack : undefined,
-        }
-      );
-      return 0;
-    }
+    return this.clearCache(pattern);
   }
 
   /**

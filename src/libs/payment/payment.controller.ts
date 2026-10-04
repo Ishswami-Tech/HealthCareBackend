@@ -30,6 +30,8 @@ import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache';
 import { PaymentService } from './payment.service';
 import { PaymentHandoffTokenService } from './payment.handoff-token.service';
+import { describePaymentCallbackOutcome } from './payment-callback-outcome.util';
+import type { PaymentCallbackCode } from './payment-callback-outcome.util';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import {
   LogType,
@@ -61,6 +63,16 @@ import { JobType, JobPriorityLevel } from '@core/types/queue.types';
 import type { PaymentProcessingJobData } from '@queue/src/queue.processor';
 
 type BillingServiceLike = {
+  assertPublicPaymentIntentAmount: (
+    target: {
+      appointmentId?: string | undefined;
+      subscriptionId?: string | undefined;
+      invoiceId?: string | undefined;
+      prescriptionId?: string | undefined;
+    },
+    clinicId: string,
+    amountMinorUnits: number
+  ) => Promise<void>;
   handlePaymentCallback: (
     clinicId: string,
     paymentId: string,
@@ -111,17 +123,23 @@ export class PaymentController {
   }
 
   private async withBillingTimeout<T>(promise: Promise<T>, timeoutMs = 10_000): Promise<T> {
+    // A Promise executor's return value is discarded by the Promise constructor,
+    // so the previous `return () => clearTimeout(timer)` here never ran — every
+    // call leaked a live timer for the full timeoutMs even when `promise` won
+    // the race. Clearing it explicitly once either side settles fixes the leak.
+    let timer: ReturnType<typeof setTimeout>;
     const timeout = new Promise<never>((_, reject) => {
-      const timer = setTimeout(
+      timer = setTimeout(
         () => reject(new Error(`Billing service call timed out after ${timeoutMs}ms`)),
         timeoutMs
       );
-      if (typeof clearTimeout !== 'undefined') {
-        return () => clearTimeout(timer);
-      }
     });
 
-    return Promise.race([promise, timeout]);
+    try {
+      return await Promise.race([promise, timeout]);
+    } finally {
+      clearTimeout(timer!);
+    }
   }
 
   private parsePaymentProvider(provider?: string): PaymentProvider | undefined {
@@ -1489,6 +1507,8 @@ export class PaymentController {
     invoice?: unknown;
     appointment?: unknown;
     error?: string;
+    code?: PaymentCallbackCode;
+    retryable?: boolean;
   }> {
     try {
       if (!paymentId || !orderId) {
@@ -1514,7 +1534,35 @@ export class PaymentController {
         payment?: unknown;
         invoice?: unknown;
         appointment?: unknown;
+        processing?: boolean;
       };
+
+      // BillingService returns an empty payment object when no local payment record exists for
+      // the references (nothing was verified or recorded) - that is not a success.
+      const hasPaymentRecord =
+        typeof result.payment === 'object' &&
+        result.payment !== null &&
+        Object.keys(result.payment).length > 0;
+      if (!hasPaymentRecord) {
+        return {
+          success: false,
+          error: 'Payment record not found for the given references',
+          code: 'PAYMENT_NOT_FOUND',
+          retryable: true,
+        };
+      }
+
+      // The payment is COMPLETED but another delivery is still applying its side effects
+      // (plan activation, appointment confirmation): not final for the caller yet - keep polling.
+      if (result.processing) {
+        return {
+          success: false,
+          payment: result.payment,
+          error: 'Payment is being finalised, please retry shortly',
+          code: 'PAYMENT_PROCESSING',
+          retryable: true,
+        };
+      }
 
       return {
         success: true,
@@ -1564,8 +1612,11 @@ export class PaymentController {
   @ApiOperation({ summary: 'Create payment intent (public, for payment bridge)' })
   @ApiHeader({ name: 'X-Clinic-ID', description: 'Clinic identifier', required: true })
   @ApiResponse({ status: 200, description: 'Payment intent created successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid request' })
-  @ApiResponse({ status: 404, description: 'Clinic not found or no payment config' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid request or amount does not match the amount due',
+  })
+  @ApiResponse({ status: 404, description: 'Clinic, payment target or payment config not found' })
   async createPaymentIntentPublic(
     @Headers('x-clinic-id') clinicIdHeader: string | undefined,
     @Body()
@@ -1615,6 +1666,15 @@ export class PaymentController {
         error: 'A target (subscription, appointment, invoice, or prescription) is required.',
       };
     }
+
+    // The route is public (clinic header only, no user): never trust the client-chosen amount.
+    // The target must exist in this clinic, be open, and the amount must equal what is due
+    // (404 / 400 with fixed messages).
+    await this.getBillingService().assertPublicPaymentIntentAmount(
+      { appointmentId, subscriptionId, invoiceId, prescriptionId },
+      clinicId,
+      amount
+    );
 
     // This bridge endpoint creates a bare gateway order with no local payment record.
     // If billing already opened an order for the same target, a second one would be a
@@ -1750,6 +1810,9 @@ export class PaymentController {
     appointmentType?: string;
     message?: string;
     error?: string;
+    payment?: { id?: string; status: string };
+    code?: PaymentCallbackCode;
+    retryable?: boolean;
   }> {
     let verifiedPayload: {
       clinicId: string;
@@ -1799,7 +1862,12 @@ export class PaymentController {
       ) as PaymentProvider | undefined;
       const verificationPaymentId = resolvedPaymentId || resolvedOrderId;
 
-      let paymentResultStatus = 'completed';
+      // Never assume success: only a status the billing service actually reports (read from the
+      // payment record after backend verification) may mark the handoff as completed. A callback
+      // with no local payment record yields no status and stays 'unknown' -> success: false.
+      let paymentResultStatus = 'unknown';
+      let paymentResultRecord: Record<string, unknown> | undefined;
+      let paymentProcessing = false;
       if (verificationPaymentId) {
         const callbackResult = await this.withBillingTimeout(
           this.getBillingService().handlePaymentCallback(
@@ -1809,15 +1877,32 @@ export class PaymentController {
             resolvedProvider
           )
         );
-        const resultRecord = (callbackResult as { payment?: unknown })?.payment as
+        paymentResultRecord = (callbackResult as { payment?: unknown })?.payment as
           Record<string, unknown> | undefined;
-        if (resultRecord?.['status'] && typeof resultRecord['status'] === 'string') {
-          paymentResultStatus = String(resultRecord['status']).toLowerCase();
+        paymentProcessing = (callbackResult as { processing?: boolean })?.processing === true;
+        if (paymentResultRecord?.['status'] && typeof paymentResultRecord['status'] === 'string') {
+          paymentResultStatus = String(paymentResultRecord['status']).toLowerCase();
         }
       }
 
-      // Only return success if payment is truly completed
-      const isSuccessful = paymentResultStatus === 'completed';
+      // Only return success if payment is truly completed AND its side effects are applied: a
+      // COMPLETED payment another delivery is still finalising is "processing" (retry shortly).
+      const isSuccessful = paymentResultStatus === 'completed' && !paymentProcessing;
+      const outcomeFields = describePaymentCallbackOutcome({
+        hasPaymentRecord: paymentResultStatus !== 'unknown',
+        status: paymentResultStatus,
+        processing: paymentProcessing,
+      });
+      // Same value the plain /payments/callback returns as payment.status, so a client can tell
+      // a terminal failed / cancelled / expired payment from a pending one in a single call.
+      const reportedStatus =
+        typeof paymentResultRecord?.['status'] === 'string'
+          ? String(paymentResultRecord['status'])
+          : undefined;
+      const reportedPaymentId =
+        typeof paymentResultRecord?.['id'] === 'string'
+          ? String(paymentResultRecord['id'])
+          : undefined;
 
       // The replay lock (acquired in verifyHandoffToken) is otherwise only
       // released in the catch block below (thrown exceptions). A cancelled
@@ -1861,7 +1946,22 @@ export class PaymentController {
           : {}),
         ...(isSuccessful
           ? { message: 'Payment callback processed successfully' }
-          : { message: `Payment is ${paymentResultStatus}, not completed` }),
+          : {
+              message: paymentProcessing
+                ? 'Payment is being finalised, please retry shortly'
+                : `Payment is ${paymentResultStatus}, not completed`,
+            }),
+        ...(reportedStatus
+          ? {
+              payment: {
+                ...(reportedPaymentId ? { id: reportedPaymentId } : {}),
+                status: reportedStatus,
+              },
+            }
+          : {}),
+        ...(!isSuccessful && outcomeFields
+          ? { code: outcomeFields.code, retryable: outcomeFields.retryable }
+          : {}),
       };
     } catch (error) {
       if (verifiedPayload?.jti) {

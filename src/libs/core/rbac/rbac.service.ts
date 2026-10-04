@@ -26,6 +26,7 @@ export type { RbacContext, RoleAssignment, PermissionCheck };
 @Injectable()
 export class RbacService {
   private readonly CACHE_TTL = 3600; // 1 hour
+  private readonly DENIED_CACHE_TTL = 15; // seconds — short TTL for denials so a transient false negative can't poison access for a full hour
   private readonly CACHE_PREFIX = 'rbac:';
 
   /**
@@ -119,8 +120,12 @@ export class RbacService {
         },
       };
 
-      // Cache the result
-      await this.cacheService.set(cacheKey, result, this.CACHE_TTL);
+      // Cache the result — denials get a much shorter TTL than grants
+      await this.cacheService.set(
+        cacheKey,
+        result,
+        hasPermission ? this.CACHE_TTL : this.DENIED_CACHE_TTL
+      );
 
       // Log permission check
       await this.loggingService.log(
@@ -601,6 +606,9 @@ export class RbacService {
         'vitals:*',
         'medications:*',
         'prescriptions:*',
+        'inventory:*',
+        'pharmacy_purchase_order:*',
+        'pharmacy_inventory:*',
         'notifications:*',
         'profile:read',
         'profile:update',
@@ -681,8 +689,13 @@ export class RbacService {
       ],
       NURSE: [
         'appointments:read',
+        // Check-in, force-check-in, status and complete routes already list NURSE in @Roles;
+        // without this the RbacGuard refused every one of them (CONTRACT_WEB_B row 41).
+        'appointments:update',
         'patients:read',
         'patients:update',
+        // GET /clinics/:id/locations and /clinics/my-clinic (queue page location picker).
+        'clinics:read',
         'medical-records:read',
         'video:read',
         'video:create',
@@ -693,6 +706,7 @@ export class RbacService {
         'medical-records:create',
         'invoices:read',
         'analytics:read',
+        'notifications:read',
       ],
       RECEPTIONIST: [
         'appointments:*',
@@ -707,6 +721,9 @@ export class RbacService {
         'billing:create',
         'billing:update',
         'invoices:read',
+        // Front desk raises and marks-paid OPD invoices (POST /billing/invoices, /:id/mark-paid).
+        'invoices:create',
+        'invoices:update',
         'payments:read',
         'payments:create',
         'subscriptions:read',
@@ -737,19 +754,37 @@ export class RbacService {
         'profile:update',
         'users:update', // Update own profile (users controller PATCH with requireOwnership)
         'medical-records:read',
+        // Patient adds their own lab result / document (POST /ehr/medical-records: the
+        // route is @Roles-gated and the service enforces own-chart + patient-safe types)
+        'medical-records:create',
         // EHR permissions - patients can view their own health records
         'ehr:read',
         'vitals:read',
         'lab-reports:read',
         'medications:read',
+        // Patient marks their own doses taken (POST /ehr/medications/:id/doses)
+        'medications:log',
         'prescriptions:read',
+        // Pay for own prescription (POST /pharmacy/prescriptions/:id/process-payment);
+        // other prescription writes are @Roles(PHARMACIST/DOCTOR) and the service
+        // enforces patient ownership.
+        'prescriptions:update',
         // Communication permissions
         'notifications:read',
         // Billing permissions - patients can view and manage their own billing data
         'billing:read',
+        // File an insurance claim (POST /billing/insurance-claims; the service pins it to the
+        // caller's own patient profile). Every other billing:create route is staff-only via @Roles.
+        'billing:create',
         'subscriptions:read',
         'subscriptions:create', // Create subscription (billing controller POST subscriptions)
         'subscriptions:update', // Cancel/renew, book appointment with subscription
+        // Cancel own subscription (POST /billing/subscriptions/:id/cancel requires
+        // subscriptions:delete). Ownership is NOT implied by this permission: it is enforced by
+        // BillingService.getSubscription, which runs assertBillingEntityAccess (patient must own
+        // the row, clinic must match) on every call - including cache hits - before cancel,
+        // renew, update or pay can proceed.
+        'subscriptions:delete',
         'invoices:read',
         'payments:read',
         'payments:create',
@@ -764,21 +799,28 @@ export class RbacService {
         'patients:read',
         'medical-records:read',
         'inventory:*',
+        'pharmacy_purchase_order:*',
+        'pharmacy_inventory:*',
         'medications:*',
         'payments:create',
         'invoices:read',
         'profile:read',
         'profile:update',
+        'notifications:read',
       ],
       THERAPIST: [
         'appointments:read',
+        // Therapist screens book their own sessions (POST /appointments) and read clinic locations.
+        'appointments:create',
         'appointments:update',
+        'clinics:read',
         'patients:read',
         'therapy:*',
         'medical-records:read',
         'billing:read',
         'profile:read',
         'profile:update',
+        'notifications:read',
       ],
       LAB_TECHNICIAN: [
         'lab-reports:*',
@@ -789,6 +831,7 @@ export class RbacService {
         'billing:read',
         'profile:read',
         'profile:update',
+        'notifications:read',
       ],
       FINANCE_BILLING: [
         'billing:*',
@@ -798,6 +841,7 @@ export class RbacService {
         'patients:read',
         'profile:read',
         'profile:update',
+        'notifications:read',
       ],
       SUPPORT_STAFF: [
         'appointments:read',
@@ -806,20 +850,32 @@ export class RbacService {
         'billing:read',
         'profile:read',
         'profile:update',
+        'notifications:read',
       ],
       COUNSELOR: [
         'appointments:read',
+        // Counselor screens book their own sessions (POST /appointments) and read clinic locations.
+        'appointments:create',
         'appointments:update',
+        'clinics:read',
         'patients:read',
         'counseling:*',
         'medical-records:read',
         'billing:read',
         'profile:read',
         'profile:update',
+        'notifications:read',
       ],
       CLINIC_LOCATION_HEAD: [
         'locations:read',
         'locations:update',
+        // The location routes (clinic-location.controller) and the clinic reads the location-head
+        // dashboard uses are gated on the `clinics` resource; no delete (deactivate via isActive).
+        'clinics:read',
+        'clinics:create',
+        'clinics:update',
+        'doctors:read',
+        'patients:read',
         'appointments:read',
         'appointments:update',
         'queue:read',
@@ -836,6 +892,7 @@ export class RbacService {
         'subscriptions:*',
         'profile:read',
         'profile:update',
+        'notifications:read',
       ],
     };
   }

@@ -84,7 +84,7 @@ export class AppointmentAnalyticsService {
       // Use executeHealthcareRead for groupBy and complex queries
       const [appointmentsByStatus, appointmentsByType, completedAppointments] = (await Promise.all([
         this.databaseService.executeHealthcareRead(async client => {
-          const appointment = client['appointment'] as {
+          const appointment = client['appointment'] as unknown as {
             groupBy: (args: {
               by: string[];
               where: unknown;
@@ -100,7 +100,7 @@ export class AppointmentAnalyticsService {
           })) as unknown as Array<{ status: string; _count: { status: number } }>;
         }),
         this.databaseService.executeHealthcareRead(async client => {
-          const appointment = client['appointment'] as {
+          const appointment = client['appointment'] as unknown as {
             groupBy: (args: {
               by: string[];
               where: unknown;
@@ -116,7 +116,7 @@ export class AppointmentAnalyticsService {
           })) as unknown as Array<{ type: string; _count: { type: number } }>;
         }),
         this.databaseService.executeHealthcareRead(async client => {
-          const appointment = client['appointment'] as {
+          const appointment = client['appointment'] as unknown as {
             findMany: (args: {
               where: unknown;
               select: {

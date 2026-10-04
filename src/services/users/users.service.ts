@@ -12,6 +12,7 @@ import type { User } from '@core/types/database.types';
 import { EmergencyContact } from '@core/types/database.types';
 import { RbacService } from '@core/rbac/rbac.service';
 import { CreateUserDto, UserResponseDto, UpdateUserDto, MedicalDocumentDto } from '@dtos/user.dto';
+import type { BloodGroup, EmergencyContactDto, MaritalStatus } from '@dtos/user.dto';
 import { HealthcareErrorsService } from '@core/errors';
 // Removed ProfileCompletionService import as logic is moved here
 import { PatientsService } from '@services/patients/patients.service';
@@ -276,6 +277,10 @@ export class UsersService {
           state?: string | null;
           country?: string | null;
           zipCode?: string | null;
+          profilePicture?: string | null;
+          occupation?: string | null;
+          maritalStatus?: string | null;
+          bloodGroup?: string | null;
           doctor?: {
             specialization?: string | null;
             experience?: number | null;
@@ -305,7 +310,26 @@ export class UsersService {
           ...(userRecord.state ? { state: userRecord.state } : {}),
           ...(userRecord.country ? { country: userRecord.country } : {}),
           ...(userRecord.zipCode ? { zipCode: userRecord.zipCode } : {}),
+          // Stored on the User row but previously dropped from the profile response.
+          // The photo is a PRIVATE object: the response carries a short-lived presigned URL.
+          ...(userRecord.profilePicture
+            ? {
+                profilePicture: await this.patientsService.resolveProfilePhotoUrl(
+                  result.id,
+                  userRecord.profilePicture
+                ),
+              }
+            : {}),
+          ...(userRecord.occupation ? { occupation: userRecord.occupation } : {}),
+          ...(userRecord.maritalStatus
+            ? { maritalStatus: userRecord.maritalStatus as MaritalStatus }
+            : {}),
+          ...(userRecord.bloodGroup ? { bloodGroup: userRecord.bloodGroup as BloodGroup } : {}),
         };
+        const emergencyContact = await this.getEmergencyContact(result.id);
+        if (emergencyContact) {
+          userResponse.emergencyContact = emergencyContact;
+        }
         let patientRecord = result.patient as { id?: string } | null | undefined;
         if (String(result.role).toUpperCase() === 'PATIENT' && !patientRecord?.id) {
           // `result` already came from findUserByIdSafe with `patient: true` included
@@ -614,6 +638,8 @@ export class UsersService {
       if (data.state) userProfileUpdates['state'] = data.state;
       if (data.country) userProfileUpdates['country'] = data.country;
       if (data.zipCode) userProfileUpdates['zipCode'] = data.zipCode;
+      if (data.maritalStatus) userProfileUpdates['maritalStatus'] = data.maritalStatus;
+      if (data.bloodGroup) userProfileUpdates['bloodGroup'] = data.bloodGroup;
       const medicalConditionSummaryParts: string[] = [];
       if (data.medicalConditions?.length) {
         medicalConditionSummaryParts.push(`Conditions: ${data.medicalConditions.join(', ')}`);
@@ -1059,6 +1085,8 @@ export class UsersService {
         area: cleanedData.area,
         district: cleanedData.district,
         occupation: cleanedData.occupation,
+        maritalStatus: cleanedData.maritalStatus,
+        bloodGroup: cleanedData.bloodGroup,
         organization: cleanedData.organization,
         profilePicture: cleanedData.profilePicture,
       };
@@ -1135,6 +1163,9 @@ export class UsersService {
         state?: string | null;
         country?: string | null;
         zipCode?: string | null;
+        occupation?: string | null;
+        maritalStatus?: string | null;
+        bloodGroup?: string | null;
         doctor?: {
           specialization?: string | null;
           experience?: number | null;
@@ -1172,6 +1203,9 @@ export class UsersService {
         ...(result.state ? { state: result.state } : {}),
         ...(result.country ? { country: result.country } : {}),
         ...(result.zipCode ? { zipCode: result.zipCode } : {}),
+        ...(result.occupation ? { occupation: result.occupation } : {}),
+        ...(result.maritalStatus ? { maritalStatus: result.maritalStatus as MaritalStatus } : {}),
+        ...(result.bloodGroup ? { bloodGroup: result.bloodGroup as BloodGroup } : {}),
         ...(result.doctor?.specialization ? { specialization: result.doctor.specialization } : {}),
         ...(typeof result.doctor?.experience === 'number'
           ? { experience: result.doctor.experience }
@@ -1182,6 +1216,10 @@ export class UsersService {
             }
           : {}),
       };
+      const savedEmergencyContact = await this.getEmergencyContact(id);
+      if (savedEmergencyContact) {
+        userResponse.emergencyContact = savedEmergencyContact;
+      }
       return userResponse;
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -1364,6 +1402,68 @@ export class UsersService {
       { userId: id }
     );
     await this.eventService.emit('user.deleted', { userId: id });
+  }
+
+  /**
+   * Self-service account deletion (app-store requirement).
+   * Soft delete only: sets isActive=false and deletedAt=now on the caller's own
+   * User row. Clinical records (Patient, EHR, prescriptions, invoices) are kept
+   * for medico-legal retention; the account can no longer sign in (AuthService
+   * rejects inactive users) and existing tokens are rejected by JwtAuthGuard.
+   * Session revocation is done by the controller via AuthService.
+   */
+  async deactivateOwnAccount(
+    userId: string,
+    clinicId?: string
+  ): Promise<{ deactivatedAt: string }> {
+    const existing = await this.databaseService.findUserByIdSafe(userId);
+    if (!existing) {
+      throw this.errors.userNotFound(userId, 'UsersService.deactivateOwnAccount');
+    }
+    if ((existing.role as Role) === Role.SUPER_ADMIN) {
+      throw new BadRequestException(
+        'Super admin accounts cannot be self-deactivated. Contact platform support.'
+      );
+    }
+
+    const deactivatedAt = new Date();
+    await this.databaseService.executeHealthcareWrite<unknown>(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return await typedClient.user.update({
+          where: { id: userId } as PrismaDelegateArgs,
+          data: { isActive: false, deletedAt: deactivatedAt } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId,
+        clinicId: clinicId || String(existing.primaryClinicId || ''),
+        resourceType: 'USER',
+        operation: 'UPDATE',
+        resourceId: userId,
+        userRole: String(existing.role || 'PATIENT'),
+        details: { action: 'SELF_DEACTIVATE', softDelete: true },
+      }
+    );
+
+    await this.invalidateUserProfileCaches(userId, clinicId).catch(() => undefined);
+    await this.cacheService.del(`user:sessions:${userId}`).catch(() => undefined);
+
+    try {
+      await this.logAuditEvent(userId, 'ACCOUNT_DEACTIVATED', 'User deactivated their own account');
+    } catch {
+      // Audit log row is best effort; the write above is already audited.
+    }
+    await this.loggingService.log(
+      LogType.AUDIT,
+      LogLevel.INFO,
+      'User self-deactivated account',
+      'UsersService.deactivateOwnAccount',
+      { userId, clinicId }
+    );
+    await this.eventService.emit('user.deactivated', { userId, clinicId, selfService: true });
+
+    return { deactivatedAt: deactivatedAt.toISOString() };
   }
 
   private async logAuditEvent(userId: string, action: string, description: string): Promise<void> {
@@ -1973,7 +2073,7 @@ export class UsersService {
     await Promise.all([
       this.cacheService.invalidateCache(`users:one:v5:${userId}:global`),
       this.cacheService.invalidateCache(`users:one:${userId}`),
-      this.cacheService.invalidateCacheByPattern(`users:one:*${userId}*`),
+      this.cacheService.invalidateCacheByPattern(`*users:one:*${userId}*`),
       this.cacheService.invalidateCacheByPattern(`*${userId}*`),
       this.cacheService.invalidateDoctorCache(userId, clinicId),
       this.cacheService.invalidateCacheByTag('users'),
@@ -2093,6 +2193,33 @@ export class UsersService {
     delete cleanedData.experience;
     delete cleanedData.availability;
     return availability;
+  }
+
+  /** The user's first active emergency contact, or null (profile responses carry it). */
+  private async getEmergencyContact(userId: string): Promise<EmergencyContactDto | null> {
+    const contact = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return (await typedClient.emergencyContact.findFirst({
+        where: { userId, isActive: true, deletedAt: null } as PrismaDelegateArgs,
+        orderBy: { createdAt: 'asc' } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as {
+        name: string;
+        relationship: string;
+        phone: string;
+        alternatePhone?: string | null;
+        address?: string | null;
+      } | null;
+    });
+    if (!contact) {
+      return null;
+    }
+    return {
+      name: contact.name,
+      relationship: contact.relationship,
+      phone: contact.phone,
+      ...(contact.alternatePhone ? { alternatePhone: contact.alternatePhone } : {}),
+      ...(contact.address ? { address: contact.address } : {}),
+    };
   }
 
   private async updateEmergencyContact(

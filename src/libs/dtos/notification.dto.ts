@@ -306,6 +306,16 @@ export class SubscribeToTopicDto {
       'Topic name can only contain alphanumeric characters, hyphens, underscores, periods, tildes, and percent signs',
   })
   topic!: string;
+
+  /**
+   * Accepted and ignored: the subscriber is always the JWT subject. The web client sends it,
+   * and the global ValidationPipe is `forbidNonWhitelisted`, so an unknown key would be a 400.
+   */
+  @ApiPropertyOptional({ description: 'Ignored; the subscriber is the authenticated user' })
+  @IsOptional()
+  @IsString()
+  @Length(1, 100)
+  userId?: string;
 }
 
 export class RegisterDeviceTokenDto {
@@ -323,7 +333,9 @@ export class RegisterDeviceTokenDto {
   @IsEnum(Platform)
   platform: Platform = Platform.WEB;
 
-  @ApiPropertyOptional({ description: 'User ID associated with the device' })
+  @ApiPropertyOptional({
+    description: 'Ignored; the device is registered for the authenticated user',
+  })
   @IsOptional()
   @IsString()
   @Length(1, 100)

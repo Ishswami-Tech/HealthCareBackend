@@ -6,16 +6,18 @@ import { PatientsService } from '@services/patients/patients.service';
 import { Role } from '@core/types/enums.types';
 
 describe('PatientsService', () => {
-  function createService(overrides: {
-    databaseService?: Record<string, jest.Mock>;
-    loggingService?: Record<string, jest.Mock>;
-    staticAssetService?: Record<string, jest.Mock>;
-    cacheService?: Record<string, jest.Mock>;
-    appointmentsService?: Record<string, jest.Mock>;
-    ehrService?: Record<string, jest.Mock>;
-    billingService?: Record<string, jest.Mock>;
-    pharmacyService?: Record<string, jest.Mock>;
-  } = {}) {
+  function createService(
+    overrides: {
+      databaseService?: Record<string, jest.Mock>;
+      loggingService?: Record<string, jest.Mock>;
+      staticAssetService?: Record<string, jest.Mock>;
+      cacheService?: Record<string, jest.Mock>;
+      appointmentsService?: Record<string, jest.Mock>;
+      ehrService?: Record<string, jest.Mock>;
+      billingService?: Record<string, jest.Mock>;
+      pharmacyService?: Record<string, jest.Mock>;
+    } = {}
+  ) {
     const databaseService = overrides.databaseService || {
       executeHealthcareRead: jest.fn(),
       executeHealthcareWrite: jest.fn(),
@@ -55,7 +57,7 @@ describe('PatientsService', () => {
       appointmentsService as any,
       ehrService as any,
       billingService as any,
-      pharmacyService as any,
+      pharmacyService as any
     );
   }
 
@@ -196,9 +198,7 @@ describe('PatientsService', () => {
 
       const service = createService({ databaseService });
 
-      await expect(
-        (service as any).getPatientProfile('nonexistent', 'clinic-1')
-      ).rejects.toThrow();
+      await expect((service as any).getPatientProfile('nonexistent', 'clinic-1')).rejects.toThrow();
     });
   });
 
@@ -331,14 +331,12 @@ describe('PatientsService', () => {
       };
 
       const service = createService({ databaseService });
-      await expect(
-        (service as any).deletePatient('user-123', 'clinic-1')
-      ).resolves.toBeUndefined();
+      await expect((service as any).deletePatient('user-123', 'clinic-1')).resolves.toBeUndefined();
 
       expect(databaseService.executeHealthcareWrite).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 'patient-1' },
-        }),
+        })
       );
     });
   });
@@ -385,7 +383,7 @@ describe('PatientsService', () => {
       expect(databaseService.executeHealthcareRead).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ clinicId: 'clinic-1' }),
-        }),
+        })
       );
     });
   });

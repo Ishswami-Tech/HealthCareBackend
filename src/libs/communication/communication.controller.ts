@@ -78,6 +78,83 @@ import { RoleEnum as Role } from '@core/types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { formatDateTimeInIST, nowIso } from '../utils/date-time.util';
 
+/** Every role has a notification inbox; ownership of `:userId` is enforced by RBAC. */
+const INBOX_ROLES: readonly Role[] = [
+  Role.SUPER_ADMIN,
+  Role.CLINIC_ADMIN,
+  Role.CLINIC_LOCATION_HEAD,
+  Role.DOCTOR,
+  Role.ASSISTANT_DOCTOR,
+  Role.NURSE,
+  Role.RECEPTIONIST,
+  Role.PHARMACIST,
+  Role.THERAPIST,
+  Role.LAB_TECHNICIAN,
+  Role.FINANCE_BILLING,
+  Role.SUPPORT_STAFF,
+  Role.COUNSELOR,
+  Role.NUTRITIONIST,
+  Role.PATIENT,
+];
+
+/** Columns of a `Notification` row the inbox reads. */
+interface NotificationInboxRow {
+  id: string;
+  userId: string;
+  type: string;
+  message: string;
+  read: boolean;
+  status: string;
+  createdAt: Date;
+  title?: string | null;
+  category?: string | null;
+  data?: unknown;
+  appointmentId?: string | null;
+  readAt?: Date | null;
+}
+
+/** Inbox item as returned to the web bell / mobile notifications screens. */
+export interface NotificationInboxItem {
+  id: string;
+  userId: string;
+  type: string;
+  title: string | null;
+  category: string;
+  message: string;
+  read: boolean;
+  isRead: boolean;
+  readAt: Date | null;
+  status: string;
+  appointmentId: string | null;
+  data: Record<string, unknown>;
+  createdAt: Date;
+}
+
+export function toNotificationInboxItem(row: NotificationInboxRow): NotificationInboxItem {
+  const data =
+    row.data && typeof row.data === 'object' && !Array.isArray(row.data)
+      ? (row.data as Record<string, unknown>)
+      : {};
+  const appointmentId =
+    row.appointmentId ??
+    (typeof data['appointmentId'] === 'string' ? (data['appointmentId'] as string) : null);
+  return {
+    id: row.id,
+    userId: row.userId,
+    type: row.type,
+    title: row.title ?? null,
+    category: row.category ?? 'SYSTEM',
+    message: row.message,
+    read: row.read,
+    isRead: row.read,
+    readAt: row.readAt ?? null,
+    status: row.status,
+    appointmentId,
+    data: appointmentId ? { ...data, appointmentId } : data,
+    createdAt: row.createdAt,
+  };
+}
+
 /**
  * Unified Communication Controller
  * Provides category-based routing for all communication needs
@@ -441,8 +518,10 @@ export class CommunicationController {
   /**
    * Topic Management
    */
+  // Device registration routes (subscribe / unsubscribe / device-token) carry no RBAC resource
+  // requirement: any authenticated user may register their OWN device (the identity is the JWT
+  // subject). `notifications:create` used to be required here, which most staff roles lack.
   @Post('push/subscribe')
-  @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
     summary: 'Subscribe device to topic',
     description: 'Subscribe a device token to a specific topic for topic-based messaging',
@@ -452,8 +531,15 @@ export class CommunicationController {
     description: 'Device subscribed to topic successfully',
   })
   async subscribeToTopic(
-    @Body() subscribeDto: SubscribeToTopicDto
+    @Body() subscribeDto: SubscribeToTopicDto,
+    @Request() req?: ClinicAuthenticatedRequest
   ): Promise<{ success: boolean; error?: string }> {
+    // The subscriber is always the caller: `subscribeDto.userId` is accepted for compatibility
+    // (the web client still sends it) and ignored.
+    const callerId = this.resolveCallerUserId(req);
+    if (!callerId) {
+      return { success: false, error: 'User not authenticated' };
+    }
     const success = await this.pushService.subscribeToTopic(
       subscribeDto.deviceToken,
       subscribeDto.topic
@@ -465,8 +551,13 @@ export class CommunicationController {
     };
   }
 
+  /** The user id a device-registration route acts for: always the JWT subject, never the body. */
+  private resolveCallerUserId(req?: ClinicAuthenticatedRequest): string | undefined {
+    const candidate = req?.user?.sub || req?.user?.id;
+    return typeof candidate === 'string' && candidate.length > 0 ? candidate : undefined;
+  }
+
   @Post('push/unsubscribe')
-  @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
     summary: 'Unsubscribe device from topic',
     description: 'Unsubscribe a device token from a specific topic',
@@ -490,7 +581,6 @@ export class CommunicationController {
   }
 
   @Post('push/device-token')
-  @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
     summary: 'Register device token for push notifications',
     description:
@@ -509,9 +599,13 @@ export class CommunicationController {
     @Body() registerDto: RegisterDeviceTokenDto,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<{ success: boolean; error?: string }> {
-    // Extract userId from JWT token (req.user is set by JwtAuthGuard)
-    // Priority: DTO userId > req.user.id > req.user.sub > 'anonymous'
-    const userId = registerDto.userId || req.user?.id || req.user?.sub || 'anonymous';
+    // The token is registered for the JWT subject; `registerDto.userId` is accepted for
+    // compatibility and ignored (a body value used to win, letting a caller attach a device to
+    // another account).
+    const userId = this.resolveCallerUserId(req);
+    if (!userId) {
+      return { success: false, error: 'User not authenticated' };
+    }
 
     const success = await this.deviceTokenService.registerDeviceToken({
       userId,
@@ -530,24 +624,28 @@ export class CommunicationController {
   }
 
   /**
-   * Patient notification inbox. Kept separate from chat history: chat
-   * messages and persisted notification records have different contracts.
+   * Notification inbox (web header bell, mobile notifications screens). Kept separate from chat
+   * history: chat messages and persisted notification records have different contracts.
+   * Every role has an inbox, so the list / read / delete routes accept every role; ownership
+   * (`:userId` must be the caller, admins excepted) is enforced by the RBAC decorator.
    */
   @Get('history/:userId')
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN)
+  @Roles(...INBOX_ROLES)
   @RequireResourcePermission('notifications', 'read', { requireOwnership: true })
   async getNotificationHistory(
     @Param('userId') userId: string,
     @Query('type') type?: string,
     @Query('isRead') isRead?: string,
+    @Query('category') category?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
     @Request() req?: ClinicAuthenticatedRequest
-  ) {
+  ): Promise<{ notifications: NotificationInboxItem[] }> {
     const clinicId = req?.clinicContext?.clinicId;
     const take = Math.min(Math.max(Number(limit) || 50, 1), 100);
     const skip = Math.max(Number(offset) || 0, 0);
     const readFilter = isRead === undefined ? undefined : isRead === 'true';
+    const categoryFilter = category?.trim().toUpperCase();
 
     const notifications = await this.databaseService.executeHealthcareRead(async client => {
       const notificationClient = client as unknown as {
@@ -558,22 +656,12 @@ export class CommunicationController {
               clinicId?: string;
               type?: string;
               read?: boolean;
+              category?: string;
             };
             orderBy: { createdAt: string };
             take: number;
             skip: number;
-          }) => Promise<
-            Array<{
-              id: string;
-              userId: string;
-              type: string;
-              message: string;
-              read: boolean;
-              status: string;
-              createdAt: Date;
-              data: unknown;
-            }>
-          >;
+          }) => Promise<NotificationInboxRow[]>;
         };
       };
       return notificationClient.notification.findMany({
@@ -582,6 +670,7 @@ export class CommunicationController {
           ...(clinicId ? { clinicId } : {}),
           ...(type ? { type } : {}),
           ...(readFilter === undefined ? {} : { read: readFilter }),
+          ...(categoryFilter ? { category: categoryFilter } : {}),
         },
         orderBy: { createdAt: 'desc' },
         take,
@@ -590,22 +679,12 @@ export class CommunicationController {
     });
 
     return {
-      notifications: notifications.map(notification => ({
-        id: notification.id,
-        userId: notification.userId,
-        type: notification.type,
-        message: notification.message,
-        read: notification.read,
-        isRead: notification.read,
-        status: notification.status,
-        createdAt: notification.createdAt,
-        data: {},
-      })),
+      notifications: notifications.map(notification => toNotificationInboxItem(notification)),
     };
   }
 
   @Get('history/:userId/unread-count')
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN)
+  @Roles(...INBOX_ROLES)
   @RequireResourcePermission('notifications', 'read', { requireOwnership: true })
   async getUnreadNotificationCount(
     @Param('userId') userId: string,
@@ -628,58 +707,62 @@ export class CommunicationController {
   }
 
   @Patch('history/:id/read')
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN)
+  @Roles(...INBOX_ROLES)
   @RequireResourcePermission('notifications', 'read', { requireOwnership: true })
-  async markNotificationRead(@Param('id') id: string, @Request() req?: ClinicAuthenticatedRequest) {
-    return {
-      notification: await this.databaseService.executeHealthcareWrite(
-        async client => {
-          const notificationClient = client as {
-            notification: {
-              update: (args: {
-                where: { id: string };
-                data: { read: boolean };
-              }) => Promise<unknown>;
-            };
+  async markNotificationRead(
+    @Param('id') id: string,
+    @Request() req?: ClinicAuthenticatedRequest
+  ): Promise<{ notification: NotificationInboxItem }> {
+    const readAt = new Date();
+    const updated = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const notificationClient = client as unknown as {
+          notification: {
+            update: (args: {
+              where: { id: string };
+              data: { read: boolean; readAt: Date };
+            }) => Promise<NotificationInboxRow>;
           };
-          return await notificationClient.notification.update({
-            where: { id },
-            data: { read: true },
-          });
-        },
-        {
-          operation: 'MARK_NOTIFICATION_READ',
-          resourceType: 'NOTIFICATION',
-          resourceId: id,
-          userId: req?.user?.sub || '',
-          userRole: req?.user?.role || 'PATIENT',
-          clinicId: req?.clinicContext?.clinicId || '',
-        }
-      ),
-    };
+        };
+        return await notificationClient.notification.update({
+          where: { id },
+          data: { read: true, readAt },
+        });
+      },
+      {
+        operation: 'MARK_NOTIFICATION_READ',
+        resourceType: 'NOTIFICATION',
+        resourceId: id,
+        userId: req?.user?.sub || '',
+        userRole: req?.user?.role || 'PATIENT',
+        clinicId: req?.clinicContext?.clinicId || '',
+      }
+    );
+    return { notification: toNotificationInboxItem(updated) };
   }
 
   @Patch('history/mark-all-read')
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN)
+  @Roles(...INBOX_ROLES)
   @RequireResourcePermission('notifications', 'read', { requireOwnership: true })
   async markAllNotificationsRead(
     @Query('userId') userId: string,
     @Request() req?: ClinicAuthenticatedRequest
   ) {
     const clinicId = req?.clinicContext?.clinicId;
+    const readAt = new Date();
     const result = await this.databaseService.executeHealthcareWrite(
       async client => {
-        const nc = client as {
+        const nc = client as unknown as {
           notification: {
             updateMany: (args: {
               where: { userId: string; read: boolean; clinicId?: string };
-              data: { read: boolean };
+              data: { read: boolean; readAt: Date };
             }) => Promise<{ count: number }>;
           };
         };
         return await nc.notification.updateMany({
           where: { userId, read: false, ...(clinicId ? { clinicId } : {}) },
-          data: { read: true },
+          data: { read: true, readAt },
         });
       },
       {
@@ -694,12 +777,12 @@ export class CommunicationController {
   }
 
   @Delete(':id')
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN)
+  @Roles(...INBOX_ROLES)
   @RequireResourcePermission('notifications', 'read', { requireOwnership: true })
   async deleteNotification(@Param('id') id: string, @Request() req?: ClinicAuthenticatedRequest) {
     await this.databaseService.executeHealthcareWrite(
       async client => {
-        const nc = client as {
+        const nc = client as unknown as {
           notification: {
             delete: (args: { where: { id: string } }) => Promise<unknown>;
           };

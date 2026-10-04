@@ -10,23 +10,25 @@ import { AuthService } from '@services/auth/auth.service';
 import type { AuthTokens } from '@core/types';
 
 describe('AuthService', () => {
-  function createService(overrides: {
-    databaseService?: Record<string, jest.Mock>;
-    jwtService?: Record<string, jest.Mock>;
-    configService?: Record<string, jest.Mock>;
-    cacheService?: Record<string, jest.Mock>;
-    logging?: Record<string, jest.Mock>;
-    eventService?: Record<string, jest.Mock>;
-    errors?: Record<string, jest.Mock>;
-    emailService?: Record<string, jest.Mock>;
-    whatsAppService?: Record<string, jest.Mock>;
-    sessionService?: Record<string, jest.Mock>;
-    rbacService?: Record<string, jest.Mock>;
-    jwtAuthService?: Record<string, jest.Mock>;
-    socialAuthService?: Record<string, jest.Mock>;
-    otpService?: Record<string, jest.Mock>;
-    queueService?: Record<string, jest.Mock>;
-  } = {}) {
+  function createService(
+    overrides: {
+      databaseService?: Record<string, jest.Mock>;
+      jwtService?: Record<string, jest.Mock>;
+      configService?: Record<string, jest.Mock>;
+      cacheService?: Record<string, jest.Mock>;
+      logging?: Record<string, jest.Mock>;
+      eventService?: Record<string, jest.Mock>;
+      errors?: Record<string, jest.Mock>;
+      emailService?: Record<string, jest.Mock>;
+      whatsAppService?: Record<string, jest.Mock>;
+      sessionService?: Record<string, jest.Mock>;
+      rbacService?: Record<string, jest.Mock>;
+      jwtAuthService?: Record<string, jest.Mock>;
+      socialAuthService?: Record<string, jest.Mock>;
+      otpService?: Record<string, jest.Mock>;
+      queueService?: Record<string, jest.Mock>;
+    } = {}
+  ) {
     const databaseService = overrides.databaseService || {
       executeHealthcareRead: jest.fn(),
       executeHealthcareWrite: jest.fn(),
@@ -128,7 +130,7 @@ describe('AuthService', () => {
       jwtAuthService as any,
       socialAuthService as any,
       otpService as any,
-      queueService as any,
+      queueService as any
     );
   }
 
@@ -142,7 +144,9 @@ describe('AuthService', () => {
   describe('register', () => {
     it('should throw validation error when clinicId is missing', async () => {
       const errors = {
-        validationError: jest.fn(() => { throw new Error('Clinic ID is required'); }),
+        validationError: jest.fn(() => {
+          throw new Error('Clinic ID is required');
+        }),
         clinicNotFound: jest.fn(() => new Error('Clinic not found')),
         userNotFound: jest.fn(() => new Error('Invalid credentials')),
       };
@@ -162,7 +166,9 @@ describe('AuthService', () => {
 
     it('should throw validation error when clinicId mismatches header', async () => {
       const errors = {
-        validationError: jest.fn(() => { throw new Error('Clinic ID mismatch'); }),
+        validationError: jest.fn(() => {
+          throw new Error('Clinic ID mismatch');
+        }),
         clinicNotFound: jest.fn(() => new Error('Clinic not found')),
         userNotFound: jest.fn(() => new Error('Invalid credentials')),
       };
@@ -182,7 +188,7 @@ describe('AuthService', () => {
         (service as any).register(
           { email: 'test@example.com', password: 'SecurePass123!', clinicId: 'clinic-1' } as any,
           undefined,
-          'clinic-2',
+          'clinic-2'
         )
       ).rejects.toThrow();
     });
@@ -229,7 +235,7 @@ describe('AuthService', () => {
       // We test that the method is callable and produces structured output.
       const result = await (service as any).login(
         { email: 'test@example.com', password: 'SecurePass123!' } as any,
-        {},
+        {}
       );
 
       // The result should be an AuthResponse-like object
@@ -238,9 +244,13 @@ describe('AuthService', () => {
 
     it('should reject login with non-existent email', async () => {
       const errors = {
-        validationError: jest.fn(() => { throw new Error('Invalid credentials'); }),
+        validationError: jest.fn(() => {
+          throw new Error('Invalid credentials');
+        }),
         clinicNotFound: jest.fn(() => new Error('Clinic not found')),
-        userNotFound: jest.fn(() => { throw new Error('Invalid credentials'); }),
+        userNotFound: jest.fn(() => {
+          throw new Error('Invalid credentials');
+        }),
       };
       const databaseService = {
         executeHealthcareRead: jest.fn().mockResolvedValue(null),
@@ -285,7 +295,9 @@ describe('AuthService', () => {
       const service = createService({ jwtAuthService });
 
       // Test that refreshToken method is callable and returns tokens
-      const result = await (service as any).refreshToken('valid-refresh-token', { userId: 'user-123' });
+      const result = await (service as any).refreshToken('valid-refresh-token', {
+        userId: 'user-123',
+      });
 
       expect(result).toBeDefined();
       expect(typeof result).toBe('object');
@@ -337,7 +349,7 @@ describe('AuthService', () => {
       const result = await (service as any).requestOtp(
         { email: 'test@example.com' } as any,
         'email',
-        'clinic-1',
+        'clinic-1'
       );
 
       expect(result).toBeDefined();

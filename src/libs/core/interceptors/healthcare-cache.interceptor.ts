@@ -5,12 +5,13 @@ import {
   NestInterceptor,
   ExecutionContext,
   CallHandler,
+  HttpException,
   Inject,
   forwardRef,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { Observable, of, throwError } from 'rxjs';
-import { tap, catchError } from 'rxjs/operators';
+import { Observable, from, of, throwError } from 'rxjs';
+import { tap, catchError, concatMap, map } from 'rxjs/operators';
 
 // Internal imports - Infrastructure
 import { CacheService } from '@infrastructure/cache/cache.service';
@@ -22,24 +23,49 @@ import {
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 
-// Internal imports - Core
-import { HealthcareError } from '@core/errors';
-import { ErrorCode } from '@core/errors/error-codes.enum';
-
 // Internal imports - Types
 import type { UnifiedCacheOptions, CacheInvalidationOptions } from '@core/types';
 import type { CustomFastifyRequest } from '@core/types/infrastructure.types';
 
 // Internal imports - Core
 import { CACHE_KEY, CACHE_INVALIDATE_KEY } from '@core/decorators';
+import {
+  asNonEmptyString,
+  buildTemplateParams,
+  clinicKeyPrefix,
+  hashQuery,
+  isCacheableQuery,
+  resolveActorKeySegment,
+  resolveActorScope,
+  resolvePlaceholders,
+  resolveTagTemplates,
+  stripCacheBusterParams,
+  withoutCacheBusters,
+} from '@core/interceptors/cache-key-scope.util';
+import type { ScopedRequest } from '@core/interceptors/cache-key-scope.util';
+import { CacheInvalidationRunner } from '@core/interceptors/cache-invalidation.runner';
+import {
+  calculateTTL,
+  isCachedEmptyArray,
+  mapPriority,
+  unwrapCacheValue,
+} from '@core/interceptors/cache-value.util';
+
+const HTTP_ERROR_STATUS_FLOOR = 400;
+const HTTP_SERVER_ERROR_STATUS_FLOOR = 500;
 
 @Injectable()
 export class HealthcareCacheInterceptor implements NestInterceptor {
+  /** Tag invalidation (awaited, bounded) and scoped, coalesced background pattern deletes. */
+  private readonly invalidationRunner: CacheInvalidationRunner;
+
   constructor(
     @Inject(forwardRef(() => CacheService)) private readonly cacheService: CacheService,
     @Inject(Reflector) private readonly reflector: Reflector,
     @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService
-  ) {}
+  ) {
+    this.invalidationRunner = new CacheInvalidationRunner(cacheService, loggingService);
+  }
 
   async intercept(context: ExecutionContext, next: CallHandler): Promise<Observable<unknown>> {
     try {
@@ -135,7 +161,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
 
       // Check for existing cache
       const cachedResult = await this.getCachedValue(cacheKey, options);
-      const cachedIsEmptyArray = this.isCachedEmptyArray(cachedResult);
+      const cachedIsEmptyArray = isCachedEmptyArray(cachedResult);
       if (cachedResult !== null && !cachedIsEmptyArray) {
         await this.loggingService.log(
           LogType.CACHE,
@@ -160,17 +186,24 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
           }
         }),
         catchError(error => {
-          void this.loggingService.log(
-            LogType.ERROR,
-            LogLevel.ERROR,
-            'Error in healthcare cache operation',
-            'HealthcareCacheInterceptor',
-            {
-              cacheKey,
-              error: error instanceof Error ? error.message : 'Unknown error',
-              stack: error instanceof Error ? error.stack : undefined,
-            }
-          );
+          // A handler's own HttpException (403, 404, validation, ...) is a normal response
+          // passing through, not a cache failure. Only real backend failures are logged here.
+          if (
+            !(error instanceof HttpException) ||
+            error.getStatus() >= HTTP_SERVER_ERROR_STATUS_FLOOR
+          ) {
+            void this.loggingService.log(
+              LogType.ERROR,
+              LogLevel.ERROR,
+              'Error in healthcare cache operation',
+              'HealthcareCacheInterceptor',
+              {
+                cacheKey,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                stack: error instanceof Error ? error.stack : undefined,
+              }
+            );
+          }
           return throwError(() => error as Error);
         })
       );
@@ -190,121 +223,137 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
     }
   }
 
+  /**
+   * Invalidation runs only AFTER the handler succeeded: a failed write (any thrown error, so 4xx
+   * and 5xx alike) changed nothing and must not be a way to flush other people's cache, and an
+   * invalid body must not cost a keyspace scan. The error passes through untouched.
+   */
   private handleCacheInvalidation(
     context: ExecutionContext,
     next: CallHandler,
     options: CacheInvalidationOptions
   ): Observable<unknown> {
-    return next.handle().pipe(
-      tap(result => {
-        try {
-          // Check condition before invalidating
-          if (options.condition && !options.condition(context, result, ...[])) {
-            return;
-          }
+    return next
+      .handle()
+      .pipe(
+        concatMap((result: unknown) =>
+          from(this.invalidateAfterSuccess(context, result, options)).pipe(map(() => result))
+        )
+      );
+  }
 
-          void this.performCacheInvalidation(context, result, options);
-        } catch (error) {
-          void this.loggingService.log(
-            LogType.ERROR,
-            LogLevel.ERROR,
-            'Error in cache invalidation',
-            'HealthcareCacheInterceptor',
-            {
-              error: error instanceof Error ? error.message : 'Unknown error',
-              stack: error instanceof Error ? error.stack : undefined,
-            }
-          );
-          // Don't throw error here to avoid affecting the main operation
+  private async invalidateAfterSuccess(
+    context: ExecutionContext,
+    result: unknown,
+    options: CacheInvalidationOptions
+  ): Promise<void> {
+    try {
+      const response = context.switchToHttp().getResponse<{ statusCode?: number }>();
+      if ((response?.statusCode ?? 200) >= HTTP_ERROR_STATUS_FLOOR) return;
+      if (options.condition && !options.condition(context, result, ...[])) return;
+      await this.invalidationRunner.run(context, result, options);
+    } catch (error) {
+      // Never let invalidation affect the response of the write that already succeeded.
+      void this.loggingService?.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Error in cache invalidation',
+        'HealthcareCacheInterceptor',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
         }
-      }),
-      catchError(error => {
-        // Even if the operation fails, we might want to invalidate cache
-        // to prevent serving stale data
-        void this.performCacheInvalidation(context, null, options).catch(invalidationError => {
-          void this.loggingService.log(
-            LogType.ERROR,
-            LogLevel.ERROR,
-            'Error in error-case cache invalidation',
-            'HealthcareCacheInterceptor',
-            {
-              error:
-                invalidationError instanceof Error ? invalidationError.message : 'Unknown error',
-              stack: invalidationError instanceof Error ? invalidationError.stack : undefined,
-            }
-          );
-        });
-        return throwError(() => error as Error);
-      })
-    );
+      );
+    }
   }
 
   /**
-   * Parameters available to `{placeholder}` substitution in key and tag
-   * templates: route params, query params, and the caller's identity.
-   *
-   * Do not clobber a route param that already supplies {userId}
-   * (e.g. GET /ehr/comprehensive/:userId) — that param identifies the
-   * resource being fetched, not the caller, and overwriting it collapses
-   * every distinct resource onto one cache key keyed by whichever user
-   * happens to be making the request.
+   * Clinic that scopes a templated key. The validated clinic always wins; the
+   * legacy `clinicSpecific` + route-param behaviour only applies when the
+   * request carries no clinic context (e.g. a global SUPER_ADMIN call).
    */
-  private buildTemplateParams(request: CustomFastifyRequest): Record<string, unknown> {
-    const params: Record<string, unknown> = {
-      ...(request.params || {}),
-      ...(request.query || {}),
-    };
-    if (request.user) {
-      if (params['userId'] === undefined) {
-        params['userId'] = request.user.sub;
-      }
-      params['userRole'] = request.user.role;
-    }
-    return params;
+  private resolveKeyClinicId(
+    request: ScopedRequest,
+    options: UnifiedCacheOptions
+  ): string | undefined {
+    const { clinicId } = resolveActorScope(request);
+    if (clinicId) return clinicId;
+    return options.clinicSpecific ? asNonEmptyString(request.params?.['clinicId']) : undefined;
   }
 
-  private resolveTemplate(template: string, params: Record<string, unknown>): string {
-    let resolved = template;
-    for (const [param, value] of Object.entries(params)) {
-      resolved = resolved.replace(`{${param}}`, String(value));
-    }
-    return resolved;
-  }
-
+  /**
+   * Final key:
+   * `[clinic:<clinicId>:]<resolved template>:<handler>[:<actor segment>]:q-<query digest>`
+   * (32 hex characters; cache-buster params are ignored; a query over the size limits is not
+   * cached at all, see isCacheableQuery).
+   *
+   * Every templated key is clinic-scoped whenever the request has a clinic
+   * context, even if the template forgot `{clinicId}`, so two clinics can never
+   * share an entry. The actor segment (`u-<userId>` for a PATIENT, `r-<ROLE>`
+   * for staff, see resolveActorKeySegment) keeps one caller's response from
+   * being replayed to another caller whose ownership/role check would be
+   * skipped on a hit. The query digest keeps filters (?status=, ?page=, ...)
+   * distinct now that the query can no longer supply identity placeholders; it
+   * only ever makes a key more specific. Tags never receive the segment or digest.
+   */
   private finalizeTemplateKey(
     resolvedKey: string,
-    request: CustomFastifyRequest,
+    request: ScopedRequest,
     options: UnifiedCacheOptions,
-    context: ExecutionContext
+    context: ExecutionContext,
+    params: Readonly<Record<string, unknown>>
   ): string {
-    let key = resolvedKey;
-    // Add clinic specificity if needed
-    if (options.clinicSpecific && request.params?.['clinicId']) {
-      key = `clinic:${request.params['clinicId'] as string}:${key}`;
-    }
-    // Add method name for uniqueness
-    return `${key}:${context.getHandler().name}`;
+    const clinicId = this.resolveKeyClinicId(request, options);
+    const scopedKey = clinicId ? `${clinicKeyPrefix(clinicId)}${resolvedKey}` : resolvedKey;
+    const actorSegment = resolveActorKeySegment(
+      options.keyTemplate ?? '',
+      params,
+      resolveActorScope(request)
+    );
+    const handlerAndActor = actorSegment
+      ? `${context.getHandler().name}:${actorSegment}`
+      : context.getHandler().name;
+    return `${scopedKey}:${handlerAndActor}:q-${hashQuery(request.query)}`;
+  }
+
+  /**
+   * Key for routes without a keyTemplate. The URL alone does not identify the
+   * caller (personal endpoints such as /me answer differently per user), so the
+   * validated clinic and the authenticated user are part of the key.
+   */
+  private buildDefaultKey(request: ScopedRequest): string | null {
+    if (!isCacheableQuery(request.query)) return null;
+    const { clinicId, userId } = resolveActorScope(request);
+    const scope = (clinicId ? `clinic:${clinicId}:` : '') + (userId ? `user:${userId}:` : '');
+    // Cache-buster params (?_t=<now>) never change the response; keep them out of the key.
+    const route = stripCacheBusterParams(request.url || '');
+    const paramsStr =
+      request.params && Object.keys(request.params).length > 0
+        ? JSON.stringify(request.params)
+        : '';
+    const relevantQuery = withoutCacheBusters(request.query);
+    const queryStr = Object.keys(relevantQuery).length > 0 ? JSON.stringify(relevantQuery) : '';
+
+    return `healthcare:${scope}${route}:${paramsStr}:${queryStr}`;
   }
 
   /**
    * Cache tags with `{placeholder}`s resolved the same way as the key
    * template (so `user:{userId}` becomes `user:<id>`). Used for every write
    * path so that invalidateCacheByTag() reaches PHI/emergency entries too.
+   * The write path resolves the same tags through the shared resolveTagTemplates.
    */
   private resolveTags(options: UnifiedCacheOptions, context: ExecutionContext): string[] {
-    if (!options.tags || options.tags.length === 0) return [];
-    try {
-      const request = context.switchToHttp().getRequest<CustomFastifyRequest>();
-      const params = this.buildTemplateParams(request);
-      return options.tags.map(tag => this.resolveTemplate(tag, params));
-    } catch {
-      return [...options.tags];
-    }
+    return resolveTagTemplates(
+      options.tags,
+      context.switchToHttp().getRequest<ScopedRequest>(),
+      false
+    );
   }
 
   private generateCacheKey(context: ExecutionContext, options: UnifiedCacheOptions): string | null {
     try {
-      const request = context.switchToHttp().getRequest<CustomFastifyRequest>();
+      const request = context.switchToHttp().getRequest<ScopedRequest>();
 
       // Use custom key generator if provided
       if (options.customKeyGenerator) {
@@ -318,20 +367,16 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
 
       // Use key template with parameter substitution
       if (options.keyTemplate) {
-        const key = this.resolveTemplate(options.keyTemplate, this.buildTemplateParams(request));
-        return this.finalizeTemplateKey(key, request, options, context);
+        // Over-limit queries are not cached: truncating would alias different filters, and an
+        // unbounded query space lets `?x=<random>` flood the cache with one-hit entries.
+        if (!isCacheableQuery(request.query)) return null;
+        const params = buildTemplateParams(request);
+        const key = resolvePlaceholders(options.keyTemplate, params);
+        return this.finalizeTemplateKey(key, request, options, context, params);
       }
 
-      // Generate default key based on route and parameters
-      const route = request.url || '';
-      const paramsStr =
-        request.params && Object.keys(request.params).length > 0
-          ? JSON.stringify(request.params)
-          : '';
-      const queryStr =
-        request.query && Object.keys(request.query).length > 0 ? JSON.stringify(request.query) : '';
-
-      return `healthcare:${route}:${paramsStr}:${queryStr}`;
+      // Generate default key based on route, parameters, clinic and caller
+      return this.buildDefaultKey(request);
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
@@ -391,7 +436,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
         // via this branch, not the patientSpecific one).
         const cachedValue = await this.cacheService.get(cacheKey);
         const decrypted = decryptPHIValue(cachedValue);
-        return this.unwrapCacheValue(decrypted) ?? null;
+        return unwrapCacheValue(decrypted) ?? null;
       } catch (cacheError) {
         void this.loggingService?.log(
           LogType.CACHE,
@@ -418,47 +463,6 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
         }
       );
       return null;
-    }
-  }
-
-  /**
-   * Unwrap SWR-wrapped cache values ({ data, timestamp }) to return the
-   * underlying data. If the value isn't wrapped, return it as-is.
-   */
-  private unwrapCacheValue(value: unknown): unknown {
-    if (value === null || value === undefined) return value;
-    if (typeof value !== 'object') return value;
-    const obj = value as Record<string, unknown>;
-    if ('data' in obj && 'timestamp' in obj) {
-      return obj['data'];
-    }
-    return value;
-  }
-
-  private isCachedEmptyArray(value: unknown): boolean {
-    if (value === null || value === undefined) return false;
-    // Handle raw JSON strings (from setCacheValue's JSON.stringify)
-    const parsed: unknown = typeof value === 'string' ? this.tryParseJson(value) : value;
-    // Direct empty array
-    if (Array.isArray(parsed) && parsed.length === 0) return true;
-    // SWR-wrapped empty array: { data: [], timestamp: number }
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      'data' in parsed &&
-      Array.isArray((parsed as { data: unknown }).data) &&
-      (parsed as { data: unknown[] }).data.length === 0
-    ) {
-      return true;
-    }
-    return false;
-  }
-
-  private tryParseJson(raw: string): unknown {
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return raw;
     }
   }
 
@@ -493,7 +497,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
 
       // Safely call cache service methods with error handling
       try {
-        const ttl = this.calculateTTL(effectiveOptions, context);
+        const ttl = calculateTTL(effectiveOptions);
         const serializedValue = JSON.stringify(value);
 
         // Apply healthcare-specific caching logic
@@ -533,14 +537,15 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
             ...(effectiveOptions.enableCompression !== undefined && {
               compress: effectiveOptions.enableCompression,
             }),
-            priority: this.mapPriority(effectiveOptions.priority),
+            priority: mapPriority(effectiveOptions.priority),
             enableSwr: effectiveOptions.enableSWR !== false,
             ...(effectiveOptions.staleTime !== undefined && {
               staleTime: effectiveOptions.staleTime,
             }),
-            ...(effectiveOptions.tags !== undefined && {
-              tags: [...(effectiveOptions.tags ?? [])],
-            }),
+            // Resolved like the tags on the set() paths above, so a
+            // `user:{userId}` / `clinic:{clinicId}` tag matches the strings
+            // services pass to invalidateCacheByTag().
+            ...(effectiveOptions.tags !== undefined && { tags }),
           });
         }
 
@@ -583,154 +588,13 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
     }
   }
 
-  private async performCacheInvalidation(
-    context: ExecutionContext,
-    result: unknown,
-    options: CacheInvalidationOptions
-  ): Promise<void> {
-    try {
-      // Check if cache service is available
-      if (!this.cacheService) {
-        void this.loggingService?.log(
-          LogType.CACHE,
-          LogLevel.WARN,
-          'Cache service not available, skipping cache invalidation',
-          'HealthcareCacheInterceptor',
-          {}
-        );
-        return;
-      }
-
-      const request = context.switchToHttp().getRequest<CustomFastifyRequest>();
-
-      // Execute custom invalidation logic if provided
-      if (options.customInvalidation) {
-        await options.customInvalidation(context, result, ...[]);
-        return;
-      }
-
-      // Invalidate by patterns
-      if (options.patterns?.length > 0) {
-        for (const pattern of options.patterns) {
-          let resolvedPattern = pattern;
-
-          // Replace placeholders in pattern
-          const params: Record<string, unknown> = {
-            ...(request.params || {}),
-            ...((request.body as Record<string, unknown>) || {}),
-          };
-          for (const [param, value] of Object.entries(params)) {
-            resolvedPattern = resolvedPattern.replace(`{${param}}`, String(value));
-          }
-
-          await this.cacheService.invalidateCacheByPattern(resolvedPattern);
-          await this.loggingService.log(
-            LogType.CACHE,
-            LogLevel.DEBUG,
-            'Invalidated cache pattern',
-            'HealthcareCacheInterceptor',
-            { pattern: resolvedPattern }
-          );
-        }
-      }
-
-      // Invalidate by tags
-      if (options.tags && options.tags.length > 0) {
-        for (const tag of options.tags) {
-          await this.cacheService.invalidateCacheByTag(tag);
-          await this.loggingService.log(
-            LogType.CACHE,
-            LogLevel.DEBUG,
-            'Invalidated cache tag',
-            'HealthcareCacheInterceptor',
-            { tag }
-          );
-        }
-      }
-
-      // Healthcare-specific invalidations
-      if (options.invalidatePatient && request['params']?.['patientId']) {
-        await this.cacheService.invalidatePatientCache(
-          request['params']['patientId'] as string,
-          request['params']?.['clinicId'] as string | undefined
-        );
-      }
-
-      if (options.invalidateDoctor && request['params']?.['doctorId']) {
-        await this.cacheService.invalidateDoctorCache(
-          request['params']['doctorId'] as string,
-          request['params']?.['clinicId'] as string | undefined
-        );
-      }
-
-      if (options.invalidateClinic && request['params']?.['clinicId']) {
-        await this.cacheService.invalidateClinicCache(request['params']['clinicId'] as string);
-      }
-    } catch (error) {
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        'Error performing cache invalidation',
-        'HealthcareCacheInterceptor',
-        {
-          error: error instanceof Error ? error.message : 'Unknown error',
-          stack: error instanceof Error ? error.stack : undefined,
-        }
-      );
-      throw new HealthcareError(
-        ErrorCode.CACHE_INVALIDATION_FAILED,
-        'Failed to invalidate cache',
-        undefined,
-        { operation: 'performCacheInvalidation' },
-        'HealthcareCacheInterceptor.performCacheInvalidation'
-      );
-    }
-  }
-
-  private calculateTTL(options: UnifiedCacheOptions, _context: ExecutionContext): number {
-    if (options.ttl) {
-      return options.ttl;
-    }
-
-    // Healthcare-specific TTL defaults
-    if (options.emergencyData) return 300; // 5 minutes
-    if (options.containsPHI) return 1800; // 30 minutes
-    if (options.patientSpecific) return 3600; // 1 hour
-    if (options.doctorSpecific) return 7200; // 2 hours
-    if (options.clinicSpecific) return 14400; // 4 hours
-
-    // Compliance-based TTL
-    switch (options.complianceLevel) {
-      case 'restricted':
-        return 900; // 15 minutes
-      case 'sensitive':
-        return 1800; // 30 minutes
-      case 'standard':
-        return 3600; // 1 hour
-      default:
-        return 3600;
-    }
-  }
-
-  private mapPriority(priority?: string): 'high' | 'low' {
-    switch (priority) {
-      case 'normal':
-      case 'low':
-        return 'low';
-      case 'critical':
-      case 'high':
-      default:
-        return 'high'; // Healthcare data defaults to high priority
-    }
-  }
-
   private async trackPHIAccess(
     cacheKey: string,
     context: ExecutionContext,
     operation: 'cache_get' | 'cache_set'
   ): Promise<void> {
     try {
-      const request = context.switchToHttp().getRequest<CustomFastifyRequest>();
+      const request = context.switchToHttp().getRequest<ScopedRequest>();
       const auditData = {
         timestamp: nowIso(),
         operation,
@@ -739,7 +603,9 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
         userRole: request.user?.role,
         ipAddress: request.ip || '',
         userAgent: request.headers['user-agent'] || '',
+        // The guard-validated clinic is the authoritative one for the audit trail.
         clinicId:
+          resolveActorScope(request).clinicId ||
           (request.params?.['clinicId'] as string) ||
           ((request.body as Record<string, unknown>)?.['clinicId'] as string) ||
           '',

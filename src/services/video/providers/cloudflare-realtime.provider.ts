@@ -1,4 +1,4 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, HttpStatus } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { LoggingService } from '@infrastructure/logging';
 import { DatabaseService } from '@infrastructure/database/database.service';
@@ -19,7 +19,8 @@ import {
   buildConsultationSession,
   buildTokenResponse,
   upsertConsultationRecord,
-  setConsultationStatus,
+  markConsultationActive,
+  markConsultationEnded,
 } from './video-provider.helpers';
 
 type CloudflareMeetingResponse = {
@@ -38,9 +39,17 @@ type CloudflareParticipantResponse = {
   success?: boolean;
 };
 
+type CloudflareMeetingRef = {
+  meetingId: string;
+  meetingUri: string;
+};
+
 @Injectable()
 export class CloudflareRealtimeProvider implements IVideoProvider {
   readonly providerName: VideoProviderType = 'cloudflare';
+  // Every Cloudflare call is bounded: an unresponsive API must fail the request (and let the
+  // provider fallback run) instead of hanging it. Same bound the Daily provider uses.
+  private readonly CLOUDFLARE_FETCH_TIMEOUT_MS = 10000;
 
   constructor(
     @Inject(forwardRef(() => ConfigService))
@@ -50,6 +59,16 @@ export class CloudflareRealtimeProvider implements IVideoProvider {
     @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService
   ) {}
+
+  private async fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.CLOUDFLARE_FETCH_TIMEOUT_MS);
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
 
   isEnabled(): boolean {
     const videoConfig = this.configService.get<VideoProviderConfig>('video');
@@ -66,36 +85,80 @@ export class CloudflareRealtimeProvider implements IVideoProvider {
     return frontendBaseUrl ? `${frontendBaseUrl.replace(/\/+$/, '')}${relativeUrl}` : relativeUrl;
   }
 
-  private async createMeeting(
-    appointmentId: string,
-    roomName: string,
-    userInfo: { displayName: string; email: string }
-  ): Promise<{ meetingId: string; meetingUri: string; token: string }> {
+  private getMeetingsBaseUrl(config: {
+    apiBaseUrl: string;
+    accountId: string;
+    appId: string;
+  }): string {
+    return `${config.apiBaseUrl.replace(/\/+$/, '')}/accounts/${config.accountId}/realtime/kit/${config.appId}/meetings`;
+  }
+
+  /**
+   * The meeting a previous join already registered for this appointment, if Cloudflare still
+   * knows it. Doctor and patient must land in the SAME meeting, so a stored meeting is reused
+   * instead of creating (and overwriting it with) a new one on every token request.
+   */
+  private async findReusableMeeting(appointmentId: string): Promise<CloudflareMeetingRef | null> {
     const config = this.getCloudflareConfig();
     if (!config || !config.enabled) {
       throw new Error('Cloudflare Realtime is not enabled');
     }
 
-    const apiBaseUrl = config.apiBaseUrl.replace(/\/+$/, '');
-    const createResponse = await fetch(
-      `${apiBaseUrl}/accounts/${config.accountId}/realtime/kit/${config.appId}/meetings`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${config.apiToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          title: `Appointment ${appointmentId}`,
-          metadata: {
-            appointmentId,
-            roomName,
-            createdBy: userInfo.displayName,
-            email: userInfo.email,
-          },
-        }),
-      }
+    const stored = await this.databaseService.executeHealthcareRead(async prisma => {
+      const delegate = getVideoConsultationDelegate(prisma);
+      return await delegate.findFirst({ where: { OR: [{ appointmentId }] } });
+    });
+    if (!stored?.roomId) {
+      return null;
+    }
+
+    // The stored room may belong to another provider (the clinic switched providers), so
+    // confirm Cloudflare knows it. A miss means "create a new meeting", never an error.
+    const response = await this.fetchWithTimeout(
+      `${this.getMeetingsBaseUrl(config)}/${encodeURIComponent(stored.roomId)}`,
+      { headers: { Authorization: `Bearer ${config.apiToken}` } }
     );
+    if (!response.ok) {
+      return null;
+    }
+
+    const payload = (await response.json()) as CloudflareMeetingResponse;
+    const meetingId = String(payload.data?.id || '');
+    if (!meetingId) {
+      return null;
+    }
+    return {
+      meetingId,
+      meetingUri: String(payload.data?.meeting_uri || payload.data?.meetingUri || ''),
+    };
+  }
+
+  private async createMeeting(
+    appointmentId: string,
+    roomName: string,
+    userInfo: { displayName: string; email: string }
+  ): Promise<CloudflareMeetingRef> {
+    const config = this.getCloudflareConfig();
+    if (!config || !config.enabled) {
+      throw new Error('Cloudflare Realtime is not enabled');
+    }
+
+    const createResponse = await this.fetchWithTimeout(this.getMeetingsBaseUrl(config), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.apiToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: `Appointment ${appointmentId}`,
+        metadata: {
+          appointmentId,
+          roomName,
+          createdBy: userInfo.displayName,
+          email: userInfo.email,
+        },
+      }),
+    });
 
     if (!createResponse.ok) {
       throw new Error(`Cloudflare meeting create failed with status ${createResponse.status}`);
@@ -107,10 +170,27 @@ export class CloudflareRealtimeProvider implements IVideoProvider {
       throw new Error('Cloudflare meeting create response missing meeting id');
     }
 
+    return {
+      meetingId,
+      meetingUri: String(meetingPayload.data?.meeting_uri || meetingPayload.data?.meetingUri || ''),
+    };
+  }
+
+  /** Add this caller to the meeting and return their participant token (null if none issued). */
+  private async addParticipant(
+    meetingId: string,
+    participantKey: string,
+    userInfo: { displayName: string }
+  ): Promise<string | null> {
+    const config = this.getCloudflareConfig();
+    if (!config || !config.enabled) {
+      throw new Error('Cloudflare Realtime is not enabled');
+    }
+
     const participantPreset =
       config.participantPresetName || config.hostPresetName || 'group-call-participant';
-    const participantResponse = await fetch(
-      `${apiBaseUrl}/accounts/${config.accountId}/realtime/kit/${config.appId}/meetings/${meetingId}/participants`,
+    const participantResponse = await this.fetchWithTimeout(
+      `${this.getMeetingsBaseUrl(config)}/${encodeURIComponent(meetingId)}/participants`,
       {
         method: 'POST',
         headers: {
@@ -118,7 +198,7 @@ export class CloudflareRealtimeProvider implements IVideoProvider {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          custom_participant_id: appointmentId,
+          custom_participant_id: participantKey,
           preset_name: participantPreset,
           name: userInfo.displayName,
         }),
@@ -132,21 +212,12 @@ export class CloudflareRealtimeProvider implements IVideoProvider {
     }
 
     const participantPayload = (await participantResponse.json()) as CloudflareParticipantResponse;
-    const meetingUri =
-      String(meetingPayload.data?.meeting_uri || meetingPayload.data?.meetingUri || '') ||
-      this.buildInternalJoinUrl(appointmentId, meetingId, roomName);
-    const token = String(participantPayload.data?.token || meetingUri);
-
-    return {
-      meetingId,
-      meetingUri: meetingUri || this.buildInternalJoinUrl(appointmentId, meetingId, roomName),
-      token,
-    };
+    return participantPayload.data?.token ? String(participantPayload.data.token) : null;
   }
 
   async generateMeetingToken(
     appointmentId: string,
-    _userId: string,
+    userId: string,
     userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin',
     userInfo: { displayName: string; email: string; avatar?: string }
   ): Promise<VideoTokenResponse> {
@@ -155,19 +226,26 @@ export class CloudflareRealtimeProvider implements IVideoProvider {
       throw new HealthcareError(
         ErrorCode.DATABASE_RECORD_NOT_FOUND,
         `Appointment ${appointmentId} not found`,
-        undefined,
+        HttpStatus.NOT_FOUND,
         { appointmentId },
         'CloudflareRealtimeProvider.generateMeetingToken'
       );
     }
 
     const roomName = buildStableRoomName(this.providerName, appointmentId, appointment.clinicId);
-    const { meetingId, meetingUri, token } = await this.createMeeting(
-      appointmentId,
-      roomName,
+    const reusedMeeting = await this.findReusableMeeting(appointmentId);
+    const meeting = reusedMeeting ?? (await this.createMeeting(appointmentId, roomName, userInfo));
+    const meetingId = meeting.meetingId;
+    const internalJoinUrl = this.buildInternalJoinUrl(appointmentId, meetingId, roomName);
+    const meetingUri = meeting.meetingUri || internalJoinUrl;
+
+    // One participant identity per user: doctor and patient must not share an identity.
+    const participantToken = await this.addParticipant(
+      meetingId,
+      userId || appointmentId,
       userInfo
     );
-    const meetingUrl = this.buildInternalJoinUrl(appointmentId, meetingId, roomName);
+    const token = participantToken || meetingUri;
 
     await upsertConsultationRecord(
       this.databaseService,
@@ -175,7 +253,7 @@ export class CloudflareRealtimeProvider implements IVideoProvider {
       {
         roomId: meetingId,
         roomName,
-        meetingUrl,
+        meetingUrl: internalJoinUrl,
         token,
         provider: this.providerName,
       },
@@ -192,7 +270,7 @@ export class CloudflareRealtimeProvider implements IVideoProvider {
     void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      'Cloudflare Realtime meeting created',
+      reusedMeeting ? 'Cloudflare Realtime meeting reused' : 'Cloudflare Realtime meeting created',
       'CloudflareRealtimeProvider.generateMeetingToken',
       {
         appointmentId,
@@ -204,7 +282,7 @@ export class CloudflareRealtimeProvider implements IVideoProvider {
     return buildTokenResponse({
       roomId: meetingId,
       roomName,
-      meetingUrl: meetingUri || meetingUrl,
+      meetingUrl: meetingUri,
       token,
       provider: this.providerName,
     });
@@ -212,29 +290,24 @@ export class CloudflareRealtimeProvider implements IVideoProvider {
 
   async startConsultation(
     appointmentId: string,
-    _userId: string,
-    _userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
+    userId: string,
+    userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
   ): Promise<VideoConsultationSession> {
     const existing = await this.getConsultationSession(appointmentId);
-    if (existing) {
-      const session = await setConsultationStatus(this.databaseService, appointmentId, 'ACTIVE', {
-        startTime: new Date(),
+    if (!existing) {
+      // Creates the meeting + VideoConsultation row for the real caller.
+      await this.generateMeetingToken(appointmentId, userId, userRole, {
+        displayName: userRole === 'patient' ? 'Patient' : 'Doctor',
+        email: '',
       });
-      if (!session) {
-        throw new Error(`Failed to start consultation for appointment ${appointmentId}`);
-      }
-      return buildConsultationSession(session, this.providerName);
     }
 
-    await this.generateMeetingToken(appointmentId, '', 'doctor', {
-      displayName: 'Doctor',
-      email: '',
-    });
-    const session = await this.getConsultationSession(appointmentId);
+    // startTime is stamped once; a repeat start never resets it or revives a finished call.
+    const session = await markConsultationActive(this.databaseService, appointmentId);
     if (!session) {
-      throw new Error(`Failed to create consultation session for appointment ${appointmentId}`);
+      throw new Error(`Failed to start consultation for appointment ${appointmentId}`);
     }
-    return session;
+    return buildConsultationSession(session, this.providerName);
   }
 
   async endConsultation(
@@ -242,11 +315,15 @@ export class CloudflareRealtimeProvider implements IVideoProvider {
     _userId: string,
     _userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
   ): Promise<VideoConsultationSession> {
-    const ended = await setConsultationStatus(this.databaseService, appointmentId, 'ENDED', {
-      endTime: new Date(),
-    });
+    const ended = await markConsultationEnded(this.databaseService, appointmentId);
     if (!ended) {
-      throw new Error(`Consultation session not found for appointment ${appointmentId}`);
+      throw new HealthcareError(
+        ErrorCode.DATABASE_RECORD_NOT_FOUND,
+        `Consultation session not found for appointment ${appointmentId}`,
+        HttpStatus.NOT_FOUND,
+        { appointmentId },
+        'CloudflareRealtimeProvider.endConsultation'
+      );
     }
     return buildConsultationSession(ended, this.providerName);
   }
@@ -274,8 +351,8 @@ export class CloudflareRealtimeProvider implements IVideoProvider {
     }
 
     try {
-      const response = await fetch(
-        `${config.apiBaseUrl.replace(/\/+$/, '')}/accounts/${config.accountId}/realtime/kit/${config.appId}/meetings?per_page=1`,
+      const response = await this.fetchWithTimeout(
+        `${this.getMeetingsBaseUrl(config)}?per_page=1`,
         {
           headers: {
             Authorization: `Bearer ${config.apiToken}`,

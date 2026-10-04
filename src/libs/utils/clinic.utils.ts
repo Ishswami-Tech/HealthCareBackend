@@ -40,7 +40,7 @@ async function findClinicById(
 ): Promise<ClinicData | null> {
   // Use DatabaseService for proper connection pooling, caching, and optimization
   return (await databaseService.executeHealthcareRead(async client => {
-    const clinic = client['clinic'] as {
+    const clinic = client['clinic'] as unknown as {
       findFirst: (args: {
         where: Record<string, unknown>;
         select: Record<string, boolean>;

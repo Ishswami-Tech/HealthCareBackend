@@ -1,8 +1,8 @@
 # Cache Service
 
-**Purpose:** Multi-provider cache service with multi-layer caching (Memory + Redis/Dragonfly)
-**Location:** `src/libs/infrastructure/cache`
-**Status:** ✅ Production-ready
+**Purpose:** Multi-provider cache service with multi-layer caching (Memory +
+Redis/Dragonfly) **Location:** `src/libs/infrastructure/cache` **Status:** ✅
+Production-ready
 
 ---
 
@@ -20,11 +20,12 @@ export class MyService {
   async getUser(userId: string) {
     // Cache-aside pattern with automatic population
     return await this.cacheService.cache(
-      `user:${userId}`,           // Cache key
-      async () => {                // Fetch function if cache miss
+      `user:${userId}`, // Cache key
+      async () => {
+        // Fetch function if cache miss
         return await this.db.user.findUnique({ where: { id: userId } });
       },
-      { ttl: 3600 }               // 1 hour TTL
+      { ttl: 3600 } // 1 hour TTL
     );
   }
 
@@ -78,8 +79,9 @@ CacheModule
     └── cache.controller.ts    # Admin endpoints
 ```
 
-**Consolidated Documentation:**
-📖 [Complete Infrastructure Documentation](../../../INFRASTRUCTURE_DOCUMENTATION.md#cache-system) - Architecture, design decisions
+**Consolidated Documentation:** 📖
+[Complete Infrastructure Documentation](../../../INFRASTRUCTURE_DOCUMENTATION.md#cache-system) -
+Architecture, design decisions
 
 ---
 
@@ -132,13 +134,13 @@ import { Cache, PatientCache, InvalidateCache } from '@cache/decorators';
 @Controller('patients')
 export class PatientsController {
   @Get(':id')
-  @PatientCache()  // Automatic PHI-compliant caching
+  @PatientCache() // Automatic PHI-compliant caching
   async getPatient(@Param('id') id: string) {
     return await this.patientService.findOne(id);
   }
 
   @Put(':id')
-  @InvalidateCache(['patient', 'clinic'])  // Auto invalidation
+  @InvalidateCache(['patient', 'clinic']) // Auto invalidation
   async updatePatient(@Param('id') id: string, @Body() data: any) {
     return await this.patientService.update(id, data);
   }
@@ -198,7 +200,7 @@ await cacheService.set(key, data, ttl);
 ```typescript
 // Write to cache immediately, async DB update
 await cacheService.set(key, data, ttl);
-queue.add('db-update', { key, data });  // Async
+queue.add('db-update', { key, data }); // Async
 ```
 
 ### 4. Refresh-Ahead (SWR)
@@ -207,7 +209,7 @@ queue.add('db-update', { key, data });  // Async
 // Return stale data while revalidating in background
 const data = await cacheService.cache(key, fetchFn, {
   ttl: 3600,
-  staleWhileRevalidate: true,  // Return stale, refresh async
+  staleWhileRevalidate: true, // Return stale, refresh async
 });
 ```
 
@@ -226,6 +228,7 @@ async getMedicalRecord(@Param('id') id: string) {
 ```
 
 **Features:**
+
 - Automatic encryption of cached data
 - Patient ID isolation in cache keys
 - Audit logging of cache access
@@ -238,7 +241,7 @@ async getMedicalRecord(@Param('id') id: string) {
 ### 1. Time-Based (TTL)
 
 ```typescript
-await cacheService.set('key', value, 3600);  // Auto-expire after 1 hour
+await cacheService.set('key', value, 3600); // Auto-expire after 1 hour
 ```
 
 ### 2. Tag-Based
@@ -250,7 +253,7 @@ await cacheService.invalidateCacheByTag(['user', 'clinic-123']);
 ### 3. Pattern-Based
 
 ```typescript
-await cacheService.deletePattern('user:*');  // Delete all user: keys
+await cacheService.deletePattern('user:*'); // Delete all user: keys
 ```
 
 ### 4. Event-Driven
@@ -297,12 +300,46 @@ CACHE_PROVIDER=redis pnpm test infrastructure/cache
 ## Dependencies
 
 ### Required
+
 - IoRedis (for Redis/Dragonfly)
 - CacheManager (for multi-layer caching)
 
 ### Optional
+
 - EventService (for cache invalidation events)
 - LoggingService (for cache metrics)
+
+---
+
+## Invalidation Safety
+
+- **One pattern-delete implementation.** `BaseCacheClientService.clearCache`
+  (inherited by `RedisService` and `DragonflyService`) is the only code that
+  deletes by glob. It prefixes the glob with the connection `keyPrefix`, walks
+  the keyspace with `SCAN` (`COUNT 500`; `KEYS` only as a fallback for a client
+  without it), strips the prefix from the result and deletes in batches of at
+  most 500 keys with `UNLINK`. A failure throws; `clearCacheDetailed` returns a
+  result object instead. `keys()` returns logical (unprefixed) names, so they
+  can be passed straight back to `get`/`lRange`/`del`.
+- **Protected namespaces are never deleted by pattern.** `auth:*`, `session*`,
+  `user_sessions:*`, `jwt:*`, `otp*`, `account_lock:*`, `security:*`,
+  `phi:access*`, `rate_limit*`, `lock:*`, `payment-handoff:*`,
+  `webhook:processed:*`, `cache:*` (tag indexes, stats) and `bull:*` (see
+  `utils/protected-keys.util.ts`). A pattern that targets one is refused (WARN),
+  and the keys a broad glob such as `*` or `*<userId>*` resolves to are filtered
+  before deletion. Only admin tooling can bypass this:
+  `DELETE /cache?includeProtected=true` (SUPER_ADMIN).
+- **`@InvalidateCache` patterns are reduced to the caller's tenant** by the HTTP
+  cache interceptor (clinic: `clinic:{clinicId}:...`, user:
+  `user:{userId}:...`), after the handler succeeded only. Declare patterns with
+  `{clinicId}` / `{userId}` placeholders; a global pattern is rewritten into the
+  caller's clinic or refused, and the refusal is logged once per pattern. Tags
+  are invalidated first and awaited (bounded), patterns run behind the response,
+  one scan at a time per pattern.
+- **Tag indexes** (`cache:tag:<tag>`) never lose lifetime: their expiry is only
+  raised (`EXPIRE ... NX` then `GT`). Invalidation deletes members in chunks of
+  at most 500 and removes a chunk from the set only after it was deleted, so a
+  failed delete is retried by the next invalidation.
 
 ---
 
@@ -317,16 +354,24 @@ CACHE_PROVIDER=redis pnpm test infrastructure/cache
 ## Troubleshooting
 
 **Issue 1: Low Cache Hit Rate**
-- **Solution:** Increase TTL, check key naming consistency, review cache warming strategy
+
+- **Solution:** Increase TTL, check key naming consistency, review cache warming
+  strategy
 
 **Issue 2: Memory Pressure**
-- **Solution:** Reduce `CACHE_L1_MAX_SIZE`, enable LRU eviction, increase L2 capacity
+
+- **Solution:** Reduce `CACHE_L1_MAX_SIZE`, enable LRU eviction, increase L2
+  capacity
 
 **Issue 3: Stale Data**
-- **Solution:** Review TTL values, implement proper cache invalidation, use event-driven invalidation
+
+- **Solution:** Review TTL values, implement proper cache invalidation, use
+  event-driven invalidation
 
 **Issue 4: Connection Errors**
-- **Solution:** Check `CACHE_HOST` and `CACHE_PORT`, verify Redis/Dragonfly is running
+
+- **Solution:** Check `CACHE_HOST` and `CACHE_PORT`, verify Redis/Dragonfly is
+  running
 
 ---
 

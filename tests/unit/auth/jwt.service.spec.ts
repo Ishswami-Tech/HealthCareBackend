@@ -49,7 +49,7 @@ function createService() {
     mockJwt as any,
     mockConfig as any,
     mockCache as any,
-    mockLogging as any,
+    mockLogging as any
   );
 
   return { service, mockJwt, mockCache, mockLogging, mockConfig };
@@ -66,9 +66,7 @@ describe('JwtAuthService', () => {
   describe('generateTokens', () => {
     it('should generate access and refresh tokens', async () => {
       const { service, mockJwt } = createService();
-      mockJwt.sign
-        .mockResolvedValueOnce('access-token')
-        .mockResolvedValueOnce('refresh-token');
+      mockJwt.sign.mockResolvedValueOnce('access-token').mockResolvedValueOnce('refresh-token');
 
       const result = await (service as any).generateTokens(payload);
 
@@ -86,7 +84,7 @@ describe('JwtAuthService', () => {
       expect(mockCache.set).toHaveBeenCalledWith(
         expect.stringContaining('refresh_token'),
         'refresh-token',
-        expect.any(Number),
+        expect.any(Number)
       );
     });
   });
@@ -193,7 +191,7 @@ describe('JwtAuthService', () => {
       expect(mockCache.set).toHaveBeenCalledWith(
         expect.stringContaining('blacklist'),
         expect.any(String),
-        expect.any(Number),
+        expect.any(Number)
       );
     });
   });

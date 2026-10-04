@@ -10,11 +10,41 @@ import {
   IsObject,
   IsDateString,
   ValidateNested,
+  registerDecorator,
+  type ValidationArguments,
+  type ValidationOptions,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import { IsClinicId } from '@core/decorators/clinic-id.validator';
 import { Role } from '@core/types/enums.types';
+
+/**
+ * Passes when the decorated value equals the sibling property `relatedProperty`.
+ * Used for the optional `confirmPassword` fields: the web and mobile clients do not send a
+ * confirmation, so the field is optional, but when a client does send one it must match.
+ */
+function MatchesProperty(
+  relatedProperty: string,
+  validationOptions?: ValidationOptions
+): PropertyDecorator {
+  return (target: object, propertyKey: string | symbol): void => {
+    registerDecorator({
+      name: 'matchesProperty',
+      target: target.constructor,
+      propertyName: String(propertyKey),
+      constraints: [relatedProperty],
+      ...(validationOptions ? { options: validationOptions } : {}),
+      validator: {
+        validate(value: unknown, args: ValidationArguments): boolean {
+          const [related] = args.constraints as [string];
+          const sibling = (args.object as Record<string, unknown>)[related];
+          return value === sibling;
+        },
+      },
+    });
+  };
+}
 
 function getTrimmedString(value: unknown): string | undefined {
   if (typeof value !== 'string') {
@@ -506,17 +536,15 @@ export class PasswordResetDto {
   @MinLength(8, { message: 'New password must be at least 8 characters long' })
   newPassword!: string;
 
-  @ApiProperty({
-    description: 'Confirm new password',
+  @ApiPropertyOptional({
+    description: 'Confirm new password (optional; must equal newPassword when sent)',
     example: 'NewSecurePassword123!',
     minLength: 8,
   })
+  @IsOptional()
   @IsString({ message: 'Confirm password must be a string' })
-  @IsNotEmpty({ message: 'Confirm password is required' })
-  @MinLength(8, {
-    message: 'Confirm password must be at least 8 characters long',
-  })
-  confirmPassword!: string;
+  @MatchesProperty('newPassword', { message: 'Passwords do not match' })
+  confirmPassword?: string;
 }
 
 /**
@@ -608,17 +636,15 @@ export class ChangePasswordDto {
   @MinLength(8, { message: 'New password must be at least 8 characters long' })
   newPassword!: string;
 
-  @ApiProperty({
-    description: 'Confirm new password',
+  @ApiPropertyOptional({
+    description: 'Confirm new password (optional; must equal newPassword when sent)',
     example: 'NewSecurePassword123!',
     minLength: 8,
   })
+  @IsOptional()
   @IsString({ message: 'Confirm password must be a string' })
-  @IsNotEmpty({ message: 'Confirm password is required' })
-  @MinLength(8, {
-    message: 'Confirm password must be at least 8 characters long',
-  })
-  confirmPassword!: string;
+  @MatchesProperty('newPassword', { message: 'Passwords do not match' })
+  confirmPassword?: string;
 }
 
 /**

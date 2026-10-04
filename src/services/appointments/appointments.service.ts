@@ -1,6 +1,15 @@
-import { Injectable, Inject, forwardRef, HttpException } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  forwardRef,
+  HttpException,
+  ForbiddenException,
+  BadRequestException,
+  ConflictException,
+} from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfigService } from '@config/config.service';
+import { getVideoActiveWindowMinutes } from '@config/video.config';
 
 // Infrastructure Services
 import { CacheService } from '@infrastructure/cache/cache.service';
@@ -64,14 +73,35 @@ import {
   ProposeVideoSlotsDto,
   ConfirmVideoSlotDto,
   ConfirmVideoFinalSlotDto,
+  AppointmentDailySummaryDto,
 } from '@dtos/appointment.dto';
 import { Role } from '@core/types/enums.types';
+import { isPaidPaymentStatus, normalizePaymentStatus } from '@utils/currency.util';
 import {
   findTreatmentCatalogEntry,
   getAppointmentTreatmentCatalog,
 } from '@core/types/treatment-catalog.types';
 import { isVideoCallAppointmentType } from '@core/types/appointment-guards.types';
-import { isVideoSlotAwaitingConfirmation } from './core/appointment-state-contract';
+import {
+  APPOINTMENT_TERMINAL_STATUSES,
+  PATIENT_STATUS_CHANGE_MESSAGE,
+  getGenericStatusChangeRefusal,
+  isAppointmentStaffRole,
+  isAppointmentSystemRole,
+  isSystemOnlyStatusTransition,
+  isValidAppointmentStatusTransition,
+  isVideoSlotAwaitingConfirmation,
+} from './core/appointment-state-contract';
+import { isAppointmentPaid } from './core/appointment-payment.util';
+import {
+  findConflictingSlotKind,
+  loadDoctorDayAppointments,
+  slotConflictMessage,
+} from './core/appointment-slot-conflict.util';
+import {
+  isAppointmentOwnedByPatientUser,
+  isReceptionistAssignedToAppointmentLocation,
+} from './core/appointment-access.util';
 
 // Legacy imports for backward compatibility
 import { DatabaseService } from '@infrastructure/database';
@@ -87,7 +117,7 @@ import { BillingService } from '@services/billing/billing.service';
 import type { AppointmentWithRelations } from '@core/types/database.types';
 import type { PrismaDelegateArgs } from '@core/types/prisma.types';
 import { getVideoConsultationDelegate } from '@core/types/video-database.types';
-import { startOfIstDay } from '@utils/clock.util';
+import { startOfIstDay, endOfIstDay } from '@utils/clock.util';
 
 type AssistantDoctorCoverageEntry = {
   assistantDoctorId: string;
@@ -101,7 +131,64 @@ type AssistantDoctorCoverageAssignmentRecord = {
   isActive: boolean;
 };
 
-const VIDEO_APPOINTMENT_RESCHEDULE_WINDOW_HOURS = 5;
+/** The appointment columns completion decides on, read fresh (never from the detail cache). */
+interface CompletionAppointmentRow {
+  id: string;
+  clinicId: string;
+  patientId: string;
+  doctorId: string;
+  userId: string;
+  type: string;
+  status: string;
+  metadata?: unknown;
+  completedAt?: Date | string | null;
+  doctor?: { id: string; userId: string } | null;
+  payment?: { status?: string | null; invoice?: { status?: string | null } | null } | null;
+  subscriptionId?: string | null;
+  isSubscriptionBased?: boolean | null;
+}
+
+/** The appointment columns the generic update decides on, read fresh (never from the detail cache). */
+interface AppointmentStatusSnapshot {
+  id: string;
+  type: string;
+  status: string;
+}
+
+/** A row the expiry crons scan: just the columns needed to decide whether it is due. */
+interface ExpiryCandidate {
+  id: string;
+  patientId: string;
+  userId: string;
+  doctorId: string;
+  clinicId: string;
+  date: Date;
+  time: string;
+  duration?: number | null;
+  status: string;
+  type: string;
+  /** Only read when the scan asks for it (withPayment): whether the visit was paid or comped. */
+  subscriptionId?: string | null;
+  isSubscriptionBased?: boolean | null;
+  payment?: { status?: string | null; invoice?: { status?: string | null } | null } | null;
+}
+
+/** The appointment columns a reschedule decides on, read fresh (never from the detail cache). */
+interface RescheduleAppointmentRow {
+  id: string;
+  clinicId: string;
+  patientId: string;
+  doctorId: string;
+  /** Booking user (the patient's User id): the dashboard summary cache is tagged with it. */
+  userId?: string | null;
+  locationId?: string | null;
+  type: string;
+  status: string;
+  date: Date;
+  time: string;
+  checkedInAt?: Date | string | null;
+  metadata?: unknown;
+}
 
 /**
  * Enhanced Appointments Service
@@ -795,9 +882,167 @@ export class AppointmentsService {
     };
   }
 
-  @Cron(CronExpression.EVERY_HOUR)
-  async handlePastVideoCallClosureCron() {
+  /**
+   * Closes every video visit that is still open when its window ends (scheduled start +
+   * VIDEO_ACTIVE_WINDOW_MINUTES, 5 hours by default): confirmed visits nobody joined and
+   * visits the doctor started but never completed. They become EXPIRED, never COMPLETED.
+   */
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async handlePastVideoCallClosureCron(): Promise<void> {
+    // One replica per tick. The lock is deliberately not released: it expires just before the
+    // next tick, so a replica whose cron fires a moment later still sees it and skips.
+    const acquired = await this.acquireCronLock(
+      AppointmentsService.PAST_VIDEO_CLOSURE_LOCK_KEY,
+      AppointmentsService.PAST_VIDEO_CLOSURE_LOCK_TTL_SECONDS,
+      'AppointmentsService.handlePastVideoCallClosureCron'
+    );
+    if (!acquired) {
+      return;
+    }
     await this.processPastVideoCallClosures();
+  }
+
+  /**
+   * Expires in-clinic visits that never happened, hourly (at :20, away from the 3 AM no-show
+   * cron). Only SCHEDULED and CONFIRMED rows are ever touched: a visit that was started or ended
+   * is left alone. The payment is not touched either; the patient simply books again.
+   *
+   * Which cron ends a row: paid (or plan-covered) visits and checked-in visits end here as
+   * EXPIRED, never cancelled, so billing sees no cancellation. Unpaid visits nobody arrived for are
+   * left to the 3 AM no-show cron, which skips everything this one handles.
+   */
+  @Cron('20 * * * *')
+  async handleExpiredInPersonAppointmentsCron(): Promise<void> {
+    const acquired = await this.acquireCronLock(
+      AppointmentsService.IN_PERSON_EXPIRY_LOCK_KEY,
+      AppointmentsService.IN_PERSON_EXPIRY_LOCK_TTL_SECONDS,
+      'AppointmentsService.handleExpiredInPersonAppointmentsCron'
+    );
+    if (!acquired) {
+      return;
+    }
+    await this.processExpiredInPersonAppointments();
+  }
+
+  private static readonly PAST_VIDEO_CLOSURE_LOCK_KEY = 'lock:cron:appointments:past-video-closure';
+  private static readonly PAST_VIDEO_CLOSURE_LOCK_TTL_SECONDS = 240;
+  private static readonly IN_PERSON_EXPIRY_LOCK_KEY = 'lock:cron:appointments:in-person-expiry';
+  private static readonly IN_PERSON_EXPIRY_LOCK_TTL_SECONDS = 3300;
+  /** Candidates read per page. The scan keeps paging until none are left (or time runs out). */
+  private static readonly EXPIRY_BATCH_SIZE = 200;
+  /** A scan stops after this long, safely inside the 240 s video lock, and the next tick resumes. */
+  private static readonly EXPIRY_MAX_RUNTIME_MS = 200_000;
+  /** In-clinic SCHEDULED visit nobody arrived for: expires this long after its slot ends. */
+  private static readonly IN_PERSON_NO_SHOW_GRACE_MINUTES = 180;
+  /** In-clinic CONFIRMED (checked-in, queued) visit never started: expires this long after its day ends. */
+  private static readonly IN_PERSON_QUEUED_GRACE_MINUTES = 120;
+
+  private async acquireCronLock(
+    lockKey: string,
+    ttlSeconds: number,
+    source: string
+  ): Promise<boolean> {
+    const acquired = await this.cacheService.acquireLock(lockKey, ttlSeconds);
+    if (!acquired) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'Cron run skipped: its lock is held by another replica, or the cache is unavailable',
+        source,
+        { lockKey }
+      );
+    }
+    return acquired;
+  }
+
+  /**
+   * Pages through every row matching `baseWhere`, oldest first, with a (date, id) keyset cursor,
+   * and hands each to `visit`. Rows the visitor skips or fails on cannot hold up the scan: the
+   * cursor moves past them. Stops when the rows are exhausted or the runtime budget is spent.
+   */
+  private async forEachExpiryCandidate(
+    baseWhere: Record<string, unknown>,
+    visit: (candidate: ExpiryCandidate) => Promise<void>,
+    source: string,
+    options: { withPayment?: boolean } = {}
+  ): Promise<{ scanned: number }> {
+    const batchSize = AppointmentsService.EXPIRY_BATCH_SIZE;
+    const deadline = Date.now() + AppointmentsService.EXPIRY_MAX_RUNTIME_MS;
+    let cursor: { date: Date; id: string } | null = null;
+    let scanned = 0;
+
+    while (Date.now() < deadline) {
+      const afterCursor: { date: Date; id: string } | null = cursor;
+      const batch: ExpiryCandidate[] = await this.databaseService.executeHealthcareRead(
+        async client => {
+          const delegate = client['appointment'] as unknown as {
+            findMany: (args: PrismaDelegateArgs) => Promise<ExpiryCandidate[]>;
+          };
+          return await delegate.findMany({
+            where: {
+              ...baseWhere,
+              ...(afterCursor
+                ? {
+                    OR: [
+                      { date: { gt: afterCursor.date } },
+                      { date: afterCursor.date, id: { gt: afterCursor.id } },
+                    ],
+                  }
+                : {}),
+            },
+            select: {
+              id: true,
+              patientId: true,
+              userId: true,
+              doctorId: true,
+              clinicId: true,
+              date: true,
+              time: true,
+              duration: true,
+              status: true,
+              type: true,
+              ...(options.withPayment
+                ? {
+                    subscriptionId: true,
+                    isSubscriptionBased: true,
+                    payment: { select: { status: true, invoice: { select: { status: true } } } },
+                  }
+                : {}),
+            },
+            orderBy: [{ date: 'asc' }, { id: 'asc' }],
+            take: batchSize,
+          } as PrismaDelegateArgs);
+        }
+      );
+
+      let outOfTime = false;
+      for (const candidate of batch) {
+        if (Date.now() >= deadline) {
+          outOfTime = true;
+          break;
+        }
+        scanned++;
+        await visit(candidate);
+      }
+      if (outOfTime) {
+        break;
+      }
+
+      const last = batch[batch.length - 1];
+      if (batch.length < batchSize || !last) {
+        return { scanned };
+      }
+      cursor = { date: last.date, id: last.id };
+    }
+
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.WARN,
+      'Expiry scan stopped at its time budget; the remaining rows are picked up by the next run',
+      source,
+      { scanned }
+    );
+    return { scanned };
   }
 
   async processPastVideoCallClosures(settings?: {
@@ -816,8 +1061,9 @@ export class AppointmentsService {
       reason: string;
     }>;
   }> {
+    const source = 'AppointmentsService.processPastVideoCallClosures';
     const mergedSettings = {
-      graceHours: 6,
+      graceHours: 0,
       checkStatuses: [
         AppointmentStatus.CONFIRMED,
         AppointmentStatus.SCHEDULED,
@@ -827,37 +1073,11 @@ export class AppointmentsService {
     };
 
     const now = new Date();
-    const istOffset = 5.5 * 60 * 60 * 1000;
-    const nowIST = new Date(now.getTime() + istOffset);
-    const cutoff = new Date(nowIST.getTime() - mergedSettings.graceHours * 60 * 60 * 1000);
-
-    const cacheKey = `cron:appointments:past-closure:${Math.floor(now.getTime() / 60000)}`;
-    const candidates = await this.cacheService.cache(
-      cacheKey,
-      async () => {
-        return await this.databaseService.executeHealthcareRead(async client => {
-          const prismaClient = client as unknown as Prisma.TransactionClient;
-          return await prismaClient.appointment.findMany({
-            where: {
-              type: AppointmentType.VIDEO_CALL,
-              status: { in: mergedSettings.checkStatuses as unknown as $Enums.AppointmentStatus[] },
-              ...(mergedSettings.clinicId ? { clinicId: mergedSettings.clinicId } : {}),
-            },
-            select: {
-              id: true,
-              patientId: true,
-              doctorId: true,
-              clinicId: true,
-              date: true,
-              time: true,
-              status: true,
-              type: true,
-            },
-          });
-        });
-      },
-      { ttl: 60, compress: false }
-    );
+    const windowMinutes = getVideoActiveWindowMinutes();
+    const windowMs = windowMinutes * 60_000;
+    const graceMs = mergedSettings.graceHours * 60 * 60 * 1000;
+    const windowLabel =
+      windowMinutes % 60 === 0 ? `${windowMinutes / 60}-hour` : `${windowMinutes}-minute`;
 
     const details: Array<{
       appointmentId: string;
@@ -866,115 +1086,407 @@ export class AppointmentsService {
       closedAt: Date;
       reason: string;
     }> = [];
-    let closedCount = 0;
     let failedCount = 0;
 
-    for (const appointment of candidates) {
-      const start = new Date(appointment.date);
-      const time = appointment.time;
-      if (time) {
-        const parts = time.split(':');
-        const hours = parts[0] ?? '0';
-        const mins = parts[1] ?? '0';
-        start.setHours(parseInt(hours, 10), parseInt(mins, 10), 0, 0);
-      }
-      start.setHours(start.getHours() + 5);
+    const { scanned } = await this.forEachExpiryCandidate(
+      {
+        type: AppointmentType.VIDEO_CALL,
+        status: { in: mergedSettings.checkStatuses as unknown as $Enums.AppointmentStatus[] },
+        // The stored date is the IST midnight of the visit's day and the visit starts at or after
+        // it, so a row can only be due once its date is a full window (and grace) in the past.
+        // This keeps every not-yet-due row out of the scan without ever hiding a due one.
+        date: { lte: new Date(now.getTime() - windowMs - graceMs) },
+        ...(mergedSettings.clinicId ? { clinicId: mergedSettings.clinicId } : {}),
+      },
+      async appointment => {
+        // The slot is IST wall-clock on the appointment's IST day; parseIstDateTime gives the
+        // real instant whatever timezone the server runs in.
+        const scheduledStart = parseIstDateTime(appointment.date, appointment.time);
+        if (!scheduledStart) {
+          // Skipped, not retried in this scan: the cursor moves past it.
+          void this.loggingService.log(
+            LogType.BUSINESS,
+            LogLevel.WARN,
+            'Past video call skipped: its scheduled time cannot be parsed',
+            source,
+            {
+              appointmentId: appointment.id,
+              clinicId: appointment.clinicId,
+              time: appointment.time,
+            }
+          );
+          return;
+        }
 
-      if (start.getTime() > cutoff.getTime()) {
-        continue;
-      }
+        if (now.getTime() < scheduledStart.getTime() + windowMs + graceMs) {
+          return;
+        }
 
-      const formattedStart = formatDateTimeInIST(start, {
-        year: 'numeric',
-        month: 'short',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-      const reason =
-        `Auto-closed: video appointment scheduled for ${formattedStart} IST ` +
-        `has passed its 5-hour join window without being completed. ` +
-        `The appointment is now closed.`;
+        const formattedStart = formatDateTimeInIST(scheduledStart, {
+          year: 'numeric',
+          month: 'short',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+        const reason =
+          `Auto-closed: video appointment scheduled for ${formattedStart} IST ` +
+          `has passed its ${windowLabel} window without being completed. ` +
+          `The appointment is now closed.`;
 
-      try {
-        await this.updateStatus(
-          appointment.id,
-          {
-            status: AppointmentStatus.EXPIRED,
-            reason,
-            notes: 'Auto-closed by past-video-call closure cron.',
-          } as unknown as UpdateAppointmentStatusDto,
-          'system',
-          appointment.clinicId,
-          'SYSTEM'
-        );
-
-        closedCount++;
-        details.push({
-          appointmentId: appointment.id,
-          patientId: appointment.patientId,
-          doctorId: appointment.doctorId,
-          closedAt: new Date(),
+        const closed = await this.expireDueAppointment(appointment, {
           reason,
+          notes: 'Auto-closed by past-video-call closure cron.',
+          source,
         });
-
-        await this.emitAppointmentEnterpriseEvent('appointment.expired', {
-          eventId: `video-expired-${appointment.id}-${Date.now()}`,
-          clinicId: appointment.clinicId,
-          priority: EventPriority.HIGH,
-          userId: appointment.patientId,
-          payload: {
+        if (closed) {
+          details.push({
             appointmentId: appointment.id,
-            doctorId: appointment.doctorId,
-            clinicId: appointment.clinicId,
             patientId: appointment.patientId,
-            patientName: '',
-            doctorName: '',
-            date: appointment.date,
-            time: appointment.time,
-            appointmentType: 'VIDEO_CALL',
+            doctorId: appointment.doctorId,
+            closedAt: new Date(),
             reason,
-            appointment,
-          },
-        });
-      } catch (error) {
-        failedCount++;
-        await this.loggingService.log(
-          LogType.ERROR,
-          LogLevel.WARN,
-          `Failed to auto-close past video call: ${
-            error instanceof Error ? error.message : 'Unknown error'
-          }`,
-          'AppointmentsService.processPastVideoCallClosures',
-          {
-            appointmentId: appointment.id,
-            clinicId: appointment.clinicId,
-            status: appointment.status,
-          }
-        );
-      }
-    }
+          });
+        } else {
+          failedCount++;
+        }
+      },
+      source
+    );
 
     if (details.length > 0 || failedCount > 0) {
       await this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         'Processed past video call closures',
-        'AppointmentsService.processPastVideoCallClosures',
+        source,
         {
-          totalChecked: candidates.length,
-          closed: closedCount,
+          totalChecked: scanned,
+          closed: details.length,
           failed: failedCount,
         }
       );
     }
 
     return {
-      totalChecked: candidates.length,
-      closed: closedCount,
+      totalChecked: scanned,
+      closed: details.length,
       failed: failedCount,
       details,
     };
+  }
+
+  /**
+   * Expires one due appointment as the system, through the status flow (so the state contract
+   * and the core's status-conditional write decide): a visit a doctor completed a moment ago
+   * stays COMPLETED. Returns true only for a visit that really closed; only then is it announced.
+   */
+  private async expireDueAppointment(
+    appointment: ExpiryCandidate,
+    params: { reason: string; notes: string; source: string }
+  ): Promise<boolean> {
+    try {
+      const closeResult = (await this.updateStatus(
+        appointment.id,
+        {
+          status: AppointmentStatus.EXPIRED,
+          reason: params.reason,
+          notes: params.notes,
+        } as unknown as UpdateAppointmentStatusDto,
+        'system',
+        appointment.clinicId,
+        'SYSTEM'
+      )) as AppointmentResult;
+
+      // The status change can be refused (for example it was completed a moment ago).
+      if (!closeResult.success) {
+        void this.loggingService.log(
+          LogType.BUSINESS,
+          LogLevel.WARN,
+          `Appointment was not expired: ${closeResult.message || closeResult.error || 'status change refused'}`,
+          params.source,
+          {
+            appointmentId: appointment.id,
+            clinicId: appointment.clinicId,
+            status: appointment.status,
+          }
+        );
+        return false;
+      }
+
+      await this.announceExpiry(appointment, params.reason);
+      return true;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        `Failed to auto-expire appointment: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        params.source,
+        {
+          appointmentId: appointment.id,
+          clinicId: appointment.clinicId,
+          status: appointment.status,
+        }
+      );
+      return false;
+    }
+  }
+
+  private async announceExpiry(appointment: ExpiryCandidate, reason: string): Promise<void> {
+    await this.emitAppointmentEnterpriseEvent('appointment.expired', {
+      eventId: `appointment-expired-${appointment.id}-${Date.now()}`,
+      clinicId: appointment.clinicId,
+      priority: EventPriority.HIGH,
+      userId: appointment.patientId,
+      payload: {
+        appointmentId: appointment.id,
+        doctorId: appointment.doctorId,
+        clinicId: appointment.clinicId,
+        patientId: appointment.patientId,
+        patientName: '',
+        doctorName: '',
+        date: appointment.date,
+        time: appointment.time,
+        appointmentType: String(appointment.type),
+        reason,
+        appointment,
+      },
+    });
+  }
+
+  /**
+   * When an in-clinic visit that was never started is due to expire, or null when its schedule
+   * cannot be parsed. A SCHEDULED visit (nobody arrived) is due after its slot plus the
+   * check-in window; a CONFIRMED visit (checked in, in the doctor's queue) after its whole day,
+   * so a patient who is still waiting is never expired.
+   */
+  private resolveInPersonExpiryDue(
+    appointment: ExpiryCandidate,
+    noShowGraceMs: number,
+    queuedGraceMs: number
+  ): Date | null {
+    const scheduledStart = parseIstDateTime(appointment.date, appointment.time);
+    if (!scheduledStart) {
+      return null;
+    }
+
+    if (String(appointment.status).toUpperCase() === String(AppointmentStatus.CONFIRMED)) {
+      const dayEnd = endOfIstDay(appointment.date);
+      return dayEnd ? new Date(dayEnd.getTime() + queuedGraceMs) : null;
+    }
+
+    const slotMs = (appointment.duration || 30) * 60_000;
+    return new Date(scheduledStart.getTime() + slotMs + noShowGraceMs);
+  }
+
+  async processExpiredInPersonAppointments(settings?: {
+    noShowGraceMinutes?: number;
+    queuedGraceMinutes?: number;
+    clinicId?: string;
+  }): Promise<{
+    totalChecked: number;
+    expired: number;
+    failed: number;
+    details: Array<{
+      appointmentId: string;
+      patientId: string;
+      doctorId: string;
+      expiredAt: Date;
+      reason: string;
+    }>;
+  }> {
+    const source = 'AppointmentsService.processExpiredInPersonAppointments';
+    const now = new Date();
+    const noShowGraceMs =
+      (settings?.noShowGraceMinutes ?? AppointmentsService.IN_PERSON_NO_SHOW_GRACE_MINUTES) *
+      60_000;
+    const queuedGraceMs =
+      (settings?.queuedGraceMinutes ?? AppointmentsService.IN_PERSON_QUEUED_GRACE_MINUTES) * 60_000;
+
+    const details: Array<{
+      appointmentId: string;
+      patientId: string;
+      doctorId: string;
+      expiredAt: Date;
+      reason: string;
+    }> = [];
+    let failedCount = 0;
+
+    const { scanned } = await this.forEachExpiryCandidate(
+      {
+        type: { not: AppointmentType.VIDEO_CALL },
+        // Never IN_PROGRESS and never a terminal status: only visits that were never started.
+        status: { in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED] },
+        // The stored date is the IST midnight of the visit's day; nothing can be due before the
+        // shortest grace has passed since that midnight.
+        date: { lte: new Date(now.getTime() - noShowGraceMs) },
+        ...(settings?.clinicId ? { clinicId: settings.clinicId } : {}),
+      },
+      async appointment => {
+        const dueAt = this.resolveInPersonExpiryDue(appointment, noShowGraceMs, queuedGraceMs);
+        if (!dueAt) {
+          void this.loggingService.log(
+            LogType.BUSINESS,
+            LogLevel.WARN,
+            'In-clinic appointment skipped: its scheduled time cannot be parsed',
+            source,
+            {
+              appointmentId: appointment.id,
+              clinicId: appointment.clinicId,
+              time: appointment.time,
+            }
+          );
+          return;
+        }
+        if (now.getTime() < dueAt.getTime()) {
+          return;
+        }
+
+        // One terminal path per row. A visit that was paid for (or is covered by a plan), and any
+        // checked-in visit, ends here as EXPIRED. An unpaid visit nobody ever arrived for keeps its
+        // old path, the 3 AM no-show cron, which cancels it and tells the patient.
+        const neverConfirmedAndUnpaid =
+          String(appointment.status).toUpperCase() === String(AppointmentStatus.SCHEDULED) &&
+          !isAppointmentPaid(appointment);
+        if (neverConfirmedAndUnpaid) {
+          return;
+        }
+
+        const reason =
+          'Auto-expired: the in-clinic appointment was not attended and its time has passed. ' +
+          'The appointment is now closed; any payment is left as it is. Please book a new appointment.';
+        const outcome = await this.expireInPersonAppointment(appointment, reason, source);
+        if (outcome === 'expired') {
+          details.push({
+            appointmentId: appointment.id,
+            patientId: appointment.patientId,
+            doctorId: appointment.doctorId,
+            expiredAt: new Date(),
+            reason,
+          });
+        } else if (outcome === 'failed') {
+          failedCount++;
+        }
+      },
+      source,
+      { withPayment: true }
+    );
+
+    if (details.length > 0 || failedCount > 0) {
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        'Processed expired in-clinic appointments',
+        source,
+        { totalChecked: scanned, expired: details.length, failed: failedCount }
+      );
+    }
+
+    return { totalChecked: scanned, expired: details.length, failed: failedCount, details };
+  }
+
+  /**
+   * Expires one in-clinic appointment with a conditional, clinic-scoped write that only matches a
+   * row that is still SCHEDULED or CONFIRMED. A visit that started, completed or was cancelled
+   * since the scan read it is left exactly as it is ('moved-on'). It is the one terminal path of
+   * these rows: payment, invoice and refund state are never touched here.
+   */
+  private async expireInPersonAppointment(
+    appointment: ExpiryCandidate,
+    reason: string,
+    source: string
+  ): Promise<'expired' | 'moved-on' | 'failed'> {
+    const expiredAt = new Date();
+    try {
+      const claim = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await (
+            client as unknown as {
+              appointment: { updateMany: <T>(args: T) => Promise<{ count: number }> };
+            }
+          ).appointment.updateMany({
+            where: {
+              id: appointment.id,
+              clinicId: appointment.clinicId,
+              status: { in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED] },
+            },
+            data: {
+              status: AppointmentStatus.EXPIRED,
+              cancellationReason: reason,
+              updatedAt: expiredAt,
+            },
+          });
+        },
+        {
+          userId: 'system',
+          userRole: 'SYSTEM',
+          clinicId: appointment.clinicId,
+          operation: 'EXPIRE_APPOINTMENT',
+          resourceType: 'APPOINTMENT',
+          resourceId: appointment.id,
+          timestamp: expiredAt,
+          details: { previousStatus: appointment.status, reason },
+        }
+      );
+
+      if (claim.count === 0) {
+        void this.loggingService.log(
+          LogType.BUSINESS,
+          LogLevel.INFO,
+          'In-clinic appointment left untouched: it was started, closed or changed since it was read',
+          source,
+          { appointmentId: appointment.id, clinicId: appointment.clinicId }
+        );
+        return 'moved-on';
+      }
+
+      try {
+        await this.appointmentQueueService.removePatientFromQueue(
+          appointment.id,
+          appointment.doctorId,
+          appointment.clinicId,
+          'clinic'
+        );
+      } catch (queueError) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Queue cleanup after auto-expiry failed: ${queueError instanceof Error ? queueError.message : String(queueError)}`,
+          source,
+          { appointmentId: appointment.id, doctorId: appointment.doctorId }
+        );
+      }
+
+      try {
+        await this.cacheService.invalidateAppointmentCache(
+          appointment.id,
+          appointment.patientId,
+          appointment.doctorId,
+          appointment.clinicId
+        );
+        this.invalidateBookingUserCache(appointment.userId);
+      } catch (cacheError) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Cache invalidation after auto-expiry failed: ${cacheError instanceof Error ? cacheError.message : String(cacheError)}`,
+          source,
+          { appointmentId: appointment.id }
+        );
+      }
+
+      await this.announceExpiry(appointment, reason);
+      return 'expired';
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        `Failed to auto-expire in-clinic appointment: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        source,
+        { appointmentId: appointment.id, clinicId: appointment.clinicId }
+      );
+      return 'failed';
+    }
   }
 
   async processNoShowCancellations(settings?: {
@@ -1032,6 +1544,10 @@ export class AppointmentsService {
               time: true,
               status: true,
               clinicId: true,
+              // Whether the visit was paid or is covered by a plan decides how it may end.
+              subscriptionId: true,
+              isSubscriptionBased: true,
+              payment: { select: { status: true, invoice: { select: { status: true } } } },
             },
             orderBy: { date: 'asc' },
           });
@@ -1051,6 +1567,13 @@ export class AppointmentsService {
     let failedCount = 0;
 
     for (const appointment of appointmentsToCheck) {
+      // A paid (or plan-covered) visit that never happened ends as EXPIRED, with its payment
+      // left as it is, through the expiry cron: cancelling it here could release quota or start
+      // a refund in billing. This cron only handles the unpaid, plan-less rows.
+      if (isAppointmentPaid(appointment)) {
+        continue;
+      }
+
       try {
         const hasCheckIn = await this.hasPatientCheckedInForNoShow(
           appointment.patientId,
@@ -1232,7 +1755,8 @@ export class AppointmentsService {
     }
 
     return new Date(
-      scheduledStart.getTime() + VIDEO_APPOINTMENT_RESCHEDULE_WINDOW_HOURS * 60 * 60 * 1000
+      // Same boundary as expiry: the visit can be moved until its window closes, not after.
+      scheduledStart.getTime() + getVideoActiveWindowMinutes() * 60_000
     );
   }
 
@@ -1898,6 +2422,9 @@ export class AppointmentsService {
         createDto.doctorId,
         clinicId
       );
+      this.invalidateBookingUserCache(
+        (result.data as Record<string, unknown>)?.['userId'] ?? userId
+      );
       void Promise.all([
         this.cacheService.invalidateCacheByTag('appointments'),
         this.cacheService.invalidateCacheByTag('clinic_appointments'),
@@ -2023,7 +2550,7 @@ export class AppointmentsService {
       patientId: string | null;
       doctorId: string | null;
     }>(async client => {
-      const prisma = client as {
+      const prisma = client as unknown as {
         patient: { findFirst: (args: unknown) => Promise<{ id: string } | null> };
         doctor: { findFirst: (args: unknown) => Promise<{ id: string } | null> };
       };
@@ -2416,6 +2943,7 @@ export class AppointmentsService {
       appointment.doctorId,
       clinicId
     );
+    this.invalidateBookingUserCache(appointment.userId);
     await this.eventService.emit('doctor.availability.changed', {
       clinicId,
       appointmentId,
@@ -2688,6 +3216,7 @@ export class AppointmentsService {
       appointment.doctorId,
       clinicId
     );
+    this.invalidateBookingUserCache(appointment.userId);
     await this.eventService.emit('doctor.availability.changed', {
       clinicId,
       appointmentId,
@@ -2706,6 +3235,412 @@ export class AppointmentsService {
     };
   }
 
+  /** Staff roles that may reschedule any appointment of their clinic (patients need ownership). */
+  private static readonly RESCHEDULE_STAFF_ROLES: ReadonlySet<string> = new Set<string>([
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.RECEPTIONIST,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN,
+  ]);
+
+  /**
+   * The appointment columns a reschedule decides on, read fresh (never from the detail cache) and
+   * scoped to the caller's clinic. Whether it may move, how often it already moved and whether the
+   * patient has arrived are decided on this row, inside the locks.
+   */
+  private async loadAppointmentForReschedule(
+    appointmentId: string,
+    clinicId: string
+  ): Promise<RescheduleAppointmentRow> {
+    const row = await this.databaseService.executeHealthcareRead(async client => {
+      const delegate = client['appointment'] as unknown as {
+        findFirst: (args: PrismaDelegateArgs) => Promise<RescheduleAppointmentRow | null>;
+      };
+      return await delegate.findFirst({
+        where: { id: appointmentId, clinicId },
+        select: {
+          id: true,
+          clinicId: true,
+          patientId: true,
+          doctorId: true,
+          userId: true,
+          locationId: true,
+          type: true,
+          status: true,
+          date: true,
+          time: true,
+          checkedInAt: true,
+          metadata: true,
+        },
+      } as PrismaDelegateArgs);
+    });
+
+    if (!row) {
+      throw this.errors.appointmentNotFound(
+        appointmentId,
+        'AppointmentsService.rescheduleAppointment'
+      );
+    }
+    return row;
+  }
+
+  /**
+   * The patient dashboard summary (PatientsService.getDashboardSummary) is cached under the tag
+   * `user:<User.id>` of the booking user, while CacheService.invalidateAppointmentCache only knows
+   * the Patient.id. Every appointment write busts that user tag here so the dashboard never shows a
+   * visit that was just booked, cancelled, moved, checked in or completed as stale. Fire-and-forget:
+   * a cache miss is cheap, a failed invalidation must never fail the write.
+   */
+  private invalidateBookingUserCache(bookingUserId: unknown): void {
+    if (typeof bookingUserId !== 'string' || !bookingUserId.trim()) return;
+    void this.cacheService.invalidateCacheByTag(`user:${bookingUserId}`).catch(error => {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Booking-user cache invalidation failed: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentsService.invalidateBookingUserCache',
+        { bookingUserId }
+      );
+    });
+  }
+
+  /**
+   * Today's live queue state (token, position, estimated wait) folded onto the list rows. Only
+   * in-person visits checked in today have an entry; everything else is left untouched. Read once
+   * per (uncached) list load, and never allowed to fail the list.
+   */
+  private async attachLiveQueueState(
+    result: AppointmentResult,
+    clinicId: string
+  ): Promise<AppointmentResult> {
+    const data = result.data as { appointments?: unknown } | undefined;
+    const rows = Array.isArray(data?.appointments) ? (data.appointments as unknown[]) : null;
+    if (!rows || rows.length === 0) return result;
+
+    try {
+      const queue = await this.appointmentQueueService.getClinicQueue(
+        clinicId,
+        formatDateKeyInIST(new Date()),
+        'clinic'
+      );
+      if (queue.length === 0) return result;
+
+      const byAppointment = new Map<
+        string,
+        {
+          tokenNumber: number | null;
+          queuePosition: number | null;
+          estimatedWaitTime: number | null;
+        }
+      >();
+      for (const entry of queue) {
+        if (!entry.appointmentId) continue;
+        byAppointment.set(entry.appointmentId, {
+          tokenNumber: typeof entry.tokenNumber === 'number' ? entry.tokenNumber : null,
+          queuePosition: typeof entry.position === 'number' ? entry.position : null,
+          estimatedWaitTime:
+            typeof entry.estimatedWaitTime === 'number' ? entry.estimatedWaitTime : null,
+        });
+      }
+      if (byAppointment.size === 0) return result;
+
+      const appointments = rows.map(row => {
+        const record = row as Record<string, unknown>;
+        const live = typeof record['id'] === 'string' ? byAppointment.get(record['id']) : undefined;
+        return live ? { ...record, ...live } : row;
+      });
+      return { ...result, data: { ...(result.data as Record<string, unknown>), appointments } };
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Live queue state unavailable for appointment list: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentsService.attachLiveQueueState',
+        { clinicId }
+      );
+      return result;
+    }
+  }
+
+  /**
+   * The reschedule policy, applied to the fresh row. Returns how many times the appointment has
+   * already been moved.
+   */
+  private assertRescheduleAllowed(row: RescheduleAppointmentRow): number {
+    const context = 'AppointmentsService.rescheduleAppointment';
+    const status = String(row.status).toUpperCase();
+
+    if (
+      [
+        String(AppointmentStatus.CANCELLED),
+        String(AppointmentStatus.EXPIRED),
+        String(AppointmentStatus.COMPLETED),
+      ].includes(status)
+    ) {
+      throw this.errors.validationError(
+        'status',
+        `This appointment cannot be rescheduled because it is already ${status.toLowerCase()}.`,
+        context
+      );
+    }
+
+    // Reschedule is allowed for CONFIRMED appointments, and for in-person visits that
+    // are still SCHEDULED (booked, awaiting clinic arrival — they never pass through
+    // CONFIRMED before the patient checks in).
+    const isInPersonVisit = String(row.type) !== 'VIDEO_CALL';
+    const isReschedulableStatus =
+      status === String(AppointmentStatus.CONFIRMED) ||
+      (isInPersonVisit && status === String(AppointmentStatus.SCHEDULED));
+    if (!isReschedulableStatus) {
+      throw this.errors.validationError(
+        'status',
+        'Only confirmed appointments can be rescheduled.',
+        context
+      );
+    }
+
+    // Once the patient has arrived and joined the clinic queue the visit can't be moved.
+    if (isInPersonVisit && row.checkedInAt) {
+      throw this.errors.validationError(
+        'status',
+        'You have already checked in for this visit. Please ask the reception desk to change it.',
+        context
+      );
+    }
+
+    // Video appointment: enforce 5-hour reschedule window
+    if (!isInPersonVisit) {
+      const rescheduleDeadline = this.resolveVideoAppointmentRescheduleDeadline({
+        date: row.date,
+        time: row.time,
+      });
+
+      if (!rescheduleDeadline) {
+        throw this.errors.validationError(
+          'date',
+          'Unable to determine the appointment reschedule deadline.',
+          context
+        );
+      }
+
+      if (Date.now() >= rescheduleDeadline.getTime()) {
+        throw this.errors.validationError(
+          'date',
+          'Rescheduling is only allowed until the 5-hour appointment window expires.',
+          context
+        );
+      }
+    }
+
+    // Policy: Limit number of reschedules (e.g. max 2 times)
+    const metadata =
+      row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : {};
+    const rescheduleCount = Number(metadata['rescheduleCount'] || 0);
+    if (rescheduleCount >= AppointmentsService.MAX_RESCHEDULES) {
+      throw this.errors.validationError(
+        'metadata',
+        `Maximum reschedule limit (${AppointmentsService.MAX_RESCHEDULES}) reached for this appointment.`,
+        context
+      );
+    }
+
+    return rescheduleCount;
+  }
+
+  /**
+   * Moves the appointment with a conditional, clinic-scoped write: it only matches while the row
+   * is still in a reschedulable status and the patient has not checked in. A check-in (or another
+   * reschedule) that committed after the fresh read is therefore never overwritten; the caller
+   * gets a 409 instead. The slot is written exactly as validated, in the same statement.
+   */
+  private async claimReschedule(params: {
+    row: RescheduleAppointmentRow;
+    newDate: string;
+    newTime: string;
+    rescheduleCount: number;
+    userId: string;
+    role: string;
+    clinicId: string;
+  }): Promise<void> {
+    const { row, newDate, newTime, rescheduleCount, userId, role, clinicId } = params;
+    const isVideo = String(row.type) === 'VIDEO_CALL';
+    const metadata =
+      row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : {};
+    const movedAt = new Date();
+
+    // Clear video-specific metadata so stale proposal data does not survive a reschedule:
+    // proposedSlots and confirmedSlotIndex return to their defaults so a fresh cycle begins after
+    // the new date/time is set. For VIDEO_CALL appointments the old paymentExpiresAt must also be
+    // cleared: the scheduler treats it as the authoritative expiry moment, and leaving it set
+    // would auto-expire the row by the OLD deadline even though the patient has a new future date.
+    //
+    // A video visit is only rescheduled while CONFIRMED (paid), and moving it does not undo the
+    // payment, so it stays CONFIRMED on the new slot with its window re-stamped from the new
+    // slot. In-clinic visits go back to SCHEDULED, their normal state until the patient checks in.
+    const newVideoStart = isVideo ? parseIstDateTime(new Date(newDate), newTime) : null;
+    const data: Record<string, unknown> = {
+      date: new Date(newDate),
+      time: newTime,
+      status: isVideo ? AppointmentStatus.CONFIRMED : AppointmentStatus.SCHEDULED,
+      ...(isVideo ? { paymentExpiresAt: null } : {}),
+      ...(isVideo && newVideoStart
+        ? {
+            confirmationExpiresAt: new Date(
+              newVideoStart.getTime() + getVideoActiveWindowMinutes() * 60_000
+            ),
+          }
+        : {}),
+      proposedSlots: [],
+      confirmedSlotIndex: null,
+      // The where clause already requires it to be null; a reset status never keeps an arrival.
+      checkedInAt: null,
+      metadata: {
+        ...metadata,
+        rescheduleCount: rescheduleCount + 1,
+        lastRescheduledAt: movedAt,
+      },
+      updatedAt: movedAt,
+    };
+    const reschedulableStatuses = isVideo
+      ? [String(AppointmentStatus.CONFIRMED)]
+      : [String(AppointmentStatus.CONFIRMED), String(AppointmentStatus.SCHEDULED)];
+
+    const claim = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        return await (
+          client as unknown as {
+            appointment: { updateMany: <T>(args: T) => Promise<{ count: number }> };
+          }
+        ).appointment.updateMany({
+          where: {
+            id: row.id,
+            clinicId,
+            status: { in: reschedulableStatuses },
+            checkedInAt: null,
+          },
+          data,
+        });
+      },
+      {
+        userId,
+        userRole: role,
+        clinicId,
+        operation: 'UPDATE_APPOINTMENT',
+        resourceType: 'APPOINTMENT',
+        resourceId: row.id,
+        timestamp: movedAt,
+        details: { action: 'RESCHEDULE', previousStatus: row.status, newDate, newTime },
+      }
+    );
+
+    if (claim.count === 0) {
+      throw this.errors.appointmentConflict(row.id, 'AppointmentsService.rescheduleAppointment');
+    }
+  }
+
+  /** The rescheduled appointment with the relations the event and the API response carry. */
+  private async loadAppointmentWithRelations(
+    appointmentId: string,
+    clinicId: string
+  ): Promise<AppointmentWithRelations | null> {
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const delegate = client['appointment'] as unknown as {
+        findFirst: (args: PrismaDelegateArgs) => Promise<AppointmentWithRelations | null>;
+      };
+      return await delegate.findFirst({
+        where: { id: appointmentId, clinicId },
+        include: {
+          patient: { include: { user: true } },
+          doctor: { include: { user: true } },
+          clinic: true,
+        },
+      } as PrismaDelegateArgs);
+    });
+  }
+
+  private static readonly MAX_RESCHEDULES = 2;
+
+  /**
+   * Everything that must see the same appointment, under the locks: the fresh read and the policy
+   * decision, the slot checks against live rows, and the conditional write. Returns the count of
+   * reschedules before this one and the row as it was just before the move.
+   */
+  private async rescheduleUnderLocks(params: {
+    appointmentId: string;
+    newDate: string;
+    newTime: string;
+    userId: string;
+    role: string;
+    clinicId: string;
+    cachedDoctorId: string;
+  }): Promise<{ before: RescheduleAppointmentRow; rescheduleCount: number }> {
+    const { appointmentId, newDate, newTime, userId, role, clinicId } = params;
+    const context = 'AppointmentsService.rescheduleAppointment';
+
+    const before = await this.loadAppointmentForReschedule(appointmentId, clinicId);
+
+    // The slot lock was keyed on the doctor of the cached detail. If the visit was handed to
+    // another doctor since, that lock protects the wrong doctor's slot: start over.
+    if (before.doctorId !== params.cachedDoctorId) {
+      throw this.errors.appointmentConflict(appointmentId, context);
+    }
+
+    const rescheduleCount = this.assertRescheduleAllowed(before);
+
+    // Check availability for new slot on the same grid the visit was booked on: the
+    // appointment's own type (video slots differ from in-clinic ones) and clinic location.
+    const availability = (await this.coreAppointmentService.getDoctorAvailability(
+      before.doctorId,
+      newDate,
+      {
+        clinicId,
+        userId,
+        role: 'USER',
+        ...(before.locationId ? { locationId: before.locationId } : {}),
+        ...(before.type ? { appointmentType: String(before.type) } : {}),
+      }
+    )) as { availableSlots: string[] };
+
+    if (!availability.availableSlots || !availability.availableSlots.includes(newTime)) {
+      throw this.errors.appointmentSlotUnavailable(`${newDate} ${newTime}`, context);
+    }
+
+    // Re-check against the live rows now that the lock is held (availability may have been
+    // computed before a concurrent booking committed). A doctor may hold a video visit and an
+    // in-clinic visit in the same slot, never two of the same kind; this appointment is excluded.
+    const dayAppointments = await loadDoctorDayAppointments(this.databaseService, {
+      doctorId: before.doctorId,
+      clinicId,
+      dayKey: formatDateKeyInIST(new Date(newDate)),
+      excludeAppointmentId: appointmentId,
+    });
+    const conflictingKind = findConflictingSlotKind(dayAppointments, {
+      type: before.type,
+      time: newTime,
+    });
+    if (conflictingKind) {
+      throw new ConflictException(slotConflictMessage(conflictingKind));
+    }
+
+    await this.claimReschedule({
+      row: before,
+      newDate,
+      newTime,
+      rescheduleCount,
+      userId,
+      role,
+      clinicId,
+    });
+
+    return { before, rescheduleCount };
+  }
+
   /**
    * Reschedule appointment with policy enforcement (24h notice).
    */
@@ -2714,7 +3649,8 @@ export class AppointmentsService {
     newDate: string,
     newTime: string,
     userId: string,
-    clinicId: string
+    clinicId: string,
+    role?: string
   ): Promise<AppointmentResult> {
     const permissionCheck = await this.rbacService.checkPermission({
       userId,
@@ -2740,127 +3676,97 @@ export class AppointmentsService {
       );
     }
 
-    if (
-      [
-        AppointmentStatus.CANCELLED,
-        AppointmentStatus.EXPIRED,
-        AppointmentStatus.COMPLETED,
-      ].includes(appointment.status as AppointmentStatus)
-    ) {
-      throw this.errors.validationError(
-        'status',
-        `This appointment cannot be rescheduled because it is already ${String(appointment.status).toLowerCase()}.`,
+    // Clinic scoping, asserted again here so it holds whatever the read above returned.
+    if (appointment.clinicId !== clinicId) {
+      throw this.errors.appointmentNotFound(
+        appointmentId,
         'AppointmentsService.rescheduleAppointment'
       );
     }
 
-    // Reschedule is only allowed for CONFIRMED appointments
-    if (String(appointment.status).toUpperCase() !== String(AppointmentStatus.CONFIRMED)) {
-      throw this.errors.validationError(
-        'status',
-        'Only confirmed appointments can be rescheduled.',
-        'AppointmentsService.rescheduleAppointment'
+    // RbacGuard passes any PATIENT (blanket appointments:update), so ownership is enforced here
+    // for every caller: a patient may only move their own appointment or an owned dependent's.
+    // Staff are scoped to the clinic only. An unknown or missing role is treated like a patient.
+    const normalizedRole = String(role ?? '').toUpperCase();
+    if (!AppointmentsService.RESCHEDULE_STAFF_ROLES.has(normalizedRole)) {
+      const ownsAppointment = await isAppointmentOwnedByPatientUser(
+        this.databaseService,
+        appointment,
+        userId
       );
-    }
-
-    // Video appointment: enforce 5-hour reschedule window
-    if (String(appointment.type) === 'VIDEO_CALL') {
-      const rescheduleDeadline = this.resolveVideoAppointmentRescheduleDeadline({
-        date: appointment.date,
-        time: appointment.time,
-      });
-      const now = new Date();
-
-      if (!rescheduleDeadline) {
-        throw this.errors.validationError(
-          'date',
-          'Unable to determine the appointment reschedule deadline.',
-          'AppointmentsService.rescheduleAppointment'
-        );
-      }
-
-      if (now.getTime() >= rescheduleDeadline.getTime()) {
-        throw this.errors.validationError(
-          'date',
-          'Rescheduling is only allowed until the 5-hour appointment window expires.',
-          'AppointmentsService.rescheduleAppointment'
-        );
+      if (!ownsAppointment) {
+        throw this.errors.insufficientPermissions('AppointmentsService.rescheduleAppointment');
       }
     }
 
-    // Patient-self-confirmed video flow: when a VIDEO_CALL appointment is in
-    // SCHEDULED status with proposedSlots populated, the patient has already
-    // chosen their slots. We still want to verify the proposal hasn't been
-    // totally orphaned (e.g. all proposed slots passed) before allowing a
-    // reschedule — but the reschedule itself is allowed.
-    //
-    // Production policy: Allow rescheduling up to 24h before.
-    // Temporarily disabled for testing so short-notice appointment changes can be exercised.
-    // const appointmentDateTime = new Date(
-    //   parseIstDateTime(appointment.date, appointment.time)
-    // );
-    // const now = new Date();
-    // const minNoticeMs = 24 * 60 * 60 * 1000;
-    //
-    // if (appointmentDateTime.getTime() - now.getTime() < minNoticeMs) {
-    //   throw this.errors.validationError(
-    //     'date',
-    //     'Rescheduling is only allowed at least 24 hours in advance.',
-    //     'AppointmentsService.rescheduleAppointment'
-    //   );
-    // }
+    // The new slot, validated before any lock is taken.
+    const context = 'AppointmentsService.rescheduleAppointment';
+    const newSlotStart = parseIstDateTime(newDate, newTime);
+    if (!newSlotStart) {
+      throw this.errors.validationError('date', 'The new date or time is not valid.', context);
+    }
 
-    // Policy: Limit number of reschedules (e.g. max 2 times)
-    const metadata = (appointment.metadata as Record<string, unknown>) || {};
-    const rescheduleCount = (metadata['rescheduleCount'] || 0) as number;
-    const MAX_RESCHEDULES = 2;
+    // Whether the visit may move is decided on a fresh read inside two locks, never on the cached
+    // detail above (it can be 30 minutes old, and a check-in or another reschedule may have landed
+    // since). The slot lock is the very lock the create path takes, so a booking and a reschedule
+    // of the same doctor slot serialize; the appointment lock serializes concurrent reschedules of
+    // this one appointment, so two moves to different slots cannot both pass the reschedule limit.
+    const bookingLockKey = `lock:booking:${appointment.doctorId}:${clinicId}:${newSlotStart.toISOString()}`;
+    const appointmentLockKey = `lock:reschedule:${clinicId}:${appointmentId}`;
 
-    if (rescheduleCount >= MAX_RESCHEDULES) {
-      throw this.errors.validationError(
-        'metadata',
-        `Maximum reschedule limit (${MAX_RESCHEDULES}) reached for this appointment.`,
-        'AppointmentsService.rescheduleAppointment'
+    const bookingLockAcquired = await this.cacheService.acquireLock(bookingLockKey, 15);
+    if (!bookingLockAcquired) {
+      throw this.errors.appointmentSlotUnavailable(`${newDate} ${newTime}`, context);
+    }
+
+    let outcome: { before: RescheduleAppointmentRow; rescheduleCount: number };
+    try {
+      const appointmentLockAcquired = await this.cacheService.acquireLock(appointmentLockKey, 15);
+      if (!appointmentLockAcquired) {
+        throw this.errors.appointmentConflict(appointmentId, context);
+      }
+      try {
+        outcome = await this.rescheduleUnderLocks({
+          appointmentId,
+          newDate,
+          newTime,
+          userId,
+          role: String(role ?? ''),
+          clinicId,
+          cachedDoctorId: appointment.doctorId,
+        });
+      } finally {
+        await this.cacheService.releaseLock(appointmentLockKey);
+      }
+    } finally {
+      await this.cacheService.releaseLock(bookingLockKey);
+    }
+
+    const { before, rescheduleCount } = outcome;
+
+    // The write above bypasses the database layer's own invalidation: drop the stale detail and
+    // list entries now so the read below, and any concurrent reader, see the new slot.
+    try {
+      await this.cacheService.invalidateAppointmentCache(
+        appointmentId,
+        before.patientId,
+        before.doctorId,
+        clinicId
+      );
+      this.invalidateBookingUserCache(before.userId);
+    } catch (cacheError) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Cache invalidation after reschedule failed: ${cacheError instanceof Error ? cacheError.message : String(cacheError)}`,
+        context,
+        { appointmentId, clinicId }
       );
     }
 
-    // Check availability for new slot
-    const availability = (await this.coreAppointmentService.getDoctorAvailability(
-      appointment.doctorId,
-      newDate,
-      { clinicId, userId, role: 'USER' }
-    )) as { availableSlots: string[] };
-
-    if (!availability.availableSlots || !availability.availableSlots.includes(newTime)) {
-      throw this.errors.appointmentSlotUnavailable(
-        `${newDate} ${newTime}`,
-        'AppointmentsService.rescheduleAppointment'
-      );
-    }
-
-    // Update appointment — clear video-specific metadata so stale proposal
-    // data does not survive a reschedule.  proposedSlots and
-    // confirmedSlotIndex are reset to their defaults so a fresh cycle
-    // begins after the new date/time is set.
-    //
-    // For VIDEO_CALL appointments the old paymentExpiresAt must also be
-    // cleared: the scheduler treats it as the authoritative expiry moment.
-    // Leaving it set would cause the row to be auto-expired by the OLD
-    // deadline even though the patient now has a new future date.
-    const isVideo = String(appointment.type) === 'VIDEO_CALL';
-    const updateData: Parameters<typeof this.databaseService.updateAppointmentSafe>[1] = {
-      date: new Date(newDate),
-      time: newTime,
-      status: AppointmentStatus.SCHEDULED, // Reset to scheduled
-      ...(isVideo ? { paymentExpiresAt: null } : {}),
-      proposedSlots: [],
-      confirmedSlotIndex: null,
-      metadata: {
-        ...metadata,
-        rescheduleCount: rescheduleCount + 1,
-        lastRescheduledAt: new Date(),
-      },
-    };
-    const updated = await this.databaseService.updateAppointmentSafe(appointmentId, updateData);
+    const updated =
+      (await this.loadAppointmentWithRelations(appointmentId, clinicId)) ??
+      ({ id: appointmentId, clinicId } as unknown as AppointmentWithRelations);
 
     await this.syncPaidAppointmentBillingAfterReschedule(appointment, newDate, newTime, userId);
 
@@ -2902,8 +3808,8 @@ export class AppointmentsService {
     await this.eventService.emit('appointment.rescheduled', {
       appointmentId,
       clinicId,
-      oldDate: appointment.date,
-      oldTime: appointment.time,
+      oldDate: before.date,
+      oldTime: before.time,
       newDate,
       newTime,
       appointment: updated,
@@ -2913,7 +3819,7 @@ export class AppointmentsService {
     return {
       success: true,
       data: updated as unknown as Record<string, unknown>,
-      message: `Appointment rescheduled successfully (Count: ${rescheduleCount + 1}/${MAX_RESCHEDULES}).`,
+      message: `Appointment rescheduled successfully (Count: ${rescheduleCount + 1}/${AppointmentsService.MAX_RESCHEDULES}).`,
     };
   }
 
@@ -2999,7 +3905,11 @@ export class AppointmentsService {
     // keyed and tagged per-user — is safe for patients too.
     return this.cacheService.cache(
       cacheKey,
-      () => this.coreAppointmentService.getAppointments(filters, context, page, limit),
+      async () =>
+        this.attachLiveQueueState(
+          await this.coreAppointmentService.getAppointments(filters, context, page, limit),
+          clinicId
+        ),
       {
         ttl: 300, // 5 minutes - optimized for 10M+ users (balance freshness vs load)
         tags: ['appointments', 'clinic_appointments', `clinic:${clinicId}`, `user:${userId}`],
@@ -3010,6 +3920,222 @@ export class AppointmentsService {
         clinicSpecific: true, // Healthcare-specific optimization
       }
     );
+  }
+
+  /**
+   * GET /appointments/summary/daily. Counts, paid revenue and the average consultation length of
+   * the appointments in an IST day range. A DOCTOR / ASSISTANT_DOCTOR is always pinned to their own
+   * Doctor row; an admin may name a doctor of the clinic (Doctor.id or User id) or omit it for the
+   * clinic total. Clinic-scoped on every path, so another clinic's doctor is simply "not found".
+   */
+  async getDailySummary(input: {
+    clinicId: string;
+    actorUserId: string;
+    role: string;
+    startDate?: string;
+    endDate?: string;
+    doctorId?: string;
+  }): Promise<AppointmentDailySummaryDto> {
+    const context = 'AppointmentsService.getDailySummary';
+    const MAX_RANGE_DAYS = 92;
+
+    const startKey = formatDateKeyInIST(input.startDate ? new Date(input.startDate) : new Date());
+    const endKey = input.endDate ? formatDateKeyInIST(new Date(input.endDate)) : startKey;
+    const rangeStart = startKey ? startOfIstDay(startKey) : null;
+    const rangeEnd = endKey ? endOfIstDay(endKey) : null;
+    if (!rangeStart || !rangeEnd) {
+      throw this.errors.validationError('startDate', 'Invalid date range', context);
+    }
+    if (rangeEnd.getTime() < rangeStart.getTime()) {
+      throw this.errors.validationError('endDate', 'endDate must not be before startDate', context);
+    }
+    if (rangeEnd.getTime() - rangeStart.getTime() > MAX_RANGE_DAYS * 24 * 60 * 60 * 1000) {
+      throw this.errors.validationError(
+        'endDate',
+        `The summary range cannot exceed ${MAX_RANGE_DAYS} days`,
+        context
+      );
+    }
+
+    const isConsultant = [Role.DOCTOR, Role.ASSISTANT_DOCTOR].includes(input.role as Role);
+    let doctorId: string | undefined;
+    if (isConsultant) {
+      const own = await this.resolveDoctorEntityId(input.actorUserId, input.clinicId);
+      if (!own) throw this.errors.insufficientPermissions(context);
+      doctorId = own;
+    } else if (input.doctorId) {
+      const requested = input.doctorId;
+      const resolved = await this.databaseService.executeHealthcareRead(async client => {
+        const tx = client as unknown as Prisma.TransactionClient;
+        return await tx.doctor.findFirst({
+          where: {
+            clinics: { some: { clinicId: input.clinicId } },
+            OR: [{ id: requested }, { userId: requested }],
+          },
+          select: { id: true },
+        });
+      });
+      if (!resolved) throw this.errors.doctorNotFound(requested, context);
+      doctorId = resolved.id;
+    }
+
+    type SummaryRow = {
+      status: string;
+      startedAt: Date | null;
+      completedAt: Date | null;
+      payment: { amount: number; status: string } | null;
+    };
+    const rows = await this.databaseService.executeHealthcareRead<SummaryRow[]>(async client => {
+      const tx = client as unknown as Prisma.TransactionClient;
+      return (await tx.appointment.findMany({
+        where: {
+          clinicId: input.clinicId,
+          date: { gte: rangeStart, lte: rangeEnd },
+          ...(doctorId ? { doctorId } : {}),
+        },
+        select: {
+          status: true,
+          startedAt: true,
+          completedAt: true,
+          payment: { select: { amount: true, status: true } },
+        },
+      })) as unknown as SummaryRow[];
+    });
+
+    const breakdown = new Map<string, number>();
+    let completed = 0;
+    let noShows = 0;
+    let cancelled = 0;
+    let pending = 0;
+    let revenue = 0;
+    let consultationMinutes = 0;
+    let consultationsTimed = 0;
+    const OPEN_STATUSES = new Set<string>([
+      String(AppointmentStatus.SCHEDULED),
+      String(AppointmentStatus.CONFIRMED),
+      String(AppointmentStatus.IN_PROGRESS),
+    ]);
+
+    for (const row of rows) {
+      const status = String(row.status || '').toUpperCase();
+      breakdown.set(status, (breakdown.get(status) ?? 0) + 1);
+      if (status === String(AppointmentStatus.COMPLETED)) completed += 1;
+      else if (status === String(AppointmentStatus.NO_SHOW)) noShows += 1;
+      else if (status === String(AppointmentStatus.CANCELLED)) cancelled += 1;
+      else if (OPEN_STATUSES.has(status)) pending += 1;
+
+      if (row.payment && isPaidPaymentStatus(normalizePaymentStatus(row.payment.status || ''))) {
+        revenue += Number(row.payment.amount) || 0;
+      }
+      if (row.startedAt && row.completedAt) {
+        const minutes =
+          (new Date(row.completedAt).getTime() - new Date(row.startedAt).getTime()) / 60_000;
+        if (Number.isFinite(minutes) && minutes > 0) {
+          consultationMinutes += minutes;
+          consultationsTimed += 1;
+        }
+      }
+    }
+
+    return {
+      startDate: startKey,
+      endDate: endKey,
+      ...(doctorId ? { doctorId } : {}),
+      totalAppointments: rows.length,
+      completed,
+      noShows,
+      cancelled,
+      pending,
+      revenue: Math.round(revenue * 100) / 100,
+      averageConsultationMin:
+        consultationsTimed > 0 ? Math.round(consultationMinutes / consultationsTimed) : 0,
+      appointmentStatusBreakdown: [...breakdown.entries()]
+        .sort((left, right) => right[1] - left[1])
+        .map(([status, count]) => ({ status, count })),
+    };
+  }
+
+  /**
+   * Fresh (uncached) read of the appointment's status and type, scoped to the caller's clinic.
+   * The guard in {@link assertStatusChangeAllowed} must rest on the current row, not on a cached
+   * detail that could be minutes stale or belong to another clinic.
+   */
+  private async loadAppointmentStatusSnapshot(
+    appointmentId: string,
+    clinicId: string
+  ): Promise<AppointmentStatusSnapshot> {
+    const appointment = await this.databaseService.executeHealthcareRead(async client => {
+      const delegate = client['appointment'] as unknown as {
+        findFirst: (args: PrismaDelegateArgs) => Promise<AppointmentStatusSnapshot | null>;
+      };
+      return await delegate.findFirst({
+        where: { id: appointmentId, clinicId },
+        select: { id: true, type: true, status: true },
+      });
+    });
+
+    if (!appointment) {
+      throw this.errors.appointmentNotFound(appointmentId, 'AppointmentsService.updateAppointment');
+    }
+    return appointment;
+  }
+
+  /**
+   * Early, clinic-scoped answer for the generic update (PUT /appointments/:id). The rules
+   * themselves are the state contract's (getGenericStatusChangeRefusal) and the core service
+   * enforces them again on every update, whichever route it came through; this guard only answers
+   * first, from a fresh read, for the cases that need one:
+   * - a non-staff caller (patient...) may not change a status here: they cancel, or check in;
+   * - nobody confirms through the generic update: an in-clinic visit is confirmed by check-in
+   *   (QR, code, front desk, presence at the clinic), a video visit by payment.
+   * Every other staff transition is left to the core, which reads the row itself.
+   */
+  private async assertStatusChangeAllowed(
+    appointmentId: string,
+    updateDto: UpdateAppointmentDto,
+    clinicId: string,
+    role: string
+  ): Promise<void> {
+    if (!updateDto.status) {
+      return;
+    }
+
+    const requestedStatus = String(updateDto.status).toUpperCase();
+
+    if (isAppointmentStaffRole(role) && requestedStatus !== String(AppointmentStatus.CONFIRMED)) {
+      return;
+    }
+
+    const current = await this.loadAppointmentStatusSnapshot(appointmentId, clinicId);
+    const refusal = getGenericStatusChangeRefusal({
+      currentStatus: current.status,
+      targetStatus: requestedStatus,
+      appointmentType: current.type,
+      role,
+    });
+    if (refusal) {
+      throw refusal.httpStatus === 403
+        ? new ForbiddenException(refusal.message)
+        : new BadRequestException(refusal.message);
+    }
+  }
+
+  /**
+   * What a caller may ask of the status endpoint, before anything is dispatched. Clinic staff and
+   * the SYSTEM scheduler drive the lifecycle (each target then has its own rules below). Everyone
+   * else, a patient above all, may only cancel: starting a consultation, completing, confirming
+   * (the legacy check-in with no geofence), no-show and expiry are not theirs, and no-show and
+   * expiry can also trigger refunds and free the slot.
+   */
+  private assertStatusRequestAllowedForRole(targetStatus: AppointmentStatus, role: string): void {
+    if (isAppointmentSystemRole(role) || isAppointmentStaffRole(role)) {
+      return;
+    }
+    if (targetStatus === AppointmentStatus.CANCELLED) {
+      return;
+    }
+
+    throw new ForbiddenException(PATIENT_STATUS_CHANGE_MESSAGE);
   }
 
   /**
@@ -3024,6 +4150,7 @@ export class AppointmentsService {
   ): Promise<AppointmentResult> {
     // RBAC: Check permission to update appointments
     // SYSTEM role bypass: automated schedulers (no-show detection, system events) skip RBAC
+    // and the status-change guard below.
     if (role !== 'SYSTEM') {
       const permissionCheck = await this.rbacService.checkPermission({
         userId,
@@ -3036,6 +4163,8 @@ export class AppointmentsService {
       if (!permissionCheck.hasPermission) {
         throw this.errors.insufficientPermissions('AppointmentsService.updateAppointment');
       }
+
+      await this.assertStatusChangeAllowed(appointmentId, updateDto, clinicId, role);
     }
 
     const context: AppointmentContext = {
@@ -3052,17 +4181,24 @@ export class AppointmentsService {
 
     // Invalidate related cache entries
     if (result.success) {
-      const cancelledResult = result.data ?? {};
-      const cancelledDoctorId =
-        typeof cancelledResult?.['doctorId'] === 'string' && cancelledResult['doctorId']
-          ? String(cancelledResult['doctorId'])
+      const updatedRecord = result.data ?? {};
+      const queuedDoctorId =
+        typeof updatedRecord?.['doctorId'] === 'string' && updatedRecord['doctorId']
+          ? String(updatedRecord['doctorId'])
           : undefined;
+      const rawStatus = updatedRecord['status'];
+      const resultingStatus = typeof rawStatus === 'string' ? rawStatus.toUpperCase() : '';
 
-      if (cancelledDoctorId) {
+      // The patient leaves the doctor's queue only when the appointment is over. An edit that
+      // keeps it alive (a note on a checked-in visit) must not drop a queued patient: they would
+      // stay CONFIRMED with a check-in time and could never be queued again. The doctor cannot
+      // change through this method (reassignDoctor moves the queue entry itself), so a terminal
+      // status is the only reason to remove it here.
+      if (queuedDoctorId && APPOINTMENT_TERMINAL_STATUSES.has(resultingStatus)) {
         try {
           await this.appointmentQueueService.removePatientFromQueue(
             appointmentId,
-            cancelledDoctorId,
+            queuedDoctorId,
             clinicId,
             'clinic'
           );
@@ -3070,11 +4206,11 @@ export class AppointmentsService {
           void this.loggingService.log(
             LogType.SYSTEM,
             LogLevel.WARN,
-            `Queue cleanup after appointment cancellation failed: ${queueError instanceof Error ? queueError.message : String(queueError)}`,
-            'AppointmentsService.cancelAppointment',
+            `Queue cleanup after appointment update to ${resultingStatus} failed: ${queueError instanceof Error ? queueError.message : String(queueError)}`,
+            'AppointmentsService.updateAppointment',
             {
               appointmentId,
-              doctorId: cancelledDoctorId,
+              doctorId: queuedDoctorId,
               clinicId,
               error: queueError instanceof Error ? queueError.stack : undefined,
             }
@@ -3088,6 +4224,7 @@ export class AppointmentsService {
         (result.data as Record<string, unknown>)?.['doctorId'] as string,
         clinicId
       );
+      this.invalidateBookingUserCache((result.data as Record<string, unknown>)?.['userId']);
 
       // Emit enterprise event for real-time WebSocket broadcasting
       await this.emitAppointmentEnterpriseEvent('appointment.updated', {
@@ -3133,9 +4270,29 @@ export class AppointmentsService {
 
     const normalizedStatus = updateDto.status;
 
-    // 2. Business rule: IN_PERSON appointments must complete QR check-in
-    //    (reach CONFIRMED status) before a consultation can be started.
+    // IN_PROGRESS -> EXPIRED is the scheduler closing a visit the doctor started but never
+    // completed. It is allowed by the state contract for the system only: no human role may
+    // expire a consultation that is under way. Checked first so the answer is the same 403 for
+    // every appointment type.
     if (
+      isSystemOnlyStatusTransition(String(appointment.status), String(normalizedStatus)) &&
+      !isAppointmentSystemRole(role)
+    ) {
+      throw this.errors.insufficientPermissions('AppointmentsService.updateStatus');
+    }
+
+    // Only clinic staff and the scheduler move an appointment through its lifecycle; everyone
+    // else may only cancel. Refused before anything else runs (the NO_SHOW branch below can issue
+    // a refund before it reaches the update, IN_PROGRESS would start a consultation, CONFIRMED
+    // would run a check-in).
+    this.assertStatusRequestAllowedForRole(normalizedStatus, role);
+
+    // 2. Business rule: IN_PERSON appointments must complete check-in (reach CONFIRMED) before a
+    //    consultation can be started or completed. Other targets (cancel, no-show, expire...) do
+    //    not need an arrival; startConsultation and completeAppointment enforce their own rules too.
+    if (
+      (normalizedStatus === AppointmentStatus.IN_PROGRESS ||
+        normalizedStatus === AppointmentStatus.COMPLETED) &&
       String(appointment.type) === String(AppointmentType.IN_PERSON) &&
       String(appointment.status).toUpperCase() !== String(AppointmentStatus.CONFIRMED)
     ) {
@@ -3255,26 +4412,12 @@ export class AppointmentsService {
           role
         );
 
-        if (cancelResult.success) {
-          await this.triggerAppointmentRefund(
-            appointmentId,
-            clinicId,
-            `Appointment cancelled: ${updateDto.reason}`
-          );
-        }
-
         return cancelResult;
       }
 
       case AppointmentStatus.NO_SHOW: {
-        // Handle automated refund if it's a doctor no-show
-        if (updateDto.reason === 'Doctor failed to join within grace period.') {
-          await this.triggerAppointmentRefund(
-            appointmentId,
-            clinicId,
-            'Automated refund due to Doctor No-Show'
-          );
-        }
+        // A visit that never happened ends here (or EXPIRED) with its payment left as it is: there
+        // is no automatic refund, whoever did not show up. The patient books a new appointment.
         const noShowResult = await this.updateAppointment(
           appointmentId,
           {
@@ -3311,7 +4454,8 @@ export class AppointmentsService {
         return noShowResult;
       }
 
-      // Handle other status updates generically (e.g., CONFIRMED)
+      // Every other target (ON_HOLD, RESCHEDULED...) is a generic update: the core applies the
+      // state contract. CONFIRMED, IN_PROGRESS and COMPLETED never get here; they have their own flows.
       default:
         return this.updateAppointment(
           appointmentId,
@@ -3496,7 +4640,11 @@ export class AppointmentsService {
       }
     );
 
-    if (String(appointment.status) === String(AppointmentStatus.CONFIRMED)) {
+    // Video visits never enter a doctor queue: they are only re-assigned in the database.
+    if (
+      String(appointment.status) === String(AppointmentStatus.CONFIRMED) &&
+      !isVideoCallAppointmentType(appointment.type)
+    ) {
       await this.appointmentQueueService.removePatientFromQueue(
         appointmentId,
         appointment.doctorId,
@@ -3615,6 +4763,7 @@ export class AppointmentsService {
         (result.data as Record<string, unknown>)?.['doctorId'] as string,
         clinicId
       );
+      this.invalidateBookingUserCache((result.data as Record<string, unknown>)?.['userId']);
 
       try {
         await this.appointmentReminderService.cancelAppointmentReminder(
@@ -3757,12 +4906,32 @@ export class AppointmentsService {
     _role: string = 'USER'
   ): Promise<unknown> {
     try {
+      // A receptionist assigned to a clinic location may only check in appointments at that
+      // location. The clinic-scoped read also turns another clinic's appointment into a 404.
+      if (String(_role).toUpperCase() === String(Role.RECEPTIONIST) && checkInDto.appointmentId) {
+        const target = (await this.getAppointmentById(
+          checkInDto.appointmentId,
+          clinicId
+        )) as AppointmentWithRelations;
+        const assignedToLocation = await isReceptionistAssignedToAppointmentLocation(
+          this.databaseService,
+          userId,
+          clinicId,
+          target.locationId
+        );
+        if (!assignedToLocation) {
+          throw this.errors.insufficientPermissions('AppointmentsService.processCheckIn');
+        }
+      }
+
       // Hot path: Direct plugin injection for performance (10M+ users scale)
       // Direct access: ~0.1ms faster than registry lookup
       const checkInData = await this.clinicCheckInPlugin.process({
         operation: 'processCheckIn',
         clinicId,
         userId,
+        // The actor: without it the plugin applies the patient time window to staff.
+        userRole: _role,
         ...checkInDto,
       });
 
@@ -3859,30 +5028,280 @@ export class AppointmentsService {
    *
    * Performance: Uses direct plugin injection for hot-path optimization (10M+ users scale)
    */
+
+  /** Clinician roles that may complete a VIDEO visit, and only when they are its treating doctor. */
+  private static readonly VIDEO_COMPLETION_CLINICIAN_ROLES: ReadonlySet<string> = new Set<string>([
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+  ]);
+
+  /**
+   * The only role that may complete a VIDEO visit without being its treating doctor: the clinic
+   * admin of the appointment's clinic (the read is clinic-scoped, so another clinic's admin gets a
+   * 404). Everyone else, the doctor's assistant and the front desk included, gets a 403.
+   */
+  private static readonly VIDEO_COMPLETION_ADMIN_ROLES: ReadonlySet<string> = new Set<string>([
+    Role.CLINIC_ADMIN,
+  ]);
+
+  /** Administrators whose completions are written to the audit log. */
+  private static readonly ADMIN_COMPLETION_ROLES: ReadonlySet<string> = new Set<string>([
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN,
+  ]);
+
+  /** Every role that may complete an appointment at all. PATIENT and unknown roles never can. */
+  private static readonly COMPLETION_ROLES: ReadonlySet<string> = new Set<string>([
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.NURSE,
+    Role.RECEPTIONIST,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN,
+  ]);
+
+  /**
+   * Fresh (uncached) read of the appointment for completion, scoped to the caller's clinic, with
+   * the treating doctor's user and the payment state. A cached copy could be minutes stale and
+   * the decision to complete must rest on the current row.
+   */
+  private async loadAppointmentForCompletion(
+    appointmentId: string,
+    clinicId: string
+  ): Promise<CompletionAppointmentRow> {
+    const appointment = await this.databaseService.executeHealthcareRead(async client => {
+      const delegate = client['appointment'] as unknown as {
+        findFirst: (args: PrismaDelegateArgs) => Promise<CompletionAppointmentRow | null>;
+      };
+      return await delegate.findFirst({
+        where: { id: appointmentId, clinicId },
+        include: {
+          doctor: { select: { id: true, userId: true } },
+          payment: { select: { status: true, invoice: { select: { status: true } } } },
+        },
+      });
+    });
+
+    if (!appointment) {
+      throw this.errors.appointmentNotFound(
+        appointmentId,
+        'AppointmentsService.completeAppointment'
+      );
+    }
+    return appointment;
+  }
+
+  /**
+   * Who may complete this appointment. Fails closed: an unknown role, a PATIENT, or (for a video
+   * visit) anybody who is neither the treating doctor nor a clinic admin is refused.
+   */
+  private assertCompletionAllowed(
+    appointment: CompletionAppointmentRow,
+    userId: string,
+    role: string
+  ): void {
+    const context = 'AppointmentsService.completeAppointment';
+    const normalizedRole = String(role || '').toUpperCase();
+
+    if (!AppointmentsService.COMPLETION_ROLES.has(normalizedRole)) {
+      throw this.errors.insufficientPermissions(context);
+    }
+    if (!isVideoCallAppointmentType(appointment.type)) {
+      return;
+    }
+    if (AppointmentsService.VIDEO_COMPLETION_ADMIN_ROLES.has(normalizedRole)) {
+      return;
+    }
+
+    const isTreatingDoctor =
+      AppointmentsService.VIDEO_COMPLETION_CLINICIAN_ROLES.has(normalizedRole) &&
+      Boolean(userId) &&
+      appointment.doctor?.userId === userId;
+    if (!isTreatingDoctor) {
+      throw this.errors.insufficientPermissions(context);
+    }
+  }
+
+  private buildAlreadyCompletedResult(appointment: CompletionAppointmentRow): {
+    success: true;
+    data: Record<string, unknown>;
+  } {
+    return {
+      success: true,
+      data: {
+        success: true,
+        appointmentId: appointment.id,
+        doctorId: appointment.doctorId,
+        clinicId: appointment.clinicId,
+        completedAt: appointment.completedAt
+          ? new Date(appointment.completedAt).toISOString()
+          : null,
+        alreadyCompleted: true,
+      },
+    };
+  }
+
   async completeAppointment(
     appointmentId: string,
     completeDto: CompleteAppointmentDto,
     userId: string,
     clinicId: string,
-    _role: string = 'USER'
+    role: string = 'USER'
   ): Promise<unknown> {
+    const context = 'AppointmentsService.completeAppointment';
+
     try {
-      // Get appointment to extract doctorId and validate clinic isolation
-      const appointmentRecord = (await this.getAppointmentById(
-        appointmentId,
-        clinicId
-      )) as AppointmentWithRelations;
+      // Fresh, clinic-scoped read. Any failure here (including an unexpected database error)
+      // stops the completion: there is no fail-open path.
+      const appointmentRecord = await this.loadAppointmentForCompletion(appointmentId, clinicId);
 
-      // Use appointment's doctorId, fallback to userId if not available
-      const doctorId = appointmentRecord.doctorId || userId;
+      this.assertCompletionAllowed(appointmentRecord, userId, role);
 
-      // Hot path: Direct plugin injection for performance
-      // Use doctorId from DTO if provided, otherwise use appointment's doctorId
-      const finalDoctorId = completeDto.doctorId || doctorId;
+      const currentStatus = String(appointmentRecord.status || '').toUpperCase();
+
+      // Already completed: report success without re-emitting events or re-running side effects.
+      if (currentStatus === String(AppointmentStatus.COMPLETED)) {
+        return this.buildAlreadyCompletedResult(appointmentRecord);
+      }
+
+      // The state contract decides: only IN_PROGRESS -> COMPLETED. CANCELLED, EXPIRED, NO_SHOW,
+      // unpaid PENDING and every not-yet-started visit are refused.
+      if (!isValidAppointmentStatusTransition(currentStatus, String(AppointmentStatus.COMPLETED))) {
+        throw this.errors.businessRuleViolation(
+          `Only an appointment that is in progress can be completed (this one is ${currentStatus.toLowerCase().replace(/_/g, ' ')}).`,
+          context
+        );
+      }
+
+      if (isVideoCallAppointmentType(appointmentRecord.type)) {
+        // The same definition of "paid" the video room uses to let the patient in: a visit that
+        // is joinable must never be un-completable.
+        if (!isAppointmentPaid(appointmentRecord)) {
+          throw this.errors.businessRuleViolation(
+            'Payment must be completed before a video appointment can be completed.',
+            context
+          );
+        }
+      }
+
+      // The doctor on record. completeDto.doctorId is client-supplied and never trusted.
+      const finalDoctorId = appointmentRecord.doctorId;
 
       // Create a copy of completeDto without doctorId to avoid duplication
       const { doctorId: _, ...restDto } = completeDto;
 
+      const completedAt = new Date();
+      const completedAtIso = completedAt.toISOString();
+      const existingMetadata =
+        appointmentRecord.metadata &&
+        typeof appointmentRecord.metadata === 'object' &&
+        !Array.isArray(appointmentRecord.metadata)
+          ? (appointmentRecord.metadata as Record<string, unknown>)
+          : {};
+      const completionMetadata =
+        completeDto.metadata &&
+        typeof completeDto.metadata === 'object' &&
+        !Array.isArray(completeDto.metadata)
+          ? completeDto.metadata
+          : {};
+
+      // Claim the completion with a conditional write: it only matches while the row still has
+      // the status we validated, and it is clinic-scoped. Two simultaneous completions (or a
+      // completion racing a cancellation) cannot both win.
+      const claim = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await (
+            client as unknown as {
+              appointment: {
+                updateMany: <T>(args: T) => Promise<{ count: number }>;
+              };
+            }
+          ).appointment.updateMany({
+            where: { id: appointmentId, clinicId, status: currentStatus },
+            data: {
+              status: AppointmentStatus.COMPLETED,
+              completedAt,
+              updatedAt: completedAt,
+              metadata: {
+                ...existingMetadata,
+                ...completionMetadata,
+                consultationOutcome: 'completed',
+                consultationCompletedAt: completedAtIso,
+                // The authenticated user, not whoever the request body claims to be.
+                consultationCompletedBy: userId,
+              },
+            },
+          });
+        },
+        {
+          userId,
+          userRole: role,
+          clinicId,
+          operation: 'UPDATE_APPOINTMENT',
+          resourceType: 'APPOINTMENT',
+          resourceId: appointmentId,
+          timestamp: completedAt,
+          details: {
+            status: AppointmentStatus.COMPLETED,
+            previousStatus: currentStatus,
+            completedAt: completedAtIso,
+            metadata: completionMetadata,
+          },
+        }
+      );
+
+      if (claim.count === 0) {
+        // Lost a race: somebody completed (idempotent) or cancelled / expired it (conflict).
+        const latest = await this.loadAppointmentForCompletion(appointmentId, clinicId);
+        if (String(latest.status || '').toUpperCase() === String(AppointmentStatus.COMPLETED)) {
+          return this.buildAlreadyCompletedResult(latest);
+        }
+        throw this.errors.appointmentConflict(appointmentId, context);
+      }
+
+      // An administrator completing a visit that is not theirs leaves an audit trail.
+      if (AppointmentsService.ADMIN_COMPLETION_ROLES.has(String(role || '').toUpperCase())) {
+        await this.loggingService.log(
+          LogType.AUDIT,
+          LogLevel.INFO,
+          'Appointment completed by an administrator',
+          context,
+          {
+            actorId: userId,
+            actorRole: role,
+            appointmentId,
+            clinicId,
+            previousStatus: currentStatus,
+          }
+        );
+      }
+
+      // Drop the stale cached detail / list entries now, so the reads below (and any concurrent
+      // reader) see COMPLETED instead of the pre-completion row.
+      try {
+        await this.cacheService.invalidateAppointmentCache(
+          appointmentId,
+          appointmentRecord.patientId,
+          appointmentRecord.doctorId,
+          clinicId
+        );
+        this.invalidateBookingUserCache(appointmentRecord.userId);
+      } catch (cacheError) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Cache invalidation after appointment completion failed: ${cacheError instanceof Error ? cacheError.message : String(cacheError)}`,
+          context,
+          { appointmentId, clinicId }
+        );
+      }
+
+      // Best-effort clinical side effects (EHR persistence). The appointment is already COMPLETED,
+      // so a plugin failure degrades to the fallback result instead of failing the request.
       let completionData: unknown;
       try {
         completionData = await this.clinicConfirmationPlugin.process({
@@ -3898,7 +5317,7 @@ export class AppointmentsService {
           LogType.SYSTEM,
           LogLevel.WARN,
           `Clinic confirmation plugin failed during completion; continuing with appointment status update: ${error instanceof Error ? error.message : String(error)}`,
-          'AppointmentsService.completeAppointment',
+          context,
           {
             appointmentId,
             doctorId: finalDoctorId,
@@ -3911,7 +5330,7 @@ export class AppointmentsService {
           appointmentId,
           doctorId: finalDoctorId,
           clinicId,
-          completedAt: nowIso(),
+          completedAt: completedAtIso,
           fallback: true,
         };
       }
@@ -3919,61 +5338,6 @@ export class AppointmentsService {
       const result = { success: true, data: completionData };
 
       if (result.success) {
-        const completedAt = new Date();
-        const completedAtIso = completedAt.toISOString();
-        const existingMetadata =
-          appointmentRecord.metadata &&
-          typeof appointmentRecord.metadata === 'object' &&
-          !Array.isArray(appointmentRecord.metadata)
-            ? (appointmentRecord.metadata as Record<string, unknown>)
-            : {};
-        const completionMetadata =
-          completeDto.metadata &&
-          typeof completeDto.metadata === 'object' &&
-          !Array.isArray(completeDto.metadata)
-            ? completeDto.metadata
-            : {};
-
-        await this.databaseService.executeHealthcareWrite(
-          async client => {
-            return await (
-              client as unknown as {
-                appointment: {
-                  update: <T>(args: T) => Promise<unknown>;
-                };
-              }
-            ).appointment.update({
-              where: { id: appointmentId },
-              data: {
-                status: AppointmentStatus.COMPLETED,
-                completedAt,
-                updatedAt: completedAt,
-                metadata: {
-                  ...existingMetadata,
-                  ...completionMetadata,
-                  consultationOutcome: 'completed',
-                  consultationCompletedAt: completedAtIso,
-                  consultationCompletedBy: finalDoctorId,
-                },
-              },
-            });
-          },
-          {
-            userId,
-            userRole: _role,
-            clinicId,
-            operation: 'UPDATE_APPOINTMENT',
-            resourceType: 'APPOINTMENT',
-            resourceId: appointmentId,
-            timestamp: completedAt,
-            details: {
-              status: AppointmentStatus.COMPLETED,
-              completedAt: completedAtIso,
-              metadata: completionMetadata,
-            },
-          }
-        );
-
         try {
           await this.completeAssociatedVideoSession(
             appointmentId,
@@ -3981,7 +5345,7 @@ export class AppointmentsService {
             clinicId,
             userId,
             finalDoctorId,
-            _role
+            role
           );
         } catch (videoSessionError) {
           await this.loggingService.log(
@@ -4011,12 +5375,15 @@ export class AppointmentsService {
         // On completion, remove the current patient from the live queue and
         // advance the next waiting patient automatically when one exists.
         try {
-          await this.appointmentQueueService.removePatientFromQueue(
-            appointmentId,
-            finalDoctorId,
-            clinicId,
-            'clinic'
-          );
+          // Video visits never enter the live queue, so there is nothing to remove for them.
+          if (!isVideoCallAppointmentType(appointmentRecord.type)) {
+            await this.appointmentQueueService.removePatientFromQueue(
+              appointmentId,
+              finalDoctorId,
+              clinicId,
+              'clinic'
+            );
+          }
           // Removed automatic callNext since callNext now requires explicit appointmentId
           // to advance a specific patient. await this.appointmentQueueService.callNext(finalDoctorId, clinicId, 'clinic');
           // The doctor will manually click Call Next from the queue UI instead of it
@@ -4036,12 +5403,11 @@ export class AppointmentsService {
           );
         }
 
-        // Create follow-up plan if requested
-        if (
-          completeDto.followUpRequired &&
-          completeDto.followUpType &&
-          completeDto.followUpInstructions
-        ) {
+        // Create follow-up plan if requested. The web "complete visit" form sends the clinician's
+        // text as `followUpNotes`; it is the plan's instructions when `followUpInstructions` is absent.
+        const followUpInstructions =
+          completeDto.followUpInstructions?.trim() || completeDto.followUpNotes?.trim() || '';
+        if (completeDto.followUpRequired && completeDto.followUpType && followUpInstructions) {
           try {
             // Get appointment details to extract patientId
             const appointment = (await this.getAppointmentById(
@@ -4067,7 +5433,7 @@ export class AppointmentsService {
                 clinicId,
                 completeDto.followUpType,
                 daysAfter,
-                completeDto.followUpInstructions,
+                followUpInstructions,
                 completeDto.followUpPriority || 'normal',
                 completeDto.medications,
                 completeDto.tests,
@@ -4118,7 +5484,7 @@ export class AppointmentsService {
                         type: appointment.type || AppointmentType.IN_PERSON,
                         treatmentType: TreatmentType.FOLLOW_UP,
                         priority: completeDto.followUpPriority || AppointmentPriority.NORMAL,
-                        notes: completeDto.followUpInstructions,
+                        notes: followUpInstructions,
                         ...(appointment.locationId && { locationId: appointment.locationId }),
                       } as CreateAppointmentDto,
                       userId,
@@ -4154,7 +5520,7 @@ export class AppointmentsService {
                             data: {
                               parentAppointmentId: appointmentId,
                               isFollowUp: true,
-                              followUpReason: completeDto.followUpInstructions,
+                              followUpReason: followUpInstructions,
                               originalAppointmentId: appointmentId,
                               status: AppointmentStatus.SCHEDULED,
                             },
@@ -4249,6 +5615,9 @@ export class AppointmentsService {
       }
       return result;
     } catch (_error) {
+      if (_error instanceof HealthcareError || _error instanceof HttpException) {
+        throw _error;
+      }
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
@@ -4398,8 +5767,15 @@ export class AppointmentsService {
     startDto: StartConsultationDto,
     userId: string,
     clinicId: string,
-    _role: string = 'USER'
+    role: string = 'USER'
   ): Promise<unknown> {
+    // Only clinic staff and doctors start a consultation. A patient (or an unknown role) never
+    // starts their own, whatever route led here. Checked before the try block: its catch has a
+    // fallback path for failures that mention "startConsultation", which a refusal must never take.
+    if (!isAppointmentStaffRole(role)) {
+      throw this.errors.insufficientPermissions('AppointmentsService.startConsultation');
+    }
+
     try {
       // Hot path: Direct plugin injection for performance
       const consultationPayload = {
@@ -4627,7 +6003,7 @@ export class AppointmentsService {
     // Leverages all optimization layers: circuit breaker, metrics, error handling, SWR
     const cacheKey = this.cacheService.getKeyFactory().appointment(id, 'detail');
 
-    return this.cacheService.cache(
+    const cachedAppointment = await this.cacheService.cache(
       cacheKey,
       async () => {
         // Use DatabaseService safe method first, fallback to executeHealthcareRead for complex queries
@@ -4642,7 +6018,7 @@ export class AppointmentsService {
         // For complex queries with relations, use executeHealthcareRead with client parameter
         const appointmentWithRelations = (await this.databaseService.executeHealthcareRead(
           async client => {
-            const appointment = client['appointment'] as {
+            const appointment = client['appointment'] as unknown as {
               findFirst: (args: {
                 where: { id: string; clinicId: string };
                 include: {
@@ -4691,6 +6067,20 @@ export class AppointmentsService {
         compress: true,
       }
     );
+
+    // The cache key above has no clinic in it, so a cache hit skips the clinic check that lives
+    // inside the loader and would hand clinic A's appointment to a clinic B caller. Re-assert the
+    // clinic on whatever came back, for every caller. The answer is a plain not-found so another
+    // clinic's appointment is never confirmed to exist.
+    const cachedClinicId =
+      cachedAppointment && typeof cachedAppointment === 'object'
+        ? (cachedAppointment as { clinicId?: unknown }).clinicId
+        : undefined;
+    if (!cachedAppointment || cachedClinicId !== clinicId) {
+      throw this.errors.appointmentNotFound(id, 'AppointmentsService.getAppointmentById');
+    }
+
+    return cachedAppointment;
   }
 
   /**
@@ -4700,7 +6090,7 @@ export class AppointmentsService {
     // Direct DB lookup. Patient-to-user mapping must always be fresh.
     // A 1-hour stale cache caused null returns for newly created patient profiles.
     const patient = await this.databaseService.executeHealthcareRead(async client => {
-      const patientDelegate = client['patient'] as {
+      const patientDelegate = client['patient'] as unknown as {
         findFirst: (args: {
           where: { OR: Array<{ userId: string } | { id: string }> };
           include: { user: boolean };
@@ -4747,7 +6137,7 @@ export class AppointmentsService {
       );
       await this.databaseService.executeHealthcareWrite(
         async client => {
-          const typedClient = client as {
+          const typedClient = client as unknown as {
             patient: {
               upsert: (args: {
                 where: { userId: string };
@@ -5012,7 +6402,34 @@ export class AppointmentsService {
   // - getUserUpcomingAppointments() instead of getUserUpcomingAppointmentsLegacy()
 
   /**
-   * Find appointments for a user at a specific location
+   * True when the appointment is a VIDEO visit that belongs to the (patient) caller or one of
+   * their dependents. Lets clinic check-in answer "video visits do not use check-in" only to
+   * the owner instead of revealing another patient's appointment type.
+   */
+  async isOwnedVideoAppointment(
+    appointmentId: string,
+    clinicId: string,
+    userId: string
+  ): Promise<boolean> {
+    try {
+      const appointment = (await this.getAppointmentById(
+        appointmentId,
+        clinicId
+      )) as AppointmentWithRelations;
+      return (
+        isVideoCallAppointmentType(appointment.type) &&
+        (await isAppointmentOwnedByPatientUser(this.databaseService, appointment, userId))
+      );
+    } catch (error) {
+      if (error instanceof HealthcareError || error instanceof HttpException) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Find the in-person appointments for a user at a specific location
    * Used for QR code check-in functionality
    */
   async findUserAppointmentsByLocation(
@@ -5094,8 +6511,12 @@ export class AppointmentsService {
       }
 
       // Keep already-confirmed appointments so the controller can return queue-status
-      // responses on re-scan; only exclude past appointments here.
-      const validAppointments = allAppointments.filter(apt => new Date(apt.date) >= today);
+      // responses on re-scan; only exclude past appointments here. Video visits are paid and
+      // joined online and never take part in clinic check-in, so scanning the clinic QR must
+      // never match them (a patient with a video visit today is not confirmed by a scan).
+      const validAppointments = allAppointments.filter(
+        apt => new Date(apt.date) >= today && !isVideoCallAppointmentType(apt.type)
+      );
 
       // Remove duplicates (in case same appointment appears in both queries)
       const uniqueAppointments = validAppointments.filter(
@@ -5933,7 +7354,7 @@ export class AppointmentsService {
       // Index ensures fast lookup even with 10M+ appointments
       // Note: seriesId is not in AppointmentWhereInput, so we use executeHealthcareRead directly
       const appointments = await this.databaseService.executeHealthcareRead(async client => {
-        const appointmentDelegate = client['appointment'] as {
+        const appointmentDelegate = client['appointment'] as unknown as {
           findMany: (args: {
             where: { clinicId: string; seriesId: string };
             orderBy: { seriesSequence: 'asc' };
@@ -6026,7 +7447,7 @@ export class AppointmentsService {
         // Get all appointments in series first (uses indexed seriesId)
         // Note: seriesId is not in AppointmentWhereInput, so we use executeHealthcareRead directly
         const allAppointments = await this.databaseService.executeHealthcareRead(async client => {
-          const appointmentDelegate = client['appointment'] as {
+          const appointmentDelegate = client['appointment'] as unknown as {
             findMany: (args: {
               where: { clinicId: string; seriesId: string };
               orderBy: { date: 'asc' };
@@ -6171,38 +7592,6 @@ export class AppointmentsService {
         `Failed to log operation: ${_error instanceof Error ? _error.message : 'Unknown error'}`,
         'AppointmentsService.logOperation',
         { error: _error instanceof Error ? _error.message : String(_error) }
-      );
-    }
-  }
-  /**
-   * Helper to trigger refund for an appointment if payments exist.
-   */
-  private async triggerAppointmentRefund(
-    appointmentId: string,
-    clinicId: string,
-    reason: string
-  ): Promise<void> {
-    try {
-      const payments = await this.databaseService.findPaymentsSafe({
-        appointmentId,
-        status: 'COMPLETED',
-      });
-
-      for (const payment of payments) {
-        await this.billingService.refundPayment(
-          clinicId,
-          payment.id,
-          undefined, // full refund
-          reason
-        );
-      }
-    } catch (error) {
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.WARN,
-        `Failed to trigger refund for appointment ${appointmentId}: ${error instanceof Error ? error.message : String(error)}`,
-        'AppointmentsService.triggerAppointmentRefund',
-        { appointmentId }
       );
     }
   }

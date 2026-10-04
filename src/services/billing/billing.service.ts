@@ -52,6 +52,36 @@ import {
   TreatmentType,
 } from '@dtos/appointment.dto';
 import { InvoicePDFService } from './invoice-pdf.service';
+import { BillingPaymentStore } from '@services/billing/billing-payment.store';
+import type { InvoiceRow, PaymentRow } from '@services/billing/billing-payment.store';
+import {
+  BillingSubscriptionStore,
+  assertPlanMatchesClinic,
+  assertPlanReadable,
+  assertPlanWritable,
+  calculatePeriodEnd,
+  planSubscriptionRenewal,
+  resolvePlanClinicId,
+} from '@services/billing/billing-subscription.store';
+import { BillingPaymentFinaliser } from '@services/billing/billing-payment-finaliser';
+import type {
+  FinalisationOutcome,
+  InvoiceSettlement,
+  SettlementFlag,
+} from '@services/billing/billing-payment-finaliser';
+import {
+  buildSettlementReviewMetadata,
+  hasSettlementReview,
+  hasSubscriptionRenewalStamp,
+  isAmountCovered,
+  isPersistedAnomaly,
+  preserveReservedSubscriptionMetadata,
+  readFinalisationMarker,
+  resolvePaidConfirmationExpiresAt,
+  sumCompletedPaymentMinorUnits,
+  toMinorUnits,
+  withSubscriptionRenewalStamp,
+} from '@services/billing/billing-payment-finalisation.util';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { PaymentService } from '@payment/payment.service';
 import { PaymentHandoffTokenService } from '@payment/payment.handoff-token.service';
@@ -63,13 +93,14 @@ import type {
   RefundResult,
 } from '@core/types/payment.types';
 import { PaymentProvider } from '@core/types/payment.types';
-import { formatDateInIST, nowIso } from '@utils/date-time.util';
+import { formatDateInIST, IST_TIMEZONE, nowIso } from '@utils/date-time.util';
 import { formatCurrencyFromMinorUnits } from '@utils/currency.util';
 
 // Import centralized types
 import type {
   AppointmentWhereInput,
   SubscriptionUpdateInput,
+  SubscriptionWhereInput,
   InvoiceUpdateInput,
 } from '@core/types/input.types';
 import type {
@@ -86,12 +117,42 @@ import type {
 import type { ClinicSettings } from '@core/types/clinic.types';
 import type {
   AppointmentWithRelations,
+  InvoiceWithRelations,
   PaymentWithRelations,
   SubscriptionWithRelations,
 } from '@core/types';
 
 type AppointmentsServiceLike = {
   getAppointmentServiceCatalog: () => AppointmentServiceMetadataDto[];
+};
+
+/** Name / phone joined onto staff invoice and payment rows (plain `userId` FKs, no relation). */
+type UserContact = { name: string | null; phone: string | null };
+
+/** One `items[]` entry of a staff invoice row (normalised from the `lineItems` JSON). */
+export type InvoiceLineItemView = {
+  id: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+};
+
+/** `GET /billing/invoices/clinic` row. */
+export type ClinicInvoiceView = InvoiceWithRelations & {
+  patientName: string;
+  patientPhone: string | null;
+  items: InvoiceLineItemView[];
+  paidAmount: number;
+  balance: number;
+};
+
+/** Subscription row with the computed fields the subscription cards read. */
+export type SubscriptionView = SubscriptionWithRelations & {
+  appointmentsLimit: number | null;
+  nextBillingDate: Date | null;
+  autoRenew: boolean;
+  plan?: SubscriptionWithRelations['plan'] & { billingCycle: string; price: number };
 };
 
 type BillingAccessContext = {
@@ -147,11 +208,86 @@ export class BillingService implements OnModuleInit {
     });
   }
 
+  private paymentStoreRef: BillingPaymentStore | null = null;
+  private subscriptionStoreRef: BillingSubscriptionStore | null = null;
+  private finaliserRef: BillingPaymentFinaliser | null = null;
+
+  /** Atomic payment / invoice / appointment primitives (fresh primary-database reads + CAS). */
+  private get paymentStore(): BillingPaymentStore {
+    this.paymentStoreRef ??= new BillingPaymentStore(this.databaseService);
+    return this.paymentStoreRef;
+  }
+
+  private get subscriptionStore(): BillingSubscriptionStore {
+    this.subscriptionStoreRef ??= new BillingSubscriptionStore(this.databaseService);
+    return this.subscriptionStoreRef;
+  }
+
+  /** The claim / repair protocol; its side effects are the idempotent methods below. */
+  private get finaliser(): BillingPaymentFinaliser {
+    this.finaliserRef ??= new BillingPaymentFinaliser({
+      store: this.paymentStore,
+      log: (level, message, context) =>
+        this.loggingService.log(LogType.PAYMENT, level, message, 'BillingService', context),
+      updatePaymentAfterClaim: (paymentId, data) =>
+        this.updatePayment(paymentId, data, undefined, { skipInvoiceSettlement: true }),
+      settleInvoice: (payment, clinicId) => this.settleInvoiceForPayment(payment, clinicId),
+      isPlanAmountCovered: (subscriptionId, payment) =>
+        this.isPlanAmountCovered(subscriptionId, payment),
+      renewSubscription: (subscriptionId, payment, options) =>
+        this.renewSubscriptionAfterPayment(subscriptionId, {
+          ...options,
+          paymentId: payment.id,
+          clinicId: payment.clinicId,
+        }),
+      recordSubscriptionLedger: (paymentId, clinicId, subscriptionId) =>
+        this.prepareLedgerForSubscriptionPayment(paymentId, clinicId, subscriptionId),
+      loadAppointment: appointmentId => this.databaseService.findAppointmentByIdSafe(appointmentId),
+      syncAppointment: args =>
+        this.syncAppointmentAfterPayment({
+          appointmentId: args.appointmentId,
+          clinicId: args.clinicId,
+          paymentId: args.paymentId,
+          paymentStatus: PaymentStatus.COMPLETED,
+          amount: args.amount,
+          appointment: args.appointment,
+          userId: args.userId,
+          emitAppointmentUpdated: true,
+        }),
+      emitPaymentLifecycle: args => this.emitPaymentLifecycleEvents(args),
+      flagSettlement: flag => this.flagSettlement(flag),
+    });
+    return this.finaliserRef;
+  }
+
+  /**
+   * Cache invalidation after a committed write must never abort the caller: the database
+   * already holds the new state and a thrown cache error would skip the remaining steps of
+   * a payment/subscription flow (ledger, activation, ...) and push a retry into the
+   * duplicate-callback path. Failures are logged; entries age out via their TTL.
+   */
+  private async invalidateCacheTagsSafely(tags: readonly string[]): Promise<void> {
+    const results = await Promise.allSettled(
+      tags.map(tag => this.cacheService.invalidateCacheByTag(tag))
+    );
+    const failedTags = tags.filter((_tag, index) => results[index]?.status === 'rejected');
+    if (failedTags.length > 0) {
+      try {
+        await this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Billing cache invalidation failed; entries will expire via TTL',
+          'BillingService',
+          { failedTags }
+        );
+      } catch {
+        // A logging failure must not turn a best-effort invalidation into a flow abort.
+      }
+    }
+  }
+
   private async invalidateUserEntityCaches(userId: string, entityTag: string): Promise<void> {
-    await Promise.all([
-      this.cacheService.invalidateCacheByTag(`${entityTag}:${userId}`),
-      this.cacheService.invalidateCacheByTag(`user:${userId}`),
-    ]);
+    await this.invalidateCacheTagsSafely([`${entityTag}:${userId}`, `user:${userId}`]);
   }
 
   // Deprecated: use invalidateUserEntityCaches(userId, entityTag) instead
@@ -245,7 +381,9 @@ export class BillingService implements OnModuleInit {
       return;
     }
 
-    if (requester.role === 'PATIENT' && requester.userId && entity.userId !== requester.userId) {
+    // A patient may only touch their own records. Fail closed when the requester carries no
+    // user id instead of skipping the comparison.
+    if (requester.role === 'PATIENT' && entity.userId !== requester.userId) {
       throw new NotFoundException('Billing record not found');
     }
 
@@ -312,7 +450,7 @@ export class BillingService implements OnModuleInit {
     }
 
     const patientRecord = await this.databaseService.executeHealthcareRead(async client => {
-      const typedClient = client as PrismaTransactionClientWithDelegates & {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
         patient: {
           findUnique: (args: PrismaDelegateArgs) => Promise<unknown>;
         };
@@ -749,6 +887,165 @@ export class BillingService implements OnModuleInit {
     return fallback;
   }
 
+  // ============ Staff list enrichment (patient contact, items, balances) ============
+
+  /**
+   * `User.id -> { name, phone }` for the ids given. Invoices and payments carry plain `userId`
+   * FKs (no Prisma relation), so the staff lists join the contact here in one query.
+   */
+  private async lookupUserContacts(
+    userIds: Array<string | null | undefined>
+  ): Promise<Map<string, UserContact>> {
+    const ids = [
+      ...new Set(userIds.filter((id): id is string => typeof id === 'string' && id.length > 0)),
+    ];
+    if (ids.length === 0) {
+      return new Map();
+    }
+    const users = await this.databaseService.executeHealthcareRead(async client => {
+      const userClient = client as unknown as {
+        user: {
+          findMany: (args: {
+            where: { id: { in: string[] } };
+            select: { id: true; name: true; phone: true };
+          }) => Promise<Array<{ id: string; name: string | null; phone: string | null }>>;
+        };
+      };
+      return userClient.user.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, name: true, phone: true },
+      });
+    });
+    return new Map(
+      users.map(user => [user.id, { name: user.name ?? null, phone: user.phone ?? null }])
+    );
+  }
+
+  /**
+   * `lineItems` is stored either as an array or as `{ items: [...] }`, with `amount` and/or
+   * `unitPrice` per entry. The clients read `items[{ id, description, quantity, unitPrice, total }]`.
+   */
+  private normaliseInvoiceItems(lineItems: unknown): InvoiceLineItemView[] {
+    const container = this.asRecord(lineItems);
+    const raw: unknown[] = Array.isArray(lineItems)
+      ? lineItems
+      : Array.isArray(container?.['items'])
+        ? (container?.['items'] as unknown[])
+        : [];
+    return raw.map((entry, index) => {
+      const item = this.asRecord(entry) ?? {};
+      const quantity = Math.max(1, Math.round(Number(item['quantity']) || 1));
+      const amount = Number(item['amount'] ?? item['total']);
+      const unitPriceRaw = Number(item['unitPrice'] ?? item['price']);
+      const unitPrice = Number.isFinite(unitPriceRaw)
+        ? unitPriceRaw
+        : Number.isFinite(amount)
+          ? this.fromPaise(Math.round(this.toPaise(amount) / quantity))
+          : 0;
+      const total = Number.isFinite(amount)
+        ? amount
+        : this.fromPaise(this.toPaise(unitPrice) * quantity);
+      return {
+        id: this.asSafeString(item['id'], String(index + 1)),
+        description: this.asSafeString(
+          item['description'] || item['name'] || item['label'],
+          'Item'
+        ),
+        quantity,
+        unitPrice: this.roundToTwo(unitPrice),
+        total: this.roundToTwo(total),
+      };
+    });
+  }
+
+  /** Staff invoice row: patient contact, `items[]`, paid amount and outstanding balance. */
+  private decorateClinicInvoice(
+    invoice: InvoiceWithRelations,
+    contacts: Map<string, UserContact>
+  ): ClinicInvoiceView {
+    const contact = contacts.get(invoice.userId);
+    const totalPaise = this.toPaise(Number(invoice.totalAmount) || 0);
+    const completedPaise = (invoice.payments ?? [])
+      .filter(payment => String(payment.status).toUpperCase() === String(PaymentStatus.COMPLETED))
+      .reduce((sum, payment) => sum + this.toPaise(Number(payment.amount) || 0), 0);
+    // A cash invoice marked paid at the desk has no payment row: PAID means fully settled.
+    const paidPaise =
+      String(invoice.status) === String(InvoiceStatus.PAID)
+        ? Math.max(totalPaise, completedPaise)
+        : Math.min(totalPaise, completedPaise);
+    return {
+      ...invoice,
+      patientName: contact?.name || 'Unknown',
+      patientPhone: contact?.phone ?? null,
+      items: this.normaliseInvoiceItems(invoice.lineItems),
+      paidAmount: this.fromPaise(paidPaise),
+      balance: this.fromPaise(Math.max(0, totalPaise - paidPaise)),
+    };
+  }
+
+  /** `YYYY-MM` of a timestamp in clinic (IST) time; revenue is bucketed per calendar month. */
+  private monthKeyInIST(date: Date): string {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: IST_TIMEZONE,
+      year: 'numeric',
+      month: '2-digit',
+    }).format(date);
+  }
+
+  /**
+   * Fields the subscription cards read but the row does not store: `appointmentsLimit`
+   * (null = unlimited), `nextBillingDate`, `autoRenew`, and `plan.billingCycle` / `plan.price`
+   * as aliases of the plan's `interval` / `amount`.
+   */
+  private decorateSubscriptionRow(subscription: SubscriptionWithRelations): SubscriptionView {
+    const { plan, ...row } = subscription;
+    const status = String(subscription.status);
+    const renewable =
+      status === String(SubscriptionStatus.ACTIVE) ||
+      status === String(SubscriptionStatus.TRIALING) ||
+      status === String(SubscriptionStatus.PAST_DUE);
+    const autoRenew = renewable && !subscription.cancelAtPeriodEnd;
+    const appointmentsLimit = plan
+      ? plan.isUnlimitedAppointments
+        ? null
+        : (plan.appointmentsIncluded ?? null)
+      : null;
+    const decorated: SubscriptionView = {
+      ...row,
+      appointmentsLimit,
+      nextBillingDate: autoRenew ? (subscription.currentPeriodEnd ?? null) : null,
+      autoRenew,
+    };
+    return plan
+      ? { ...decorated, plan: { ...plan, billingCycle: plan.interval, price: plan.amount } }
+      : decorated;
+  }
+
+  /**
+   * Payment method named by the gateway on a verified payment, mapped to the stored
+   * PaymentMethod enum. Undefined when the gateway did not report one we recognise.
+   */
+  private resolveGatewayPaymentMethod(
+    paymentStatus: PaymentStatusResult
+  ): PaymentMethod | undefined {
+    const metadata = this.asRecord(paymentStatus.metadata);
+    const reported = (
+      this.asSafeString(metadata?.['paymentMethod']) ||
+      this.asSafeString(metadata?.['paymentMode']) ||
+      this.asSafeString(metadata?.['payment_group']) ||
+      this.asSafeString(metadata?.['payment_method'])
+    )
+      .trim()
+      .toUpperCase();
+
+    if (!reported) return undefined;
+    if (reported.includes('UPI')) return PaymentMethod.UPI;
+    if (reported.includes('NET') && reported.includes('BANK')) return PaymentMethod.NET_BANKING;
+    if (reported.includes('WALLET')) return PaymentMethod.WALLET;
+    if (reported.includes('CARD') && !reported.includes('CARDLESS')) return PaymentMethod.CARD;
+    return undefined;
+  }
+
   private getPlatformFeePercent(): number {
     const raw = this.configService.getEnv('PLATFORM_FEE_PERCENT', '20') || '20';
     const parsed = Number(raw);
@@ -793,8 +1090,10 @@ export class BillingService implements OnModuleInit {
 
   // ============ Billing Plans ============
 
-  async createBillingPlan(data: CreateBillingPlanDto) {
+  async createBillingPlan(data: CreateBillingPlanDto, requester?: BillingAccessContext) {
     try {
+      // Non-super-admins can only create plans for the clinic the guard validated.
+      const planClinicId = resolvePlanClinicId(data.clinicId, requester);
       const plan = await this.databaseService.createBillingPlanSafe({
         name: data.name,
         amount: data.amount,
@@ -804,7 +1103,7 @@ export class BillingService implements OnModuleInit {
         ...(data.description && { description: data.description }),
         ...(data.trialPeriodDays && { trialPeriodDays: data.trialPeriodDays }),
         ...(data.features && { features: data.features }),
-        ...(data.clinicId && { clinicId: data.clinicId }),
+        ...(planClinicId && { clinicId: planClinicId }),
         ...(data.metadata && { metadata: data.metadata }),
         ...(data.appointmentsIncluded !== undefined && {
           appointmentsIncluded: data.appointmentsIncluded,
@@ -943,19 +1242,21 @@ export class BillingService implements OnModuleInit {
     );
   }
 
-  async getBillingPlan(id: string) {
+  async getBillingPlan(id: string, requester?: BillingAccessContext) {
     const cacheKey = `billing_plan:${id}`;
 
-    return this.cacheService.cache(
+    // Only the raw row is cached (the key carries no requester); the clinic check depends on WHO
+    // is asking, so it runs on every call, outside the loader.
+    const plan = await this.cacheService.cache(
       cacheKey,
       async () => {
-        const plan = await this.databaseService.findBillingPlanByIdSafe(id);
+        const row = await this.databaseService.findBillingPlanByIdSafe(id);
 
-        if (!plan) {
+        if (!row) {
           throw new NotFoundException(`Billing plan with ID ${id} not found`);
         }
 
-        return plan;
+        return row;
       },
       {
         ttl: 3600, // 1 hour
@@ -963,9 +1264,22 @@ export class BillingService implements OnModuleInit {
         priority: 'normal',
       }
     );
+
+    assertPlanReadable(plan, requester);
+    return plan;
   }
 
-  async updateBillingPlan(id: string, data: UpdateBillingPlanDto) {
+  async updateBillingPlan(
+    id: string,
+    data: UpdateBillingPlanDto,
+    requester?: BillingAccessContext
+  ) {
+    const existingPlan = await this.databaseService.findBillingPlanByIdSafe(id);
+    if (!existingPlan) {
+      throw new NotFoundException(`Billing plan with ID ${id} not found`);
+    }
+    assertPlanWritable(existingPlan, requester);
+
     const plan = await this.databaseService.updateBillingPlanSafe(id, data);
 
     await this.loggingService.log(
@@ -986,8 +1300,12 @@ export class BillingService implements OnModuleInit {
     return plan;
   }
 
-  async deleteBillingPlan(id: string) {
+  async deleteBillingPlan(id: string, requester?: BillingAccessContext) {
     const plan = await this.databaseService.findBillingPlanByIdSafe(id);
+    if (!plan) {
+      throw new NotFoundException(`Billing plan with ID ${id} not found`);
+    }
+    assertPlanWritable(plan, requester);
 
     // Check if plan has active subscriptions
     const activeSubscriptions = await this.databaseService.findSubscriptionsSafe({
@@ -1013,7 +1331,7 @@ export class BillingService implements OnModuleInit {
 
     await this.eventService.emit('billing.plan.deleted', {
       planId: id,
-      clinicId: plan?.clinicId,
+      clinicId: plan.clinicId,
       plan,
     });
     await this.cacheService.invalidateCacheByTag('billing_plans');
@@ -1081,6 +1399,8 @@ export class BillingService implements OnModuleInit {
     }
 
     const plan = await this.getBillingPlan(data.planId);
+    // A subscription may only use a plan of its own clinic (or a platform-wide plan).
+    assertPlanMatchesClinic(plan, data.clinicId);
     const existingSubscriptions = await this.databaseService.findSubscriptionsSafe({
       userId: data.userId,
       clinicId: data.clinicId,
@@ -1142,6 +1462,55 @@ export class BillingService implements OnModuleInit {
       ? null
       : plan.appointmentsIncluded || null;
 
+    // An abandoned checkout leaves an unpaid (INCOMPLETE) subscription behind. For a plain
+    // re-subscribe to the same plan, reuse it with a fresh period instead of adding another.
+    const reusableSubscription =
+      String(status) === String(SubscriptionStatus.INCOMPLETE) &&
+      !data.startDate &&
+      !data.endDate &&
+      !data.metadata &&
+      !trialStart &&
+      !trialEnd
+        ? existingSubscriptions
+            .filter(existing => String(existing.status) === String(SubscriptionStatus.INCOMPLETE))
+            .sort(
+              (left, right) =>
+                new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+            )[0]
+        : undefined;
+
+    if (reusableSubscription) {
+      // A re-subscribe must not inherit a cancellation: clear the cancel flags so the plan
+      // is not cancelled at period end the moment it is paid for. SubscriptionUpdateInput
+      // types `cancelledAt` as `Date`, but the column is nullable and null is what clears it.
+      const reuseUpdate: Omit<SubscriptionUpdateInput, 'cancelledAt'> & { cancelledAt: null } = {
+        startDate,
+        currentPeriodStart,
+        currentPeriodEnd,
+        cancelAtPeriodEnd: false,
+        cancelledAt: null,
+        appointmentsUsed: 0,
+        ...(appointmentsRemaining !== null &&
+          appointmentsRemaining !== undefined && { appointmentsRemaining }),
+      };
+      const reused = await this.databaseService.updateSubscriptionSafe(
+        reusableSubscription.id,
+        reuseUpdate as unknown as SubscriptionUpdateInput
+      );
+
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Unpaid subscription reused for a new checkout',
+        'BillingService',
+        { subscriptionId: reused.id, userId: data.userId }
+      );
+
+      await this.invalidateSubscriptionCaches(data.userId, reused.id);
+
+      return reused;
+    }
+
     try {
       const subscription = await this.databaseService.createSubscriptionSafe({
         userId: data.userId,
@@ -1202,17 +1571,21 @@ export class BillingService implements OnModuleInit {
       throw new BadRequestException('You can only view your own subscriptions');
     }
 
-    const cacheKey = `billing_subscriptions:user:${userId}:${clinicId || 'all'}`;
+    // Resolve the clinic scope BEFORE the cache so the key carries the scope that is really
+    // queried; keyed by the raw `clinicId` a staff caller without clinic context shared the
+    // `all` entry with an unscoped patient request.
+    const resolvedClinicId = await this.resolveUserClinicId(userId, clinicId, role);
+    const cacheKey = `billing_subscriptions:user:${userId}:${resolvedClinicId || 'all'}`;
 
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        const resolvedClinicId = await this.resolveUserClinicId(userId, clinicId, role);
         const whereClause: Record<string, unknown> = { userId };
         if (resolvedClinicId) {
           whereClause['clinicId'] = resolvedClinicId;
         }
-        return await this.databaseService.findSubscriptionsSafe(whereClause);
+        const rows = await this.databaseService.findSubscriptionsSafe(whereClause);
+        return rows.map(row => this.decorateSubscriptionRow(row));
       },
       {
         ttl: 1800,
@@ -1228,7 +1601,8 @@ export class BillingService implements OnModuleInit {
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        return await this.databaseService.findSubscriptionsSafe({ clinicId });
+        const rows = await this.databaseService.findSubscriptionsSafe({ clinicId });
+        return rows.map(row => this.decorateSubscriptionRow(row));
       },
       {
         ttl: 1800,
@@ -1241,24 +1615,37 @@ export class BillingService implements OnModuleInit {
   async getSubscription(id: string, requester?: BillingAccessContext) {
     const cacheKey = `billing_subscription:${id}`;
 
-    return this.cacheService.cache(
+    // Only the raw row is cached (the key carries no requester). The ownership/clinic check
+    // depends on WHO is asking, so it must run on every call, outside the loader: inside the
+    // loader it ran on a cache miss only, and a warm entry let any caller who knew a
+    // subscription id read, cancel, renew or pay another patient's/clinic's plan.
+    const subscription = await this.cacheService.cache(
       cacheKey,
       async () => {
-        const subscription = await this.databaseService.findSubscriptionByIdSafe(id);
+        const row = await this.databaseService.findSubscriptionByIdSafe(id);
 
-        if (!subscription) {
+        if (!row) {
           throw new NotFoundException(`Subscription with ID ${id} not found`);
         }
 
-        this.assertBillingEntityAccess(subscription, requester);
-        return subscription;
+        return row;
       },
       {
         ttl: 1800, // 30 minutes
-        tags: ['billing_subscriptions', `billing_subscription:${id}`],
+        // `subscription:{id}` / `subscriptions` are the tags DatabaseService invalidates on every
+        // subscription write, so a write through any path drops this entry too.
+        tags: [
+          'billing_subscriptions',
+          `billing_subscription:${id}`,
+          `subscription:${id}`,
+          'subscriptions',
+        ],
         priority: 'normal',
       }
     );
+
+    this.assertBillingEntityAccess(subscription, requester);
+    return subscription;
   }
 
   async updateSubscription(
@@ -1274,7 +1661,11 @@ export class BillingService implements OnModuleInit {
         cancelAtPeriodEnd: data.cancelAtPeriodEnd,
       }),
       ...(data.metadata && {
-        metadata: data.metadata as Record<string, string | number | boolean>,
+        // The payment-protocol keys (renewed payment ids) survive a staff metadata edit.
+        metadata: preserveReservedSubscriptionMetadata(
+          existingSubscription.metadata,
+          data.metadata as Record<string, unknown>
+        ) as Record<string, string | number | boolean>,
       }),
     };
 
@@ -1292,7 +1683,7 @@ export class BillingService implements OnModuleInit {
       subscriptionId: id,
       subscription,
     });
-    await this.invalidateUserSubscriptionCaches(existingSubscription.userId);
+    await this.invalidateSubscriptionCaches(existingSubscription.userId, id);
 
     return subscription;
   }
@@ -1336,7 +1727,7 @@ export class BillingService implements OnModuleInit {
       subscription: updated,
     });
 
-    await this.invalidateUserSubscriptionCaches(subscription.userId);
+    await this.invalidateSubscriptionCaches(subscription.userId, id);
 
     return updated;
   }
@@ -1419,6 +1810,14 @@ export class BillingService implements OnModuleInit {
   async renewSubscription(id: string, requester?: BillingAccessContext) {
     const subscription = await this.getSubscription(id, requester);
 
+    // This route activates a plan without taking money, so it is for staff only.
+    // A patient renews by paying: POST /billing/subscriptions/:id/process-payment.
+    if (requester?.role === 'PATIENT') {
+      throw new BadRequestException(
+        'Payment is required to renew this plan. Please pay for the plan to renew it.'
+      );
+    }
+
     if (String(subscription.status) === 'ACTIVE') {
       throw new BadRequestException('Subscription is already active');
     }
@@ -1449,7 +1848,7 @@ export class BillingService implements OnModuleInit {
       subscriptionId: id,
       subscription: updated,
     });
-    await this.invalidateUserSubscriptionCaches(subscription.userId);
+    await this.invalidateSubscriptionCaches(subscription.userId, id);
 
     return updated;
   }
@@ -1738,12 +2137,12 @@ export class BillingService implements OnModuleInit {
       throw new BadRequestException('You can only view your own invoices');
     }
 
-    const cacheKey = `user_invoices:${userId}:${clinicId || 'all'}`;
+    const resolvedClinicId = await this.resolveUserClinicId(userId, clinicId, role);
+    const cacheKey = `user_invoices:${userId}:${resolvedClinicId || 'all'}`;
 
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        const resolvedClinicId = await this.resolveUserClinicId(userId, clinicId, role);
         const whereClause: Record<string, unknown> = { userId };
         if (resolvedClinicId) {
           whereClause['clinicId'] = resolvedClinicId;
@@ -1760,13 +2159,34 @@ export class BillingService implements OnModuleInit {
     );
   }
 
-  async getClinicInvoices(clinicId: string) {
-    const cacheKey = `billing_invoices:clinic:${clinicId}`;
+  /**
+   * Pharmacy scope: PHARMACIST only ever sees pharmacy/prescription finance data of the clinic
+   * (never appointment or subscription invoices/payments). Fail closed: a row with no pharmacy
+   * marker is excluded.
+   */
+  private isPharmacyInvoice(invoice: object): boolean {
+    const { billType, prescriptionId } = invoice as {
+      billType?: unknown;
+      prescriptionId?: unknown;
+    };
+    return billType === 'PHARMACY' || Boolean(prescriptionId);
+  }
+
+  async getClinicInvoices(clinicId: string, role?: string) {
+    const pharmacyOnly = role === 'PHARMACIST';
+    const cacheKey = pharmacyOnly
+      ? `billing_invoices:clinic:${clinicId}:pharmacy`
+      : `billing_invoices:clinic:${clinicId}`;
 
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        return await this.databaseService.findInvoicesSafe({ clinicId });
+        const allInvoices = await this.databaseService.findInvoicesSafe({ clinicId });
+        const invoices = pharmacyOnly
+          ? allInvoices.filter(invoice => this.isPharmacyInvoice(invoice))
+          : allInvoices;
+        const contacts = await this.lookupUserContacts(invoices.map(invoice => invoice.userId));
+        return invoices.map(invoice => this.decorateClinicInvoice(invoice, contacts));
       },
       {
         ttl: 900,
@@ -1785,6 +2205,23 @@ export class BillingService implements OnModuleInit {
 
     this.assertBillingEntityAccess(invoice, requester);
     return invoice;
+  }
+
+  /**
+   * Generated invoice PDFs are named `invoice_<invoiceNumber>_<suffix>.pdf`. Downloading by file
+   * name must pass the same ownership / clinic check as reading the invoice itself.
+   */
+  async assertInvoiceFileAccess(fileName: string, requester?: BillingAccessContext): Promise<void> {
+    const baseName = String(fileName).split(/[\\/]/).pop() ?? '';
+    const invoiceNumber = /^invoice_(.+)_[^_]+\.pdf$/.exec(baseName)?.[1];
+    if (!invoiceNumber) {
+      throw new NotFoundException('Invoice PDF not found');
+    }
+    const [invoice] = await this.databaseService.findInvoicesSafe({ invoiceNumber });
+    if (!invoice) {
+      throw new NotFoundException('Invoice PDF not found');
+    }
+    this.assertBillingEntityAccess(invoice, requester);
   }
 
   async updateInvoice(id: string, data: UpdateInvoiceDto, requester?: BillingAccessContext) {
@@ -1841,13 +2278,66 @@ export class BillingService implements OnModuleInit {
   async markInvoiceAsPaid(
     id: string,
     requester?: BillingAccessContext,
-    options?: { skipWhatsApp?: boolean }
+    options?: { skipWhatsApp?: boolean; settledByPaymentId?: string }
   ) {
     const existingInvoice = await this.getInvoice(id, requester);
-    const invoice = await this.databaseService.updateInvoiceSafe(id, {
-      status: InvoiceStatus.PAID,
-      paidAt: new Date(),
+
+    // Idempotent: an invoice that is already PAID keeps its original paidAt and does not emit a
+    // second receipt (PDF regeneration + WhatsApp/email) when a payment callback is replayed.
+    if (String(existingInvoice.status).toUpperCase() === String(InvoiceStatus.PAID)) {
+      return existingInvoice;
+    }
+
+    const transition = await this.transitionInvoiceToPaid(
+      existingInvoice as unknown as InvoiceRow,
+      options
+    );
+    return transition.invoice;
+  }
+
+  /**
+   * PENDING/VOID -> PAID as ONE conditional statement. Only the call whose statement matched
+   * (`transitioned`) regenerates the PDF and emits the receipt, so two racing callers can never
+   * both send one.
+   */
+  private async transitionInvoiceToPaid(
+    existingInvoice: InvoiceRow,
+    options?: { skipWhatsApp?: boolean; settledByPaymentId?: string }
+  ): Promise<{ transitioned: boolean; invoice: unknown }> {
+    const id = existingInvoice.id;
+    const paidAt = new Date();
+    const transitioned = await this.paymentStore.markInvoicePaid({
+      invoice: existingInvoice,
+      clinicId: existingInvoice.clinicId,
+      paidAt,
+      ...(options?.settledByPaymentId ? { settledByPaymentId: options.settledByPaymentId } : {}),
     });
+    if (!transitioned) {
+      return {
+        transitioned: false,
+        invoice: (await this.databaseService.findInvoiceByIdSafe(id)) ?? existingInvoice,
+      };
+    }
+
+    // The conditional write bypassed the invoice read cache: drop it before the PDF is rebuilt.
+    try {
+      await this.databaseService.invalidateEntityCache('invoice', id, existingInvoice.clinicId);
+    } catch {
+      // Best effort: entries age out via their TTL.
+    }
+    const invoice = {
+      ...existingInvoice,
+      status: InvoiceStatus.PAID,
+      paidAt,
+      ...(options?.settledByPaymentId
+        ? {
+            metadata: {
+              ...(this.asRecord(existingInvoice.metadata) ?? {}),
+              settledByPaymentId: options.settledByPaymentId,
+            },
+          }
+        : {}),
+    };
 
     await this.loggingService.log(
       LogType.SYSTEM,
@@ -1881,7 +2371,7 @@ export class BillingService implements OnModuleInit {
     });
     await this.invalidateUserInvoiceCaches(existingInvoice.userId);
 
-    return invoice;
+    return { transitioned: true, invoice };
   }
 
   // ============ Bill History (OPD consultation + pharmacy invoices) ============
@@ -2619,7 +3109,48 @@ export class BillingService implements OnModuleInit {
 
   // ============ Payments ============
 
-  async createPayment(data: CreatePaymentDto) {
+  /**
+   * A payment created through the API (staff / finance) must point at entities of its own clinic
+   * and, when it names a user, at that entity's user. Without this a caller-chosen invoice /
+   * plan id would let one clinic record money against another clinic's billing records.
+   */
+  private async assertPaymentTargetsBelongToClinic(data: CreatePaymentDto): Promise<void> {
+    if (data.invoiceId) {
+      const invoice = await this.databaseService.findInvoiceByIdSafe(data.invoiceId);
+      if (!invoice || invoice.clinicId !== data.clinicId) {
+        throw new NotFoundException('Invoice not found');
+      }
+      if (data.userId && invoice.userId !== data.userId) {
+        throw new BadRequestException('Payment user does not match the invoice user');
+      }
+    }
+    if (data.subscriptionId) {
+      const subscription = await this.databaseService.findSubscriptionByIdSafe(data.subscriptionId);
+      if (!subscription || subscription.clinicId !== data.clinicId) {
+        throw new NotFoundException('Subscription not found');
+      }
+      if (data.userId && subscription.userId !== data.userId) {
+        throw new BadRequestException('Payment user does not match the subscription user');
+      }
+    }
+    if (data.appointmentId) {
+      const appointment = await this.databaseService.findAppointmentByIdSafe(data.appointmentId);
+      if (!appointment || appointment.clinicId !== data.clinicId) {
+        throw new NotFoundException('Appointment not found');
+      }
+    }
+  }
+
+  /**
+   * The requester is passed by the API layer only: internal callers (payment intents the service
+   * builds itself) are trusted and skip the target ownership validation.
+   */
+  async createPayment(data: CreatePaymentDto, requester?: BillingAccessContext) {
+    if (requester) {
+      this.assertBillingEntityAccess({ clinicId: data.clinicId }, requester);
+      await this.assertPaymentTargetsBelongToClinic(data);
+    }
+
     if (data.appointmentId) {
       const recovered = await this.recoverFromDuplicatePayment(data);
       if (recovered) {
@@ -2777,7 +3308,12 @@ export class BillingService implements OnModuleInit {
     return Math.abs(hash);
   }
 
-  async updatePayment(id: string, data: UpdatePaymentDto, requester?: BillingAccessContext) {
+  async updatePayment(
+    id: string,
+    data: UpdatePaymentDto,
+    requester?: BillingAccessContext,
+    options: { skipInvoiceSettlement?: boolean } = {}
+  ) {
     const existingPayment = await this.getPayment(id, requester);
     const payment = await this.databaseService.updatePaymentSafe(id, {
       ...data,
@@ -2827,9 +3363,15 @@ export class BillingService implements OnModuleInit {
       await this.invalidateUserPaymentCaches(existingPayment.userId);
     }
 
-    // Auto-update invoice if payment is linked to one
-    if ('invoiceId' in payment && payment.invoiceId && data.status === PaymentStatus.COMPLETED) {
-      await this.markInvoiceAsPaid(payment.invoiceId);
+    // Auto-update the invoice if the payment is linked to one: PAID only once the COMPLETED
+    // payments recorded against it cover its total (the callback path settles it itself).
+    if (
+      'invoiceId' in payment &&
+      payment.invoiceId &&
+      data.status === PaymentStatus.COMPLETED &&
+      !options.skipInvoiceSettlement
+    ) {
+      await this.settleInvoiceForPayment(payment as unknown as PaymentRow, payment.clinicId);
     }
 
     return payment;
@@ -2845,12 +3387,12 @@ export class BillingService implements OnModuleInit {
       throw new BadRequestException('You can only view your own payments');
     }
 
-    const cacheKey = `user_payments:${userId}:${clinicId || 'all'}`;
+    const resolvedClinicId = await this.resolveUserClinicId(userId, clinicId, role);
+    const cacheKey = `user_payments:${userId}:${resolvedClinicId || 'all'}`;
 
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        const resolvedClinicId = await this.resolveUserClinicId(userId, clinicId, role);
         const allPayments = await this.databaseService.findPaymentsSafe({
           ...(resolvedClinicId ? { clinicId: resolvedClinicId } : {}),
         });
@@ -2872,7 +3414,13 @@ export class BillingService implements OnModuleInit {
               const aptPatient = (apt as unknown as { patient?: { userId?: string } }).patient;
               if (aptPatient?.userId !== userId) return false;
               const aptStatus = String(apt.status || '').toUpperCase();
-              return !['EXPIRED', 'CANCELLED', 'NO_SHOW'].includes(aptStatus);
+              if (!['EXPIRED', 'CANCELLED', 'NO_SHOW'].includes(aptStatus)) return true;
+              // A cancelled visit's payment stays visible once money came back, so the
+              // patient can see the refund.
+              return (
+                String(p.status || '').toUpperCase() === String(PaymentStatus.REFUNDED) ||
+                Number(p.refundAmount ?? 0) > 0
+              );
             }
             return p.userId === userId;
           })
@@ -2908,7 +3456,8 @@ export class BillingService implements OnModuleInit {
       revenueModel?: 'APPOINTMENT' | 'SUBSCRIPTION' | 'OTHER';
       appointmentType?: string;
       provider?: string;
-    }
+    },
+    role?: string
   ) {
     const whereClause: Record<string, unknown> = { clinicId };
     if (filters?.status) {
@@ -2916,8 +3465,18 @@ export class BillingService implements OnModuleInit {
     }
 
     const payments = await this.databaseService.findPaymentsSafe(whereClause);
+    const pharmacyOnly = role === 'PHARMACIST';
 
-    return payments.filter(payment => {
+    const filtered = payments.filter(payment => {
+      if (
+        pharmacyOnly &&
+        (payment.appointmentId ||
+          payment.subscriptionId ||
+          !payment.invoice ||
+          !this.isPharmacyInvoice(payment.invoice))
+      ) {
+        return false;
+      }
       if (!filters?.startDate && !filters?.endDate) {
         // continue and evaluate metadata filters
       } else {
@@ -2957,6 +3516,27 @@ export class BillingService implements OnModuleInit {
       }
 
       return true;
+    });
+
+    // Same enrichment as getUserPayments(): patient contact (appointment patient, else the
+    // paying user / invoice user) and the gateway order id for the ledger rows.
+    const contacts = await this.lookupUserContacts(
+      filtered.map(payment => payment.userId || payment.invoice?.userId)
+    );
+    return filtered.map(payment => {
+      const metadata = this.asRecord(payment.metadata);
+      const appointmentPatient = (
+        payment.appointment as unknown as { patient?: { user?: { name?: string | null } } } | null
+      )?.patient?.user?.name;
+      const contact = contacts.get(payment.userId || payment.invoice?.userId || '');
+      return {
+        ...payment,
+        patientName: appointmentPatient || contact?.name || 'Unknown',
+        orderId:
+          this.asSafeString(metadata?.['orderId']) ||
+          this.asSafeString(metadata?.['paymentIntentId']) ||
+          payment.id,
+      };
     });
   }
 
@@ -3137,27 +3717,7 @@ export class BillingService implements OnModuleInit {
   // ============ Helper Methods ============
 
   private calculatePeriodEnd(start: Date, interval: string, intervalCount: number): Date {
-    const end = new Date(start);
-
-    switch (interval) {
-      case 'DAILY':
-        end.setDate(end.getDate() + intervalCount);
-        break;
-      case 'WEEKLY':
-        end.setDate(end.getDate() + intervalCount * 7);
-        break;
-      case 'MONTHLY':
-        end.setMonth(end.getMonth() + intervalCount);
-        break;
-      case 'QUARTERLY':
-        end.setMonth(end.getMonth() + intervalCount * 3);
-        break;
-      case 'YEARLY':
-        end.setFullYear(end.getFullYear() + intervalCount);
-        break;
-    }
-
-    return end;
+    return calculatePeriodEnd(start, interval, intervalCount);
   }
 
   private async generateInvoiceNumber(): Promise<string> {
@@ -3273,6 +3833,23 @@ export class BillingService implements OnModuleInit {
     return { allowed: true };
   }
 
+  /**
+   * True when the invoice has a payment attempt that is still open (PENDING) or already settled
+   * (COMPLETED/REFUNDED). Only FAILED/CANCELLED/EXPIRED attempts leave an invoice safe to reuse.
+   */
+  private invoiceHasLivePayment(invoice: {
+    payments?: ReadonlyArray<{ status?: string | null }> | null;
+  }): boolean {
+    const deadStatuses = new Set<string>([
+      String(PaymentStatus.FAILED),
+      String(PaymentStatus.CANCELLED),
+      String(PaymentStatus.EXPIRED),
+    ]);
+    return (invoice.payments ?? []).some(
+      payment => !deadStatuses.has(String(payment.status ?? '').toUpperCase())
+    );
+  }
+
   private getDefaultAppointmentPrice(appointmentType: string): number {
     const prices: Record<string, number> = {
       IN_PERSON: 1251,
@@ -3317,60 +3894,65 @@ export class BillingService implements OnModuleInit {
       throw new BadRequestException(canBook.reason);
     }
 
-    const subscription = await this.databaseService.findSubscriptionByIdSafe(subscriptionId);
+    const cachedSubscription = await this.databaseService.findSubscriptionByIdSafe(subscriptionId);
 
-    if (!subscription) {
+    if (!cachedSubscription) {
       throw new NotFoundException('Subscription not found');
     }
 
-    if (requester?.clinicId && subscription.clinicId !== requester.clinicId) {
+    if (requester?.clinicId && cachedSubscription.clinicId !== requester.clinicId) {
       throw new BadRequestException('Subscription does not belong to current clinic');
     }
 
     if (
       requester?.role === 'PATIENT' &&
       requester.userId &&
-      subscription.userId !== requester.userId
+      cachedSubscription.userId !== requester.userId
     ) {
       throw new BadRequestException('Patients can only use their own subscription');
     }
 
-    // Update appointment to link with subscription using executeHealthcareWrite
-    // Note: subscriptionId and isSubscriptionBased are not part of AppointmentUpdateInput
-    // Use executeHealthcareWrite for direct Prisma access with full optimization layers
-    await this.databaseService.executeHealthcareWrite<AppointmentWithRelations>(
-      async client => {
-        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-        return await typedClient.appointment.update({
-          where: { id: appointmentId } as PrismaDelegateArgs,
-          data: {
-            subscriptionId,
-            isSubscriptionBased: true,
-          } as PrismaDelegateArgs,
-        } as PrismaDelegateArgs);
-      },
-      {
-        userId: 'system',
-        clinicId: subscription.clinicId || '',
-        resourceType: 'APPOINTMENT',
-        operation: 'UPDATE',
-        resourceId: appointmentId,
-        userRole: 'system',
-        details: { subscriptionId, isSubscriptionBased: true },
-      }
-    );
-
-    // Update subscription usage if not unlimited
-    if (!subscription.plan?.isUnlimitedAppointments) {
-      await this.databaseService.updateSubscriptionSafe(subscriptionId, {
-        appointmentsUsed: subscription.appointmentsUsed + 1,
-        ...(subscription.appointmentsRemaining !== null &&
-          subscription.appointmentsRemaining !== undefined && {
-            appointmentsRemaining: subscription.appointmentsRemaining - 1,
-          }),
-      });
+    // The appointment must be the subscription holder's own, in the subscription's clinic:
+    // otherwise any patient could attach somebody else's appointment to their plan.
+    const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+    if (!appointment || appointment.clinicId !== cachedSubscription.clinicId) {
+      throw new NotFoundException('Appointment not found');
+    }
+    const appointmentUserId = await this.resolveAppointmentBillingUserId(appointment);
+    if (!appointmentUserId || appointmentUserId !== cachedSubscription.userId) {
+      throw new ForbiddenException('This appointment does not belong to the subscription holder');
     }
 
+    // Fresh row for the quota decision; the link + quota change below is one atomic transaction
+    // (compare-and-set on `subscriptionId IS NULL`, conditional `appointmentsRemaining > 0`).
+    const subscription =
+      (await this.subscriptionStore.readSubscription(
+        subscriptionId,
+        cachedSubscription.clinicId
+      )) ?? null;
+    if (!subscription) {
+      throw new NotFoundException('Subscription not found');
+    }
+    const outcome = await this.subscriptionStore.bookAppointment({ subscription, appointmentId });
+    if (outcome === 'linked-elsewhere') {
+      throw new BadRequestException('Appointment is already covered by a subscription');
+    }
+    if (outcome === 'quota-exhausted') {
+      throw new BadRequestException('Appointment quota exceeded for this period');
+    }
+    if (outcome === 'already-linked') {
+      return; // idempotent: nothing was charged to the quota twice
+    }
+
+    try {
+      await this.databaseService.invalidateEntityCache(
+        'subscription',
+        subscriptionId,
+        subscription.clinicId
+      );
+    } catch {
+      // Best effort: entries age out via their TTL.
+    }
     void Promise.allSettled([
       this.loggingService.log(
         LogType.SYSTEM,
@@ -3383,7 +3965,7 @@ export class BillingService implements OnModuleInit {
         subscriptionId,
         appointmentId,
       }),
-      this.invalidateUserSubscriptionCaches(subscription.userId),
+      this.invalidateSubscriptionCaches(subscription.userId, subscriptionId),
     ]);
   }
 
@@ -3407,33 +3989,64 @@ export class BillingService implements OnModuleInit {
     const subscriptionAmount = this.roundToTwo(subscription.plan.amount);
     const subscriptionTax = this.calculateGstAmount(subscriptionAmount);
 
-    // Create invoice for subscription renewal
-    const invoice = await this.createInvoice({
-      userId: subscription.userId,
-      clinicId: subscription.clinicId,
+    // A checkout that never produced a payment attempt leaves an unpaid invoice behind. Reuse it
+    // (same plan price only) instead of adding another PENDING invoice on every attempt.
+    // An invoice that already carries a live payment (open PENDING attempt - the customer may
+    // still be paying at the gateway - or a settled one) is NEVER reused: a second gateway order
+    // against it could be paid as well and charge the customer twice for one invoice.
+    const expectedSubscriptionTotal = this.roundToTwo(subscriptionAmount + subscriptionTax);
+    const pendingSubscriptionInvoices = await this.databaseService.findInvoicesSafe({
       subscriptionId: subscription.id,
-      amount: subscriptionAmount,
-      tax: subscriptionTax,
-      discount: 0,
-      dueDate: new Date(subscription.currentPeriodEnd).toISOString(),
-      description: `Subscription renewal for ${subscription.plan.name}`,
-      lineItems: {
-        items: [
-          {
-            description: subscription.plan.name,
-            amount: subscriptionAmount,
-            quantity: 1,
-          },
-        ],
-      },
-      metadata: {
-        subscriptionId: subscription.id,
-        planId: subscription.planId,
-        gstRatePercent: this.getGstRatePercent(),
-        periodStart: subscription.currentPeriodStart.toISOString(),
-        periodEnd: subscription.currentPeriodEnd.toISOString(),
-      },
+      status: InvoiceStatus.PENDING,
     });
+    const reusableInvoice =
+      pendingSubscriptionInvoices
+        .filter(
+          pending =>
+            pending.userId === subscription.userId &&
+            pending.clinicId === subscription.clinicId &&
+            Math.abs(this.getInvoiceTotalAmount(pending, 0) - expectedSubscriptionTotal) < 0.005 &&
+            !this.invoiceHasLivePayment(pending)
+        )
+        .sort(
+          (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+        )[0] ?? null;
+
+    // Create invoice for subscription renewal
+    const invoice =
+      reusableInvoice ??
+      (await this.createInvoice({
+        userId: subscription.userId,
+        clinicId: subscription.clinicId,
+        subscriptionId: subscription.id,
+        amount: subscriptionAmount,
+        tax: subscriptionTax,
+        discount: 0,
+        dueDate: new Date(subscription.currentPeriodEnd).toISOString(),
+        description: `Subscription renewal for ${subscription.plan.name}`,
+        lineItems: {
+          items: [
+            {
+              description: subscription.plan.name,
+              amount: subscriptionAmount,
+              quantity: 1,
+            },
+          ],
+        },
+        metadata: {
+          subscriptionId: subscription.id,
+          planId: subscription.planId,
+          gstRatePercent: this.getGstRatePercent(),
+          periodStart: subscription.currentPeriodStart.toISOString(),
+          periodEnd: subscription.currentPeriodEnd.toISOString(),
+        },
+      }));
+    // Every attempt still opens its own gateway order, as before: a reused invoice gets a
+    // new order id because some gateways reject a repeated order id.
+    const gatewayOrderId = this.buildGatewayOrderId(
+      invoice.invoiceNumber,
+      reusableInvoice ? Date.now().toString(36) : invoice.id
+    );
 
     // Get user details for payment
     const user = await this.databaseService.findUserByIdSafe(subscription.userId);
@@ -3448,7 +4061,7 @@ export class BillingService implements OnModuleInit {
     const paymentIntentOptions: PaymentIntentOptions = {
       amount: Math.round(subscriptionTotalAmount * 100),
       currency: subscription.plan.currency || 'INR',
-      orderId: this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id),
+      orderId: gatewayOrderId,
       customerId: subscription.userId,
       ...(user?.email && { customerEmail: user.email }),
       ...(user?.phone && { customerPhone: user.phone }),
@@ -3493,14 +4106,14 @@ export class BillingService implements OnModuleInit {
       this.asSafeString(providerResponse['redirect_url']);
     const redirectUrl = this.buildPaymentCallbackUrl(
       subscription.clinicId,
-      orderId || this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id),
+      orderId || gatewayOrderId,
       provider,
       undefined,
       paymentId || undefined
     );
     const handoff = await this.createPaymentHandoffDetails({
       clinicId: subscription.clinicId,
-      orderId: orderId || this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id),
+      orderId: orderId || gatewayOrderId,
       callbackUrl: redirectUrl,
       ...(paymentId ? { paymentId } : {}),
       ...(paymentIntentResult.provider
@@ -4167,6 +4780,8 @@ export class BillingService implements OnModuleInit {
       clinicId: invoice.clinicId,
       userId: invoice.userId,
       invoiceId: invoice.id,
+      // A care-plan invoice paid from the invoice list must activate the plan in the callback.
+      ...(invoice.subscriptionId && { subscriptionId: invoice.subscriptionId }),
       ...(paymentId && { transactionId: paymentId }),
       description: `Payment for invoice ${invoice.invoiceNumber}`,
       metadata: {
@@ -4211,7 +4826,7 @@ export class BillingService implements OnModuleInit {
     orderId: string,
     provider?: PaymentProvider,
     surchargeData?: { surchargeServiceCharge: number; surchargeServiceTax: number }
-  ): Promise<{ payment: unknown; invoice?: unknown; appointment?: unknown }> {
+  ): Promise<FinalisationOutcome> {
     try {
       const normalizedProvider =
         this.normalizePaymentProvider(provider) ?? PaymentProvider.CASHFREE;
@@ -4300,26 +4915,25 @@ export class BillingService implements OnModuleInit {
         return { payment: {} };
       }
 
-      const currentStatusLower = String(payment.status || '').toLowerCase();
-      const incomingStatusLower = String(normalizedIncomingStatus).toLowerCase();
-      const isSameStatus = currentStatusLower === incomingStatusLower;
-      const isCurrentFinal =
-        currentStatusLower === 'completed' ||
-        currentStatusLower === 'refunded' ||
-        currentStatusLower === 'cancelled';
-
       // Bind payment record to the gateway result — reject if clinic, amount, or currency mismatch.
       const paymentRecord = payment as {
         clinicId?: string;
         amount?: number;
-        transactionId?: string | null;
       };
       if (paymentRecord.clinicId && String(paymentRecord.clinicId) !== String(clinicId)) {
         throw new ForbiddenException(
           `Payment record clinic ${paymentRecord.clinicId} does not match callback clinic ${clinicId}`
         );
       }
+      // The amount must match before a payment is claimed. A payment that is already settled /
+      // released is never changed by a callback, so a mismatching amount there is the signature
+      // of a second gateway order: it is flagged by the finaliser instead of being dropped here.
+      const localStatus = String(payment.status || '').toLowerCase();
+      const isUnclaimedStatus = !['completed', 'cancelled', 'expired', 'refunded'].includes(
+        localStatus
+      );
       if (
+        isUnclaimedStatus &&
         paymentStatus.amount &&
         paymentRecord.amount &&
         Math.abs(paymentRecord.amount - paymentStatus.amount) > 0.01
@@ -4343,214 +4957,42 @@ export class BillingService implements OnModuleInit {
         );
       }
 
-      // Idempotency + anti-regression for repeated gateway callbacks.
-      if (
-        isSameStatus ||
-        (isCurrentFinal && incomingStatusLower !== currentStatusLower) ||
-        (currentStatusLower === 'failed' && incomingStatusLower === 'pending')
-      ) {
-        await this.loggingService.log(
-          LogType.PAYMENT,
-          LogLevel.INFO,
-          'Ignoring duplicate or regressive payment callback',
-          'BillingService',
-          {
-            clinicId,
-            paymentId: payment.id,
-            currentStatus: currentStatusLower,
-            incomingStatus: incomingStatusLower,
-            orderId,
-            provider: normalizedProvider || 'unknown',
-          }
-        );
-
-        // Still reconcile the invoice if payment is already completed but the
-        // invoice was left unpaid (e.g. earlier callback partially applied).
-        let reconciledInvoice: unknown;
-        if (currentStatusLower === 'completed' && payment.invoiceId) {
-          const linkedInvoice = await this.databaseService.findInvoiceByIdSafe(payment.invoiceId);
-          if (
-            linkedInvoice &&
-            String(linkedInvoice.status).toUpperCase() !== String(InvoiceStatus.PAID)
-          ) {
-            reconciledInvoice = await this.markInvoiceAsPaid(payment.invoiceId);
-          }
-        }
-
-        return {
-          payment,
-          ...(reconciledInvoice ? { invoice: reconciledInvoice } : {}),
-        };
-      }
-
-      const callbackMetadata = this.asRecord(payment.metadata)
+      // Idempotent finalisation: compare-and-set claim with a per-delivery token, repair of a
+      // crashed finalisation, duplicate / late settlement detection (BillingPaymentFinaliser).
+      const gatewayMethod = this.resolveGatewayPaymentMethod(paymentStatus);
+      const baseMetadata: Record<string, unknown> = this.asRecord(payment.metadata)
         ? { ...(payment.metadata as Record<string, unknown>) }
         : {};
       if (reboundFromOrderId !== null) {
-        callbackMetadata['orderId'] = orderId;
-        callbackMetadata['provider'] = normalizedProvider;
-        callbackMetadata['supersededOrderId'] = reboundFromOrderId;
-      }
-      callbackMetadata['callbackAudit'] = {
-        provider: normalizedProvider || 'unknown',
-        orderId,
-        requestedPaymentId: paymentId,
-        verifiedTransactionId: paymentStatus.transactionId || paymentId,
-        receivedAt: nowIso(),
-        incomingStatus: incomingStatusLower,
-      };
-
-      const updatedPayment = await this.updatePayment(payment.id, {
-        status: normalizedIncomingStatus,
-        transactionId: paymentStatus.transactionId || paymentId,
-        metadata: callbackMetadata,
-        ...(surchargeData && {
-          surchargeServiceCharge: surchargeData.surchargeServiceCharge,
-          surchargeServiceTax: surchargeData.surchargeServiceTax,
-        }),
-      });
-
-      let invoice: unknown;
-      if (incomingStatusLower === 'completed' && payment.invoiceId) {
-        invoice = await this.markInvoiceAsPaid(payment.invoiceId);
+        baseMetadata['orderId'] = orderId;
+        baseMetadata['provider'] = normalizedProvider;
+        baseMetadata['supersededOrderId'] = reboundFromOrderId;
       }
 
-      let completedAppointment =
-        incomingStatusLower === 'completed' && payment.appointmentId
-          ? await this.databaseService.findAppointmentByIdSafe(payment.appointmentId)
-          : null;
-
-      if (incomingStatusLower === 'completed' && payment.appointmentId && completedAppointment) {
-        if (String(completedAppointment.status) !== String(AppointmentStatus.CONFIRMED)) {
-          const paymentExpiresAt = (
-            completedAppointment as { paymentExpiresAt?: Date | string | null }
-          ).paymentExpiresAt;
-          const expiresAt =
-            paymentExpiresAt instanceof Date
-              ? paymentExpiresAt.getTime()
-              : typeof paymentExpiresAt === 'string'
-                ? new Date(paymentExpiresAt).getTime()
-                : null;
-          const canConfirm = !expiresAt || expiresAt > Date.now();
-
-          if (canConfirm) {
-            const confirmationResult = await this.databaseService.executeHealthcareWrite(
-              async client => {
-                const appointmentClient = client as unknown as {
-                  appointment: {
-                    updateMany: (args: {
-                      where: {
-                        id: string;
-                        status: { notIn: string[] };
-                        paymentExpiresAt?: { gt: Date };
-                      };
-                      data: { status: string };
-                    }) => Promise<{ count: number }>;
-                  };
-                };
-                return appointmentClient.appointment.updateMany({
-                  where: {
-                    id: payment.appointmentId as string,
-                    status: {
-                      notIn: [
-                        AppointmentStatus.CANCELLED,
-                        AppointmentStatus.EXPIRED,
-                        AppointmentStatus.COMPLETED,
-                      ],
-                    },
-                    ...(paymentExpiresAt ? { paymentExpiresAt: { gt: new Date() } } : {}),
-                  },
-                  data: { status: AppointmentStatus.CONFIRMED },
-                });
-              },
-              {
-                userId: 'system',
-                clinicId: completedAppointment.clinicId,
-                resourceType: 'APPOINTMENT',
-                operation: 'UPDATE',
-                resourceId: payment.appointmentId,
-                userRole: 'system',
-                details: {
-                  reason: 'Payment callback completed',
-                  paymentId: payment.id,
-                  orderId,
-                },
-              }
-            );
-
-            completedAppointment = confirmationResult.count
-              ? ((await this.databaseService.findAppointmentByIdSafe(payment.appointmentId)) ??
-                completedAppointment)
-              : null;
-          } else {
-            completedAppointment = null;
-          }
-        }
+      if (String(normalizedIncomingStatus).toLowerCase() === 'completed') {
+        await this.assertPaymentTargetsConsistent(payment, clinicId);
       }
 
-      if (incomingStatusLower === 'completed' && payment.appointmentId && completedAppointment) {
-        void this.syncAppointmentAfterPayment({
-          appointmentId: payment.appointmentId,
-          clinicId: completedAppointment?.clinicId || clinicId,
-          paymentId: payment.id,
-          paymentStatus: normalizedIncomingStatus,
-          amount: paymentStatus.amount,
-          appointment: completedAppointment,
-          userId: payment.userId ?? null,
-          emitAppointmentUpdated: true, // Emit so frontend dashboards refresh via WebSocket
-        }).catch((error: unknown) => {
-          void this.loggingService.log(
-            LogType.PAYMENT,
-            LogLevel.WARN,
-            `Failed to sync appointment after payment: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-            'BillingService.handlePaymentCallback',
-            {
-              clinicId,
-              paymentId: payment.id,
-              appointmentId: payment.appointmentId,
-            }
-          );
-        });
-      }
-
-      if (incomingStatusLower === 'completed' && payment.subscriptionId) {
-        await this.renewSubscriptionAfterPayment(payment.subscriptionId);
-        await this.prepareLedgerForSubscriptionPayment(payment.id, clinicId);
-      }
-
-      void this.emitPaymentLifecycleEvents({
+      return await this.finaliser.process({
+        payment: payment as unknown as PaymentRow,
         clinicId,
-        paymentId: payment.id,
-        status: paymentStatus.status,
-        amount: paymentStatus.amount,
-        ...(payment.userId ? { userId: payment.userId } : {}),
-        ...(payment.appointmentId ? { appointmentId: payment.appointmentId } : {}),
-        ...(payment.appointmentId && completedAppointment
-          ? { appointment: completedAppointment }
-          : {}),
-        ...(payment.subscriptionId ? { subscriptionId: payment.subscriptionId } : {}),
-      }).catch((error: unknown) => {
-        void this.loggingService.log(
-          LogType.PAYMENT,
-          LogLevel.WARN,
-          `Failed to emit payment lifecycle events: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-          'BillingService.handlePaymentCallback',
-          {
-            clinicId,
-            paymentId: payment.id,
-          }
-        );
+        paymentId,
+        orderId,
+        provider: normalizedProvider || 'unknown',
+        paymentStatus,
+        incomingStatus: normalizedIncomingStatus,
+        baseMetadata,
+        update: {
+          status: normalizedIncomingStatus,
+          transactionId: paymentStatus.transactionId || paymentId,
+          // "Paid via" on the invoice: only set when the gateway names a method we store.
+          ...(gatewayMethod && { method: gatewayMethod }),
+          ...(surchargeData && {
+            surchargeServiceCharge: surchargeData.surchargeServiceCharge,
+            surchargeServiceTax: surchargeData.surchargeServiceTax,
+          }),
+        },
       });
-
-      return {
-        payment: updatedPayment,
-        ...(invoice ? { invoice } : {}),
-        ...(completedAppointment ? { appointment: completedAppointment } : {}),
-      };
     } catch (error) {
       await this.loggingService.log(
         LogType.PAYMENT,
@@ -4568,8 +5010,328 @@ export class BillingService implements OnModuleInit {
     }
   }
 
+  /**
+   * The payment row is the trust anchor of the callback, so the entities it points at must be
+   * the same clinic's and the same user's: a payment can never settle someone else's invoice or
+   * plan.
+   */
+  private async assertPaymentTargetsConsistent(
+    payment: {
+      clinicId?: string | null;
+      userId?: string | null;
+      invoiceId?: string | null;
+      subscriptionId?: string | null;
+    },
+    clinicId: string
+  ): Promise<void> {
+    const paymentClinicId = payment.clinicId || clinicId;
+    const targets: Array<{
+      kind: 'invoice' | 'subscription';
+      id: string;
+      row: { clinicId?: string | null; userId?: string | null } | null;
+    }> = [];
+    if (payment.invoiceId) {
+      targets.push({
+        kind: 'invoice',
+        id: payment.invoiceId,
+        row: await this.databaseService.findInvoiceByIdSafe(payment.invoiceId),
+      });
+    }
+    if (payment.subscriptionId) {
+      targets.push({
+        kind: 'subscription',
+        id: payment.subscriptionId,
+        row: await this.databaseService.findSubscriptionByIdSafe(payment.subscriptionId),
+      });
+    }
+
+    for (const target of targets) {
+      if (!target.row) {
+        continue;
+      }
+      const clinicMismatch =
+        Boolean(target.row.clinicId) && target.row.clinicId !== paymentClinicId;
+      const userMismatch =
+        Boolean(payment.userId) &&
+        Boolean(target.row.userId) &&
+        payment.userId !== target.row.userId;
+      if (clinicMismatch || userMismatch) {
+        await this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.ERROR,
+          `Payment ${target.kind} does not belong to the payment's clinic/user; callback rejected`,
+          'BillingService',
+          { clinicId, targetKind: target.kind, targetId: target.id, clinicMismatch, userMismatch }
+        );
+        throw new ForbiddenException(
+          `Payment ${target.kind} does not belong to the same clinic and user as the payment`
+        );
+      }
+    }
+  }
+
+  /**
+   * Settles the invoice a completed payment points at. The invoice becomes PAID only once the
+   * COMPLETED payments recorded against it cover its total (compared in paise); the transition
+   * itself is one conditional statement, so exactly one caller performs it (and sends the
+   * receipt). A payment landing on an invoice another payment already settled is a duplicate;
+   * one that does not cover the total leaves the invoice PENDING.
+   */
+  async settleInvoiceForPayment(payment: PaymentRow, clinicId: string): Promise<InvoiceSettlement> {
+    if (!payment.invoiceId) {
+      return { state: 'none' };
+    }
+    const invoice = await this.paymentStore.readInvoice(payment.invoiceId, clinicId);
+    if (!invoice) {
+      return { state: 'none' };
+    }
+
+    const settledBy = (row: InvoiceRow): string =>
+      this.asSafeString(this.asRecord(row.metadata)?.['settledByPaymentId']);
+    if (String(invoice.status).toUpperCase() === String(InvoiceStatus.PAID)) {
+      return {
+        state: settledBy(invoice) === payment.id ? 'already-settled' : 'duplicate',
+        invoice,
+      };
+    }
+
+    const recorded = await this.paymentStore.listInvoicePayments(invoice.id, clinicId);
+    const counted = recorded.some(row => row.id === payment.id)
+      ? recorded.map(row => (row.id === payment.id ? { ...row, status: 'COMPLETED' } : row))
+      : [...recorded, { ...payment, status: 'COMPLETED' }];
+    const paidMinor = sumCompletedPaymentMinorUnits(counted);
+    const requiredMinor = toMinorUnits(invoice.totalAmount);
+    if (!isAmountCovered(paidMinor, requiredMinor)) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        'Completed payments do not cover the invoice total; invoice left unpaid',
+        'BillingService',
+        { clinicId, paymentId: payment.id, invoiceId: invoice.id, paidMinor, requiredMinor }
+      );
+      return { state: 'underpaid', invoice };
+    }
+
+    const transition = await this.transitionInvoiceToPaid(invoice, {
+      settledByPaymentId: payment.id,
+    });
+    if (transition.transitioned) {
+      return { state: 'settled', invoice: transition.invoice as InvoiceRow };
+    }
+    const latest = await this.paymentStore.readInvoice(invoice.id, clinicId);
+    return {
+      state: latest && settledBy(latest) === payment.id ? 'already-settled' : 'duplicate',
+      invoice: latest ?? invoice,
+    };
+  }
+
+  /**
+   * Server-side check for the PUBLIC payment bridge (`POST /payments/payment-intents`), which has
+   * no authenticated user - only the clinic header. The client-chosen amount is never trusted:
+   * the target must exist, belong to that clinic and be open, and the amount (minor units) must
+   * equal the amount really due (invoice balance, VIDEO_CALL fee + GST, or plan price + GST),
+   * compared in paise. Prescription payments are not supported on the bridge (they have their own
+   * authenticated endpoint). Throws 404 / 400 with fixed messages.
+   */
+  async assertPublicPaymentIntentAmount(
+    target: {
+      appointmentId?: string | undefined;
+      subscriptionId?: string | undefined;
+      invoiceId?: string | undefined;
+      prescriptionId?: string | undefined;
+    },
+    clinicId: string,
+    amountMinorUnits: number
+  ): Promise<void> {
+    const provided = [
+      target.appointmentId,
+      target.subscriptionId,
+      target.invoiceId,
+      target.prescriptionId,
+    ].filter(Boolean);
+    if (provided.length !== 1) {
+      throw new BadRequestException('Exactly one payment target is required');
+    }
+    if (target.prescriptionId) {
+      throw new BadRequestException('Prescription payments use the prescription payment endpoint');
+    }
+
+    const notFound = new NotFoundException('Payment target not found');
+    const notOpen = new BadRequestException('Payment target is not open for payment');
+    let dueMinor = 0;
+
+    if (target.invoiceId) {
+      const invoice = await this.paymentStore.readInvoice(target.invoiceId, clinicId);
+      if (!invoice || invoice.clinicId !== clinicId) {
+        throw notFound;
+      }
+      if (String(invoice.status).toUpperCase() !== String(InvoiceStatus.PENDING)) {
+        throw notOpen;
+      }
+      const recorded = await this.paymentStore.listInvoicePayments(invoice.id, clinicId);
+      dueMinor = toMinorUnits(invoice.totalAmount) - sumCompletedPaymentMinorUnits(recorded);
+    } else if (target.appointmentId) {
+      const appointment = await this.databaseService.findAppointmentByIdSafe(target.appointmentId);
+      if (!appointment || appointment.clinicId !== clinicId) {
+        throw notFound;
+      }
+      const lapsed = (appointment as { paymentExpiresAt?: Date | string | null }).paymentExpiresAt;
+      if (
+        [
+          AppointmentStatus.CANCELLED,
+          AppointmentStatus.EXPIRED,
+          AppointmentStatus.COMPLETED,
+        ].includes(appointment.status as AppointmentStatus) ||
+        String(appointment.type) !== 'VIDEO_CALL' ||
+        (lapsed && new Date(lapsed).getTime() <= Date.now())
+      ) {
+        throw notOpen;
+      }
+      const fee = this.roundToTwo(
+        this.resolveVideoConsultationService(appointment.treatmentType)
+          .videoConsultationFee as number
+      );
+      dueMinor = toMinorUnits(this.roundToTwo(fee + this.calculateGstAmount(fee)));
+    } else if (target.subscriptionId) {
+      const subscription = await this.subscriptionStore.readSubscription(
+        target.subscriptionId,
+        clinicId
+      );
+      if (!subscription || subscription.clinicId !== clinicId || !subscription.plan) {
+        throw notFound;
+      }
+      if (String(subscription.status) === String(SubscriptionStatus.CANCELLED)) {
+        throw notOpen;
+      }
+      const price = this.roundToTwo(subscription.plan.amount);
+      dueMinor = toMinorUnits(this.roundToTwo(price + this.calculateGstAmount(price)));
+    }
+
+    if (dueMinor <= 0 || !Number.isInteger(amountMinorUnits) || amountMinorUnits !== dueMinor) {
+      await this.loggingService.log(
+        LogType.SECURITY,
+        LogLevel.WARN,
+        'Public payment intent refused: amount does not match the amount due',
+        'BillingService',
+        { clinicId, ...target, requestedMinor: amountMinorUnits, dueMinor }
+      );
+      throw new BadRequestException('Payment amount does not match the amount due');
+    }
+  }
+
+  /**
+   * Subscription payment without an invoice: the paid amount must reach the plan price. (With an
+   * invoice the invoice total - plan price plus the tax the invoice defines - is the bar.)
+   */
+  private async isPlanAmountCovered(subscriptionId: string, payment: PaymentRow): Promise<boolean> {
+    const subscription = await this.subscriptionStore.readSubscription(
+      subscriptionId,
+      payment.clinicId
+    );
+    if (!subscription?.plan) {
+      return true;
+    }
+    return isAmountCovered(toMinorUnits(payment.amount), toMinorUnits(subscription.plan.amount));
+  }
+
+  /**
+   * Records an anomaly the system did not apply as a normal settlement. Late settlements only log
+   * and emit (no refunds for visits that never take place); duplicates and underpayments are also
+   * stored on `payment.metadata.settlementReview` as admin-visible data. Never throws, never
+   * refunds, never notifies.
+   */
+  async flagSettlement(flag: SettlementFlag): Promise<void> {
+    try {
+      let recorded = !isPersistedAnomaly(flag.reason);
+      if (isPersistedAnomaly(flag.reason)) {
+        const reason = flag.reason;
+        const result = await this.paymentStore.mutateMetadata(
+          flag.paymentId,
+          flag.clinicId,
+          current =>
+            buildSettlementReviewMetadata(
+              current,
+              {
+                reason,
+                appointmentId: flag.appointmentId,
+                invoiceId: flag.invoiceId,
+                orderId: flag.orderId,
+                transactionId: flag.transactionId,
+                amount: flag.amount,
+              },
+              new Date()
+            )?.next ?? null
+        );
+        recorded = result === 'written' || result === 'conflict' || result === 'missing';
+      }
+      if (!recorded) {
+        return; // already recorded by an earlier delivery: no log / event spam on every poll
+      }
+
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        `Payment settlement anomaly: ${flag.reason}`,
+        'BillingService',
+        {
+          clinicId: flag.clinicId,
+          paymentId: flag.paymentId,
+          reason: flag.reason,
+          invoiceId: flag.invoiceId,
+          appointmentId: flag.appointmentId,
+          orderId: flag.orderId,
+          amount: flag.amount,
+        }
+      );
+      const eventName =
+        flag.reason === 'LATE_SETTLEMENT'
+          ? 'billing.payment.late_settlement'
+          : flag.reason === 'DUPLICATE_SETTLEMENT'
+            ? 'billing.payment.duplicate_settlement'
+            : 'billing.payment.underpaid';
+      await this.eventService.emit(eventName, {
+        clinicId: flag.clinicId,
+        paymentId: flag.paymentId,
+        ...(flag.invoiceId ? { invoiceId: flag.invoiceId } : {}),
+        ...(flag.appointmentId ? { appointmentId: flag.appointmentId } : {}),
+        ...(flag.orderId ? { orderId: flag.orderId } : {}),
+        ...(flag.amount !== undefined ? { amount: flag.amount } : {}),
+        ...(flag.userId ? { userId: flag.userId } : {}),
+        reason: flag.reason,
+      });
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        `Failed to record payment settlement anomaly: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        'BillingService',
+        { clinicId: flag.clinicId, paymentId: flag.paymentId, reason: flag.reason }
+      );
+    }
+  }
+
+  /** Cron: repairs payments stuck between the claim and their side effects (crashed finalisation). */
+  @Cron(CronExpression.EVERY_10_MINUTES)
+  async repairStalledPaymentFinalisations(): Promise<number> {
+    try {
+      return await this.finaliser.repairStalled();
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.ERROR,
+        `Stalled payment finalisation sweep failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        'BillingService'
+      );
+      return 0;
+    }
+  }
+
   async preparePayoutForAppointmentPayment(paymentId: string, clinicId: string): Promise<void> {
-    const payment = await this.databaseService.findPaymentByIdSafe(paymentId);
+    const payment = await this.paymentStore.readPayment(paymentId, clinicId);
     if (!payment || payment.clinicId !== clinicId || !payment.appointmentId) {
       return;
     }
@@ -4580,21 +5342,6 @@ export class BillingService implements OnModuleInit {
     const appointment = await this.databaseService.findAppointmentByIdSafe(payment.appointmentId);
     if (!appointment || appointment.clinicId !== clinicId) {
       return;
-    }
-
-    const metadata =
-      payment.metadata && typeof payment.metadata === 'object' && !Array.isArray(payment.metadata)
-        ? { ...(payment.metadata as Record<string, unknown>) }
-        : {};
-
-    const existingPayout =
-      metadata['payout'] &&
-      typeof metadata['payout'] === 'object' &&
-      !Array.isArray(metadata['payout'])
-        ? (metadata['payout'] as Record<string, unknown>)
-        : null;
-    if (existingPayout && existingPayout['state']) {
-      return; // idempotent
     }
 
     const gross = this.roundToTwo(payment.amount);
@@ -4627,28 +5374,38 @@ export class BillingService implements OnModuleInit {
       ],
     };
 
-    await this.updatePayment(payment.id, {
-      metadata: {
-        ...metadata,
-        payout,
-      },
+    // Written once, guarded by `updatedAt` so it never overwrites a concurrent metadata write
+    // (finalisation marker, settlement review). A payment flagged as a duplicate / underpayment
+    // was not settled as a normal booking payment and earns no payout.
+    await this.paymentStore.mutateMetadata(payment.id, clinicId, current => {
+      if (this.asRecord(current['payout'])?.['state'] || hasSettlementReview(current)) {
+        return null; // idempotent
+      }
+      return { ...current, payout };
     });
   }
 
-  async prepareLedgerForSubscriptionPayment(paymentId: string, clinicId: string): Promise<void> {
-    const payment = await this.databaseService.findPaymentByIdSafe(paymentId);
-    if (!payment || payment.clinicId !== clinicId || !payment.subscriptionId) {
+  /**
+   * Records the platform-revenue ledger entry for a completed subscription payment.
+   * `subscriptionIdOverride` covers invoice-initiated plan payments whose payment row carries
+   * no subscription id of its own (the plan is reached through the paid invoice).
+   * Written at most once per payment (compare-and-set on the metadata), never for a payment that
+   * was flagged as a duplicate / underpayment.
+   */
+  async prepareLedgerForSubscriptionPayment(
+    paymentId: string,
+    clinicId: string,
+    subscriptionIdOverride?: string | null
+  ): Promise<void> {
+    const payment = await this.paymentStore.readPayment(paymentId, clinicId);
+    if (
+      !payment ||
+      payment.clinicId !== clinicId ||
+      !(payment.subscriptionId || subscriptionIdOverride)
+    ) {
       return;
     }
     if (String(payment.status) !== String(PaymentStatus.COMPLETED)) {
-      return;
-    }
-
-    const metadata = this.asRecord(payment.metadata)
-      ? { ...(payment.metadata as Record<string, unknown>) }
-      : {};
-    const existingPayout = this.asRecord(metadata['payout']);
-    if (existingPayout && existingPayout['state']) {
       return;
     }
 
@@ -4670,12 +5427,11 @@ export class BillingService implements OnModuleInit {
       ],
     };
 
-    await this.updatePayment(payment.id, {
-      metadata: {
-        ...metadata,
-        revenueModel: 'SUBSCRIPTION',
-        payout,
-      },
+    await this.paymentStore.mutateMetadata(payment.id, clinicId, current => {
+      if (this.asRecord(current['payout'])?.['state'] || hasSettlementReview(current)) {
+        return null;
+      }
+      return { ...current, revenueModel: 'SUBSCRIPTION', payout };
     });
   }
 
@@ -4839,9 +5595,55 @@ export class BillingService implements OnModuleInit {
     };
   }
 
+  /**
+   * Payout ledger of an appointment (doctor share, platform fee). Only billing / admin roles of
+   * the appointment's clinic and the treating doctor may read it - never a patient or a
+   * different doctor.
+   */
+  private async assertPayoutStatusAccess(
+    appointment: { doctorId?: string | null; doctor?: { userId?: string | null } | null },
+    requester?: BillingAccessContext
+  ): Promise<void> {
+    if (!requester) {
+      return; // internal caller
+    }
+    if (
+      requester.role === 'SUPER_ADMIN' ||
+      requester.role === 'CLINIC_ADMIN' ||
+      requester.role === 'FINANCE_BILLING'
+    ) {
+      return;
+    }
+    if (requester.role === 'DOCTOR' && requester.userId) {
+      const treatingDoctorUserId =
+        appointment.doctor?.userId ??
+        (appointment.doctorId ? await this.resolveDoctorUserId(appointment.doctorId) : null);
+      if (treatingDoctorUserId && treatingDoctorUserId === requester.userId) {
+        return;
+      }
+    }
+    throw new NotFoundException('Appointment not found');
+  }
+
+  private async resolveDoctorUserId(doctorId: string): Promise<string | null> {
+    const doctor = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as {
+        doctor: {
+          findUnique: (args: {
+            where: { id: string };
+            select: { userId: true };
+          }) => Promise<{ userId: string | null } | null>;
+        };
+      };
+      return typedClient.doctor.findUnique({ where: { id: doctorId }, select: { userId: true } });
+    });
+    return doctor?.userId ?? null;
+  }
+
   async getAppointmentPayoutStatus(
     appointmentId: string,
-    clinicId: string
+    clinicId: string,
+    requester?: BillingAccessContext
   ): Promise<{
     paymentId?: string;
     appointmentId: string;
@@ -4852,6 +5654,7 @@ export class BillingService implements OnModuleInit {
     if (!appointment || appointment.clinicId !== clinicId) {
       throw new NotFoundException('Appointment not found');
     }
+    await this.assertPayoutStatusAccess(appointment, requester);
 
     const payments = await this.databaseService.findPaymentsSafe({
       appointmentId,
@@ -4890,7 +5693,7 @@ export class BillingService implements OnModuleInit {
     clinicId: string,
     paymentRecordId: string,
     provider?: PaymentProvider
-  ): Promise<{ payment: unknown; invoice?: unknown }> {
+  ): Promise<FinalisationOutcome> {
     const payment = await this.databaseService.findPaymentByIdSafe(paymentRecordId);
     if (!payment || payment.clinicId !== clinicId) {
       throw new NotFoundException('Payment record not found for this clinic');
@@ -4950,8 +5753,19 @@ export class BillingService implements OnModuleInit {
     }
 
     let payment = (await this.databaseService.findPaymentsSafe({ appointmentId }))[0] ?? null;
-    if (payment && String(payment.status) === String(PaymentStatus.COMPLETED)) {
-      throw new BadRequestException('This appointment payment is already marked completed');
+    // A COMPLETED payment is only repaired when something is left to repair: its finalisation
+    // never finished, or the booking was left unconfirmed (e.g. the payment window had lapsed).
+    const completedLocally =
+      Boolean(payment) && String(payment?.status) === String(PaymentStatus.COMPLETED);
+    if (completedLocally) {
+      const marker = readFinalisationMarker(payment?.metadata);
+      const finalisationUnfinished = marker !== null && !marker.sideEffectsAppliedAt;
+      if (
+        String(appointment.status) === String(AppointmentStatus.CONFIRMED) &&
+        !finalisationUnfinished
+      ) {
+        throw new BadRequestException('This appointment payment is already marked completed');
+      }
     }
 
     const normalizedProvider =
@@ -4984,6 +5798,27 @@ export class BillingService implements OnModuleInit {
       throw new BadRequestException(
         `Payment amount mismatch: local record has ${payment.amount}, gateway returned ${paymentStatus.amount}`
       );
+    }
+
+    if (completedLocally && payment) {
+      const repaired = await this.finaliser.repairManually(payment as unknown as PaymentRow, {
+        actorUserId,
+        orderId,
+      });
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        'Completed payment repaired by clinic admin',
+        'BillingService.manualReconcileAppointmentPayment',
+        { clinicId, appointmentId, paymentId: payment.id, actorUserId, orderId }
+      );
+      return {
+        payment: repaired.payment,
+        appointment:
+          repaired.appointment ??
+          (await this.databaseService.findAppointmentByIdSafe(appointmentId)) ??
+          appointment,
+      };
     }
 
     if (!payment) {
@@ -5022,7 +5857,7 @@ export class BillingService implements OnModuleInit {
             appointment: {
               updateMany: (args: {
                 where: { id: string; status: { notIn: string[] } };
-                data: { status: string };
+                data: { status: string; confirmationExpiresAt: Date | null };
               }) => Promise<{ count: number }>;
             };
           };
@@ -5031,7 +5866,13 @@ export class BillingService implements OnModuleInit {
               id: appointmentId,
               status: { notIn: [AppointmentStatus.CANCELLED, AppointmentStatus.COMPLETED] },
             },
-            data: { status: AppointmentStatus.CONFIRMED },
+            data: {
+              status: AppointmentStatus.CONFIRMED,
+              // Clamped: an admin often reconciles after the visit's own window has
+              // already elapsed; a past expiry would get the confirmed visit expired
+              // again by the scheduler on its next run.
+              confirmationExpiresAt: resolvePaidConfirmationExpiresAt(appointment),
+            },
           });
         },
         {
@@ -5089,86 +5930,117 @@ export class BillingService implements OnModuleInit {
   }
 
   /**
-   * Renew subscription after successful payment (internal method)
+   * Renew subscription after successful payment (internal method).
+   *
+   * Idempotent per payment id: the renewal stamps `metadata.renewedPaymentIds` in the SAME
+   * conditional statement that moves the period, and a repeat with a stamped id is a no-op, so
+   * one payment can never buy two intervals. The write is optimistic on (status, period): a
+   * concurrent renewal makes it re-read instead of extending the same period twice.
+   *
+   * `activationOnly` is used when re-driving a payment of unknown history (completed before the
+   * claim protocol existed): it activates a plan that is still INCOMPLETE / INCOMPLETE_EXPIRED /
+   * PAST_DUE but never extends one that is already active.
    */
-  private async renewSubscriptionAfterPayment(subscriptionId: string): Promise<void> {
-    const subscription = await this.databaseService.findSubscriptionByIdSafe(subscriptionId);
+  private async renewSubscriptionAfterPayment(
+    subscriptionId: string,
+    options: { activationOnly?: boolean; paymentId?: string; clinicId?: string } = {}
+  ): Promise<void> {
+    const maxAttempts = 3;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const subscription = await this.subscriptionStore.readSubscription(
+        subscriptionId,
+        options.clinicId ?? 'SYSTEM'
+      );
+      if (!subscription || !subscription.plan) {
+        return;
+      }
+      if (
+        options.paymentId &&
+        hasSubscriptionRenewalStamp(subscription.metadata, options.paymentId)
+      ) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'Subscription already renewed for this payment; skipping',
+          'BillingService',
+          { subscriptionId, paymentId: options.paymentId }
+        );
+        return;
+      }
 
-    if (!subscription || !subscription.plan) {
-      return;
-    }
+      const now = new Date();
+      const renewal = planSubscriptionRenewal(
+        subscription,
+        { ...(options.activationOnly ? { activationOnly: true } : {}) },
+        now
+      );
+      if (renewal.kind === 'noop') {
+        return;
+      }
 
-    const currentStatus = subscription.status;
-    const appointmentsRemaining = subscription.plan.isUnlimitedAppointments
-      ? null
-      : subscription.plan.appointmentsIncluded || null;
-
-    if (
-      (currentStatus as SubscriptionStatus) === SubscriptionStatus.INCOMPLETE ||
-      (currentStatus as SubscriptionStatus) === SubscriptionStatus.INCOMPLETE_EXPIRED ||
-      (currentStatus as SubscriptionStatus) === SubscriptionStatus.PAST_DUE
-    ) {
-      await this.databaseService.updateSubscriptionSafe(subscriptionId, {
-        status: SubscriptionStatus.ACTIVE,
-        appointmentsUsed: 0,
-        ...(appointmentsRemaining !== null && { appointmentsRemaining }),
+      const applied = await this.subscriptionStore.updateIfUnchanged(subscription, {
+        ...renewal.data,
+        ...(options.paymentId
+          ? {
+              metadata: withSubscriptionRenewalStamp(subscription.metadata, options.paymentId, now),
+            }
+          : {}),
       });
+      if (!applied) {
+        continue;
+      }
 
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        'Subscription activated after initial payment',
+        renewal.kind === 'activation'
+          ? 'Subscription activated after initial payment'
+          : 'Subscription renewed after payment',
         'BillingService',
         {
           subscriptionId,
-          periodStart: subscription.currentPeriodStart.toISOString(),
-          periodEnd: subscription.currentPeriodEnd.toISOString(),
+          paymentId: options.paymentId,
+          periodStart: renewal.periodStart.toISOString(),
+          periodEnd: renewal.periodEnd.toISOString(),
         }
       );
-
       await this.eventService.emit('billing.subscription.renewed', {
         subscriptionId,
-        periodStart: subscription.currentPeriodStart,
-        periodEnd: subscription.currentPeriodEnd,
+        periodStart: renewal.periodStart,
+        periodEnd: renewal.periodEnd,
       });
-
+      try {
+        await this.databaseService.invalidateEntityCache(
+          'subscription',
+          subscriptionId,
+          subscription.clinicId
+        );
+      } catch {
+        // Best effort: entries age out via their TTL.
+      }
+      await this.invalidateSubscriptionCaches(subscription.userId, subscriptionId);
       return;
     }
 
-    // Calculate new period
-    const newPeriodStart = new Date(subscription.currentPeriodEnd);
-    const newPeriodEnd = this.calculatePeriodEnd(
-      newPeriodStart,
-      subscription.plan.interval,
-      subscription.plan.intervalCount
+    throw new ConflictException(
+      'The subscription changed while the payment was being applied; it will be retried'
     );
+  }
 
-    // Reset appointment usage for new period
-    await this.databaseService.updateSubscriptionSafe(subscriptionId, {
-      currentPeriodStart: newPeriodStart,
-      currentPeriodEnd: newPeriodEnd,
-      status: SubscriptionStatus.ACTIVE,
-      appointmentsUsed: 0,
-      ...(appointmentsRemaining !== null && { appointmentsRemaining }),
-    });
-
-    await this.loggingService.log(
-      LogType.SYSTEM,
-      LogLevel.INFO,
-      'Subscription renewed after payment',
-      'BillingService',
-      {
-        subscriptionId,
-        newPeriodStart: newPeriodStart.toISOString(),
-        newPeriodEnd: newPeriodEnd.toISOString(),
-      }
-    );
-
-    await this.eventService.emit('billing.subscription.renewed', {
-      subscriptionId,
-      periodStart: newPeriodStart,
-      periodEnd: newPeriodEnd,
-    });
+  /**
+   * Drops the cached plan row and the user's plan lists (cached for 30 minutes) so a paid,
+   * cancelled or edited plan is reflected at once. Never throws (see invalidateCacheTagsSafely).
+   */
+  private async invalidateSubscriptionCaches(
+    userId: string,
+    subscriptionId: string
+  ): Promise<void> {
+    await this.invalidateCacheTagsSafely([
+      `user_subscriptions:${userId}`,
+      `user:${userId}`,
+      `billing_subscription:${subscriptionId}`,
+      `subscription:${subscriptionId}`,
+    ]);
   }
 
   /**
@@ -5662,66 +6534,91 @@ export class BillingService implements OnModuleInit {
     }
   }
 
-  async cancelSubscriptionAppointment(appointmentId: string) {
+  async cancelSubscriptionAppointment(appointmentId: string, requester?: BillingAccessContext) {
     const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
 
     // Type-safe check for subscription properties
     if (!appointment || !('subscriptionId' in appointment) || !appointment.subscriptionId) {
       return;
     }
+    const linkedSubscriptionId = appointment.subscriptionId;
 
-    // Get subscription with proper type checking
-    const subscription = await this.databaseService.findSubscriptionByIdSafe(
-      appointment.subscriptionId
+    // Get subscription with proper type checking (fresh: the quota decision needs the real row)
+    const subscription = await this.subscriptionStore.readSubscription(
+      linkedSubscriptionId,
+      appointment.clinicId ?? requester?.clinicId ?? ''
     );
 
     if (!subscription) {
       return;
     }
 
-    // Restore appointment quota if not unlimited
-    if (!subscription.plan?.isUnlimitedAppointments) {
-      await this.databaseService.updateSubscriptionSafe(appointment.subscriptionId, {
-        appointmentsUsed:
-          subscription.appointmentsRemaining !== null &&
-          subscription.appointmentsRemaining !== undefined
-            ? subscription.appointmentsRemaining + 1
-            : 1,
-        ...(subscription.appointmentsRemaining !== null &&
-          subscription.appointmentsRemaining !== undefined && {
-            appointmentsRemaining: subscription.appointmentsRemaining + 1,
-          }),
-      });
+    this.assertBillingEntityAccess(subscription, requester);
+
+    // Idempotent: the link is cleared by a conditional statement on `subscriptionId = X` and the
+    // quota slot is restored only when THAT statement matched - repeated calls restore nothing,
+    // and the slot never goes above the plan limit.
+    const outcome = await this.subscriptionStore.releaseAppointment({
+      subscription,
+      appointmentId,
+    });
+    if (outcome === 'not-linked') {
+      return;
     }
 
+    try {
+      await this.databaseService.invalidateEntityCache(
+        'subscription',
+        linkedSubscriptionId,
+        subscription.clinicId
+      );
+    } catch {
+      // Best effort: entries age out via their TTL.
+    }
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Subscription appointment cancelled, quota restored',
       'BillingService',
       {
-        subscriptionId: appointment.subscriptionId,
+        subscriptionId: linkedSubscriptionId,
         appointmentId,
       }
     );
 
     await this.eventService.emit('billing.appointment.cancelled', {
-      subscriptionId: appointment.subscriptionId,
+      subscriptionId: linkedSubscriptionId,
       appointmentId,
     });
 
-    await this.invalidateUserSubscriptionCaches(subscription.userId);
+    await this.invalidateSubscriptionCaches(subscription.userId, linkedSubscriptionId);
   }
 
-  async getActiveUserSubscription(userId: string, clinicId: string) {
+  async getActiveUserSubscription(
+    userId: string,
+    clinicId?: string,
+    requester?: BillingAccessContext
+  ) {
+    if (requester?.role === 'PATIENT' && requester.userId !== userId) {
+      throw new BadRequestException('You can only view your own subscriptions');
+    }
+
+    // The guard-validated clinic wins over a client-supplied one; only SUPER_ADMIN (who has no
+    // clinic of its own) may name any clinic.
+    const scopedClinicId =
+      requester?.role !== 'SUPER_ADMIN' && requester?.clinicId ? requester.clinicId : clinicId;
+
     const subscriptions = await this.databaseService.findSubscriptionsSafe({
       userId,
-      clinicId,
+      ...(scopedClinicId ? { clinicId: scopedClinicId } : {}),
     });
 
     const now = new Date();
     const subscription = subscriptions
       .filter(sub => {
+        if (scopedClinicId && sub.clinicId !== scopedClinicId) {
+          return false;
+        }
         const status = sub.status as SubscriptionStatus;
         if (status !== SubscriptionStatus.ACTIVE && status !== SubscriptionStatus.TRIALING) {
           return false;
@@ -5731,7 +6628,7 @@ export class BillingService implements OnModuleInit {
       })
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
 
-    return subscription;
+    return subscription ? this.decorateSubscriptionRow(subscription) : subscription;
   }
 
   async getSubscriptionUsageStats(subscriptionId: string, requester?: BillingAccessContext) {
@@ -5784,7 +6681,7 @@ export class BillingService implements OnModuleInit {
       subscriptionId,
       subscription,
     });
-    await this.invalidateUserSubscriptionCaches(subscription.userId);
+    await this.invalidateSubscriptionCaches(subscription.userId, subscriptionId);
   }
 
   // ============ Analytics ============
@@ -5825,18 +6722,53 @@ export class BillingService implements OnModuleInit {
       if (endDate) where.createdAt.lte = endDate;
     }
 
-    const payments = await this.databaseService.findPaymentsSafe(where);
+    const [payments, invoices, activeSubscriptions] = await Promise.all([
+      this.databaseService.findPaymentsSafe(where),
+      this.databaseService.findInvoicesSafe({ clinicId }),
+      this.databaseService.findSubscriptionsSafe({
+        clinicId,
+        status: SubscriptionStatus.ACTIVE,
+      } as SubscriptionWhereInput),
+    ]);
 
-    const totalRevenue = payments.reduce(
-      (sum: number, payment: { amount: number }) => sum + payment.amount,
+    const totalPaise = payments.reduce(
+      (sum, payment) => sum + this.toPaise(Number(payment.amount) || 0),
       0
     );
+    const totalRevenue = this.fromPaise(totalPaise);
 
+    // Revenue per calendar month (IST), oldest first; `monthlyRevenue` is the current month.
+    const byMonth = new Map<string, { paise: number; paymentCount: number }>();
+    for (const payment of payments) {
+      const key = this.monthKeyInIST(new Date(payment.createdAt));
+      const bucket = byMonth.get(key) ?? { paise: 0, paymentCount: 0 };
+      byMonth.set(key, {
+        paise: bucket.paise + this.toPaise(Number(payment.amount) || 0),
+        paymentCount: bucket.paymentCount + 1,
+      });
+    }
+    const revenueByMonth = [...byMonth.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([month, bucket]) => ({
+        month,
+        revenue: this.fromPaise(bucket.paise),
+        paymentCount: bucket.paymentCount,
+      }));
+    const currentMonth = this.monthKeyInIST(new Date());
+
+    // Full payment rows are PHI and were never needed by the dashboards: summary figures only.
     return {
       totalRevenue,
       paymentCount: payments.length,
-      averagePayment: payments.length > 0 ? totalRevenue / payments.length : 0,
-      payments,
+      averagePayment:
+        payments.length > 0 ? this.fromPaise(Math.round(totalPaise / payments.length)) : 0,
+      monthlyRevenue: this.fromPaise(byMonth.get(currentMonth)?.paise ?? 0),
+      revenueByMonth,
+      activeSubscriptions: activeSubscriptions.length,
+      totalInvoices: invoices.length,
+      pendingInvoices: invoices.filter(
+        invoice => String(invoice.status) === String(InvoiceStatus.PENDING)
+      ).length,
     };
   }
 
@@ -6428,25 +7360,108 @@ export class BillingService implements OnModuleInit {
 
   // ============ Insurance Claims ============
 
-  async createInsuranceClaim(data: CreateInsuranceClaimDto) {
+  /** Patient row owned by the given user (null when the user has no patient profile). */
+  private async findOwnPatientId(userId: string): Promise<string | null> {
+    const patient = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return (await typedClient.patient.findFirst({
+        where: { userId } as PrismaDelegateArgs,
+        select: { id: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as { id: string } | null;
+    });
+    return patient?.id ?? null;
+  }
+
+  /**
+   * Staff may file claims only for a patient who belongs to the guard-validated clinic
+   * (primary clinic or an appointment there).
+   */
+  private async assertPatientInClinic(patientId: string, clinicId: string): Promise<void> {
+    const belongs = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      const patient = (await typedClient.patient.findFirst({
+        where: {
+          id: patientId,
+          OR: [{ user: { primaryClinicId: clinicId } }, { appointments: { some: { clinicId } } }],
+        } as PrismaDelegateArgs,
+        select: { id: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as { id: string } | null;
+      return Boolean(patient);
+    });
+    if (!belongs) {
+      throw new NotFoundException('Patient not found');
+    }
+  }
+
+  private async assertClaimLinksOwnedByPatient(
+    data: CreateInsuranceClaimDto,
+    patientId: string,
+    userId: string | undefined,
+    clinicId: string
+  ): Promise<void> {
+    if (!data.appointmentId && !data.invoiceId) {
+      return;
+    }
+    const ok = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      if (data.appointmentId) {
+        const appointment = await typedClient.appointment.findFirst({
+          where: { id: data.appointmentId, patientId, clinicId } as PrismaDelegateArgs,
+          select: { id: true } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+        if (!appointment) return false;
+      }
+      if (data.invoiceId) {
+        const invoice = await typedClient.invoice.findFirst({
+          where: { id: data.invoiceId, userId, clinicId } as PrismaDelegateArgs,
+          select: { id: true } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+        if (!invoice) return false;
+      }
+      return true;
+    });
+    if (!ok) {
+      throw new NotFoundException('Appointment or invoice not found');
+    }
+  }
+
+  async createInsuranceClaim(data: CreateInsuranceClaimDto, requester: BillingAccessContext) {
+    const clinicId = requester.clinicId;
+    if (!clinicId || !requester.role) {
+      throw new NotFoundException('Clinic context required');
+    }
+
+    if (requester.role === 'PATIENT') {
+      // Fail closed: a patient can only claim for their own patient profile, and only against
+      // their own appointment / invoice.
+      const ownPatientId = requester.userId ? await this.findOwnPatientId(requester.userId) : null;
+      if (!ownPatientId || data.patientId !== ownPatientId) {
+        throw new NotFoundException('Patient not found');
+      }
+      await this.assertClaimLinksOwnedByPatient(data, ownPatientId, requester.userId, clinicId);
+    } else if (requester.role !== 'SUPER_ADMIN') {
+      await this.assertPatientInClinic(data.patientId, clinicId);
+    }
+
     return await this.databaseService.executeHealthcareWrite(
       async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
         return await typedClient.insuranceClaim.create({
           data: {
             ...data,
+            clinicId,
             status: 'SUBMITTED',
             submittedAt: new Date(),
           } as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
       },
       {
-        userId: 'system',
-        clinicId: data.clinicId,
+        userId: requester.userId ?? 'system',
+        clinicId,
         resourceType: 'INSURANCE_CLAIM',
         operation: 'CREATE',
         resourceId: 'new',
-        userRole: 'system',
+        userRole: requester.role,
         details: { claimNumber: data.claimNumber, amount: data.amount },
       }
     );
@@ -6457,7 +7472,8 @@ export class BillingService implements OnModuleInit {
       async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
         return await typedClient.insuranceClaim.update({
-          where: { id } as PrismaDelegateArgs,
+          // clinicId in the where: a claim of another clinic can never be updated by id alone.
+          where: { id, clinicId } as PrismaDelegateArgs,
           data: {
             ...data,
             responseAt: data.responseAt ? new Date(data.responseAt) : undefined,
@@ -6476,11 +7492,20 @@ export class BillingService implements OnModuleInit {
     );
   }
 
-  async getInsuranceClaims(clinicId: string) {
+  async getInsuranceClaims(clinicId: string, requester?: BillingAccessContext) {
+    let patientScope: { patientId?: string } = {};
+    if (requester?.role === 'PATIENT') {
+      // Fail closed: no patient profile -> no claims.
+      const ownPatientId = requester.userId ? await this.findOwnPatientId(requester.userId) : null;
+      if (!ownPatientId) {
+        return [];
+      }
+      patientScope = { patientId: ownPatientId };
+    }
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
       return await typedClient.insuranceClaim.findMany({
-        where: { clinicId } as PrismaDelegateArgs,
+        where: { clinicId, ...patientScope } as PrismaDelegateArgs,
         include: {
           patient: { include: { user: { select: { name: true } } } },
         } as PrismaDelegateArgs,

@@ -17,6 +17,7 @@ import type { RequestWithAuth } from '@core/types/guard.types';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { ClinicIsolationService } from '@infrastructure/database/internal/clinic-isolation.service';
 import { IS_PUBLIC_KEY } from '@core/decorators/public.decorator';
+import { resolveClinicUUID } from '@utils/clinic.utils';
 
 @Injectable()
 export class RbacGuard implements CanActivate {
@@ -177,7 +178,17 @@ export class RbacGuard implements CanActivate {
   }
 
   /**
-   * Extract and validate clinic ID from request against user's actual access
+   * Extract and validate clinic ID from request against user's actual access.
+   *
+   * Always returns the canonical clinic UUID, never a public short code (e.g.
+   * "CL0002"). Callers (RbacService.checkPermission's cache key and
+   * getUserRoles' clinic-scoped DB lookups) compare this value against
+   * UserRole.clinicId / ClinicAdmin.clinicId, which store UUIDs. Returning an
+   * unresolved short code here made the exact same permission check produce
+   * two different cache keys depending on which header/body/param the clinic
+   * id happened to come from on a given request, and made getUserRoles'
+   * DB query silently match zero rows for a short-code clinicId even when a
+   * real UserRole row existed, incorrectly denying access.
    */
   private async extractClinicId(
     request: RequestWithAuth,
@@ -197,6 +208,7 @@ export class RbacGuard implements CanActivate {
     if (requirementClinicId) {
       // Validate requirement clinic ID against user's access
       const userId = request.user?.id;
+      let validatedClinicUuid: string | undefined;
       if (userId) {
         const accessResult = await this.clinicIsolationService.validateClinicAccess(
           userId,
@@ -212,8 +224,9 @@ export class RbacGuard implements CanActivate {
           );
           throw new ForbiddenException(`Access denied for clinic: ${requirementClinicId}`);
         }
+        validatedClinicUuid = accessResult.clinicContext?.clinicId;
       }
-      return requirementClinicId;
+      return validatedClinicUuid ?? this.resolveCanonicalClinicId(requirementClinicId);
     }
 
     // Find first available clinic ID from sources
@@ -222,6 +235,7 @@ export class RbacGuard implements CanActivate {
     // If we have a clinic ID, validate it against user's actual access
     if (extractedClinicId && typeof extractedClinicId === 'string') {
       const userId = request.user?.id;
+      let validatedClinicUuid: string | undefined;
       if (userId) {
         const accessResult = await this.clinicIsolationService.validateClinicAccess(
           userId,
@@ -237,10 +251,34 @@ export class RbacGuard implements CanActivate {
           );
           throw new ForbiddenException(`Access denied for clinic: ${extractedClinicId}`);
         }
+        // validateClinicAccess already resolved the clinic (UUID or public code) to its
+        // canonical context; reuse that instead of another uncached clinic lookup per request.
+        validatedClinicUuid = accessResult.clinicContext?.clinicId;
       }
+      return validatedClinicUuid ?? this.resolveCanonicalClinicId(extractedClinicId);
     }
 
     return extractedClinicId;
+  }
+
+  /**
+   * Resolve a clinic short code or UUID to its canonical UUID. Falls back to
+   * the original value on lookup failure so a transient DB error degrades to
+   * the pre-fix behavior instead of blocking the request outright.
+   */
+  private async resolveCanonicalClinicId(clinicId: string): Promise<string> {
+    try {
+      return await resolveClinicUUID(this.databaseService, clinicId);
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        `Failed to resolve canonical clinic id for ${clinicId}; using original value`,
+        'RbacGuard',
+        { clinicId, error: error instanceof Error ? error.message : String(error) }
+      );
+      return clinicId;
+    }
   }
 
   /**

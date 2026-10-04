@@ -167,6 +167,34 @@ export class NotificationPreferenceController {
     return await this.preferenceService.updatePreferences(userId, updateDto);
   }
 
+  /** Bare-route alias of `PUT /notification-preferences/me` (the web settings hook calls it). */
+  @Put()
+  @Roles(
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.RECEPTIONIST,
+    Role.PHARMACIST,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN
+  )
+  @ApiOperation({
+    summary: 'Update my notification preferences (alias of PUT /me)',
+    description: 'Creates the preferences row when the user has none yet.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Notification preferences updated successfully',
+    type: NotificationPreferenceResponseDto as unknown as new () => NotificationPreferenceResponseDto,
+  })
+  async updateMyPreferencesAlias(
+    @Request() req: ClinicAuthenticatedRequest,
+    @Body() updateDto: UpdateNotificationPreferenceDto
+  ): Promise<NotificationPreferenceResponseDto> {
+    return this.updateMyPreferences(req, updateDto);
+  }
+
   @Put(':userId')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @ApiOperation({
@@ -223,6 +251,29 @@ export class NotificationPreferenceController {
       throw new Error('User ID not found in token');
     }
     return this.preferenceService.deletePreferences(userId);
+  }
+
+  /** Bare-route alias of `DELETE /notification-preferences/me`. */
+  @Delete()
+  @Roles(
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.RECEPTIONIST,
+    Role.PHARMACIST,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN
+  )
+  @ApiOperation({
+    summary: 'Delete my notification preferences (alias of DELETE /me)',
+  })
+  @ApiResponse({
+    status: HttpStatus.NO_CONTENT,
+    description: 'Notification preferences deleted successfully',
+  })
+  async deleteMyPreferencesAlias(@Request() req: ClinicAuthenticatedRequest): Promise<void> {
+    return this.deleteMyPreferences(req);
   }
 
   @Delete(':userId')

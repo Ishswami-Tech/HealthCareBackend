@@ -26,7 +26,7 @@ import {
 } from '@services/video/video-consultation-tracker.service';
 import { AppointmentsService } from '@services/appointments/appointments.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
-import { parseIstDateTime } from '../../../../libs/utils/date-time.util';
+import { parseIstDateTime, formatDateTimeInIST } from '../../../../libs/utils/date-time.util';
 
 /** Represents the join-status of both parties for a single appointment */
 interface ParticipationStatus {
@@ -49,9 +49,33 @@ interface VideoConsultationWithAppointment extends VideoConsultationDbModel {
   }>;
 }
 
+/** A video visit the doctor started and has not completed yet */
+interface OpenVideoVisitRow {
+  id: string;
+  clinicId: string;
+  date: Date;
+  time: string;
+  startedAt: Date | null;
+  doctor: { userId: string } | null;
+  patient: {
+    user: { name: string | null; firstName: string | null; lastName: string | null } | null;
+  } | null;
+}
+
+/** Event sent to the doctor while a started video visit is still waiting to be completed */
+export const VIDEO_COMPLETION_PENDING_EVENT = 'video.consultation.completion_pending';
+
 @Injectable()
 export class VideoAppointmentSchedulerService {
   private readonly logger = new Logger(VideoAppointmentSchedulerService.name);
+
+  /** First reminder: this many minutes after the visit time (or after the doctor started it) */
+  private static readonly COMPLETE_REMINDER_AFTER_START_MINUTES = 45;
+  /** Last reminder: this many minutes before the visit expires */
+  private static readonly COMPLETE_REMINDER_BEFORE_EXPIRY_MINUTES = 30;
+  private static readonly COMPLETE_REMINDER_BATCH_SIZE = 200;
+  /** Upper bound of consultations one no-show cron tick examines */
+  private static readonly NO_SHOW_BATCH_SIZE = 200;
 
   /** Minutes after scheduled start before a confirmed video appointment expires */
   private get confirmedExpiryWindowMinutes(): number {
@@ -104,6 +128,8 @@ export class VideoAppointmentSchedulerService {
             },
           },
           include: { appointment: true },
+          orderBy: { createdAt: 'asc' },
+          take: VideoAppointmentSchedulerService.NO_SHOW_BATCH_SIZE,
         })) as unknown as VideoConsultationWithAppointment[];
         return results.filter(c => c.appointment != null);
       });
@@ -166,6 +192,8 @@ export class VideoAppointmentSchedulerService {
             },
           },
           include: { participants: true, appointment: true },
+          orderBy: { createdAt: 'asc' },
+          take: VideoAppointmentSchedulerService.NO_SHOW_BATCH_SIZE,
         })) as unknown as VideoConsultationWithAppointment[];
         return results.filter(c => c.appointment != null);
       });
@@ -257,6 +285,9 @@ export class VideoAppointmentSchedulerService {
             },
           },
           include: { appointment: true },
+          // Oldest first: the rows most likely to be past their window come first, so a
+          // backlog of still-open visits can never starve the expired ones behind it.
+          orderBy: { createdAt: 'asc' },
           take: VideoAppointmentSchedulerService.EXPIRY_BATCH_SIZE,
         })) as unknown as Array<{
           appointment?: {
@@ -332,6 +363,163 @@ export class VideoAppointmentSchedulerService {
       }
     } catch (error) {
       this.logger.error('Error handling expired confirmed video appointments', error);
+    }
+  }
+
+  /**
+   * Remind the doctor about video visits they started and have not completed.
+   *
+   * Only the doctor completes a video visit, and an open visit expires when its window
+   * ends (scheduled start + VIDEO_ACTIVE_WINDOW_MINUTES). So the doctor is told twice:
+   * once COMPLETE_REMINDER_AFTER_START_MINUTES after the visit began, and once
+   * COMPLETE_REMINDER_BEFORE_EXPIRY_MINUTES before it expires. A cache lock per visit and
+   * stage keeps it to one message each, across ticks and across instances.
+   */
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async handleOpenVideoVisitReminders(): Promise<void> {
+    try {
+      const now = new Date();
+      const windowMs = this.confirmedExpiryWindowMinutes * 60_000;
+      const lookbackStart = new Date(now.getTime() - 2 * 24 * 60 * 60_000);
+
+      const openVisits = await this.databaseService.executeHealthcareRead<OpenVideoVisitRow[]>(
+        async client => {
+          return (
+            client as unknown as {
+              appointment: {
+                findMany: (args: {
+                  where: Record<string, unknown>;
+                  select: Record<string, unknown>;
+                  orderBy: Record<string, 'asc' | 'desc'>;
+                  take: number;
+                }) => Promise<OpenVideoVisitRow[]>;
+              };
+            }
+          ).appointment.findMany({
+            where: {
+              type: 'VIDEO_CALL',
+              status: AppointmentStatus.IN_PROGRESS,
+              date: { gte: lookbackStart, lte: now },
+            },
+            select: {
+              id: true,
+              clinicId: true,
+              date: true,
+              time: true,
+              startedAt: true,
+              doctor: { select: { userId: true } },
+              patient: {
+                select: { user: { select: { name: true, firstName: true, lastName: true } } },
+              },
+            },
+            // Deterministic order: without it a busy day could return the same 200 rows every
+            // tick and never reach the rest. Oldest visits first (they expire first).
+            orderBy: { date: 'asc' },
+            take: VideoAppointmentSchedulerService.COMPLETE_REMINDER_BATCH_SIZE,
+          });
+        }
+      );
+
+      if (!openVisits || openVisits.length === 0) return;
+
+      for (const visit of openVisits) {
+        const doctorUserId = visit.doctor?.userId;
+        const scheduledStart = parseIstDateTime(visit.date, visit.time);
+        if (!doctorUserId || !scheduledStart) continue;
+
+        // Same boundary the closure cron uses: the scheduled start plus the window. The stored
+        // confirmationExpiresAt is not read here because it can be stale after a reschedule.
+        const expiresAt = new Date(scheduledStart.getTime() + windowMs);
+        // Past the window the closure cron owns the visit; nothing left to remind about.
+        if (now.getTime() >= expiresAt.getTime()) continue;
+
+        const beganAt = Math.max(scheduledStart.getTime(), visit.startedAt?.getTime() ?? 0);
+        const firstDueAt =
+          beganAt + VideoAppointmentSchedulerService.COMPLETE_REMINDER_AFTER_START_MINUTES * 60_000;
+        const lastDueAt =
+          expiresAt.getTime() -
+          VideoAppointmentSchedulerService.COMPLETE_REMINDER_BEFORE_EXPIRY_MINUTES * 60_000;
+
+        const stage: 'last' | 'first' | null =
+          now.getTime() >= lastDueAt ? 'last' : now.getTime() >= firstDueAt ? 'first' : null;
+        if (!stage) continue;
+
+        try {
+          const lockTtlSeconds = Math.ceil(windowMs / 1000) + 3600;
+          const reminderLockKey = `video:complete-reminder:${visit.id}:${stage}`;
+          const isFirstSend = await this.cacheService.acquireLock(reminderLockKey, lockTtlSeconds);
+          if (!isFirstSend) continue;
+
+          const patientUser = visit.patient?.user;
+          const patientName =
+            patientUser?.name?.trim() ||
+            [patientUser?.firstName, patientUser?.lastName].filter(Boolean).join(' ').trim() ||
+            'your patient';
+          const expiresAtLabel = formatDateTimeInIST(expiresAt, {
+            year: undefined,
+            month: undefined,
+            day: undefined,
+            second: undefined,
+          });
+
+          try {
+            await this.eventService.emitEnterprise(VIDEO_COMPLETION_PENDING_EVENT, {
+              eventId: `video-completion-pending-${visit.id}-${stage}`,
+              eventType: VIDEO_COMPLETION_PENDING_EVENT,
+              category: EventCategory.APPOINTMENT,
+              priority: EventPriority.HIGH,
+              timestamp: now.toISOString(),
+              source: 'VideoAppointmentSchedulerService',
+              version: '1.0.0',
+              userId: doctorUserId,
+              clinicId: visit.clinicId,
+              metadata: {
+                appointmentId: visit.id,
+                doctorUserId,
+                patientName,
+                expiresAt: expiresAt.toISOString(),
+                expiresAtLabel,
+                stage,
+              },
+            } as EnterpriseEventPayload);
+          } catch (emitError) {
+            // The reminder was not delivered: free the lock so the next tick retries instead
+            // of silently dropping this stage for the rest of the visit window.
+            await this.releaseReminderLock(reminderLockKey);
+            throw emitError;
+          }
+
+          await this.loggingService.log(
+            LogType.BUSINESS,
+            LogLevel.INFO,
+            `Reminded doctor to complete open video visit ${visit.id} (${stage} reminder)`,
+            'VideoAppointmentSchedulerService.handleOpenVideoVisitReminders',
+            { appointmentId: visit.id, stage, expiresAt }
+          );
+        } catch (innerError) {
+          this.logger.error(
+            `Failed to send completion reminder for video visit ${visit.id}`,
+            innerError instanceof Error ? innerError.stack : String(innerError)
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.error('Error handling open video visit reminders', error);
+    }
+  }
+
+  /** Free a reminder lock; a failed release must never mask the error that caused it. */
+  private async releaseReminderLock(lockKey: string): Promise<void> {
+    try {
+      await this.cacheService.releaseLock(lockKey);
+    } catch (releaseError) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Failed to release reminder lock: ${releaseError instanceof Error ? releaseError.message : String(releaseError)}`,
+        'VideoAppointmentSchedulerService.releaseReminderLock',
+        { lockKey }
+      );
     }
   }
 
@@ -456,6 +644,7 @@ export class VideoAppointmentSchedulerService {
               findMany: (args: {
                 where: Record<string, unknown>;
                 select: Record<string, boolean>;
+                orderBy: Record<string, 'asc' | 'desc'>;
                 take: number;
               }) => Promise<
                 Array<{
@@ -477,6 +666,8 @@ export class VideoAppointmentSchedulerService {
             clinicId: true,
             paymentExpiresAt: true,
           },
+          // Most overdue first so a large backlog is worked off in order
+          orderBy: { paymentExpiresAt: 'asc' },
           take: 100,
         });
       });

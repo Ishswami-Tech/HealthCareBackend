@@ -55,6 +55,25 @@ export class RegisterMobileDeviceTokenDto {
   osVersion?: string;
 }
 
+/** Every authenticated role may own a phone / browser that receives push notifications. */
+export const DEVICE_OWNER_ROLES: readonly Role[] = [
+  Role.SUPER_ADMIN,
+  Role.CLINIC_ADMIN,
+  Role.CLINIC_LOCATION_HEAD,
+  Role.DOCTOR,
+  Role.ASSISTANT_DOCTOR,
+  Role.NURSE,
+  Role.RECEPTIONIST,
+  Role.PHARMACIST,
+  Role.THERAPIST,
+  Role.LAB_TECHNICIAN,
+  Role.FINANCE_BILLING,
+  Role.SUPPORT_STAFF,
+  Role.COUNSELOR,
+  Role.NUTRITIONIST,
+  Role.PATIENT,
+];
+
 @ApiTags('devices')
 @ApiBearerAuth()
 @ApiSecurity('bearer')
@@ -66,18 +85,7 @@ export class DeviceTokenController {
 
   @Post('me/token')
   @HttpCode(HttpStatus.OK)
-  @Roles(
-    Role.PATIENT,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
-    Role.NURSE,
-    Role.THERAPIST,
-    Role.COUNSELOR,
-    Role.PHARMACIST,
-    Role.RECEPTIONIST,
-    Role.CLINIC_ADMIN,
-    Role.SUPER_ADMIN
-  )
+  @Roles(...DEVICE_OWNER_ROLES)
   @ApiOperation({
     summary: 'Register mobile push token for the authenticated user',
     description:
@@ -109,18 +117,7 @@ export class DeviceTokenController {
 
   @Delete('me/token')
   @HttpCode(HttpStatus.OK)
-  @Roles(
-    Role.PATIENT,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
-    Role.NURSE,
-    Role.THERAPIST,
-    Role.COUNSELOR,
-    Role.PHARMACIST,
-    Role.RECEPTIONIST,
-    Role.CLINIC_ADMIN,
-    Role.SUPER_ADMIN
-  )
+  @Roles(...DEVICE_OWNER_ROLES)
   @ApiOperation({
     summary: 'Unregister mobile push token (e.g. on logout)',
   })

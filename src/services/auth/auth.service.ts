@@ -1,5 +1,5 @@
 import { nowIso } from '@utils/date-time.util';
-import { Inject, Injectable, forwardRef } from '@nestjs/common';
+import { Inject, Injectable, UnauthorizedException, forwardRef } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@config/config.service';
 import { DatabaseService } from '@infrastructure/database/database.service';
@@ -328,8 +328,11 @@ export class AuthService {
       // Invalidate user profile cache
       await this.cacheService.invalidatePatientCache(userId, clinicId);
 
-      // Invalidate user-specific caches
-      await this.cacheService.invalidateCacheByPattern(`user:${userId}:*`);
+      // Invalidate user-specific caches. Entries written by the HealthcareCacheInterceptor are
+      // clinic-prefixed (`clinic:<id>:user:<userId>:...`), so the tag is the reliable path and the
+      // pattern needs a leading `*` to reach the prefix.
+      await this.cacheService.invalidateCacheByTag(`user:${userId}`);
+      await this.cacheService.invalidateCacheByPattern(`*user:${userId}:*`);
 
       // Invalidate clinic-specific caches if clinicId provided
       if (clinicId) {
@@ -733,6 +736,9 @@ export class AuthService {
 
       // ✅ SECURITY: Clear failed login attempts on successful login
       await this.cacheService.del(`failed_login:${loginDto.email}`);
+
+      // SECURITY: Deactivated / self-deleted accounts cannot sign in again.
+      this.assertAccountActiveForAuth(user, 'AuthService.login');
 
       // SECURITY: Validate body clinicId doesn't mismatch header
       if (loginDto.clinicId && clinicIdFromHeader && loginDto.clinicId !== clinicIdFromHeader) {
@@ -1356,7 +1362,7 @@ export class AuthService {
           otp: this.maskOtp(otpCode),
           otpLength: otpCode.length,
           clinicId,
-          result,
+          result: { ...result, otp: this.maskOtp(result.otp) },
         });
 
         if (!result.success) {
@@ -1376,7 +1382,7 @@ export class AuthService {
           otp: this.maskOtp(otpCode),
           otpLength: otpCode.length,
           clinicId,
-          result,
+          result: { ...result, otp: this.maskOtp(result.otp) },
         });
       }
 
@@ -1557,6 +1563,9 @@ export class AuthService {
   ): Promise<AuthResponse> {
     // Legacy cleanup: Also try to delete OTP stored by user ID if it exists (legacy support)
     this.cacheService.del(`otp:${user.id}`).catch(() => {});
+
+    // SECURITY: Deactivated / self-deleted accounts cannot sign in again.
+    this.assertAccountActiveForAuth(user, 'AuthService.verifyOtp');
 
     if (verifyDto.clinicId && clinicIdFromHeader && verifyDto.clinicId !== clinicIdFromHeader) {
       throw this.errors.validationError(
@@ -2053,6 +2062,40 @@ export class AuthService {
    * @returns Resolved clinic UUID
    * @throws HealthcareError if clinic not found or user doesn't have access
    */
+  /**
+   * Reject sign-in for accounts that were deactivated (admin action or the
+   * user's own "Delete account" request via POST /user/me/deactivate).
+   * Called only after the credential (password / OTP / Google token) has been
+   * verified, so it does not leak account existence.
+   */
+  private assertAccountActiveForAuth(user: unknown, context: string): void {
+    if (!user || typeof user !== 'object') return;
+    const record = user as { isActive?: unknown; deletedAt?: unknown };
+    if (
+      record.isActive === false ||
+      (record.deletedAt !== null && record.deletedAt !== undefined)
+    ) {
+      void this.logging.log(
+        LogType.SECURITY,
+        LogLevel.WARN,
+        'Sign-in attempt for deactivated account',
+        context,
+        { userId: (user as { id?: unknown }).id }
+      );
+      throw new UnauthorizedException(
+        'This account has been deactivated. Please contact your clinic to restore access.'
+      );
+    }
+  }
+
+  /**
+   * Revoke every active session for a user (used when an account is deactivated).
+   * Best effort: returns the number of sessions revoked.
+   */
+  async revokeAllSessionsForUser(userId: string): Promise<number> {
+    return this.sessionService.revokeAllUserSessions(userId);
+  }
+
   private async validateClinicAccessForAuth(
     userId: string,
     clinicId: string,
@@ -2682,6 +2725,9 @@ export class AuthService {
           { userId: fullUser.id, email: fullUser.email }
         );
       }
+
+      // SECURITY: Deactivated / self-deleted accounts cannot sign in again.
+      this.assertAccountActiveForAuth(fullUser, 'AuthService.authenticateWithGoogle');
 
       if (
         fullUser &&

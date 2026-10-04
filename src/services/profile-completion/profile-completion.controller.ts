@@ -24,6 +24,8 @@ import {
   ProfileCompletionStatusDto,
   ProfileCompletionFieldsDto,
   CompleteProfileRequestDto,
+  UpdateProfileRequestDto,
+  omitNullishFields,
 } from '@dtos/profile-completion.dto';
 import { LoggingService } from '@infrastructure/logging';
 import { LogLevel, LogType } from '@core/types';
@@ -252,7 +254,7 @@ export class ProfileCompletionController {
   })
   async updateProfile(
     @Request() request: FastifyRequestWithUser,
-    @Body() requestDto: CompleteProfileRequestDto
+    @Body() requestDto: UpdateProfileRequestDto
   ): Promise<ProfileCompletionDto> {
     try {
       const userId = request.user?.id || request.user?.sub || '';
@@ -261,10 +263,11 @@ export class ProfileCompletionController {
         throw new BadRequestException('User ID not found in request');
       }
 
-      // Update profile with validation
+      // Update profile with validation. Explicit nulls pass the DTO's @IsOptional() checks
+      // but must never reach the user update, so only supplied values are forwarded.
       const updatedUser = await this.usersService.updateUserProfileWithValidation(
         userId,
-        requestDto as unknown as Record<string, unknown>
+        omitNullishFields(requestDto)
       );
 
       return {

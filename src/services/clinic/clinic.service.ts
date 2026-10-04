@@ -15,6 +15,8 @@ import { CacheService } from '@infrastructure/cache/cache.service';
 import { EventService } from '@infrastructure/events/event.service';
 import { ConfigService } from '@config/config.service';
 import { HealthcareErrorsService } from '@core/errors/healthcare-errors.service';
+import { HealthcareError } from '@core/errors/healthcare-error.class';
+import { ErrorCode } from '@core/errors/error-codes.enum';
 import {
   LogType,
   LogLevel,
@@ -30,12 +32,89 @@ import type {
   ClinicLocationResponseDto,
 } from '@core/types/clinic.types';
 import type { PatientWithUser, Doctor, ClinicAdmin, Clinic } from '@core/types';
+import {
+  nextAvailableSlotFromWorkingHours,
+  workingHoursToSchedule,
+  type DoctorScheduleEntry,
+} from '@services/doctors/doctor-schedule.util';
+import { ageFromDateOfBirth } from '@infrastructure/database/methods/appointment.methods';
 
 /** Patient row for staff-facing lists, enriched with OPD visit counters. */
 export type DoctorPatientListItem = PatientWithUser & {
   totalVisits: number;
   lastVisit: Date | null;
+  /** Whole years from the user's date of birth; null when unknown. */
+  age: number | null;
+  /** Earliest upcoming SCHEDULED / CONFIRMED visit in this clinic; null when none. */
+  nextAppointment: Date | null;
 };
+
+/** Filters of the staff patient lists (gender / age band / active flag are matched in memory). */
+export interface ClinicPatientListFilters {
+  search?: string;
+  limit?: number;
+  offset?: number;
+  gender?: string;
+  /** "18-30", "60+" or "0-17" (whole years, inclusive). */
+  ageRange?: string;
+  isActive?: boolean;
+}
+
+/** Parsed "min-max" / "min+" age band; null when the text is not an age range. */
+export function parseAgeRange(value: string | undefined): { min: number; max: number } | null {
+  if (!value) return null;
+  const text = value.trim();
+  const open = /^(\d{1,3})\s*\+$/.exec(text);
+  if (open) return { min: Number(open[1]), max: Number.MAX_SAFE_INTEGER };
+  const closed = /^(\d{1,3})\s*-\s*(\d{1,3})$/.exec(text);
+  if (!closed) return null;
+  const min = Number(closed[1]);
+  const max = Number(closed[2]);
+  return max >= min ? { min, max } : null;
+}
+
+/** Keys of the clinic form that are not Clinic columns and must never reach prisma.update. */
+const CLINIC_LOCATION_FIELDS = ['city', 'state', 'country', 'zipCode'] as const;
+const CLINIC_SETTINGS_FIELDS = ['operatingHours', 'status', 'type'] as const;
+
+/**
+ * One-level deep merge of the stored clinic settings with the incoming patch: nested objects are
+ * merged key by key (so a page that edits `paymentSettings` cannot wipe `opdControls`), arrays and
+ * scalars are replaced, `null` deletes a key.
+ */
+export function mergeClinicSettings(
+  existing: unknown,
+  patch: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  if (!patch) return undefined;
+  const base: Record<string, unknown> =
+    existing && typeof existing === 'object' && !Array.isArray(existing)
+      ? { ...(existing as Record<string, unknown>) }
+      : {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) {
+      delete base[key];
+      continue;
+    }
+    const current = base[key];
+    if (
+      value &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      current &&
+      typeof current === 'object' &&
+      !Array.isArray(current)
+    ) {
+      base[key] = {
+        ...(current as Record<string, unknown>),
+        ...(value as Record<string, unknown>),
+      };
+    } else {
+      base[key] = value;
+    }
+  }
+  return base;
+}
 import type { ClinicPatientOptions, ClinicPatientResult } from '@core/types/database.types';
 import type { AssignClinicAdminDto, ClinicStatsResponseDto } from '@dtos/clinic.dto';
 import type {
@@ -163,6 +242,32 @@ export class ClinicService {
   async createClinic(
     data: ClinicCreateInput & {
       settings?: Record<string, unknown>;
+      /** Main location of the new clinic (the super-admin form sends the address details here). */
+      mainLocation?: {
+        name?: string;
+        address?: string;
+        city?: string;
+        state?: string;
+        country?: string;
+        zipCode?: string;
+        phone?: string;
+        email?: string;
+        timezone?: string;
+        latitude?: number;
+        longitude?: number;
+        workingHours?: unknown;
+        settings?: Record<string, unknown>;
+      };
+      city?: string;
+      state?: string;
+      country?: string;
+      zipCode?: string;
+      /** Clinic admin to assign: a User id or email of a CLINIC_ADMIN user. */
+      clinicAdminIdentifier?: string;
+      /** Role of the creator; a CLINIC_ADMIN creator becomes the clinic's admin when no identifier is sent. */
+      createdByRole?: string;
+      type?: string;
+      operatingHours?: string;
       communicationConfig?: {
         email?: {
           primary?: {
@@ -230,6 +335,12 @@ export class ClinicService {
         dataWithDefaults.db_connection_string ||
         this.databaseService.constructClinicDatabaseUrl(databaseName);
 
+      // `type` / `operatingHours` have no Clinic column: they live in settings.
+      const settings = mergeClinicSettings(data.settings ?? {}, {
+        ...(data.type ? { clinicType: data.type } : {}),
+        ...(data.operatingHours ? { operatingHours: data.operatingHours } : {}),
+      });
+
       const clinic = await this.databaseService.executeHealthcareWrite<Clinic>(
         async client => {
           const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
@@ -251,7 +362,7 @@ export class ClinicService {
               language: data.language,
               createdBy: data.createdBy,
               isActive: data.isActive ?? true,
-              ...(data.settings && { settings: data.settings as never }),
+              ...(settings && Object.keys(settings).length > 0 && { settings: settings as never }),
             } as PrismaDelegateArgs,
             include: {
               locations: {
@@ -279,6 +390,9 @@ export class ClinicService {
         'ClinicService',
         { clinicId: clinic.id }
       );
+
+      const mainLocation = await this.createMainLocation(clinic, data);
+      const clinicAdminId = await this.assignInitialClinicAdmin(clinic.id, data);
 
       // Save communication configuration if provided
       const dataWithCommConfig = data as ClinicCreateInput & {
@@ -463,7 +577,11 @@ export class ClinicService {
         },
       });
 
-      return clinic as ClinicResponseDto;
+      return {
+        ...(clinic as unknown as Record<string, unknown>),
+        ...(mainLocation ? { mainLocation } : {}),
+        ...(clinicAdminId ? { clinicAdminId } : {}),
+      } as unknown as ClinicResponseDto;
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
@@ -474,6 +592,177 @@ export class ClinicService {
       );
       throw error;
     }
+  }
+
+  /** Writes city/state/country/zipCode from the clinic form onto the clinic's main (first active) location. */
+  private async updateMainLocationAddress(
+    clinicId: string,
+    patch: Record<string, string>
+  ): Promise<void> {
+    const location = await this.databaseService.executeHealthcareRead<{ id: string } | null>(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return (await typedClient.clinicLocation.findFirst({
+          where: { clinicId, isActive: true, deletedAt: null },
+          orderBy: { createdAt: 'asc' },
+          select: { id: true },
+        } as PrismaDelegateArgs)) as { id: string } | null;
+      }
+    );
+    if (!location) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'Clinic address fields ignored: the clinic has no active location yet',
+        'ClinicService',
+        { clinicId, fields: Object.keys(patch) }
+      );
+      return;
+    }
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return await typedClient.clinicLocation.update({
+          where: { id: location.id },
+          data: { ...patch, updatedAt: new Date() },
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId: 'system',
+        clinicId,
+        resourceType: 'CLINIC_LOCATION',
+        operation: 'UPDATE',
+        resourceId: location.id,
+        userRole: 'system',
+        details: { updateFields: Object.keys(patch), source: 'updateClinic' },
+      }
+    );
+    if (this.cacheService) {
+      await this.cacheService.invalidateCacheByTag('clinic_locations');
+      await this.cacheService.invalidateCacheByTag(`clinic_location:${location.id}`);
+    }
+  }
+
+  /**
+   * The clinic's first location, from `mainLocation` or the top-level city/state/country/zipCode
+   * the older form sends. Skipped when neither carries a city. Same row shape and id scheme as
+   * ClinicLocationService.createClinicLocation.
+   */
+  private async createMainLocation(
+    clinic: Clinic,
+    data: Parameters<ClinicService['createClinic']>[0]
+  ): Promise<ClinicLocationResponseDto | null> {
+    const source = data.mainLocation ?? {};
+    const city = source.city ?? data.city;
+    const state = source.state ?? data.state;
+    const country = source.country ?? data.country;
+    if (!city || !state || !country) return null;
+
+    const workingHours =
+      typeof source.workingHours === 'string'
+        ? source.workingHours
+        : source.workingHours
+          ? JSON.stringify(source.workingHours)
+          : '9:00 AM - 5:00 PM';
+
+    const location = await this.databaseService.executeHealthcareWrite<ClinicLocationResponseDto>(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return (await typedClient.clinicLocation.create({
+          data: {
+            clinicId: clinic.id,
+            locationId: `LOC-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+            name: source.name?.trim() || `${clinic.name} - Main`,
+            address: source.address?.trim() || clinic.address,
+            city,
+            state,
+            country,
+            zipCode: source.zipCode ?? data.zipCode ?? null,
+            phone: source.phone ?? clinic.phone,
+            email: source.email ?? clinic.email,
+            timezone: source.timezone ?? data.timezone ?? 'UTC',
+            ...(source.latitude !== undefined && { latitude: source.latitude }),
+            ...(source.longitude !== undefined && { longitude: source.longitude }),
+            workingHours,
+            ...(source.settings && { settings: source.settings as never }),
+            isActive: true,
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs)) as unknown as ClinicLocationResponseDto;
+      },
+      {
+        userId: data.createdBy || 'system',
+        clinicId: clinic.id,
+        resourceType: 'CLINIC_LOCATION',
+        operation: 'CREATE',
+        resourceId: '',
+        userRole: 'system',
+        details: { source: 'createClinic.mainLocation' },
+      }
+    );
+    return location;
+  }
+
+  /**
+   * Links the clinic to its first admin: the user named by `clinicAdminIdentifier` (User id or
+   * email, must hold the CLINIC_ADMIN role), or the creator when a clinic admin creates a clinic.
+   * Fails closed on an unknown or non-admin identifier (404 / 409) instead of leaving the clinic
+   * without an owner silently.
+   */
+  private async assignInitialClinicAdmin(
+    clinicId: string,
+    data: { clinicAdminIdentifier?: string; createdBy: string; createdByRole?: string }
+  ): Promise<string | null> {
+    const identifier = data.clinicAdminIdentifier?.trim();
+    const fallbackToCreator =
+      !identifier && String(data.createdByRole || '').toUpperCase() === String(Role.CLINIC_ADMIN);
+    if (!identifier && !fallbackToCreator) return null;
+
+    const user = await this.databaseService.executeHealthcareRead<{
+      id: string;
+      role: string;
+    } | null>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return (await typedClient.user.findFirst({
+        where: identifier
+          ? { OR: [{ id: identifier }, { email: identifier.toLowerCase() }] }
+          : { id: data.createdBy },
+        select: { id: true, role: true },
+      } as PrismaDelegateArgs)) as { id: string; role: string } | null;
+    });
+
+    if (!user) {
+      throw new NotFoundException('Specified clinic admin user was not found');
+    }
+    if (String(user.role).toUpperCase() !== String(Role.CLINIC_ADMIN)) {
+      throw new HealthcareError(
+        ErrorCode.BUSINESS_RULE_VIOLATION,
+        'The specified user is not a Clinic Admin',
+        HttpStatus.CONFLICT,
+        { userId: user.id }
+      );
+    }
+
+    const admin = await this.databaseService.executeHealthcareWrite<ClinicAdmin>(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        // ClinicAdmin.userId is unique: an admin already attached elsewhere is moved to this clinic.
+        return (await typedClient.clinicAdmin.upsert({
+          where: { userId: user.id },
+          create: { userId: user.id, clinicId, isOwner: true },
+          update: { clinicId, isOwner: true },
+        } as PrismaDelegateArgs)) as unknown as ClinicAdmin;
+      },
+      {
+        userId: data.createdBy || 'system',
+        clinicId,
+        resourceType: 'CLINIC_ADMIN',
+        operation: 'CREATE',
+        resourceId: user.id,
+        userRole: 'system',
+        details: { source: 'createClinic.clinicAdminIdentifier' },
+      }
+    );
+    return admin.id;
   }
 
   async getClinicBySubdomain(
@@ -579,8 +868,49 @@ export class ClinicService {
   ): Promise<ClinicResponseDto> {
     try {
       // Extract communicationConfig from data
-      const { communicationConfig, ...clinicUpdateData } = data;
-      const sanitizedSettings = this.sanitizeClinicSettings(clinicUpdateData.settings);
+      const { communicationConfig, ...rawUpdateData } = data;
+      const clinicUpdateData: Record<string, unknown> = { ...rawUpdateData };
+
+      // The admin forms send address details and display settings that are not Clinic columns:
+      // city/state/country/zipCode go to the main location, operatingHours/status/type to settings.
+      // Spreading them into prisma.update used to fail every clinic save with "Unknown argument".
+      const locationPatch: Record<string, string> = {};
+      for (const field of CLINIC_LOCATION_FIELDS) {
+        const value = clinicUpdateData[field];
+        delete clinicUpdateData[field];
+        if (typeof value === 'string' && value.trim()) locationPatch[field] = value.trim();
+      }
+      const settingsPatch: Record<string, unknown> = {};
+      for (const field of CLINIC_SETTINGS_FIELDS) {
+        const value = clinicUpdateData[field];
+        delete clinicUpdateData[field];
+        if (value !== undefined) settingsPatch[field === 'type' ? 'clinicType' : field] = value;
+      }
+      const incomingSettings = this.sanitizeClinicSettings(
+        clinicUpdateData['settings'] as Record<string, unknown> | undefined
+      );
+      delete clinicUpdateData['settings'];
+      const settingsToMerge =
+        incomingSettings || Object.keys(settingsPatch).length > 0
+          ? { ...(incomingSettings ?? {}), ...settingsPatch }
+          : undefined;
+
+      // Settings are merged into the stored JSON, never replaced wholesale: the super-admin page
+      // edits a few keys and must not wipe opdControls / operatingWindowsByDay / paymentSettings.
+      const existing = settingsToMerge
+        ? await this.databaseService.executeHealthcareRead<{ settings: unknown } | null>(
+            async client => {
+              const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+              return (await typedClient.clinic.findUnique({
+                where: { id },
+                select: { settings: true },
+              } as PrismaDelegateArgs)) as { settings: unknown } | null;
+            }
+          )
+        : null;
+      const mergedSettings = settingsToMerge
+        ? mergeClinicSettings(existing?.settings, settingsToMerge)
+        : undefined;
 
       // Use executeHealthcareWrite for update with full optimization layers
       const clinic = await this.databaseService.executeHealthcareWrite<Clinic>(
@@ -590,7 +920,7 @@ export class ClinicService {
             where: { id } as PrismaDelegateArgs,
             data: {
               ...clinicUpdateData,
-              ...(sanitizedSettings && { settings: sanitizedSettings as never }),
+              ...(mergedSettings && { settings: mergedSettings as never }),
               updatedAt: new Date(),
             } as PrismaDelegateArgs,
             include: {
@@ -611,6 +941,10 @@ export class ClinicService {
           details: { updateFields: Object.keys(data) },
         }
       );
+
+      if (Object.keys(locationPatch).length > 0) {
+        await this.updateMainLocationAddress(id, locationPatch);
+      }
 
       // Update communication configuration if provided
       if (communicationConfig && this.communicationConfigService) {
@@ -1718,19 +2052,65 @@ export class ClinicService {
       : patients;
 
     const page = filtered.slice(offset, offset + limit);
-    const visitStats = await this.getOpdVisitStats(
-      clinicId,
-      page.map(p => p.id)
-    );
+    const pageIds = page.map(p => p.id);
+    const [visitStats, nextVisits] = await Promise.all([
+      this.getOpdVisitStats(clinicId, pageIds),
+      this.getNextAppointments(clinicId, pageIds),
+    ]);
 
     return {
-      patients: page.map(p => ({
-        ...p,
-        totalVisits: visitStats.get(p.id)?.totalVisits ?? 0,
-        lastVisit: visitStats.get(p.id)?.lastVisit ?? null,
-      })),
+      patients: page.map(p => {
+        const dateOfBirth = (p as unknown as { user?: { dateOfBirth?: Date | string | null } }).user
+          ?.dateOfBirth;
+        return {
+          ...p,
+          totalVisits: visitStats.get(p.id)?.totalVisits ?? 0,
+          lastVisit: visitStats.get(p.id)?.lastVisit ?? null,
+          age: ageFromDateOfBirth(dateOfBirth),
+          nextAppointment: nextVisits.get(p.id) ?? null,
+        };
+      }),
       total: filtered.length,
     };
+  }
+
+  /**
+   * Earliest upcoming SCHEDULED / CONFIRMED visit per patient in this clinic, for the
+   * "Next appointment" column of the doctor's patient list.
+   */
+  private async getNextAppointments(
+    clinicId: string,
+    patientIds: string[]
+  ): Promise<Map<string, Date>> {
+    const next = new Map<string, Date>();
+    if (patientIds.length === 0) return next;
+
+    const rows = await this.databaseService.executeHealthcareRead<
+      Array<{ patientId: string; _min: { date: Date | null } }>
+    >(async client => {
+      const typedClient = client as unknown as {
+        appointment: {
+          groupBy: (
+            args: PrismaDelegateArgs
+          ) => Promise<Array<{ patientId: string; _min: { date: Date | null } }>>;
+        };
+      };
+      return typedClient.appointment.groupBy({
+        by: ['patientId'],
+        where: {
+          clinicId,
+          patientId: { in: patientIds },
+          status: { in: ['SCHEDULED', 'CONFIRMED'] },
+          date: { gte: new Date() },
+        },
+        _min: { date: true },
+      } as PrismaDelegateArgs);
+    });
+
+    for (const row of rows) {
+      if (row._min.date) next.set(row.patientId, row._min.date);
+    }
+    return next;
   }
 
   /**

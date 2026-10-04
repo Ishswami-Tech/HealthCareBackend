@@ -261,6 +261,28 @@ export class VideoAnnotationService {
   }
 
   /**
+   * The consultation an annotation belongs to. Endpoints addressed by annotation id use it to
+   * authorise the caller against that consultation's appointment before touching the annotation.
+   *
+   * @throws NotFoundException when the annotation does not exist
+   */
+  async getAnnotationConsultationId(annotationId: string): Promise<string> {
+    const annotation = await this.databaseService.executeHealthcareRead(
+      async (client: PrismaTransactionClient) => {
+        const { getVideoAnnotationDelegate } = await import('@core/types/video-database.types');
+        const delegate = getVideoAnnotationDelegate(client);
+        return (await delegate.findUnique({
+          where: { id: annotationId },
+        })) as { id: string; consultationId: string } | null;
+      }
+    );
+    if (!annotation) {
+      throw new NotFoundException(`Annotation ${annotationId} not found`);
+    }
+    return annotation.consultationId;
+  }
+
+  /**
    * Delete an annotation
    */
   async deleteAnnotation(annotationId: string, userId: string): Promise<void> {

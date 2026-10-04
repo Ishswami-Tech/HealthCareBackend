@@ -200,7 +200,9 @@ export class NotificationPreferenceService {
   ): Promise<NotificationPreferenceResponseDto> {
     const existing = await this.databaseService.findNotificationPreferenceByUserIdSafe(userId);
     if (!existing) {
-      throw new NotFoundException('Notification preferences not found for this user');
+      // First save for a user who still has the implicit defaults (GET returns them with id '')
+      // used to 404; an update on a missing row is an upsert.
+      return this.createPreferences({ ...data, userId });
     }
 
     const updateData: {

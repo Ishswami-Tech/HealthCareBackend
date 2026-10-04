@@ -10,36 +10,38 @@ import { AppointmentsService } from '@services/appointments/appointments.service
 import { Role } from '@core/types/enums.types';
 
 describe('AppointmentsService', () => {
-  function createService(overrides: {
-    coreAppointmentService?: Record<string, jest.Mock>;
-    conflictResolutionService?: Record<string, jest.Mock>;
-    workflowEngine?: Record<string, jest.Mock>;
-    businessRules?: Record<string, jest.Mock>;
-    pluginRegistry?: Record<string, jest.Mock>;
-    pluginManager?: Record<string, jest.Mock>;
-    clinicCheckInPlugin?: Record<string, jest.Mock>;
-    checkInService?: Record<string, jest.Mock>;
-    clinicNotificationPlugin?: Record<string, jest.Mock>;
-    clinicConfirmationPlugin?: Record<string, jest.Mock>;
-    clinicLocationPlugin?: Record<string, jest.Mock>;
-    clinicFollowUpPlugin?: Record<string, jest.Mock>;
-    appointmentReminderService?: Record<string, jest.Mock>;
-    clinicVideoPlugin?: Record<string, jest.Mock>;
-    loggingService?: Record<string, jest.Mock>;
-    cacheService?: Record<string, jest.Mock>;
-    queueService?: Record<string, jest.Mock>;
-    appointmentQueueService?: Record<string, jest.Mock>;
-    eventService?: Record<string, jest.Mock>;
-    configService?: Record<string, jest.Mock>;
-    databaseService?: Record<string, jest.Mock>;
-    qrService?: Record<string, jest.Mock>;
-    authService?: Record<string, jest.Mock>;
-    whatsAppService?: Record<string, jest.Mock>;
-    notificationPreferenceService?: Record<string, jest.Mock>;
-    errors?: Record<string, jest.Mock>;
-    rbacService?: Record<string, jest.Mock>;
-    billingService?: Record<string, jest.Mock>;
-  } = {}) {
+  function createService(
+    overrides: {
+      coreAppointmentService?: Record<string, jest.Mock>;
+      conflictResolutionService?: Record<string, jest.Mock>;
+      workflowEngine?: Record<string, jest.Mock>;
+      businessRules?: Record<string, jest.Mock>;
+      pluginRegistry?: Record<string, jest.Mock>;
+      pluginManager?: Record<string, jest.Mock>;
+      clinicCheckInPlugin?: Record<string, jest.Mock>;
+      checkInService?: Record<string, jest.Mock>;
+      clinicNotificationPlugin?: Record<string, jest.Mock>;
+      clinicConfirmationPlugin?: Record<string, jest.Mock>;
+      clinicLocationPlugin?: Record<string, jest.Mock>;
+      clinicFollowUpPlugin?: Record<string, jest.Mock>;
+      appointmentReminderService?: Record<string, jest.Mock>;
+      clinicVideoPlugin?: Record<string, jest.Mock>;
+      loggingService?: Record<string, jest.Mock>;
+      cacheService?: Record<string, jest.Mock>;
+      queueService?: Record<string, jest.Mock>;
+      appointmentQueueService?: Record<string, jest.Mock>;
+      eventService?: Record<string, jest.Mock>;
+      configService?: Record<string, jest.Mock>;
+      databaseService?: Record<string, jest.Mock>;
+      qrService?: Record<string, jest.Mock>;
+      authService?: Record<string, jest.Mock>;
+      whatsAppService?: Record<string, jest.Mock>;
+      notificationPreferenceService?: Record<string, jest.Mock>;
+      errors?: Record<string, jest.Mock>;
+      rbacService?: Record<string, jest.Mock>;
+      billingService?: Record<string, jest.Mock>;
+    } = {}
+  ) {
     const coreAppointmentService = overrides.coreAppointmentService || {
       create: jest.fn(),
       findById: jest.fn(),
@@ -201,7 +203,7 @@ describe('AppointmentsService', () => {
       notificationPreferenceService as any,
       errors as any,
       rbacService as any,
-      billingService as any,
+      billingService as any
     );
   }
 
@@ -259,7 +261,9 @@ describe('AppointmentsService', () => {
         }),
       };
       const errors = {
-        validationError: jest.fn(() => { throw new Error('Invalid appointment data'); }),
+        validationError: jest.fn(() => {
+          throw new Error('Invalid appointment data');
+        }),
         clinicNotFound: jest.fn(() => new Error('Clinic not found')),
         userNotFound: jest.fn(() => new Error('User not found')),
         appointmentNotFound: jest.fn(() => new Error('Appointment not found')),
@@ -318,7 +322,9 @@ describe('AppointmentsService', () => {
         validationError: jest.fn(() => new Error('Validation error')),
         clinicNotFound: jest.fn(() => new Error('Clinic not found')),
         userNotFound: jest.fn(() => new Error('User not found')),
-        appointmentNotFound: jest.fn(() => { throw new Error('Appointment not found'); }),
+        appointmentNotFound: jest.fn(() => {
+          throw new Error('Appointment not found');
+        }),
       };
 
       const service = createService({ coreAppointmentService, errors });
@@ -417,7 +423,9 @@ describe('AppointmentsService', () => {
         validationError: jest.fn(() => new Error('Validation error')),
         clinicNotFound: jest.fn(() => new Error('Clinic not found')),
         userNotFound: jest.fn(() => new Error('User not found')),
-        appointmentNotFound: jest.fn(() => { throw new Error('Appointment not found'); }),
+        appointmentNotFound: jest.fn(() => {
+          throw new Error('Appointment not found');
+        }),
       };
 
       const service = createService({ coreAppointmentService, errors });
@@ -520,7 +528,7 @@ describe('AppointmentsService', () => {
           startTime: '2026-10-02T10:00:00Z',
           endTime: '2026-10-02T11:00:00Z',
         },
-        { userId: 'patient-1', role: Role.PATIENT },
+        { userId: 'patient-1', role: Role.PATIENT }
       );
 
       expect(result).toBeDefined();
@@ -594,7 +602,7 @@ describe('AppointmentsService', () => {
       expect(databaseService.executeHealthcareRead).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ clinicId: 'clinic-1' }),
-        }),
+        })
       );
     });
   });

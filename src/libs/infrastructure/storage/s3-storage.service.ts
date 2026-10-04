@@ -37,6 +37,150 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
+// ---------------------------------------------------------------------------
+// Presigned-URL helpers for PRIVATE objects (pure, no AWS SDK).
+//
+// Kept in this file on purpose: `.gitignore` ignores new files in any `storage/`
+// directory. The decision "is this one of OUR objects?" matters: a stored `fileUrl` is
+// only ever presigned when it demonstrably points into OUR bucket and a folder we
+// manage, so a tampered / client-supplied URL can never make the API sign an
+// arbitrary object.
+// ---------------------------------------------------------------------------
+
+/** Lifetime of a presigned GET URL handed to clients (15 minutes). */
+export const PRIVATE_ASSET_URL_TTL_SECONDS = 15 * 60;
+
+/** SigV4 presigned URLs cannot live longer than 7 days. */
+const MAX_PRESIGN_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+export interface OwnedUrlConfig {
+  readonly bucket: string;
+  readonly region: string;
+  readonly endpoint?: string | undefined;
+  readonly cdnUrl?: string | undefined;
+  readonly accessKeyId?: string | undefined;
+}
+
+function trimTrailingSlashes(value: string): string {
+  return value.replace(/\/+$/, '');
+}
+
+/** Clamp a requested lifetime into the range S3 accepts (1 second .. 7 days). */
+export function clampPresignTtl(ttlSeconds: number): number {
+  if (!Number.isFinite(ttlSeconds)) {
+    return PRIVATE_ASSET_URL_TTL_SECONDS;
+  }
+  return Math.min(Math.max(1, Math.floor(ttlSeconds)), MAX_PRESIGN_TTL_SECONDS);
+}
+
+/**
+ * Every URL prefix (scheme + host + base path, trailing slash) under which an
+ * object of the configured bucket can have been published by
+ * `S3StorageService.generatePublicUrl`: the `s3://bucket/` placeholder, the CDN
+ * base, the S3-compatible endpoint (Contabo `<endpoint>/<accessKeyId>:<bucket>/`
+ * and plain path-style) and the AWS virtual-hosted style.
+ */
+export function buildOwnedUrlPrefixes(config: OwnedUrlConfig): readonly string[] {
+  if (!config.bucket) {
+    return [];
+  }
+  const prefixes = [`s3://${config.bucket}/`];
+
+  if (config.cdnUrl) {
+    prefixes.push(`${trimTrailingSlashes(config.cdnUrl)}/`);
+  }
+  if (config.endpoint) {
+    const base = trimTrailingSlashes(config.endpoint);
+    if (config.accessKeyId) {
+      prefixes.push(`${base}/${config.accessKeyId}:${config.bucket}/`);
+    }
+    prefixes.push(`${base}/${config.bucket}/`);
+  }
+  prefixes.push(`https://${config.bucket}.s3.${config.region}.amazonaws.com/`);
+  return Array.from(new Set(prefixes));
+}
+
+/**
+ * Top-level folders (= `AssetType` values) that hold patient health information:
+ * patient documents, EHR medical-record files, invoices and prescription PDFs.
+ *
+ * When S3 is configured these are NEVER written to the pod-local disk as a fallback:
+ * the local copy is not private (the `/storage/` URL is served by the ingress), is not
+ * presigned, and is lost with the pod. A failed upload is reported to the caller
+ * (`success: false`) so it can fail the request instead of recording a dead link.
+ */
+export const PHI_STORAGE_FOLDERS: readonly string[] = [
+  'documents',
+  'medical-records',
+  'invoices',
+  'prescriptions',
+];
+
+/** True when `folder` (or the first segment of a nested folder path) holds PHI. */
+export function isPhiStorageFolder(folder: string): boolean {
+  const top = folder.split('/')[0] ?? '';
+  return PHI_STORAGE_FOLDERS.includes(top);
+}
+
+/** True when `storedUrl` starts with one of our own URL prefixes (case-insensitive). */
+export function startsWithOwnedPrefix(
+  storedUrl: string | null | undefined,
+  ownedPrefixes: readonly string[]
+): boolean {
+  const lowered = (storedUrl ?? '').trim().toLowerCase();
+  return (
+    lowered.length > 0 && ownedPrefixes.some(prefix => lowered.startsWith(prefix.toLowerCase()))
+  );
+}
+
+function hasControlCharacter(value: string): boolean {
+  return Array.from(value).some(char => {
+    const code = char.codePointAt(0) ?? 0;
+    return code <= 0x1f || code === 0x7f;
+  });
+}
+
+/**
+ * Object key of `storedUrl` when it points into one of `ownedPrefixes` AND the
+ * key lives under one of `allowedFolders` (`<folder>/<...>`); null otherwise
+ * (foreign hosts, other folders, traversal, encoded separators, empty values).
+ *
+ * The prefix comparison is case-insensitive (scheme and host are); the returned
+ * key keeps the stored casing. Nothing is percent-decoded: our writers never
+ * encode the key, so a `%` can only come from a tampered value.
+ */
+export function extractOwnedObjectKey(
+  storedUrl: string | null | undefined,
+  ownedPrefixes: readonly string[],
+  allowedFolders: readonly string[]
+): string | null {
+  const value = (storedUrl ?? '').trim();
+  if (value.length === 0) {
+    return null;
+  }
+
+  const lowered = value.toLowerCase();
+  const prefix = ownedPrefixes.find(candidate => lowered.startsWith(candidate.toLowerCase()));
+  if (!prefix) {
+    return null;
+  }
+
+  const key = value.slice(prefix.length).split(/[?#]/)[0] ?? '';
+  if (key.length === 0 || key.includes('\\') || key.includes('%') || hasControlCharacter(key)) {
+    return null;
+  }
+
+  const segments = key.split('/');
+  if (segments.length < 2 || segments.some(s => s === '' || s === '.' || s === '..')) {
+    return null;
+  }
+  const folder = segments[0];
+  if (folder === undefined || !allowedFolders.includes(folder)) {
+    return null;
+  }
+  return key;
+}
+
 /**
  * S3 Storage Configuration
  * Supports any S3-compatible provider (Contabo, AWS, Wasabi, etc.)
@@ -77,6 +221,12 @@ export class S3StorageService implements OnModuleInit {
   private s3Client: unknown = null;
   private config: S3Config;
   private localStoragePath: string;
+  /**
+   * S3 was configured (S3_ENABLED=true) at startup. Unlike `config.enabled` this is not
+   * cleared when the client fails to initialise, so PHI is still refused local storage
+   * while S3 is intended but unavailable.
+   */
+  private readonly s3Configured: boolean;
 
   constructor(
     @Inject(forwardRef(() => ConfigService))
@@ -120,6 +270,9 @@ export class S3StorageService implements OnModuleInit {
       cdnUrl,
       publicUrlExpiration: this.configService.get<number>('S3_PUBLIC_URL_EXPIRATION', 3600),
     };
+
+    // Same truthiness the rest of this service uses for `config.enabled`.
+    this.s3Configured = Boolean(this.config.enabled) && Boolean(this.config.bucket);
 
     // Local storage fallback path (Kubernetes persistent volume handles backups)
     this.localStoragePath = path.join(process.cwd(), 'storage', 'assets');
@@ -290,11 +443,28 @@ export class S3StorageService implements OnModuleInit {
             folder,
           }
         );
-        // Fall through to local storage
+        // Fall through to local storage (non-PHI assets only, see below)
       }
     }
 
-    // Fallback to local storage
+    // PHI never lands on the pod-local disk while S3 is configured: report the failure so
+    // the caller fails the request (and writes no row) instead of storing a dead,
+    // possibly publicly served, `/storage/...` link.
+    if (this.s3Configured && isPhiStorageFolder(folder)) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        'PHI upload refused: S3 is configured but the object could not be stored there; local fallback is disabled for this folder',
+        'S3StorageService.uploadFile',
+        { folder, fileName, s3Initialized: this.s3Client !== null }
+      );
+      return {
+        success: false,
+        error: 'Object storage is unavailable; protected files are not stored locally',
+      };
+    }
+
+    // Fallback to local storage (S3 not configured, or a non-PHI asset such as a QR code)
     return this.uploadToLocalStorage(fileBuffer, fileName, folder, contentType);
   }
 
@@ -365,7 +535,9 @@ export class S3StorageService implements OnModuleInit {
   private generatePublicUrl(key: string, isPublic: boolean): string {
     // Use CDN URL if configured (includes auto-generated Contabo CDN)
     if (this.config.cdnUrl) {
-      return `${this.config.cdnUrl}/${key}`;
+      // Trim a trailing slash of CDN_URL: `https://cdn//documents/x` is neither
+      // fetchable nor recognised by `extractOwnedObjectKey` (empty path segment).
+      return `${trimTrailingSlashes(this.config.cdnUrl)}/${key}`;
     }
 
     // Generate presigned URL for private objects
@@ -413,6 +585,40 @@ export class S3StorageService implements OnModuleInit {
   }
 
   /**
+   * Short-lived presigned GET for a PRIVATE object (default 15 minutes, clamped
+   * to the 1 second .. 7 days S3 accepts). Works for legacy public-read objects
+   * too. The returned URL is a bearer credential: never log it.
+   */
+  async getSignedDownloadUrl(
+    key: string,
+    ttlSeconds: number = PRIVATE_ASSET_URL_TTL_SECONDS
+  ): Promise<string> {
+    return await this.getPublicUrl(key, clampPresignTtl(ttlSeconds));
+  }
+
+  /**
+   * Object key behind a stored `fileUrl`, or null when the URL does not point
+   * into OUR bucket under one of `allowedFolders` (so it is never presigned).
+   */
+  resolveOwnedObjectKey(storedUrl: string, allowedFolders: readonly string[]): string | null {
+    const ownedPrefixes = buildOwnedUrlPrefixes(this.config);
+    const key = extractOwnedObjectKey(storedUrl, ownedPrefixes, allowedFolders);
+    if (key === null && startsWithOwnedPrefix(storedUrl, ownedPrefixes)) {
+      // The value claims to be one of OUR objects but is not a signable key (malformed,
+      // wrong folder, traversal, encoded separators). It will not be presigned, so the
+      // client gets a dead private URL: make that visible. The URL itself is never logged.
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'A stored URL points into our bucket but is not a signable object key; it will not be presigned',
+        'S3StorageService.resolveOwnedObjectKey',
+        { allowedFolders: [...allowedFolders] }
+      );
+    }
+    return key;
+  }
+
+  /**
    * Presigned GET for a private object with response-header overrides, so the
    * browser receives the stored MIME type and a `Content-Disposition` chosen by
    * the caller (inline preview vs. attachment download with a friendly name).
@@ -453,12 +659,15 @@ export class S3StorageService implements OnModuleInit {
    * Delete file from S3 or local storage
    */
   async deleteFile(key: string): Promise<boolean> {
-    // Try S3 first (if key doesn't start with s3:// and S3 is enabled)
+    // Try S3 first (if key doesn't start with s3:// and S3 is enabled). Local references
+    // (relative `/storage/...` URL or an absolute disk path) are never valid S3 keys: an
+    // S3 DeleteObject for them "succeeds" without removing anything.
     if (
       this.config.enabled &&
       this.s3Client &&
       !key.startsWith('s3://') &&
-      !key.startsWith('/storage/')
+      !key.startsWith('/storage/') &&
+      !path.isAbsolute(key)
     ) {
       try {
         const command = new DeleteObjectCommand({

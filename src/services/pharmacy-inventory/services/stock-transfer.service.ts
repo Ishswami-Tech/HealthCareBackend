@@ -181,6 +181,19 @@ export class StockTransferService {
     const result = await this.db.prisma.$transaction(async tx => {
       const typedClient = tx as unknown as PrismaTransactionClientWithDelegates;
 
+      // Claim the transfer first so a concurrent dispatch cannot move stock twice.
+      const claim = await typedClient.stockTransfer.updateMany({
+        where: { id: transferId, sourceClinicId, status: TransferStatus.DRAFT },
+        data: { status: TransferStatus.IN_TRANSIT, dispatchedAt: new Date() },
+      });
+      if (claim.count !== 1) {
+        throw new HealthcareError(
+          ErrorCode.PHARMACY_TRANSFER_INVALID_STATUS,
+          `Transfer ${transferId} is no longer DRAFT`,
+          { transferId }
+        );
+      }
+
       for (const item of transfer.items) {
         const batch = await typedClient.stockBatch.findFirst({
           where: { id: item.sourceBatchId, clinicId: sourceClinicId },
@@ -203,10 +216,21 @@ export class StockTransferService {
           );
         }
 
-        await typedClient.stockBatch.update({
-          where: { id: item.sourceBatchId },
-          data: { quantityOnHand: newQty },
+        const batchUpdate = await typedClient.stockBatch.updateMany({
+          where: {
+            id: item.sourceBatchId,
+            clinicId: sourceClinicId,
+            quantityOnHand: { gte: item.quantity },
+          },
+          data: { quantityOnHand: { decrement: item.quantity } },
         });
+        if (batchUpdate.count !== 1) {
+          throw new HealthcareError(
+            ErrorCode.PHARMACY_STOCK_INSUFFICIENT,
+            `Batch ${batch.lotNumber} changed concurrently, retry the dispatch`,
+            { batchId: item.sourceBatchId }
+          );
+        }
 
         await typedClient.stockMovement.create({
           data: {
@@ -222,10 +246,21 @@ export class StockTransferService {
           },
         });
 
-        await typedClient.medicine.update({
-          where: { id: item.productId },
+        const medicineUpdate = await typedClient.medicine.updateMany({
+          where: {
+            id: item.productId,
+            clinicId: sourceClinicId,
+            stock: { gte: item.quantity },
+          },
           data: { stock: { decrement: item.quantity } },
         });
+        if (medicineUpdate.count !== 1) {
+          throw new HealthcareError(
+            ErrorCode.PHARMACY_STOCK_INSUFFICIENT,
+            `Insufficient stock for medicine ${item.productId} in clinic ${sourceClinicId}`,
+            { productId: item.productId, requested: item.quantity }
+          );
+        }
         affectedProductIds.add(item.productId);
       }
 
@@ -315,6 +350,19 @@ export class StockTransferService {
     const result = await this.db.prisma.$transaction(async tx => {
       const typedClient = tx as unknown as PrismaTransactionClientWithDelegates;
 
+      // Claim the transfer first so a concurrent receive cannot book the stock twice.
+      const claim = await typedClient.stockTransfer.updateMany({
+        where: { id: transferId, destinationClinicId, status: TransferStatus.IN_TRANSIT },
+        data: { status: TransferStatus.RECEIVED, receivedAt: new Date(), receivedById: userId },
+      });
+      if (claim.count !== 1) {
+        throw new HealthcareError(
+          ErrorCode.PHARMACY_TRANSFER_INVALID_STATUS,
+          `Transfer ${transferId} is no longer IN_TRANSIT`,
+          { transferId }
+        );
+      }
+
       const sourceBatches: Array<{
         id: string;
         productId: string;
@@ -347,11 +395,34 @@ export class StockTransferService {
         const sourceBatch = batchMap.get(item.sourceBatchId);
         if (!sourceBatch) continue;
 
+        // Medicines are per clinic: the destination keeps its own Medicine row,
+        // matched by name. Never book stock against the source clinic's row.
+        const sourceMedicine = await typedClient.medicine.findFirst({
+          where: { id: item.productId, clinicId: transfer.sourceClinicId },
+          select: { name: true },
+        });
+        const destMedicine = sourceMedicine
+          ? await typedClient.medicine.findFirst({
+              where: {
+                clinicId: destinationClinicId,
+                name: { equals: sourceMedicine.name, mode: 'insensitive' },
+              },
+              select: { id: true },
+            })
+          : null;
+        if (!destMedicine) {
+          throw new HealthcareError(
+            ErrorCode.PHARMACY_INVENTORY_NOT_FOUND,
+            `Destination clinic has no medicine matching "${sourceMedicine?.name ?? item.productId}"; add it to the destination inventory before receiving`,
+            { productId: item.productId, destinationClinicId }
+          );
+        }
+
         const newLotNumber = `${sourceBatch.lotNumber}-XFER-${transfer.id.slice(-6)}`;
 
         const destBatch = await typedClient.stockBatch.create({
           data: {
-            productId: item.productId,
+            productId: destMedicine.id,
             clinicId: destinationClinicId,
             lotNumber: newLotNumber,
             manufactureDate: sourceBatch.manufactureDate,
@@ -366,7 +437,7 @@ export class StockTransferService {
 
         await typedClient.stockMovement.create({
           data: {
-            productId: item.productId,
+            productId: destMedicine.id,
             batchId: destBatch.id,
             clinicId: destinationClinicId,
             movementType: MovementType.TRANSFER_IN,
@@ -378,11 +449,11 @@ export class StockTransferService {
           },
         });
 
-        await typedClient.medicine.update({
-          where: { id: item.productId },
+        await typedClient.medicine.updateMany({
+          where: { id: destMedicine.id, clinicId: destinationClinicId },
           data: { stock: { increment: item.quantity } },
         });
-        affectedProductIds.add(item.productId);
+        affectedProductIds.add(destMedicine.id);
       }
 
       const updated = await typedClient.stockTransfer.update({

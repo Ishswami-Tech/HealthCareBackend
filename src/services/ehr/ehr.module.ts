@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { EHRService } from './ehr.service';
+import { EHRWorkspaceService } from './ehr-workspace.service';
 import { EHRController } from './controllers/ehr.controller';
 import { EHRClinicController } from './controllers/ehr-clinic.controller';
 import { DatabaseModule } from '@infrastructure/database/database.module';
@@ -27,7 +28,7 @@ import { StorageModule } from '@infrastructure/storage/storage.module';
     StorageModule,
   ],
   controllers: [EHRController, EHRClinicController],
-  providers: [EHRService],
-  exports: [EHRService],
+  providers: [EHRService, EHRWorkspaceService],
+  exports: [EHRService, EHRWorkspaceService],
 })
 export class EHRModule {}

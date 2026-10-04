@@ -315,6 +315,8 @@ export interface MedicalHistoryResponse {
   condition: string;
   diagnosis: string;
   treatment: string;
+  /** ACTIVE | CHRONIC | RESOLVED */
+  status: string;
   date: string;
   doctorId: string;
   notes?: string;
@@ -330,6 +332,8 @@ export interface LabReportResponse {
   result: string;
   unit: string;
   normalRange: string;
+  /** PENDING | COMPLETED | REVIEWED */
+  status: string;
   date: string;
   doctorId: string;
   labName: string;

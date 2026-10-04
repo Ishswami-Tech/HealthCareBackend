@@ -88,7 +88,7 @@ const createService = () => {
     mockWhatsApp as unknown as WhatsAppService,
     mockConfig as unknown as ConfigService,
     mockEvent as unknown as EventService,
-    mockLogging as unknown as LoggingService,
+    mockLogging as unknown as LoggingService
   );
 };
 
@@ -116,7 +116,16 @@ describe('OtpService', () => {
       mockCache.set.mockResolvedValue(undefined);
       mockCache.exists.mockResolvedValue(false);
 
-      const result = await (service as unknown as { sendOtpEmail: (email: string, name: string, purpose?: string, clinicId?: string) => Promise<OtpResult> }).sendOtpEmail('test@example.com', 'Test User', 'verification');
+      const result = await (
+        service as unknown as {
+          sendOtpEmail: (
+            email: string,
+            name: string,
+            purpose?: string,
+            clinicId?: string
+          ) => Promise<OtpResult>;
+        }
+      ).sendOtpEmail('test@example.com', 'Test User', 'verification');
 
       expect(result.success).toBe(true);
       expect(mockCache.set).toHaveBeenCalled();
@@ -126,7 +135,16 @@ describe('OtpService', () => {
       mockCache.get.mockResolvedValue('cooldown-active');
       mockCache.ttl.mockResolvedValue(120);
 
-      const result = await (service as unknown as { sendOtpEmail: (email: string, name: string, purpose?: string, clinicId?: string) => Promise<OtpResult> }).sendOtpEmail('test@example.com', 'Test User', 'verification');
+      const result = await (
+        service as unknown as {
+          sendOtpEmail: (
+            email: string,
+            name: string,
+            purpose?: string,
+            clinicId?: string
+          ) => Promise<OtpResult>;
+        }
+      ).sendOtpEmail('test@example.com', 'Test User', 'verification');
 
       expect(result.success).toBe(false);
       expect(result.message).toContain('wait');
@@ -139,7 +157,11 @@ describe('OtpService', () => {
       mockCache.set.mockResolvedValue(undefined);
       mockCache.exists.mockResolvedValue(false);
 
-      const result = await (service as unknown as { sendOtpSms: (phone: string, purpose?: string, clinicId?: string) => Promise<OtpResult> }).sendOtpSms('+919876543210', 'verification');
+      const result = await (
+        service as unknown as {
+          sendOtpSms: (phone: string, purpose?: string, clinicId?: string) => Promise<OtpResult>;
+        }
+      ).sendOtpSms('+919876543210', 'verification');
 
       expect(result.success).toBe(true);
     });
@@ -150,7 +172,9 @@ describe('OtpService', () => {
       mockCache.get.mockResolvedValueOnce(null).mockResolvedValueOnce('123456');
       mockCache.exists.mockResolvedValue(true);
 
-      const result = await (service as unknown as { verifyOtp: (id: string, otp: string) => Promise<OtpResult> }).verifyOtp('test@example.com', '123456');
+      const result = await (
+        service as unknown as { verifyOtp: (id: string, otp: string) => Promise<OtpResult> }
+      ).verifyOtp('test@example.com', '123456');
 
       expect(result.success).toBe(true);
     });
@@ -159,7 +183,9 @@ describe('OtpService', () => {
       mockCache.get.mockResolvedValue('123456');
       mockCache.exists.mockResolvedValue(true);
 
-      const result = await (service as unknown as { verifyOtp: (id: string, otp: string) => Promise<OtpResult> }).verifyOtp('test@example.com', 'wrong');
+      const result = await (
+        service as unknown as { verifyOtp: (id: string, otp: string) => Promise<OtpResult> }
+      ).verifyOtp('test@example.com', 'wrong');
 
       expect(result.success).toBe(false);
       expect(result.message).toBe('Invalid OTP');
@@ -168,7 +194,9 @@ describe('OtpService', () => {
     it('should return failure when no OTP exists', async () => {
       mockCache.get.mockResolvedValue(null);
 
-      const result = await (service as unknown as { verifyOtp: (id: string, otp: string) => Promise<OtpResult> }).verifyOtp('test@example.com', '123456');
+      const result = await (
+        service as unknown as { verifyOtp: (id: string, otp: string) => Promise<OtpResult> }
+      ).verifyOtp('test@example.com', '123456');
 
       expect(result.success).toBe(false);
       expect(result.message).toBe('OTP not found or expired');
@@ -181,7 +209,13 @@ describe('OtpService', () => {
       mockCache.exists.mockResolvedValue(true);
       mockCache.ttl.mockResolvedValue(300);
 
-      const result = await (service as unknown as { checkOtpStatus: (id: string) => Promise<{ exists: boolean; expiresIn?: number; attemptsRemaining?: number }> }).checkOtpStatus('test@example.com');
+      const result = await (
+        service as unknown as {
+          checkOtpStatus: (
+            id: string
+          ) => Promise<{ exists: boolean; expiresIn?: number; attemptsRemaining?: number }>;
+        }
+      ).checkOtpStatus('test@example.com');
 
       expect(result.exists).toBe(true);
       expect(result.expiresIn).toBe(300);
@@ -192,7 +226,13 @@ describe('OtpService', () => {
       mockCache.exists.mockResolvedValue(false);
       mockCache.ttl.mockResolvedValue(-1);
 
-      const result = await (service as unknown as { checkOtpStatus: (id: string) => Promise<{ exists: boolean; expiresIn?: number; attemptsRemaining?: number }> }).checkOtpStatus('test@example.com');
+      const result = await (
+        service as unknown as {
+          checkOtpStatus: (
+            id: string
+          ) => Promise<{ exists: boolean; expiresIn?: number; attemptsRemaining?: number }>;
+        }
+      ).checkOtpStatus('test@example.com');
 
       expect(result.exists).toBe(false);
     });
@@ -202,7 +242,9 @@ describe('OtpService', () => {
     it('should invalidate OTP by deleting cache key', async () => {
       mockCache.del.mockResolvedValue(1);
 
-      const result = await (service as unknown as { invalidateOtp: (id: string) => Promise<boolean> }).invalidateOtp('test@example.com');
+      const result = await (
+        service as unknown as { invalidateOtp: (id: string) => Promise<boolean> }
+      ).invalidateOtp('test@example.com');
 
       expect(result).toBe(true);
       expect(mockCache.del).toHaveBeenCalledWith(expect.stringContaining('otp:test@example.com'));
@@ -213,7 +255,9 @@ describe('OtpService', () => {
     it('should consume and invalidate OTP', async () => {
       mockCache.del.mockResolvedValue(1);
 
-      const result = await (service as unknown as { consumeOtp: (id: string) => Promise<boolean> }).consumeOtp('test@example.com');
+      const result = await (
+        service as unknown as { consumeOtp: (id: string) => Promise<boolean> }
+      ).consumeOtp('test@example.com');
 
       expect(result).toBe(true);
       expect(mockCache.del).toHaveBeenCalled();

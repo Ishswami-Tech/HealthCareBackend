@@ -5,6 +5,7 @@ import { LogType, LogLevel } from '@core/types';
 import PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomBytes } from 'crypto';
 import type { InvoicePDFData } from '@core/types/billing.types';
 import { formatDateInIST } from '../../libs/utils/date-time.util';
 
@@ -90,7 +91,8 @@ export class InvoicePDFService {
 
   async generateInvoicePDF(data: InvoicePDFData): Promise<{ filePath: string; fileName: string }> {
     try {
-      const fileName = `invoice_${data.invoiceNumber}_${Date.now()}.pdf`;
+      // Unguessable suffix: the name is only a locator, access is still checked per invoice.
+      const fileName = `invoice_${data.invoiceNumber}_${Date.now()}-${randomBytes(8).toString('hex')}.pdf`;
       const filePath = path.join(this.invoicesDir, fileName);
 
       const doc = new PDFDocument({

@@ -16,6 +16,7 @@ import {
   HttpCode,
   HttpStatus,
   Request,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { InventoryService } from '../services/inventory.service';
@@ -29,6 +30,7 @@ import {
   AlertQueryDto,
   CreateReorderRuleDto,
   CreatePurchaseOrderDto,
+  PurchaseOrderListQueryDto,
 } from '../dto/pharmacy-inventory.dto';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
@@ -223,6 +225,59 @@ export class InventoryController {
     @Body() dto: CreatePurchaseOrderDto
   ) {
     const clinicId = req.clinicContext?.clinicId as string;
-    return this.purchaseOrderService.createPurchaseOrder(dto, req.user?.id as string, clinicId);
+    const userId = req.user?.sub ?? req.user?.id;
+    if (!userId) {
+      throw new ForbiddenException('Authenticated user required');
+    }
+    return this.purchaseOrderService.createPurchaseOrder(dto, userId, clinicId);
+  }
+
+  /**
+   * Lists the clinic's purchase orders (newest first, paginated, optional status filter).
+   * GET /pharmacy/inventory/purchase-orders
+   */
+  @Get('purchase-orders')
+  @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('pharmacy_purchase_order', 'read')
+  @RateLimitAPI()
+  @ApiOperation({ summary: 'List purchase orders of the clinic' })
+  async listPurchaseOrders(
+    @Request() req: ClinicAuthenticatedRequest,
+    @Query() query: PurchaseOrderListQueryDto
+  ) {
+    const clinicId = req.clinicContext?.clinicId as string;
+    return this.purchaseOrderService.listPurchaseOrders(clinicId, {
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.limit !== undefined ? { limit: query.limit } : {}),
+      ...(query.offset !== undefined ? { offset: query.offset } : {}),
+    });
+  }
+
+  /**
+   * Reads one purchase order of the clinic.
+   * GET /pharmacy/inventory/purchase-orders/:id
+   */
+  @Get('purchase-orders/:id')
+  @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('pharmacy_purchase_order', 'read')
+  @RateLimitAPI()
+  @ApiOperation({ summary: 'Get a purchase order' })
+  async getPurchaseOrder(@Request() req: ClinicAuthenticatedRequest, @Param('id') id: string) {
+    const clinicId = req.clinicContext?.clinicId as string;
+    return this.purchaseOrderService.getPurchaseOrderById(id, clinicId);
+  }
+
+  /**
+   * Sends a DRAFT purchase order to the supplier.
+   * POST /pharmacy/inventory/purchase-orders/:id/send
+   */
+  @Post('purchase-orders/:id/send')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('pharmacy_purchase_order', 'update')
+  @ApiOperation({ summary: 'Send a draft purchase order' })
+  async sendPurchaseOrder(@Request() req: ClinicAuthenticatedRequest, @Param('id') id: string) {
+    const clinicId = req.clinicContext?.clinicId as string;
+    return this.purchaseOrderService.sendPurchaseOrder(id, clinicId);
   }
 }

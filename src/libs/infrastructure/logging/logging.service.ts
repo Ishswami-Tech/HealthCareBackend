@@ -554,6 +554,32 @@ export class LoggingService {
   }
 
   /**
+   * JSON.stringify that never throws. Metadata can carry request objects with
+   * circular references (multipart streams) or BigInt values; a throw here
+   * rejected log() and, because callers use `void log(...)`, surfaced as an
+   * unhandled rejection that also lost the log entry.
+   */
+  private safeStringify(value: unknown): string {
+    const seen = new WeakSet<object>();
+    try {
+      return JSON.stringify(value, (_key: string, item: unknown): unknown => {
+        if (typeof item === 'bigint') {
+          return item.toString();
+        }
+        if (typeof item === 'object' && item !== null) {
+          if (seen.has(item)) {
+            return '[Circular]';
+          }
+          seen.add(item);
+        }
+        return item;
+      });
+    } catch {
+      return JSON.stringify({ message: 'Log entry could not be serialised' });
+    }
+  }
+
+  /**
    * Log a message with type, level, context, and metadata
    *
    * CRITICAL: ALL logs are ALWAYS stored in cache for UI dashboard visibility,
@@ -611,7 +637,7 @@ export class LoggingService {
     // happens (dashboard visibility is unchanged) - it just no longer holds
     // up whoever called log().
     if (this.cacheService) {
-      const logJson = JSON.stringify(logEntry);
+      const logJson = this.safeStringify(logEntry);
       void this.cacheService
         .rPush('logs', logJson)
         .then(() => this.cacheService?.lTrim('logs', -10000, -1))
@@ -1003,16 +1029,26 @@ export class LoggingService {
       }
 
       // ALWAYS read from cache first — use paginated range instead of fetching all 10,000
+      // EXCEPT when type/level/search filters are active: filtering must run against
+      // the full retained log set, not just the most recent `limit` raw entries, or
+      // matching logs outside that narrow slice are silently dropped (filtered results
+      // would wrongly come back empty even though matches exist further back).
+      const hasActiveFilters = !!type || !!level || !!(search && search.trim().length > 0);
       let cachedLogs: string[] = [];
       try {
         if (this.cacheService) {
-          // Paginated negative-index range:
-          //   page 1 / limit 50 → (-50, -1)   = last 50 entries
-          //   page 2 / limit 50 → (-100, -51) = previous 50
-          // Always fetch only the slice needed — avoids pulling 10k entries.
-          const rangeStart = -((effectivePage - 1) * effectiveLimit + effectiveLimit);
-          const rangeEnd = -((effectivePage - 1) * effectiveLimit + 1);
-          cachedLogs = (await this.cacheService.lRange('logs', rangeStart, rangeEnd)) || [];
+          if (hasActiveFilters) {
+            // Fetch the full ring buffer (capped at 10000, matching lTrim size in log()).
+            cachedLogs = (await this.cacheService.lRange('logs', 0, -1)) || [];
+          } else {
+            // Paginated negative-index range:
+            //   page 1 / limit 50 → (-50, -1)   = last 50 entries
+            //   page 2 / limit 50 → (-100, -51) = previous 50
+            // Always fetch only the slice needed — avoids pulling 10k entries.
+            const rangeStart = -((effectivePage - 1) * effectiveLimit + effectiveLimit);
+            const rangeEnd = -((effectivePage - 1) * effectiveLimit + 1);
+            cachedLogs = (await this.cacheService.lRange('logs', rangeStart, rangeEnd)) || [];
+          }
           // Debug: Log cache read results in development
           if (!this.configService?.isProduction()) {
             console.warn(

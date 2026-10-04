@@ -306,6 +306,7 @@ export interface ClinicAdminDelegate {
   findMany: (args: PrismaDelegateArgs) => Promise<ClinicAdmin[]>;
   create: (args: PrismaDelegateArgs) => Promise<ClinicAdmin>;
   update: (args: PrismaDelegateArgs) => Promise<ClinicAdmin>;
+  upsert: (args: PrismaDelegateArgs) => Promise<ClinicAdmin>;
   delete: (args: PrismaDelegateArgs) => Promise<ClinicAdmin>;
   createMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
   updateMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;

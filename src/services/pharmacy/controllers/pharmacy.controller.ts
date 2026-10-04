@@ -4,18 +4,22 @@ import {
   Post,
   Body,
   Patch,
+  Delete,
   Param,
   Query,
   UseGuards,
   Request,
+  Res,
   ForbiddenException,
 } from '@nestjs/common';
+import type { FastifyReply } from 'fastify';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
-import { PharmacyService } from '../services/pharmacy.service';
+import { PharmacyService, type PharmacyActor } from '../services/pharmacy.service';
 import {
   CreateMedicineDto,
   UpdateInventoryDto,
   CreatePharmacyPrescriptionDto,
+  UpdatePharmacyPrescriptionDto,
   UpdatePrescriptionStatusDto,
   DispensePrescriptionDto,
   ReversePrescriptionDispenseDto,
@@ -29,6 +33,7 @@ import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { ClinicGuard } from '@core/guards/clinic.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
+import { PatientSelfAccessGuard } from '@core/guards/patient-self-access.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
 import { Cache } from '@core/decorators';
@@ -42,6 +47,14 @@ import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
 export class PharmacyController {
   constructor(private readonly pharmacyService: PharmacyService) {}
+
+  /** Authenticated caller, used for the audit trail and the dispensed-by stamp. */
+  private actorOf(req: ClinicAuthenticatedRequest): PharmacyActor {
+    return {
+      userId: req.user?.sub ?? req.user?.id,
+      role: req.user?.role,
+    };
+  }
 
   /**
    * @endpoint GET /pharmacy/inventory
@@ -85,7 +98,7 @@ export class PharmacyController {
   async addMedicine(@Body() dto: CreateMedicineDto, @Request() req: ClinicAuthenticatedRequest) {
     // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
     const clinicId = req.clinicContext?.clinicId;
-    return this.pharmacyService.addMedicine(dto, clinicId);
+    return this.pharmacyService.addMedicine(dto, clinicId, this.actorOf(req));
   }
 
   /**
@@ -93,13 +106,13 @@ export class PharmacyController {
    * @access PHARMACIST, CLINIC_ADMIN
    * @frontend NONE
    * @status ADMIN_ONLY
-   * @description Update medicine inventory (stock/price)
-   * @note Used by admin panel (not yet implemented in main app)
+   * @description Edit a medicine (name, type/category, manufacturer, unit, price, batch,
+   * expiry, reorder level, supplier, notes, relative stock change, active flag)
    */
   @Patch('inventory/:id')
   @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN)
   @RequireResourcePermission('inventory', 'update')
-  @ApiOperation({ summary: 'Update medicine stock or price' })
+  @ApiOperation({ summary: 'Edit a medicine of the clinic inventory' })
   async updateInventory(
     @Param('id') id: string,
     @Body() dto: UpdateInventoryDto,
@@ -107,7 +120,22 @@ export class PharmacyController {
   ) {
     // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
     const clinicId = req.clinicContext?.clinicId;
-    return this.pharmacyService.updateInventory(id, dto, clinicId);
+    return this.pharmacyService.updateInventory(id, dto, clinicId, this.actorOf(req));
+  }
+
+  /**
+   * @endpoint DELETE /pharmacy/inventory/:id
+   * @access PHARMACIST, CLINIC_ADMIN
+   * @description Soft delete (deactivate). The row is never removed so dispense history keeps
+   * resolving it; refused while an open prescription still lists the medicine.
+   */
+  @Delete('inventory/:id')
+  @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('inventory', 'delete')
+  @ApiOperation({ summary: 'Deactivate (soft delete) a medicine' })
+  async deleteInventory(@Param('id') id: string, @Request() req: ClinicAuthenticatedRequest) {
+    const clinicId = req.clinicContext?.clinicId;
+    return this.pharmacyService.deleteMedicine(id, clinicId, this.actorOf(req));
   }
 
   /**
@@ -186,7 +214,25 @@ export class PharmacyController {
   ) {
     // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
     const clinicId = req.clinicContext?.clinicId;
-    return this.pharmacyService.createPrescription(dto, clinicId);
+    return this.pharmacyService.createPrescription(dto, clinicId, this.actorOf(req));
+  }
+
+  /**
+   * @endpoint PATCH /pharmacy/prescriptions/:id
+   * @access DOCTOR (the prescribing doctor, same clinic)
+   * @description Edit items / notes / diagnosis while the prescription is not yet dispensed
+   */
+  @Patch('prescriptions/:id')
+  @Roles(Role.DOCTOR)
+  @RequireResourcePermission('prescriptions', 'update')
+  @ApiOperation({ summary: 'Edit a not-yet-dispensed prescription (prescribing doctor only)' })
+  async updatePrescription(
+    @Param('id') id: string,
+    @Body() dto: UpdatePharmacyPrescriptionDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    return this.pharmacyService.updatePrescriptionByDoctor(id, dto, clinicId, this.actorOf(req));
   }
 
   /**
@@ -205,7 +251,13 @@ export class PharmacyController {
   ) {
     // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
     const clinicId = req.clinicContext?.clinicId;
-    return this.pharmacyService.updatePrescriptionStatus(id, dto.status, clinicId, dto.notes);
+    return this.pharmacyService.updatePrescriptionStatus(
+      id,
+      dto.status,
+      clinicId,
+      dto.notes,
+      this.actorOf(req)
+    );
   }
 
   /**
@@ -223,7 +275,7 @@ export class PharmacyController {
     @Request() req: ClinicAuthenticatedRequest
   ) {
     const clinicId = req.clinicContext?.clinicId;
-    return this.pharmacyService.dispensePrescription(id, dto, clinicId);
+    return this.pharmacyService.dispensePrescription(id, dto, clinicId, this.actorOf(req));
   }
 
   /**
@@ -241,7 +293,7 @@ export class PharmacyController {
     @Request() req: ClinicAuthenticatedRequest
   ) {
     const clinicId = req.clinicContext?.clinicId;
-    return this.pharmacyService.reversePrescriptionDispense(id, dto, clinicId);
+    return this.pharmacyService.reversePrescriptionDispense(id, dto, clinicId, this.actorOf(req));
   }
 
   /**
@@ -261,6 +313,32 @@ export class PharmacyController {
   ) {
     const clinicId = req.clinicContext?.clinicId;
     return this.pharmacyService.getPharmacyBatchAudit(clinicId, query);
+  }
+
+  /**
+   * @endpoint GET /pharmacy/prescriptions/:id/pdf
+   * @access PATIENT (owner / ACTIVE dependent), DOCTOR (prescribing), PHARMACIST, CLINIC_ADMIN
+   * @description Streams the prescription as a PDF (the `pdfUrl` of every prescription payload)
+   */
+  @Get('prescriptions/:id/pdf')
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.PHARMACIST, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('prescriptions', 'read', { requireOwnership: true })
+  @RateLimitAPI()
+  @ApiOperation({ summary: 'Download a prescription as PDF' })
+  async getPrescriptionPdf(
+    @Param('id') id: string,
+    @Request() req: ClinicAuthenticatedRequest,
+    @Res() res: FastifyReply
+  ) {
+    const { fileName, buffer } = await this.pharmacyService.getPrescriptionPdf(
+      id,
+      req.clinicContext?.clinicId,
+      this.actorOf(req)
+    );
+    res.type('application/pdf');
+    res.header('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.header('Cache-Control', 'private, no-store');
+    return res.send(buffer);
   }
 
   @Get('prescriptions/:id/payment-summary')
@@ -404,11 +482,15 @@ export class PharmacyController {
    * @frontend medical-records.server.ts
    * @status ACTIVE (NEW - Added 2026-01-23)
    * @description Get prescriptions for specific patient
-   * @ownership Patients can only view their own prescriptions
+   * @ownership Patients can only view their own prescriptions and those of an ACTIVE
+   * dependent (PatientSelfAccessGuard, which also runs before the response cache)
+   * @tenancy Staff (PHARMACIST, CLINIC_ADMIN, DOCTOR) only get the prescriptions of the
+   * request clinic; a patient sees their own prescriptions of every clinic
    * @note Fixed dashboard redirect loop issue
    */
   @Get('prescriptions/patient/:userId')
   @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN, Role.DOCTOR, Role.PATIENT)
+  @UseGuards(PatientSelfAccessGuard)
   @RequireResourcePermission('prescriptions', 'read', { requireOwnership: true })
   @Cache({
     ttl: 300,
@@ -420,12 +502,40 @@ export class PharmacyController {
   @ApiOperation({ summary: 'Get prescriptions for a specific patient' })
   async getPatientPrescriptions(
     @Param('userId') userId: string,
-    @Request() req: Request & { user?: { sub?: string; role?: string } }
+    @Request() req: ClinicAuthenticatedRequest
   ) {
-    // Patients can only view their own prescriptions
-    if (req.user?.role === 'PATIENT' && req.user?.sub !== userId) {
-      throw new ForbiddenException('Patients can only view their own prescriptions');
-    }
-    return this.pharmacyService.findPrescriptionsByPatient(userId);
+    // PATIENT callers are limited to their own / an ACTIVE dependent's id by
+    // PatientSelfAccessGuard (403 otherwise) and see that patient's prescriptions of
+    // every clinic. Staff are scoped to the validated clinic of the request, so they
+    // never see another clinic's prescriptions of a shared patient.
+    return this.pharmacyService.findPrescriptionsByPatient(userId, {
+      ...(req.user?.role ? { role: req.user.role } : {}),
+      ...(req.clinicContext?.clinicId ? { clinicId: req.clinicContext.clinicId } : {}),
+    });
+  }
+
+  /**
+   * @endpoint GET /pharmacy/prescriptions/:id
+   * @access PATIENT (own + ACTIVE dependents), PHARMACIST, CLINIC_ADMIN, DOCTOR, ASSISTANT_DOCTOR, RECEPTIONIST
+   * @description Single prescription, same shape as the list endpoints.
+   * Declared last so the static `prescriptions/queue` route keeps precedence.
+   */
+  @Get('prescriptions/:id')
+  @Roles(
+    Role.PATIENT,
+    Role.PHARMACIST,
+    Role.CLINIC_ADMIN,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.RECEPTIONIST
+  )
+  @RequireResourcePermission('prescriptions', 'read', { requireOwnership: true })
+  @ApiOperation({ summary: 'Get a single prescription' })
+  async getPrescriptionById(@Param('id') id: string, @Request() req: ClinicAuthenticatedRequest) {
+    const clinicId = req.clinicContext?.clinicId;
+    return this.pharmacyService.findPrescriptionById(id, clinicId, {
+      ...(req.user?.sub ? { userId: req.user.sub } : {}),
+      ...(req.user?.role ? { role: req.user.role } : {}),
+    });
   }
 }

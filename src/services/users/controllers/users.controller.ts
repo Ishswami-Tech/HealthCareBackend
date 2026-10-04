@@ -46,6 +46,8 @@ import { RbacService } from '@core/rbac/rbac.service';
 import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 import { PatientCache, InvalidatePatientCache } from '@core/decorators';
 import { DatabaseService } from '@infrastructure/database';
+import { SessionManagementService } from '@core/session/session-management.service';
+import { revokeOwnSession } from '@services/auth/core/session-view.util';
 
 @ApiTags('Users')
 @Controller('user')
@@ -58,7 +60,8 @@ export class UsersController {
     private readonly authService: AuthService,
     private readonly rbacService: RbacService,
     private readonly locationManagementService: LocationManagementService,
-    private readonly databaseService: DatabaseService
+    private readonly databaseService: DatabaseService,
+    private readonly sessionService: SessionManagementService
   ) {}
 
   @Post()
@@ -203,6 +206,45 @@ export class UsersController {
     return this.usersService.findOne(userId);
   }
 
+  @Post('me/deactivate')
+  @RateLimitAPI({ points: 5, duration: 3600 })
+  @ApiOperation({
+    summary: 'Delete (deactivate) my account',
+    description:
+      'Self-service account deletion for the authenticated user (any role except SUPER_ADMIN). ' +
+      'Soft delete: sets isActive=false and deletedAt=now, revokes all sessions. Clinical records ' +
+      'are retained as required by law. The account can no longer sign in.',
+    operationId: 'deactivateMyAccount',
+  })
+  @ApiResponse({ status: 201, description: 'Account deactivated' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async deactivateMyAccount(
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<{ success: boolean; message: string; deactivatedAt: string }> {
+    const userId = req.user?.sub || req.user?.id;
+    if (!userId) {
+      throw new ForbiddenException('User ID not found in token');
+    }
+
+    const { deactivatedAt } = await this.usersService.deactivateOwnAccount(
+      userId,
+      req.clinicContext?.clinicId
+    );
+
+    // Revoke every session so refresh tokens / other devices stop working immediately.
+    try {
+      await this.authService.revokeAllSessionsForUser(userId);
+    } catch {
+      // Best effort: JwtAuthGuard also rejects inactive users on every request.
+    }
+
+    return {
+      success: true,
+      message: 'Your account has been deactivated.',
+      deactivatedAt,
+    };
+  }
+
   @Get(':id')
   @RequireResourcePermission('users', 'read')
   @PatientCache({
@@ -333,6 +375,31 @@ export class UsersController {
       isProfileComplete: finalProfileComplete,
       requiresProfileCompletion: !finalProfileComplete,
     };
+  }
+
+  /**
+   * Revoke one of the caller's OWN sessions (settings > active sessions). No @Roles: every
+   * authenticated role has sessions. Ownership is enforced in revokeOwnSession (another user's
+   * session id -> 404). Two path segments, so it never collides with `DELETE :id` below.
+   */
+  @Delete('sessions/:id')
+  @ApiOperation({
+    summary: 'Revoke one of my sessions',
+    description:
+      'Invalidates a session that belongs to the authenticated user. Another user’s session (or an unknown id) is reported as not found.',
+  })
+  @ApiResponse({ status: 200, description: 'Session revoked' })
+  @ApiResponse({ status: 404, description: 'Session not found (or not yours)' })
+  async revokeMySession(
+    @Param('id') sessionId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<{ success: boolean; sessionId: string; revoked: boolean; wasCurrent: boolean }> {
+    const userId = req.user?.sub ?? req.user?.id;
+    if (!userId) {
+      throw new ForbiddenException('User ID not found in token');
+    }
+    const result = await revokeOwnSession(this.sessionService, userId, sessionId);
+    return { success: true, ...result, wasCurrent: req.user?.['sessionId'] === sessionId };
   }
 
   @Delete(':id')

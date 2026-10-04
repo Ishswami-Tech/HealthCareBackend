@@ -28,6 +28,28 @@ const INVENTORY_CACHE_PREFIX = 'pharmacy:inventory';
  */
 const CACHE_TTL = 300;
 
+/** Result of one FEFO dispense line. */
+export interface FefoDispenseResult {
+  prescriptionItemId: string;
+  medicineId: string;
+  consumedBatches: Array<{
+    batchId: string;
+    quantity: number;
+    expiryDate: Date;
+    lotNumber: string;
+  }>;
+  /** Units taken from legacy stock that is not tracked in any batch. */
+  unbatchedQuantity: number;
+  totalDispensed: number;
+}
+
+interface FefoBatchRow {
+  id: string;
+  lotNumber: string;
+  expiryDate: Date;
+  quantityOnHand: number | null;
+}
+
 /**
  * Service for pharmacy inventory stock level tracking and movements.
  *
@@ -48,46 +70,17 @@ export class InventoryService {
     private readonly events: EventService
   ) {}
 
-  private async reconcileMedicineStock(
-    client: PrismaTransactionClientWithDelegates,
-    medicineId: string,
-    clinicId: string
-  ): Promise<void> {
-    const medicine = await client.medicine.findFirst({
-      where: { id: medicineId, clinicId },
-      select: { id: true },
-    });
-
-    if (!medicine) {
-      throw new NotFoundException(
-        `Medicine ${medicineId} not found in clinic ${clinicId} during inventory reconciliation`
-      );
-    }
-
-    const aggregate = await client.stockBatch.aggregate({
-      where: {
-        productId: medicineId,
-        clinicId,
-        quantityOnHand: { gt: 0 },
-        expiryDate: { gt: new Date() },
-      },
-      _sum: { quantityOnHand: true },
-    });
-
-    await client.medicine.update({
-      where: { id: medicine.id },
-      data: { stock: aggregate._sum.quantityOnHand ?? 0 },
-    });
-  }
-
   /**
-   * Computes the current on-hand stock for a product at a clinic.
+   * Computes the sellable on-hand stock for a product at a clinic.
    *
-   * Aggregates all active (non-expired, non-fully-depleted) batches.
+   * `Medicine.stock` is the total on-hand (batched plus legacy un-batched
+   * units, e.g. medicines created through the inventory screen with a plain
+   * stock number). Sellable stock excludes units sitting in already-expired
+   * batches. Always clinic scoped: a product id from another clinic yields 0.
    *
    * @param productId - Medicine/product ID
    * @param clinicId - Clinic context
-   * @returns Total on-hand quantity and batch breakdown
+   * @returns Sellable on-hand quantity and the count of live batches
    */
   async getOnHandStock(
     productId: string,
@@ -109,25 +102,29 @@ export class InventoryService {
       return cached;
     }
 
-    const batches = await this.db.prisma.stockBatch.findMany({
-      where: {
-        productId,
-        clinicId,
-        quantityOnHand: { gt: 0 },
-        expiryDate: { gt: new Date() },
-      },
-      select: { quantityOnHand: true },
+    const now = new Date();
+    const medicine = await (
+      this.db.prisma as unknown as PrismaTransactionClientWithDelegates
+    ).medicine.findFirst({
+      where: { id: productId, clinicId },
+      select: { stock: true },
     });
+    const batches: Array<{ quantityOnHand: number | null; expiryDate: Date }> =
+      await this.db.prisma.stockBatch.findMany({
+        where: { productId, clinicId, quantityOnHand: { gt: 0 } },
+        select: { quantityOnHand: true, expiryDate: true },
+      });
 
-    const totalOnHand = batches.reduce(
-      (sum: number, b: (typeof batches)[number]) => sum + (b.quantityOnHand ?? 0),
-      0
-    );
+    const expiredQuantity = batches
+      .filter(b => b.expiryDate.getTime() <= now.getTime())
+      .reduce((sum: number, b) => sum + (b.quantityOnHand ?? 0), 0);
+    const liveBatchCount = batches.filter(b => b.expiryDate.getTime() > now.getTime()).length;
+
     const result = {
       productId,
       clinicId,
-      totalOnHand,
-      batchCount: batches.length,
+      totalOnHand: Math.max(0, (medicine?.stock ?? 0) - expiredQuantity),
+      batchCount: liveBatchCount,
     };
 
     await this.cache.set(cacheKey, result, CACHE_TTL);
@@ -161,7 +158,8 @@ export class InventoryService {
     });
 
     const movement = await this.db.prisma.$transaction(async tx => {
-      const batch = await tx.stockBatch.findFirst({
+      const client = tx as unknown as PrismaTransactionClientWithDelegates;
+      const batch = await client.stockBatch.findFirst({
         where: { id: dto.batchId, productId: dto.productId, clinicId },
       });
 
@@ -183,7 +181,28 @@ export class InventoryService {
         );
       }
 
-      const movement = await tx.stockMovement.create({
+      // Guarded write: the WHERE re-checks the quantity at write time, so two
+      // concurrent movements can never drive the batch below zero.
+      const batchUpdate = await client.stockBatch.updateMany({
+        where: {
+          id: dto.batchId,
+          clinicId,
+          productId: dto.productId,
+          ...(dto.quantity < 0 ? { quantityOnHand: { gte: Math.abs(dto.quantity) } } : {}),
+        },
+        data: { quantityOnHand: { increment: dto.quantity } },
+      });
+      if (batchUpdate.count !== 1) {
+        throw new HealthcareError(
+          ErrorCode.PHARMACY_STOCK_INSUFFICIENT,
+          `Batch ${dto.batchId} changed concurrently, retry the movement`,
+          { batchId: dto.batchId, requested: Math.abs(dto.quantity) }
+        );
+      }
+
+      await this.applyMedicineStockDelta(client, dto.productId, clinicId, dto.quantity);
+
+      return client.stockMovement.create({
         data: {
           productId: dto.productId,
           batchId: dto.batchId,
@@ -197,16 +216,9 @@ export class InventoryService {
         },
         select: { id: true, movementType: true, quantity: true, createdAt: true },
       });
-
-      await tx.stockBatch.update({
-        where: { id: dto.batchId },
-        data: { quantityOnHand: newQuantity },
-      });
-
-      await this.reconcileMedicineStock(tx, dto.productId, clinicId);
-
-      return movement;
     });
+
+    await this.cache.del(`${INVENTORY_CACHE_PREFIX}:onhand:${clinicId}:${dto.productId}`);
 
     await this.events.emit('pharmacy.movement.recorded', {
       movementId: movement.id,
@@ -254,16 +266,64 @@ export class InventoryService {
   }
 
   /**
+   * Applies a signed delta to `Medicine.stock` (clinic scoped). A negative
+   * delta is guarded (`stock >= |delta|`) so stock can never go negative, even
+   * under concurrent writers: the guarded UPDATE row-locks the medicine until
+   * the surrounding transaction commits.
+   */
+  private async applyMedicineStockDelta(
+    client: PrismaTransactionClientWithDelegates,
+    medicineId: string,
+    clinicId: string,
+    delta: number
+  ): Promise<void> {
+    const result = await client.medicine.updateMany({
+      where: {
+        id: medicineId,
+        clinicId,
+        ...(delta < 0 ? { stock: { gte: Math.abs(delta) } } : {}),
+      },
+      data: { stock: { increment: delta } },
+    });
+
+    if (result.count === 1) {
+      return;
+    }
+
+    const medicine = await client.medicine.findFirst({
+      where: { id: medicineId, clinicId },
+      select: { stock: true },
+    });
+    if (!medicine) {
+      throw new NotFoundException(`Medicine ${medicineId} not found in clinic ${clinicId}`);
+    }
+    throw new HealthcareError(
+      ErrorCode.PHARMACY_STOCK_INSUFFICIENT,
+      `Insufficient stock for medicine ${medicineId}: ${medicine.stock ?? 0} on hand, requested ${Math.abs(delta)}`,
+      { medicineId, onHand: medicine.stock ?? 0, requested: Math.abs(delta) }
+    );
+  }
+
+  /**
    * FEFO-based dispense: consumes earliest-expiring batches first.
    *
-   * For each requested dispense item, picks the earliest-expiring batch
-   * with sufficient quantity. Consumes across multiple batches if needed.
+   * Runs in one transaction (the caller's `tx` when given, so a prescription
+   * dispense stays atomic with its status update). For each item:
+   * 1. `Medicine.stock` is decremented with a guarded UPDATE (clinic scoped,
+   *    `stock >= qty`), which both prevents negative stock and serialises
+   *    concurrent dispenses of the same medicine.
+   * 2. Non-expired batches are consumed earliest expiry first with guarded
+   *    per-batch UPDATEs and one DISPENSE_OUT movement per batch.
+   * 3. Anything the batches cannot cover is taken from legacy un-batched stock
+   *    (`Medicine.stock` minus every batch, expired ones included). Expired
+   *    batches are never dispensed.
+   * If any step fails the whole transaction rolls back.
    *
    * @param prescriptionId - Source prescription ID
    * @param dto - Dispense items (one entry per prescription line)
    * @param userId - ID of the dispensing pharmacist
    * @param clinicId - Clinic context
-   * @returns Array of batches consumed with quantities
+   * @returns Per item: batches consumed (lot, expiry, quantity) and any un-batched quantity
    */
   async dispenseFefo(
     prescriptionId: string,
@@ -272,19 +332,7 @@ export class InventoryService {
     clinicId: string,
     tx?: PrismaTransactionClientWithDelegates,
     emitEvent = true
-  ): Promise<
-    Array<{
-      prescriptionItemId: string;
-      medicineId: string;
-      consumedBatches: Array<{
-        batchId: string;
-        quantity: number;
-        expiryDate: Date;
-        lotNumber: string;
-      }>;
-      totalDispensed: number;
-    }>
-  > {
+  ): Promise<FefoDispenseResult[]> {
     this.logger.info('FEFO dispense initiated', {
       module: 'Inventory',
       prescriptionId,
@@ -292,49 +340,53 @@ export class InventoryService {
       itemCount: dto.items.length,
     });
 
-    const results: Array<{
-      prescriptionItemId: string;
-      medicineId: string;
-      consumedBatches: Array<{
-        batchId: string;
-        quantity: number;
-        expiryDate: Date;
-        lotNumber: string;
-      }>;
-      totalDispensed: number;
-    }> = [];
-
-    const consume = async (client: PrismaTransactionClientWithDelegates) => {
-      const affectedMedicineIds = new Set<string>();
+    const consume = async (
+      client: PrismaTransactionClientWithDelegates
+    ): Promise<FefoDispenseResult[]> => {
+      const results: FefoDispenseResult[] = [];
 
       for (const item of dto.items) {
-        const consumedBatches: Array<{
-          batchId: string;
-          quantity: number;
-          expiryDate: Date;
-          lotNumber: string;
-        }> = [];
+        if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+          throw new BadRequestException(
+            `Dispense quantity for medicine ${item.medicineId} must be a positive whole number`
+          );
+        }
 
-        let remaining = item.quantity;
-        const fefoBatches = await client.stockBatch.findMany({
-          where: {
-            productId: item.medicineId,
-            clinicId,
-            quantityOnHand: { gt: 0 },
-            expiryDate: { gt: new Date() },
-          },
+        await this.applyMedicineStockDelta(client, item.medicineId, clinicId, -item.quantity);
+
+        const medicine = await client.medicine.findFirst({
+          where: { id: item.medicineId, clinicId },
+          select: { stock: true },
+        });
+        const stockBeforeDispense = (medicine?.stock ?? 0) + item.quantity;
+
+        const batches: FefoBatchRow[] = await client.stockBatch.findMany({
+          where: { productId: item.medicineId, clinicId, quantityOnHand: { gt: 0 } },
           orderBy: { expiryDate: 'asc' },
         });
+        const now = Date.now();
+        const trackedQuantity = batches.reduce((sum, b) => sum + (b.quantityOnHand ?? 0), 0);
+        const unbatchedAvailable = Math.max(0, stockBeforeDispense - trackedQuantity);
 
-        for (const batch of fefoBatches) {
+        const consumedBatches: FefoDispenseResult['consumedBatches'] = [];
+        let remaining = item.quantity;
+
+        for (const batch of batches) {
           if (remaining <= 0) break;
-          const available = batch.quantityOnHand ?? 0;
-          const take = Math.min(available, remaining);
+          if (batch.expiryDate.getTime() <= now) continue;
 
-          await client.stockBatch.update({
-            where: { id: batch.id },
-            data: { quantityOnHand: available - take },
+          const take = Math.min(batch.quantityOnHand ?? 0, remaining);
+          const updated = await client.stockBatch.updateMany({
+            where: { id: batch.id, clinicId, quantityOnHand: { gte: take } },
+            data: { quantityOnHand: { decrement: take } },
           });
+          if (updated.count !== 1) {
+            throw new HealthcareError(
+              ErrorCode.PHARMACY_STOCK_INSUFFICIENT,
+              `Batch ${batch.lotNumber} changed concurrently, retry the dispense`,
+              { medicineId: item.medicineId, batchId: batch.id }
+            );
+          }
 
           await client.stockMovement.create({
             data: {
@@ -359,36 +411,25 @@ export class InventoryService {
           remaining -= take;
         }
 
-        if (remaining > 0) {
+        if (remaining > unbatchedAvailable) {
           throw new HealthcareError(
             ErrorCode.PHARMACY_STOCK_INSUFFICIENT,
-            `Insufficient stock for medicine ${item.medicineId}: short by ${remaining} units`,
-            { medicineId: item.medicineId, shortage: remaining, requested: item.quantity }
+            `Insufficient stock for medicine ${item.medicineId}: short by ${remaining - unbatchedAvailable} units`,
+            {
+              medicineId: item.medicineId,
+              shortage: remaining - unbatchedAvailable,
+              requested: item.quantity,
+            }
           );
         }
-
-        await client.medicine.update({
-          where: { id: item.medicineId },
-          data: { stock: { decrement: item.quantity } },
-        });
-
-        affectedMedicineIds.add(item.medicineId);
-
-        await this.cache.del(`${INVENTORY_CACHE_PREFIX}:onhand:${clinicId}:${item.medicineId}`);
 
         results.push({
           prescriptionItemId: item.prescriptionItemId,
           medicineId: item.medicineId,
           consumedBatches,
-          totalDispensed: consumedBatches.reduce(
-            (sum: number, c: (typeof consumedBatches)[number]) => sum + c.quantity,
-            0
-          ),
+          unbatchedQuantity: remaining,
+          totalDispensed: item.quantity,
         });
-      }
-
-      for (const medicineId of affectedMedicineIds) {
-        await this.reconcileMedicineStock(client, medicineId, clinicId);
       }
 
       return results;
@@ -396,7 +437,13 @@ export class InventoryService {
 
     const consumedResults = tx
       ? await consume(tx)
-      : await this.db.prisma.$transaction(async transaction => consume(transaction));
+      : await this.db.prisma.$transaction(async transaction =>
+          consume(transaction as unknown as PrismaTransactionClientWithDelegates)
+        );
+
+    for (const result of consumedResults) {
+      await this.cache.del(`${INVENTORY_CACHE_PREFIX}:onhand:${clinicId}:${result.medicineId}`);
+    }
 
     if (emitEvent) {
       await this.events.emit('pharmacy.dispense.fefo', {
@@ -408,6 +455,111 @@ export class InventoryService {
     }
 
     return consumedResults;
+  }
+
+  /**
+   * Reverses (part of) a prescription dispense, restoring exactly what was
+   * taken: every DISPENSE_OUT movement recorded for the prescription is netted
+   * against RETURN_IN movements already booked, and the remainder is returned
+   * to the same batches (newest dispense first). Units that were taken from
+   * legacy un-batched stock go back to `Medicine.stock` only. Never restores
+   * more batch units than were taken, so a repeated call cannot inflate stock.
+   *
+   * Must run inside the caller's transaction (`tx`).
+   *
+   * @returns Per medicine: batch restores and the un-batched quantity returned
+   */
+  async restoreDispense(
+    prescriptionId: string,
+    items: Array<{ medicineId: string; quantity: number }>,
+    userId: string,
+    clinicId: string,
+    tx: PrismaTransactionClientWithDelegates
+  ): Promise<
+    Array<{
+      medicineId: string;
+      restoredBatches: Array<{ batchId: string; quantity: number }>;
+      unbatchedQuantity: number;
+    }>
+  > {
+    const results: Array<{
+      medicineId: string;
+      restoredBatches: Array<{ batchId: string; quantity: number }>;
+      unbatchedQuantity: number;
+    }> = [];
+
+    for (const item of items) {
+      if (item.quantity <= 0) continue;
+
+      const movements: Array<{ batchId: string; quantity: number }> =
+        await tx.stockMovement.findMany({
+          where: {
+            clinicId,
+            productId: item.medicineId,
+            referenceType: 'PRESCRIPTION',
+            referenceId: prescriptionId,
+            movementType: { in: [MovementType.DISPENSE_OUT, MovementType.RETURN_IN] },
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+
+      const netTakenByBatch = new Map<string, number>();
+      for (const movement of movements) {
+        netTakenByBatch.set(
+          movement.batchId,
+          (netTakenByBatch.get(movement.batchId) ?? 0) - movement.quantity
+        );
+      }
+
+      let remaining = item.quantity;
+      const restoredBatches: Array<{ batchId: string; quantity: number }> = [];
+
+      for (const [batchId, netTaken] of netTakenByBatch) {
+        if (remaining <= 0) break;
+        const restorable = Math.min(netTaken, remaining);
+        if (restorable <= 0) continue;
+
+        const updated = await tx.stockBatch.updateMany({
+          where: { id: batchId, clinicId, productId: item.medicineId },
+          data: { quantityOnHand: { increment: restorable } },
+        });
+        if (updated.count !== 1) {
+          throw new HealthcareError(
+            ErrorCode.PHARMACY_BATCH_NOT_FOUND,
+            `Batch ${batchId} not found in clinic ${clinicId} while reversing the dispense`,
+            { batchId, prescriptionId }
+          );
+        }
+
+        await tx.stockMovement.create({
+          data: {
+            productId: item.medicineId,
+            batchId,
+            clinicId,
+            movementType: MovementType.RETURN_IN,
+            quantity: restorable,
+            reason: `Dispense reversal for prescription ${prescriptionId}`,
+            referenceId: prescriptionId,
+            referenceType: 'PRESCRIPTION',
+            recordedById: userId,
+          },
+        });
+
+        restoredBatches.push({ batchId, quantity: restorable });
+        remaining -= restorable;
+      }
+
+      await this.applyMedicineStockDelta(tx, item.medicineId, clinicId, item.quantity);
+      await this.cache.del(`${INVENTORY_CACHE_PREFIX}:onhand:${clinicId}:${item.medicineId}`);
+
+      results.push({
+        medicineId: item.medicineId,
+        restoredBatches,
+        unbatchedQuantity: remaining,
+      });
+    }
+
+    return results;
   }
 
   /**

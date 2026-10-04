@@ -51,6 +51,51 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 /**
+ * Users to tell about a video visit event: the patient (`userId` on the envelope) and, when it is
+ * a different account, the user who booked the visit (`metadata.bookerUserId`). VideoService
+ * resolves both when it emits, so no lookup is needed here. The clinician is never included.
+ */
+function resolveVideoVisitRecipientUserIds(payload: EnterpriseEventPayload): string[] {
+  const candidates: unknown[] = [payload.userId, payload.metadata?.['bookerUserId']];
+  const userIds = candidates
+    .map(candidate => resolveText(candidate).trim())
+    .filter(candidate => candidate.length > 0);
+  return [...new Set(userIds)];
+}
+
+/**
+ * Metadata keys that must not travel in the push/socket `data` of an event, whatever the emitter
+ * put in `metadata`. The "complete this visit" reminder still carries the patient's name from the
+ * scheduler; the text is generic, so the name is dropped here too rather than reaching the device.
+ */
+const NOTIFICATION_METADATA_BLOCKLIST: Readonly<Record<string, readonly string[]>> = {
+  'video.consultation.completion_pending': ['patientName'],
+};
+
+function sanitizeNotificationMetadata(
+  eventType: string,
+  metadata: Record<string, unknown>
+): Record<string, unknown> {
+  const blocked = NOTIFICATION_METADATA_BLOCKLIST[eventType];
+  if (!blocked) {
+    return metadata;
+  }
+  return Object.fromEntries(Object.entries(metadata).filter(([key]) => !blocked.includes(key)));
+}
+
+/**
+ * `started` tells the patient only when the DOCTOR starts the visit for the first time (a rejoin,
+ * or a patient/front desk opening the room, notifies nobody). `ended` is only emitted when the
+ * visit was completed (by its doctor or a clinic admin), so it always notifies.
+ */
+function shouldNotifyVideoVisitEvent(payload: EnterpriseEventPayload): boolean {
+  if (payload.eventType !== 'video.consultation.started') {
+    return true;
+  }
+  return payload.metadata?.['actorRole'] === 'doctor' && payload.metadata?.['firstStart'] === true;
+}
+
+/**
  * Event-to-Communication mapping rules
  */
 interface CommunicationRule {
@@ -943,48 +988,34 @@ export class NotificationEventListener implements OnModuleInit {
       },
       shouldNotify: () => true,
     },
-    // Video Consultation Events
+    // Video Consultation Events: tell the patient the doctor has joined / the visit is done.
+    // VideoService puts the routing in the envelope (`userId` = the patient's user account,
+    // `metadata.bookerUserId`, `metadata.actorRole`, `metadata.firstStart`); the clinician who
+    // caused the event is never a recipient.
     {
       eventPattern: /^video\.consultation\.(started|ended)$/,
       category: CommunicationCategory.APPOINTMENT,
       channels: ['socket', 'push', 'email', 'whatsapp'], // Real-time + Email + WhatsApp
       priority: CommunicationPriority.HIGH,
       template: 'video_consultation',
+      recipients: payload =>
+        resolveVideoVisitRecipientUserIds(payload).map(userId => ({
+          userId,
+          socketRoom: `user:${userId}`,
+        })),
+      shouldNotify: payload => shouldNotifyVideoVisitEvent(payload),
+    },
+    // Open video visit: remind the doctor to complete it before it expires
+    {
+      eventPattern: /^video\.consultation\.completion_pending$/,
+      category: CommunicationCategory.APPOINTMENT,
+      channels: ['socket', 'push'],
+      priority: CommunicationPriority.HIGH,
+      template: 'video_completion_pending',
       recipients: payload => {
-        const recipients: Array<{
-          userId?: string;
-          deviceToken?: string;
-          socketRoom?: string;
-        }> = [];
-        // Get appointmentId from metadata
-        const appointmentId =
-          (payload.metadata?.['appointmentId'] as string | undefined) ||
-          ((payload as unknown as Record<string, unknown>)?.['appointmentId'] as
-            string | undefined);
-        if (appointmentId) {
-          recipients.push({
-            socketRoom: `appointment:${appointmentId}`,
-          });
-        }
-        // Handle both enterprise event format (userId) and simple format (patientId)
-        const patientId = payload.userId || (payload.metadata?.['patientId'] as string | undefined);
-        if (patientId) {
-          recipients.push({
-            userId: patientId,
-            socketRoom: `user:${patientId}`,
-          });
-        }
-        // Handle both enterprise event format (metadata.doctorId) and simple format (doctorId)
-        const doctorId =
-          (payload.metadata?.['doctorId'] as string | undefined) ||
-          ((payload as unknown as Record<string, unknown>)?.['doctorId'] as string | undefined);
-        if (doctorId) {
-          recipients.push({
-            userId: doctorId,
-            socketRoom: `user:${doctorId}`,
-          });
-        }
-        return recipients;
+        const doctorUserId =
+          (payload.metadata?.['doctorUserId'] as string | undefined) || payload.userId;
+        return doctorUserId ? [{ userId: doctorUserId, socketRoom: `user:${doctorUserId}` }] : [];
       },
       shouldNotify: () => true,
     },
@@ -1295,7 +1326,9 @@ export class NotificationEventListener implements OnModuleInit {
           eventId: eventPayload.eventId,
           ...(eventPayload.userId && { userId: eventPayload.userId }),
           ...(eventPayload.clinicId && { clinicId: eventPayload.clinicId }),
-          ...(eventPayload.metadata && { metadata: eventPayload.metadata }),
+          ...(eventPayload.metadata && {
+            metadata: sanitizeNotificationMetadata(normalizedEventType, eventPayload.metadata),
+          }),
         },
         respectPreferences: true,
         applyRateLimit: true,
@@ -1552,7 +1585,21 @@ export class NotificationEventListener implements OnModuleInit {
     let body = 'You have a new notification';
 
     // Customize based on event type
-    if (eventType.startsWith('ehr.prescription.')) {
+    if (eventType === 'video.consultation.started') {
+      // Generic on purpose: push and WhatsApp text is visible on a lock screen, so no names.
+      title = 'Your doctor has joined';
+      body = 'Your video consultation is ready. Open the app to join.';
+    } else if (eventType === 'video.consultation.ended') {
+      title = 'Consultation completed';
+      body =
+        'Your video consultation has ended. You can view the summary and rate your visit in the app.';
+    } else if (eventType === 'video.consultation.completion_pending') {
+      // Generic on purpose, like started/ended: push and socket text can show on a lock screen,
+      // so it never names the patient. The tap opens the visit through the deep link the app
+      // builds from `metadata.appointmentId`.
+      title = 'Complete this visit';
+      body = 'A video visit is still open — tap to complete it';
+    } else if (eventType.startsWith('ehr.prescription.')) {
       const medicationCount =
         Number(payload.metadata?.['medicationsCount'] ?? payload.metadata?.['count'] ?? 0) ||
         Number((payload as unknown as Record<string, unknown>)['count'] ?? 0);

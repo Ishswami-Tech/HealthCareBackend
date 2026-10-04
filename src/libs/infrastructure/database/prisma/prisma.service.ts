@@ -1174,6 +1174,29 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     assignDelegate<NursingNoteDelegate>('nursingNote', 'nursingNote');
     assignDelegate<VitalsFlowsheetDelegate>('vitalsFlowsheet', 'vitalsFlowsheet');
     assignDelegate<BedsideMedicationDelegate>('bedsideMedication', 'bedsideMedication');
+    // Pharmacy inventory delegates are declared on this class but were never
+    // copied from the client, so `db.prisma.stockBatch` etc. were undefined at
+    // runtime. Assigned leniently (only when the generated client has the model)
+    // so a stale generated client does not stop the whole app from booting.
+    const pharmacyInventoryDelegates = [
+      'stockBatch',
+      'stockMovement',
+      'stockTransfer',
+      'reorderRule',
+      'stockAlert',
+      'purchaseOrder',
+    ] as const;
+    for (const delegateName of pharmacyInventoryDelegates) {
+      const delegateValue = clientTyped[delegateName];
+      if (delegateValue !== undefined && delegateValue !== null) {
+        Object.defineProperty(this, delegateName, {
+          value: delegateValue,
+          writable: false,
+          enumerable: true,
+          configurable: false,
+        });
+      }
+    }
     // $transaction cannot go through assignDelegate: unlike model delegates
     // (self-contained objects whose own methods don't depend on the caller's
     // `this`), $transaction is a plain function on PrismaClient that reads

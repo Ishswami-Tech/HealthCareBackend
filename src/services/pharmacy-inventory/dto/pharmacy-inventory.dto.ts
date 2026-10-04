@@ -17,10 +17,13 @@ import {
   IsBoolean,
   ValidateNested,
   IsEnum,
+  IsIn,
   Min,
   Max,
   IsUUID,
   MaxLength,
+  ArrayMinSize,
+  ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { MovementType } from '@core/types/enums.types';
@@ -335,12 +338,14 @@ export class PurchaseOrderItemDto {
   @ApiProperty({ example: 100 })
   @IsInt()
   @Min(1)
+  @Max(1000000)
   quantity!: number;
 
-  @ApiPropertyOptional({ example: 25.5, description: 'Unit price' })
+  @ApiPropertyOptional({ example: 25.5, description: 'Unit price in rupees (max 2 decimals)' })
   @IsOptional()
-  @IsNumber()
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
+  @Max(10000000)
   unitPrice?: number;
 
   @ApiPropertyOptional({ example: 'Paracetamol 500mg', description: 'Item description' })
@@ -384,10 +389,39 @@ export class CreatePurchaseOrderDto {
     description: 'PO line items',
   })
   @IsArray()
-  @IsNotEmpty()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(200)
   @ValidateNested({ each: true })
   @Type(() => PurchaseOrderItemDto)
   items!: PurchaseOrderItemDto[];
+}
+
+/**
+ * Query parameters for listing purchase orders
+ */
+export class PurchaseOrderListQueryDto {
+  @ApiPropertyOptional({
+    enum: ['DRAFT', 'SENT', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED'],
+    description: 'Filter by status',
+  })
+  @IsOptional()
+  @IsIn(['DRAFT', 'SENT', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED'])
+  status?: 'DRAFT' | 'SENT' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CANCELLED';
+
+  @ApiPropertyOptional({ example: 50, default: 50 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  limit?: number;
+
+  @ApiPropertyOptional({ example: 0, default: 0 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  offset?: number;
 }
 
 // ============================================================================

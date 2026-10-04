@@ -16,6 +16,14 @@ import type { LoggerLike } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 
+import {
+  DELETE_BATCH_SIZE,
+  deleteKeysByPattern,
+  emptyPatternDeleteResult,
+  listKeysByPattern,
+} from './utils/pattern-delete.util';
+import type { PatternDeleteOptions, PatternDeleteResult } from './utils/pattern-delete.util';
+
 /**
  * Base class for cache client services (Redis/Dragonfly)
  * Provides common functionality for both providers
@@ -411,13 +419,29 @@ export abstract class BaseCacheClientService {
     }
   }
 
+  /**
+   * Keys matching `pattern`, as LOGICAL names (without the connection `keyPrefix`), so they can be
+   * passed straight back to get/lRange/del. ioredis does not apply `keyPrefix` to a KEYS/SCAN
+   * glob and returns raw names, which used to make `keys('queue:*')` miss every key and return
+   * names that were double-prefixed when handed back. Walks the keyspace with SCAN.
+   *
+   * A failure is logged at ERROR and reported as no keys (this is a lookup, callers treat "no
+   * keys" as an empty result), never silently.
+   */
   async keys(pattern: string): Promise<string[]> {
     if (!this.client || this.client.status !== 'ready') {
       return [];
     }
     try {
-      return await this.client.keys(pattern);
-    } catch {
+      return await listKeysByPattern(this.client, this.PRODUCTION_CONFIG.keyPrefix, pattern);
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.ERROR,
+        `[BaseCacheClientService] keys() failed for pattern "${pattern}": ${error instanceof Error ? error.message : String(error)}`,
+        `${this.PROVIDER_NAME}Service.keys`,
+        { pattern, error: error instanceof Error ? error.stack : String(error) }
+      );
       return [];
     }
   }
@@ -701,17 +725,136 @@ export abstract class BaseCacheClientService {
     }
   }
 
-  async clearCache(pattern: string): Promise<number> {
+  /**
+   * Deletes every key matching `pattern` (a glob over the logical, unprefixed key names) and
+   * reports what happened instead of throwing. See pattern-delete.util.ts for the key prefix
+   * handling, the SCAN walk, the batching and the protected-namespace deny-list.
+   *
+   * Logging contract: a refused pattern, skipped protected keys and an unavailable client are
+   * WARN; a failed delete is ERROR. Nothing is swallowed silently.
+   */
+  async clearCacheDetailed(
+    pattern: string,
+    options: PatternDeleteOptions = {}
+  ): Promise<PatternDeleteResult> {
+    if (!this.client || this.client.status !== 'ready') {
+      this.logPatternDeleteIssue(LogLevel.WARN, 'Pattern delete skipped: cache client not ready', {
+        pattern,
+        clientStatus: this.client?.status ?? 'no-client',
+      });
+      return emptyPatternDeleteResult(pattern, { unavailable: true });
+    }
+
+    const result = await deleteKeysByPattern(
+      this.client,
+      this.PRODUCTION_CONFIG.keyPrefix,
+      pattern,
+      options
+    );
+    if (result.refused) {
+      this.logPatternDeleteIssue(
+        LogLevel.WARN,
+        'Pattern delete refused: pattern targets a protected cache namespace',
+        { pattern }
+      );
+    } else if (result.protectedSkipped > 0) {
+      this.logPatternDeleteIssue(
+        LogLevel.WARN,
+        'Pattern delete skipped keys in protected cache namespaces',
+        { pattern, protectedSkipped: result.protectedSkipped, deleted: result.deleted }
+      );
+    }
+    if (result.error) {
+      this.logPatternDeleteIssue(LogLevel.ERROR, 'Pattern delete failed', {
+        pattern,
+        error: result.error,
+        deletedBeforeFailure: result.deleted,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Numeric form of {@link clearCacheDetailed}: returns the number of keys deleted and THROWS when
+   * the delete failed, so a failure can never be mistaken for "nothing matched". An unavailable
+   * client or a refused pattern deletes nothing and returns 0 (both are already logged).
+   */
+  async clearCache(pattern: string, options: PatternDeleteOptions = {}): Promise<number> {
+    const result = await this.clearCacheDetailed(pattern, options);
+    if (result.error) {
+      throw new HealthcareError(
+        ErrorCode.CACHE_OPERATION_FAILED,
+        `Failed to delete cache keys matching "${pattern}"`,
+        undefined,
+        { pattern, error: result.error, deleted: result.deleted },
+        `${this.PROVIDER_NAME}Service.clearCache`
+      );
+    }
+    return result.deleted;
+  }
+
+  /**
+   * Deletes exact keys in bounded batches and THROWS if any batch fails or the client is not
+   * ready. For callers (tag invalidation) that must know whether the delete really happened
+   * before they discard their only index of those keys.
+   */
+  async deleteKeysStrict(keys: readonly string[]): Promise<number> {
+    if (keys.length === 0) return 0;
+    if (!this.client || this.client.status !== 'ready') {
+      throw new HealthcareError(
+        ErrorCode.CACHE_CONNECTION_FAILED,
+        `${this.PROVIDER_NAME} client not ready`,
+        undefined,
+        { keys: keys.length },
+        `${this.PROVIDER_NAME}Service.deleteKeysStrict`
+      );
+    }
+    let deleted = 0;
+    for (let index = 0; index < keys.length; index += DELETE_BATCH_SIZE) {
+      const batch = keys.slice(index, index + DELETE_BATCH_SIZE);
+      deleted +=
+        typeof this.client.unlink === 'function'
+          ? await this.client.unlink(...batch)
+          : await this.client.del(...batch);
+    }
+    return deleted;
+  }
+
+  /**
+   * Raises a key's TTL to at least `seconds` and NEVER shortens it. `EXPIRE ... NX` gives a key
+   * without a TTL its first one, `EXPIRE ... GT` only ever extends. A server that rejects the
+   * options falls back to read-then-extend.
+   *
+   * Used for tag-index sets, which are shared by many entries with different TTLs: the last
+   * entry registered must not decide how long the set (and therefore the invalidation path of
+   * every older, longer-lived entry) lives.
+   */
+  async extendExpiry(key: string, seconds: number): Promise<number> {
     if (!this.client || this.client.status !== 'ready') {
       return 0;
     }
     try {
-      const keys = await this.client.keys(pattern);
-      if (keys.length === 0) return 0;
-      return await this.client.del(...keys);
+      await this.client.expire(key, seconds, 'NX');
+      return await this.client.expire(key, seconds, 'GT');
     } catch {
-      return 0;
+      const current = await this.client.ttl(key);
+      if (current === -2) return 0;
+      return current === -1 || current < seconds ? await this.client.expire(key, seconds) : 0;
     }
+  }
+
+  private logPatternDeleteIssue(
+    level: LogLevel,
+    message: string,
+    details: Record<string, string | number>
+  ): void {
+    void this.loggingService.log(
+      LogType.CACHE,
+      level,
+      message,
+      `${this.PROVIDER_NAME}Service.clearCache`,
+      details
+    );
   }
 
   async multi(

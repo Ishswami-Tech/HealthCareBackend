@@ -66,6 +66,35 @@ export class AppointmentQueueService {
     return `queue:${domain}:${clinicId}:${ownerId}:${this.getQueueDate(date)}`;
   }
 
+  /**
+   * Ticket number for an in-person check-in: a per doctor/day/clinic counter that only moves
+   * forward, so a patient's token never changes when earlier patients leave the list. Falls back
+   * to (highest token already in the list + 1) when the counter is unavailable.
+   */
+  private async nextTokenNumber(
+    counterKey: string,
+    existingEntries: readonly string[]
+  ): Promise<number> {
+    try {
+      const next = await this.cacheService.incr(counterKey);
+      if (Number.isInteger(next) && next > 0) {
+        await this.cacheService.expire(counterKey, 48 * 3600);
+        return next;
+      }
+    } catch {
+      // fall through to the list-derived token below
+    }
+    const highest = existingEntries.reduce((max, raw) => {
+      try {
+        const token = (JSON.parse(raw) as QueueEntryData).tokenNumber;
+        return typeof token === 'number' && token > max ? token : max;
+      } catch {
+        return max;
+      }
+    }, 0);
+    return Math.max(highest, existingEntries.length) + 1;
+  }
+
   private normalizeQueueLabel(value?: string): string {
     return String(value || '')
       .trim()
@@ -247,6 +276,15 @@ export class AppointmentQueueService {
         throw new Error(`Invalid laneType: ${queueData.laneType}`);
       }
 
+      // Only consultation-lane entries get a token (they are in-person arrivals).
+      const tokenNumber =
+        queueData.queueCategory === String(AppointmentQueueCategory.DOCTOR_CONSULTATION)
+          ? await this.nextTokenNumber(
+              `queue:token:${queueData.clinicId}:${queueData.queueOwnerId}:${this.getQueueDate()}`,
+              existingEntries
+            )
+          : undefined;
+
       const queueEntry: QueueEntryData = {
         entryId: queueData.entryId,
         appointmentId: queueData.appointmentId || queueData.entryId,
@@ -255,6 +293,7 @@ export class AppointmentQueueService {
         clinicId: queueData.clinicId,
         status: 'WAITING',
         checkedInAt: nowIso(),
+        ...(tokenNumber !== undefined && { tokenNumber }),
         priority:
           queueData.laneType === 'VIP'
             ? 100
@@ -599,6 +638,11 @@ export class AppointmentQueueService {
         throw new Error('Appointment arrival is already confirmed');
       }
 
+      const tokenNumber = await this.nextTokenNumber(
+        `queue:token:${clinicId}:${doctorId}:${date}`,
+        existingEntries
+      );
+
       const queueEntry: QueueEntryData = {
         appointmentId,
         patientId,
@@ -606,6 +650,7 @@ export class AppointmentQueueService {
         clinicId,
         status: 'WAITING',
         checkedInAt: nowIso(),
+        tokenNumber,
         priority:
           typeof checkInData.priority === 'number'
             ? checkInData.priority
@@ -1691,6 +1736,22 @@ export class AppointmentQueueService {
       },
     });
     return { success: true, message: 'Queue paused' };
+  }
+
+  /**
+   * Pause flag of one owner's queue for a day: 'PAUSED' while pauseQueue is in effect, null
+   * otherwise. Read-only; the key is the one pauseQueue / resumeQueue maintain.
+   */
+  async getQueuePauseStatus(
+    doctorId: string,
+    clinicId: string,
+    date: string,
+    domain: string
+  ): Promise<string | null> {
+    const status = await this.cacheService.get<string>(
+      `queue:status:${domain}:${clinicId}:${doctorId}:${date}`
+    );
+    return typeof status === 'string' && status.length > 0 ? status : null;
   }
 
   async resumeQueue(

@@ -12,8 +12,11 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { PartialType } from '@nestjs/mapped-types';
+import { Transform, Type } from 'class-transformer';
 import { Role } from '@core/types/enums.types';
+import { BLOOD_GROUPS, MARITAL_STATUSES } from '@dtos/user.dto';
+import type { BloodGroup, MaritalStatus } from '@dtos/user.dto';
 
 /**
  * Emergency Contact DTO
@@ -141,6 +144,27 @@ export class CompleteProfileRequestDto {
   @IsOptional()
   zipCode?: string;
 
+  @ApiPropertyOptional({ description: 'Occupation', example: 'Teacher' })
+  @IsString()
+  @IsOptional()
+  occupation?: string;
+
+  @ApiPropertyOptional({ enum: MARITAL_STATUSES, description: 'Marital status' })
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value
+  )
+  @IsIn(MARITAL_STATUSES)
+  @IsOptional()
+  maritalStatus?: MaritalStatus;
+
+  @ApiPropertyOptional({ enum: BLOOD_GROUPS, description: 'Blood group', example: 'O+' })
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value
+  )
+  @IsIn(BLOOD_GROUPS)
+  @IsOptional()
+  bloodGroup?: BloodGroup;
+
   @ApiPropertyOptional({ description: 'Doctor availability working hours' })
   @IsObject()
   @IsOptional()
@@ -187,6 +211,31 @@ export class CompleteProfileRequestDto {
   @IsString()
   @IsOptional()
   clinicAddress?: string;
+}
+
+/**
+ * Update Profile Request DTO
+ *
+ * POST /profile/completion/update is for incremental edits to an already
+ * in-progress or complete profile (e.g. a settings screen changing just
+ * dateOfBirth or gender) — unlike POST /complete, it must not require every
+ * field CompleteProfileRequestDto marks as required (firstName, lastName).
+ * Reusing CompleteProfileRequestDto directly for /update rejected any
+ * partial payload with a 400, even though the endpoint's own description
+ * says it supports incremental updates.
+ */
+export class UpdateProfileRequestDto extends PartialType(CompleteProfileRequestDto) {}
+
+/**
+ * `PartialType` marks every field `@IsOptional()`, and `IsOptional` lets an
+ * explicit `null` through validation. Forwarding those nulls to the user update
+ * would try to null required columns (firstName, lastName, ...), so the update
+ * handler passes only the fields the client actually supplied a value for.
+ */
+export function omitNullishFields(dto: object): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(dto).filter(([, value]) => value !== null && value !== undefined)
+  );
 }
 
 /**

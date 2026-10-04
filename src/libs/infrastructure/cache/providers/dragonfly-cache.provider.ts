@@ -17,6 +17,7 @@ import type {
   RateLimitOptions,
 } from '@core/types';
 import { DragonflyService } from '@cache/dragonfly/dragonfly.service';
+import { DELETE_BATCH_SIZE } from '@infrastructure/cache/utils/pattern-delete.util';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { LogType, LogLevel } from '@core/types';
@@ -141,17 +142,28 @@ export class DragonflyCacheProvider implements IAdvancedCacheProvider {
     }
   }
 
+  /** Best-effort bulk delete in bounded batches; errors are swallowed (see deleteKeysStrict). */
   async delMultiple(keys: readonly string[]): Promise<number> {
     if (keys.length === 0) return 0;
     try {
       let deleted = 0;
-      for (const key of keys) {
-        deleted += await this.dragonflyService.del(key);
+      for (let index = 0; index < keys.length; index += DELETE_BATCH_SIZE) {
+        deleted += await this.dragonflyService.del(...keys.slice(index, index + DELETE_BATCH_SIZE));
       }
       return deleted;
     } catch {
       return 0;
     }
+  }
+
+  /** Bulk delete that THROWS on failure, for callers that must not lose their index of the keys. */
+  async deleteKeysStrict(keys: readonly string[]): Promise<number> {
+    return this.dragonflyService.deleteKeysStrict(keys);
+  }
+
+  /** Raises a key's TTL to at least `seconds`; never shortens it. */
+  async extendExpiry(key: string, seconds: number): Promise<number> {
+    return this.dragonflyService.extendExpiry(key, seconds);
   }
 
   async getMultiple<T>(keys: readonly string[]): Promise<Map<string, T | null>> {
@@ -206,12 +218,18 @@ export class DragonflyCacheProvider implements IAdvancedCacheProvider {
     }
   }
 
+  /**
+   * Deletes every key matching the glob through the shared pattern delete (SCAN, batched UNLINK,
+   * correct key prefix handling). Protected security namespaces are never deleted. Throws when
+   * the delete failed.
+   */
   async clearByPattern(pattern: string): Promise<number> {
-    try {
-      return await this.dragonflyService.clearCache(pattern);
-    } catch {
-      return 0;
-    }
+    return this.dragonflyService.clearCache(pattern);
+  }
+
+  /** Admin tooling only: like clearByPattern, but also removes protected namespaces. */
+  async clearByPatternAllowProtected(pattern: string): Promise<number> {
+    return this.dragonflyService.clearCache(pattern, { allowProtected: true });
   }
 
   async ping(): Promise<string> {
@@ -327,34 +345,9 @@ export class DragonflyCacheProvider implements IAdvancedCacheProvider {
     }
   }
 
+  /** Clears everything except protected (security / bookkeeping) namespaces. */
   async clearAllCache(): Promise<number> {
-    try {
-      const keys = await this.dragonflyService.keys('*');
-      const keysToDelete = keys.filter(
-        key =>
-          !key.startsWith('cache:stats') &&
-          !key.startsWith('security:events') &&
-          !key.startsWith('system:')
-      );
-
-      if (keysToDelete.length === 0) return 0;
-
-      const BATCH_SIZE = 1000;
-      let deletedCount = 0;
-
-      for (let i = 0; i < keysToDelete.length; i += BATCH_SIZE) {
-        const batch = keysToDelete.slice(i, i + BATCH_SIZE);
-        if (batch.length > 0) {
-          for (const key of batch) {
-            deletedCount += await this.dragonflyService.del(key);
-          }
-        }
-      }
-
-      return deletedCount;
-    } catch {
-      return 0;
-    }
+    return this.dragonflyService.clearCache('*');
   }
 
   async resetCacheStats(): Promise<void> {

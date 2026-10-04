@@ -4,6 +4,9 @@
  */
 
 import { DatabaseMethodsBase } from './database-methods.base';
+import { isPaidPaymentStatus, normalizePaymentStatus } from '@utils/currency.util';
+import { getVideoActiveWindowMinutes, getVideoEarlyJoinMinutes } from '@config/video.config';
+import { findTreatmentCatalogEntryOrUndefined } from '@core/types/treatment-catalog.types';
 import type { AppointmentWithRelations, AppointmentTimeSlot } from '@core/types/database.types';
 import type { PrismaDelegateArgs } from '@core/types/prisma.types';
 import type {
@@ -12,6 +15,9 @@ import type {
   AppointmentWhereInput,
 } from '@core/types/input.types';
 
+// Fields the web/mobile appointment cards read directly (doctor qualification / experience /
+// fees, location address and coordinates, clinic contact, patient demographics). Keep the
+// patient user select free of anything that is not shown on an appointment row.
 const appointmentListIncludeValidator = {
   patient: {
     select: {
@@ -27,6 +33,9 @@ const appointmentListIncludeValidator = {
           phone: true,
           profilePicture: true,
           role: true,
+          gender: true,
+          dateOfBirth: true,
+          age: true,
         },
       },
     },
@@ -36,6 +45,11 @@ const appointmentListIncludeValidator = {
       id: true,
       userId: true,
       specialization: true,
+      qualification: true,
+      experience: true,
+      consultationFee: true,
+      videoConsultationFee: true,
+      rating: true,
       user: {
         select: {
           id: true,
@@ -54,6 +68,9 @@ const appointmentListIncludeValidator = {
     select: {
       id: true,
       name: true,
+      phone: true,
+      address: true,
+      email: true,
     },
   },
   location: {
@@ -61,6 +78,12 @@ const appointmentListIncludeValidator = {
       id: true,
       locationId: true,
       name: true,
+      address: true,
+      city: true,
+      state: true,
+      phone: true,
+      latitude: true,
+      longitude: true,
     },
   },
   payment: {
@@ -86,8 +109,6 @@ const appointmentListIncludeValidator = {
     },
   },
 } as const;
-
-const COMPLETED_PAYMENT_STATUSES = new Set(['COMPLETED', 'SUCCESS', 'PAID', 'CAPTURED']);
 
 type AppointmentPaymentRelation = {
   id?: string;
@@ -117,25 +138,70 @@ type AppointmentWithPaymentRelation = AppointmentWithRelations & {
   paymentTransactionId?: string | null | undefined;
   invoiceStatus?: string | null | undefined;
   invoicePaidAt?: Date | null | undefined;
+  /** Human-readable service label (treatment catalog label, falls back to the treatment type). */
+  service?: string | undefined;
+  /** Amount the visit is billed at (payment amount, then invoice total), same as paymentAmount. */
+  fee?: number | null | undefined;
+  /** Flattened patient contact / demographics for staff lists. */
+  patientPhone?: string | null | undefined;
+  patientEmail?: string | null | undefined;
+  patientGender?: string | null | undefined;
+  patientAge?: number | null | undefined;
+  isWalkIn?: boolean | undefined;
+  /** Window (minutes after the scheduled start) before a confirmed visit auto-expires. */
+  confirmationWindowMinutes?: number | undefined;
+  /** Join window for video visits (minutes before start / after start), from env. */
+  videoEarlyJoinMinutes?: number | undefined;
+  videoActiveWindowMinutes?: number | undefined;
 };
 
-function normalizePaymentStatus(value: unknown): string {
-  if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
-    return '';
-  }
+const isPaymentCompleted = isPaidPaymentStatus;
 
-  return String(value)
-    .trim()
-    .replace(/[\s-]+/g, '_')
-    .toUpperCase();
+type PatientUserDemographics = {
+  phone?: string | null;
+  email?: string | null;
+  gender?: string | null;
+  dateOfBirth?: Date | string | null;
+  age?: number | null;
+};
+
+/** Whole years between the date of birth and now; null when the date is missing or invalid. */
+export function ageFromDateOfBirth(dateOfBirth: Date | string | null | undefined): number | null {
+  if (!dateOfBirth) return null;
+  const dob = dateOfBirth instanceof Date ? dateOfBirth : new Date(dateOfBirth);
+  if (Number.isNaN(dob.getTime())) return null;
+  const now = new Date();
+  let age = now.getUTCFullYear() - dob.getUTCFullYear();
+  const beforeBirthday =
+    now.getUTCMonth() < dob.getUTCMonth() ||
+    (now.getUTCMonth() === dob.getUTCMonth() && now.getUTCDate() < dob.getUTCDate());
+  if (beforeBirthday) age -= 1;
+  return age >= 0 ? age : null;
 }
 
-function isPaymentCompleted(value: unknown): boolean {
-  const normalized = normalizePaymentStatus(value);
-  return Boolean(normalized) && COMPLETED_PAYMENT_STATUSES.has(normalized);
+/** Catalog label for a treatment type ("GENERAL_CONSULTATION" -> "General Consultation"). */
+export function resolveAppointmentServiceLabel(treatmentType: unknown): string | undefined {
+  if (typeof treatmentType !== 'string' || !treatmentType.trim()) return undefined;
+  const entry = findTreatmentCatalogEntryOrUndefined(treatmentType);
+  if (entry?.label) return entry.label;
+  return treatmentType
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
 }
 
-function enrichAppointmentPaymentState(
+function readWalkInFlag(metadata: unknown): boolean | undefined {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return undefined;
+  const record = metadata as Record<string, unknown>;
+  const flag = record['isWalkIn'] ?? record['walkIn'];
+  if (typeof flag === 'boolean') return flag;
+  const source = record['bookingSource'] ?? record['source'];
+  if (typeof source === 'string') return source.toUpperCase().includes('WALK');
+  return undefined;
+}
+
+export function enrichAppointmentPaymentState(
   appointment: AppointmentWithRelations
 ): AppointmentWithPaymentRelation {
   const payment = (appointment as AppointmentWithPaymentRelation).payment ?? null;
@@ -150,6 +216,11 @@ function enrichAppointmentPaymentState(
     isPaymentCompleted(paymentStatus) ||
     Boolean((appointment as AppointmentWithPaymentRelation).paymentCompleted) ||
     Boolean((appointment as AppointmentWithPaymentRelation).paymentPending === false);
+  const paymentAmount = payment?.amount ?? invoice?.totalAmount ?? invoice?.amount ?? null;
+
+  const record = appointment as unknown as Record<string, unknown>;
+  const patientUser = (record['patient'] as { user?: PatientUserDemographics } | undefined)?.user;
+  const isWalkIn = readWalkInFlag(record['metadata']);
 
   return {
     ...appointment,
@@ -157,10 +228,24 @@ function enrichAppointmentPaymentState(
     paymentStatus: paymentStatus || undefined,
     paymentCompleted,
     paymentPending: !paymentCompleted,
-    paymentAmount: payment?.amount ?? invoice?.totalAmount ?? invoice?.amount ?? null,
+    paymentAmount,
     paymentTransactionId: payment?.transactionId ?? null,
     invoiceStatus: invoice?.status ?? null,
     invoicePaidAt: invoice?.paidAt ?? null,
+    service: resolveAppointmentServiceLabel(record['treatmentType']),
+    fee: paymentAmount,
+    ...(patientUser
+      ? {
+          patientPhone: patientUser.phone ?? null,
+          patientEmail: patientUser.email ?? null,
+          patientGender: patientUser.gender ?? null,
+          patientAge: patientUser.age ?? ageFromDateOfBirth(patientUser.dateOfBirth),
+        }
+      : {}),
+    ...(isWalkIn !== undefined ? { isWalkIn } : {}),
+    confirmationWindowMinutes: getVideoActiveWindowMinutes(),
+    videoEarlyJoinMinutes: getVideoEarlyJoinMinutes(),
+    videoActiveWindowMinutes: getVideoActiveWindowMinutes(),
   };
 }
 

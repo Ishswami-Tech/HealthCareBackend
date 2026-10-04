@@ -127,10 +127,18 @@ import {
   QualityMetricsResponseDto,
   VirtualBackgroundSettingsDto,
   BackgroundPresetResponseDto,
+  RateVideoConsultationDto,
 } from '@dtos';
 
 // 6. Local imports (same directory)
 import { VideoService } from './video.service';
+import {
+  VIDEO_CLINICAL_STAFF_ROLES,
+  VIDEO_MODERATOR_ROLES,
+  toVideoCallerRole,
+  type VideoCallerContext,
+  type VideoCallerRole,
+} from './video-access.helpers';
 // NOTE: Health indicators removed - video health is now available via /health endpoint (HealthController)
 // This consolidates all health checks into a single endpoint for better maintainability
 
@@ -283,7 +291,6 @@ export class VideoController {
     userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin';
   } {
     const userId = req.user?.id || req.user?.sub;
-    const role = req.user?.role;
 
     if (!userId) {
       throw this.errors.validationError(
@@ -293,23 +300,69 @@ export class VideoController {
       );
     }
 
-    switch (role) {
-      case Role.PATIENT:
-        return { userId, userRole: 'patient' };
-      case Role.DOCTOR:
-      case Role.ASSISTANT_DOCTOR:
-      case Role.THERAPIST:
-      case Role.COUNSELOR:
-        return { userId, userRole: 'doctor' };
-      case Role.NURSE:
-      case Role.RECEPTIONIST:
-        return { userId, userRole: 'receptionist' };
-      case Role.CLINIC_ADMIN:
-      case Role.SUPER_ADMIN:
-        return { userId, userRole: 'clinic_admin' };
-      default:
-        throw this.errors.insufficientPermissions('VideoController.getAuthenticatedVideoUser');
+    const userRole = toVideoCallerRole(req.user?.role);
+    if (!userRole) {
+      throw this.errors.insufficientPermissions('VideoController.getAuthenticatedVideoUser');
     }
+    return { userId, userRole };
+  }
+
+  /**
+   * Clinic and platform role of the requester, taken from the request the guards validated.
+   * The service uses it to enforce clinic isolation and to tell staff roles apart.
+   */
+  private getVideoCallerContext(req: ClinicAuthenticatedRequest): VideoCallerContext {
+    return {
+      clinicId: req.clinicContext?.clinicId ?? req.user?.clinicId,
+      rawRole: req.user?.role,
+    };
+  }
+
+  /**
+   * Per-appointment authorisation for every endpoint addressed by an appointment id or a
+   * consultation id. RBAC `video:*` is not enough (every PATIENT holds it), so each of those
+   * endpoints calls this BEFORE it reads or writes anything: other clinic -> 404, not a
+   * participant (or clinic staff) -> 403.
+   *
+   * Call it outside the endpoint's try/catch so the 403/404 reaches the client instead of being
+   * folded into a 500 by the generic error mapping.
+   *
+   * @returns the authenticated user, used to override any identity the client put in a body
+   */
+  private async authorizeConsultationRequest(
+    appointmentOrConsultationId: string,
+    req: ClinicAuthenticatedRequest
+  ): Promise<{ userId: string; userRole: VideoCallerRole }> {
+    const { userId, userRole } = this.getAuthenticatedVideoUser(req);
+    await this.videoService.authorizeConsultationAccess(
+      appointmentOrConsultationId,
+      userId,
+      userRole,
+      this.getVideoCallerContext(req)
+    );
+    return { userId, userRole };
+  }
+
+  /**
+   * Same as authorizeConsultationRequest for endpoints addressed by a child record id (a note or
+   * an annotation): `lookupConsultationId` resolves the consultation the record belongs to
+   * (throwing a 404 when the record does not exist), then the caller is authorised against it.
+   */
+  private async authorizeByLookup(
+    lookupConsultationId: () => Promise<string>,
+    context: string,
+    req: ClinicAuthenticatedRequest
+  ): Promise<{ userId: string; userRole: VideoCallerRole }> {
+    let consultationId: string;
+    try {
+      consultationId = await lookupConsultationId();
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw this.errors.internalServerError(context);
+    }
+    return await this.authorizeConsultationRequest(consultationId, req);
   }
 
   private createVideoTokenResponseDto(
@@ -425,14 +478,10 @@ export class VideoController {
     }
     const VideoConsultationSessionDtoClass: typeof VideoConsultationSessionDto =
       VideoConsultationSessionDto;
+    // Note: a fresh class instance has no own properties for `!:`-declared fields, so it
+    // must not be checked for 'id' before assignment (that check always failed and made
+    // POST /video/consultation/start return 500).
     const dtoInstanceRawUnknown: unknown = new VideoConsultationSessionDtoClass();
-    if (
-      typeof dtoInstanceRawUnknown !== 'object' ||
-      dtoInstanceRawUnknown === null ||
-      !('id' in dtoInstanceRawUnknown)
-    ) {
-      throw this.errors.internalServerError('VideoController.createVideoConsultationSessionDto');
-    }
     const dtoInstanceRaw: Record<string, unknown> = dtoInstanceRawUnknown as Record<
       string,
       unknown
@@ -449,8 +498,10 @@ export class VideoController {
       typeof (dtoInstanceUnknown as { roomId: unknown }).roomId !== 'string' ||
       !('roomName' in dtoInstanceUnknown) ||
       typeof (dtoInstanceUnknown as { roomName: unknown }).roomName !== 'string' ||
-      !('meetingUrl' in dtoInstanceUnknown) ||
-      typeof (dtoInstanceUnknown as { meetingUrl: unknown }).meetingUrl !== 'string'
+      (!['string', 'undefined'].includes(
+        typeof (dtoInstanceUnknown as { meetingUrl?: unknown }).meetingUrl
+      ) &&
+        (dtoInstanceUnknown as { meetingUrl?: unknown }).meetingUrl !== null)
     ) {
       throw this.errors.internalServerError('VideoController.createVideoConsultationSessionDto');
     }
@@ -512,7 +563,8 @@ export class VideoController {
           displayName: body.userInfo.displayName,
           email: body.userInfo.email || '',
           ...(body.userInfo.avatar && { avatar: body.userInfo.avatar }),
-        }
+        },
+        this.getVideoCallerContext(req)
       );
       if (!this.isVideoTokenResponse(tokenResponseResult)) {
         throw this.errors.internalServerError('VideoController.generateToken');
@@ -621,7 +673,8 @@ export class VideoController {
       const sessionResult: unknown = await this.videoService.startConsultation(
         body.appointmentId,
         authenticatedUser.userId,
-        authenticatedUser.userRole
+        authenticatedUser.userRole,
+        this.getVideoCallerContext(req)
       );
       if (!this.isVideoConsultationSession(sessionResult)) {
         throw this.errors.internalServerError('VideoController.endConsultation');
@@ -698,13 +751,15 @@ export class VideoController {
     Role.THERAPIST,
     Role.COUNSELOR,
     Role.NURSE,
-    Role.RECEPTIONIST
+    Role.RECEPTIONIST,
+    Role.CLINIC_ADMIN
   )
   @ClinicRoute()
   @RequireResourcePermission('video', 'update', { requireOwnership: true })
   @ApiOperation({
     summary: 'End video consultation',
-    description: 'End a video consultation session.',
+    description:
+      "End (complete) a video consultation. Only the appointment's own doctor or a CLINIC_ADMIN of its clinic can; a patient calling this is recorded as leaving the call (200, the visit stays open); everyone else gets 403. The visit must have started (409 'This consultation has not started' otherwise). userId and userRole in the body are ignored: identity comes from the token.",
   })
   @ApiBody({
     type: EndVideoConsultationDto,
@@ -713,6 +768,14 @@ export class VideoController {
     status: HttpStatus.OK,
     description: 'Consultation ended successfully',
     type: (): typeof VideoConsultationSessionDto => VideoConsultationSessionDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Only the treating doctor or a clinic admin can end this consultation',
+  })
+  @ApiResponse({
+    status: HttpStatus.CONFLICT,
+    description: 'The consultation has not started, or the appointment is no longer open',
   })
   @ApiResponse({
     status: HttpStatus.NOT_FOUND,
@@ -728,7 +791,8 @@ export class VideoController {
         body.appointmentId,
         authenticatedUser.userId,
         authenticatedUser.userRole,
-        body.meetingNotes
+        body.meetingNotes,
+        this.getVideoCallerContext(req)
       );
       if (!this.isVideoConsultationSession(sessionResult)) {
         throw this.errors.internalServerError('VideoController.endConsultation');
@@ -811,7 +875,9 @@ export class VideoController {
   @ClinicRoute()
   @RequireResourcePermission('video', 'read', { requireOwnership: true })
   @Cache({
-    keyTemplate: 'video:consultation:status:{appointmentId}',
+    // Per user: a cache hit skips the handler, and with it the participant check, so the entry
+    // must never be shared between two callers who are not both authorised for the appointment.
+    keyTemplate: 'video:consultation:status:{appointmentId}:{userId}',
     ttl: 60, // 1 minute (status changes frequently during active sessions)
     tags: ['video', 'consultation', 'appointment:{appointmentId}'],
     enableSWR: true,
@@ -840,6 +906,9 @@ export class VideoController {
     @Param('appointmentId', ParseUUIDPipe) appointmentId: string,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<VideoConsultationSessionDto> {
+    // Participant / same-clinic check first: the response carries the meeting link, room name
+    // and both parties' names.
+    await this.authorizeConsultationRequest(appointmentId, req);
     try {
       const accessContext: { userId?: string; userRole?: string } = {};
       const resolvedUserId = req.user?.id || req.user?.sub;
@@ -944,6 +1013,8 @@ export class VideoController {
       if (error instanceof NotFoundException) {
         throw error;
       }
+      // The raw message and error name (Prisma text, provider response, ...) go to the log only:
+      // the exception metadata below is sent to the client by the http-exception filter.
       const actualErrorMessage =
         error instanceof Error
           ? error.message
@@ -954,8 +1025,6 @@ export class VideoController {
         {
           appointmentId,
           phase: 'catch-all',
-          originalError: actualErrorMessage,
-          originalErrorName: error instanceof Error ? error.name : typeof error,
         }
       );
       await this.loggingService.log(
@@ -980,10 +1049,122 @@ export class VideoController {
         metadata: {
           appointmentId,
           phase: 'catch-all',
-          originalError: actualErrorMessage,
-          originalErrorName: error instanceof Error ? error.name : typeof error,
         },
       });
+      this.errors.handleError(healthcareError, context);
+      throw healthcareError;
+    }
+  }
+
+  /**
+   * Post-call consultation summary
+   */
+  @Get('consultation/:appointmentId/summary')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @ClinicRoute()
+  @RequireResourcePermission('video', 'read', { requireOwnership: true })
+  @ApiOperation({
+    summary: 'Get video consultation summary',
+    description:
+      'Appointment info, doctor/patient names, actual duration and the consultation notes. Patients can only view their own consultations.',
+  })
+  @ApiParam({
+    name: 'appointmentId',
+    description: 'ID of the appointment',
+    type: 'string',
+    format: 'uuid',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Consultation summary retrieved successfully',
+  })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Appointment not found' })
+  async getConsultationSummary(
+    @Param('appointmentId', ParseUUIDPipe) appointmentId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const context = 'VideoController.getConsultationSummary';
+    try {
+      // Same participant rules as join/start/end: the patient (or booker / dependent owner), the
+      // appointment's doctor, clinic staff of the same clinic. Another clinic answers 404.
+      const { userId, userRole } = this.getAuthenticatedVideoUser(req);
+      const summary = await this.videoService.getConsultationSummary(
+        appointmentId,
+        userId,
+        userRole,
+        this.getVideoCallerContext(req)
+      );
+      let notes: unknown[] = [];
+      if (summary.consultationId) {
+        try {
+          notes = await this.medicalNotesService.getNotes(summary.consultationId);
+        } catch {
+          notes = [];
+        }
+      }
+      return { ...summary, notes };
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, context);
+        throw error;
+      }
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      const healthcareError = this.errors.internalServerError(context);
+      this.errors.handleError(healthcareError, context);
+      throw healthcareError;
+    }
+  }
+
+  /**
+   * Rate a video consultation (patient only)
+   */
+  @Post('consultation/:appointmentId/rate')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.PATIENT)
+  @ClinicRoute()
+  @RequireResourcePermission('video', 'update', { requireOwnership: true })
+  @ApiOperation({
+    summary: 'Rate video consultation',
+    description: 'Patient submits a 1-5 star rating (and optional comment) for their consultation.',
+  })
+  @ApiParam({
+    name: 'appointmentId',
+    description: 'ID of the appointment',
+    type: 'string',
+    format: 'uuid',
+  })
+  @ApiBody({ type: RateVideoConsultationDto })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Rating saved' })
+  async rateConsultation(
+    @Param('appointmentId', ParseUUIDPipe) appointmentId: string,
+    @Body() body: RateVideoConsultationDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const context = 'VideoController.rateConsultation';
+    try {
+      const userId = req.user?.id || req.user?.sub;
+      if (!userId) {
+        throw this.errors.validationError('userId', 'Authenticated user ID is required', context);
+      }
+      return await this.videoService.rateConsultation(
+        appointmentId,
+        userId,
+        body.rating,
+        body.comment,
+        req.clinicContext?.clinicId ?? req.user?.clinicId
+      );
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, context);
+        throw error;
+      }
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      const healthcareError = this.errors.internalServerError(context);
       this.errors.handleError(healthcareError, context);
       throw healthcareError;
     }
@@ -1024,16 +1205,8 @@ export class VideoController {
     @Body() body: ReportTechnicalIssueDto,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<SuccessResponseDto> {
+    const { userId } = await this.authorizeConsultationRequest(appointmentId, req);
     try {
-      const userId = req.user?.sub;
-      if (!userId) {
-        throw this.errors.validationError(
-          'userId',
-          'User ID required',
-          'VideoController.reportTechnicalIssue'
-        );
-      }
-
       await this.videoService.reportTechnicalIssue(
         appointmentId,
         userId,
@@ -1063,6 +1236,9 @@ export class VideoController {
       const context = 'VideoController.reportTechnicalIssue';
       if (error instanceof HealthcareError) {
         this.errors.handleError(error, context);
+        throw error;
+      }
+      if (error instanceof HttpException) {
         throw error;
       }
       const healthcareError = this.errors.internalServerError(context);
@@ -1233,16 +1409,9 @@ export class VideoController {
     @Body() body: ShareMedicalImageDto,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<ShareMedicalImageResponseDto> {
+    // The sharer is always the authenticated user; a userId in the body is never trusted.
+    const { userId } = await this.authorizeConsultationRequest(appointmentId, req);
     try {
-      const userId = req.user?.sub || body.userId;
-      if (!userId) {
-        throw this.errors.validationError(
-          'userId',
-          'User ID required',
-          'VideoController.shareMedicalImage'
-        );
-      }
-
       // Resolve the consultation room identifier for media sharing
       const consultation = await this.videoService.getConsultationSession(appointmentId);
       if (!consultation) {
@@ -1300,6 +1469,9 @@ export class VideoController {
         this.errors.handleError(error, context);
         throw error;
       }
+      if (error instanceof HttpException) {
+        throw error;
+      }
       const healthcareError = this.errors.internalServerError(context);
       this.errors.handleError(healthcareError, context);
       throw healthcareError;
@@ -1315,6 +1487,7 @@ export class VideoController {
 
   @Post('recording/start')
   @HttpCode(HttpStatus.CREATED)
+  @Roles(...VIDEO_MODERATOR_ROLES)
   @RequireResourcePermission('video', 'create')
   @ApiOperation({
     summary: 'Start recording',
@@ -1332,8 +1505,9 @@ export class VideoController {
   })
   async startRecording(
     @Body() dto: StartRecordingDto,
-    @Request() _req: ClinicAuthenticatedRequest
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<RecordingResponseDto> {
+    await this.authorizeConsultationRequest(dto.appointmentId, req);
     try {
       const recordingOptions: {
         outputMode?: 'COMPOSED' | 'INDIVIDUAL';
@@ -1372,12 +1546,16 @@ export class VideoController {
         this.errors.handleError(error, 'VideoController.startRecording');
         throw error;
       }
+      if (error instanceof HttpException) {
+        throw error;
+      }
       throw this.errors.internalServerError('VideoController.startRecording');
     }
   }
 
   @Post('recording/stop')
   @HttpCode(HttpStatus.OK)
+  @Roles(...VIDEO_MODERATOR_ROLES)
   @RequireResourcePermission('video', 'update')
   @ApiOperation({
     summary: 'Stop recording',
@@ -1391,8 +1569,9 @@ export class VideoController {
   })
   async stopRecording(
     @Body() dto: StopRecordingDto,
-    @Request() _req: ClinicAuthenticatedRequest
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<RecordingResponseDto> {
+    await this.authorizeConsultationRequest(dto.appointmentId, req);
     try {
       const result: { recordingId: string; url?: string; duration: number } =
         await this.videoService.stopSessionRecording(dto.appointmentId, dto.recordingId);
@@ -1412,15 +1591,20 @@ export class VideoController {
         this.errors.handleError(error, 'VideoController.stopRecording');
         throw error;
       }
+      if (error instanceof HttpException) {
+        throw error;
+      }
       throw this.errors.internalServerError('VideoController.stopRecording');
     }
   }
 
   @Get('recording/:appointmentId')
   @HttpCode(HttpStatus.OK)
+  @Roles(...VIDEO_MODERATOR_ROLES)
   @RequireResourcePermission('video', 'read')
   @Cache({
-    keyTemplate: 'video:recording:{appointmentId}',
+    // Per user: a cache hit skips the participant check (see getConsultationStatus).
+    keyTemplate: 'video:recording:{appointmentId}:{userId}',
     ttl: 300, // 5 minutes (recordings may be added)
     tags: ['video', 'recording', 'appointment:{appointmentId}'],
     enableSWR: true,
@@ -1443,8 +1627,9 @@ export class VideoController {
   })
   async getRecordings(
     @Param('appointmentId', ParseUUIDPipe) appointmentId: string,
-    @Request() _req: ClinicAuthenticatedRequest
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<RecordingListResponseDto> {
+    await this.authorizeConsultationRequest(appointmentId, req);
     try {
       type RecordingReturnType = Awaited<
         ReturnType<typeof this.videoService.getSessionRecordings>
@@ -1469,6 +1654,9 @@ export class VideoController {
         this.errors.handleError(error, 'VideoController.getRecordings');
         throw error;
       }
+      if (error instanceof HttpException) {
+        throw error;
+      }
       throw this.errors.internalServerError('VideoController.getRecordings');
     }
   }
@@ -1478,6 +1666,7 @@ export class VideoController {
 
   @Post('participant/manage')
   @HttpCode(HttpStatus.OK)
+  @Roles(...VIDEO_MODERATOR_ROLES)
   @RequireResourcePermission('video', 'update')
   @ApiOperation({
     summary: 'Manage participant',
@@ -1491,8 +1680,9 @@ export class VideoController {
   })
   async manageParticipant(
     @Body() dto: ManageParticipantDto,
-    @Request() _req: ClinicAuthenticatedRequest
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<SuccessResponseDto> {
+    await this.authorizeConsultationRequest(dto.appointmentId, req);
     try {
       await this.videoService.manageSessionParticipant(
         dto.appointmentId,
@@ -1506,15 +1696,20 @@ export class VideoController {
         this.errors.handleError(error, 'VideoController.manageParticipant');
         throw error;
       }
+      if (error instanceof HttpException) {
+        throw error;
+      }
       throw this.errors.internalServerError('VideoController.manageParticipant');
     }
   }
 
   @Get('participants/:appointmentId')
   @HttpCode(HttpStatus.OK)
+  @Roles(...VIDEO_CLINICAL_STAFF_ROLES)
   @RequireResourcePermission('video', 'read')
   @Cache({
-    keyTemplate: 'video:participants:{appointmentId}',
+    // Per user: a cache hit skips the participant check (see getConsultationStatus).
+    keyTemplate: 'video:participants:{appointmentId}:{userId}',
     ttl: 30, // 30 seconds (participants change frequently during active sessions)
     tags: ['video', 'participants', 'appointment:{appointmentId}'],
     enableSWR: true,
@@ -1537,8 +1732,9 @@ export class VideoController {
   })
   async getParticipants(
     @Param('appointmentId', ParseUUIDPipe) appointmentId: string,
-    @Request() _req: ClinicAuthenticatedRequest
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<ParticipantListResponseDto> {
+    await this.authorizeConsultationRequest(appointmentId, req);
     try {
       type ParticipantReturnType = Awaited<
         ReturnType<typeof this.videoService.getSessionParticipants>
@@ -1570,6 +1766,9 @@ export class VideoController {
         this.errors.handleError(error, 'VideoController.getParticipants');
         throw error;
       }
+      if (error instanceof HttpException) {
+        throw error;
+      }
       throw this.errors.internalServerError('VideoController.getParticipants');
     }
   }
@@ -1579,9 +1778,11 @@ export class VideoController {
 
   @Get('analytics/:appointmentId')
   @HttpCode(HttpStatus.OK)
+  @Roles(...VIDEO_CLINICAL_STAFF_ROLES)
   @RequireResourcePermission('video', 'read')
   @Cache({
-    keyTemplate: 'video:analytics:{appointmentId}',
+    // Per user: a cache hit skips the participant check (see getConsultationStatus).
+    keyTemplate: 'video:analytics:{appointmentId}:{userId}',
     ttl: 300, // 5 minutes (analytics change frequently)
     tags: ['video', 'analytics', 'appointment:{appointmentId}'],
     enableSWR: true,
@@ -1604,8 +1805,9 @@ export class VideoController {
   })
   async getSessionAnalytics(
     @Param('appointmentId', ParseUUIDPipe) appointmentId: string,
-    @Request() _req: ClinicAuthenticatedRequest
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<SessionAnalyticsResponseDto> {
+    await this.authorizeConsultationRequest(appointmentId, req);
     try {
       const analytics = await this.videoService.getSessionAnalytics(appointmentId);
 
@@ -1639,6 +1841,9 @@ export class VideoController {
         this.errors.handleError(error, 'VideoController.getSessionAnalytics');
         throw error;
       }
+      if (error instanceof HttpException) {
+        throw error;
+      }
       throw this.errors.internalServerError('VideoController.getSessionAnalytics');
     }
   }
@@ -1657,10 +1862,12 @@ export class VideoController {
   @ApiResponse({ status: 201, type: ChatMessageResponseDto })
   async sendChatMessage(
     @Body() dto: SendChatMessageDto,
-    @Request() _req: ClinicAuthenticatedRequest
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<ChatMessageResponseDto> {
+    const caller = await this.authorizeConsultationRequest(dto.consultationId, req);
     try {
-      const message = await this.chatService.sendMessage(dto);
+      // The sender is the authenticated user, whatever userId the body claims.
+      const message = await this.chatService.sendMessage({ ...dto, userId: caller.userId });
       return {
         id: message.id,
         consultationId: message.consultationId,
@@ -1683,6 +1890,9 @@ export class VideoController {
         this.errors.handleError(error, 'VideoController.sendChatMessage');
         throw error;
       }
+      if (error instanceof HttpException) {
+        throw error;
+      }
       throw this.errors.internalServerError('VideoController.sendChatMessage');
     }
   }
@@ -1696,9 +1906,11 @@ export class VideoController {
   @ApiParam({ name: 'consultationId', type: String })
   async getChatHistory(
     @Param('consultationId') consultationId: string,
+    @Request() req: ClinicAuthenticatedRequest,
     @Query('limit') limit?: string,
     @Query('before') before?: string
   ) {
+    await this.authorizeConsultationRequest(consultationId, req);
     try {
       return await this.chatService.getMessageHistory(
         consultationId,
@@ -1708,6 +1920,9 @@ export class VideoController {
     } catch (error) {
       if (error instanceof HealthcareError) {
         this.errors.handleError(error, 'VideoController.getChatHistory');
+        throw error;
+      }
+      if (error instanceof HttpException) {
         throw error;
       }
       throw this.errors.internalServerError('VideoController.getChatHistory');
@@ -1722,13 +1937,20 @@ export class VideoController {
     description: 'Update typing indicator for chat',
   })
   @ApiResponse({ status: 200, type: SuccessResponseDto })
-  updateTypingIndicator(@Body() dto: UpdateTypingIndicatorDto): SuccessResponseDto {
+  async updateTypingIndicator(
+    @Body() dto: UpdateTypingIndicatorDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<SuccessResponseDto> {
+    const caller = await this.authorizeConsultationRequest(dto.consultationId, req);
     try {
-      this.chatService.updateTypingIndicator(dto.consultationId, dto.userId, dto.isTyping);
+      this.chatService.updateTypingIndicator(dto.consultationId, caller.userId, dto.isTyping);
       return new SuccessResponseDto('Typing indicator updated');
     } catch (error) {
       if (error instanceof HealthcareError) {
         this.errors.handleError(error, 'VideoController.updateTypingIndicator');
+        throw error;
+      }
+      if (error instanceof HttpException) {
         throw error;
       }
       throw this.errors.internalServerError('VideoController.updateTypingIndicator');
@@ -1747,9 +1969,17 @@ export class VideoController {
     description: 'Join the waiting room for a video consultation',
   })
   @ApiResponse({ status: 201, type: WaitingRoomEntryResponseDto })
-  async joinWaitingRoom(@Body() dto: JoinWaitingRoomDto): Promise<WaitingRoomEntryResponseDto> {
+  async joinWaitingRoom(
+    @Body() dto: JoinWaitingRoomDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<WaitingRoomEntryResponseDto> {
+    const caller = await this.authorizeConsultationRequest(dto.consultationId, req);
     try {
-      const entry = await this.waitingRoomService.joinWaitingRoom(dto);
+      // Only the authenticated user may take a place in the queue.
+      const entry = await this.waitingRoomService.joinWaitingRoom({
+        ...dto,
+        userId: caller.userId,
+      });
       return {
         id: entry.id,
         consultationId: entry.consultationId,
@@ -1770,6 +2000,9 @@ export class VideoController {
         this.errors.handleError(error, 'VideoController.joinWaitingRoom');
         throw error;
       }
+      if (error instanceof HttpException) {
+        throw error;
+      }
       throw this.errors.internalServerError('VideoController.joinWaitingRoom');
     }
   }
@@ -1786,13 +2019,16 @@ export class VideoController {
     @Body() dto: LeaveWaitingRoomDto,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<SuccessResponseDto> {
+    const authenticatedUser = await this.authorizeConsultationRequest(dto.consultationId, req);
     try {
-      const authenticatedUser = this.getAuthenticatedVideoUser(req);
       await this.waitingRoomService.leaveWaitingRoom(dto.consultationId, authenticatedUser.userId);
       return new SuccessResponseDto('Left waiting room successfully');
     } catch (error) {
       if (error instanceof HealthcareError) {
         this.errors.handleError(error, 'VideoController.leaveWaitingRoom');
+        throw error;
+      }
+      if (error instanceof HttpException) {
         throw error;
       }
       throw this.errors.internalServerError('VideoController.leaveWaitingRoom');
@@ -1801,15 +2037,21 @@ export class VideoController {
 
   @Post('waiting-room/admit')
   @HttpCode(HttpStatus.OK)
+  @Roles(...VIDEO_CLINICAL_STAFF_ROLES)
   @RequireResourcePermission('video', 'update')
   @ApiOperation({
     summary: 'Admit patient from waiting room',
     description: 'Doctor admits a patient from the waiting room',
   })
   @ApiResponse({ status: 200, type: WaitingRoomEntryResponseDto })
-  async admitPatient(@Body() dto: AdmitPatientDto): Promise<WaitingRoomEntryResponseDto> {
+  async admitPatient(
+    @Body() dto: AdmitPatientDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<WaitingRoomEntryResponseDto> {
+    const caller = await this.authorizeConsultationRequest(dto.consultationId, req);
     try {
-      const entry = await this.waitingRoomService.admitPatient(dto);
+      // The admitting doctor is the authenticated user, never a doctorId taken from the body.
+      const entry = await this.waitingRoomService.admitPatient({ ...dto, doctorId: caller.userId });
       return {
         id: entry.id,
         consultationId: entry.consultationId,
@@ -1830,22 +2072,33 @@ export class VideoController {
         this.errors.handleError(error, 'VideoController.admitPatient');
         throw error;
       }
+      if (error instanceof HttpException) {
+        throw error;
+      }
       throw this.errors.internalServerError('VideoController.admitPatient');
     }
   }
 
   @Get('waiting-room/:consultationId/queue')
+  @Roles(...VIDEO_CLINICAL_STAFF_ROLES)
   @RequireResourcePermission('video', 'read')
   @ApiOperation({
     summary: 'Get waiting room queue',
     description: 'Get the current waiting room queue for a consultation',
   })
-  async getWaitingRoomQueue(@Param('consultationId') consultationId: string) {
+  async getWaitingRoomQueue(
+    @Param('consultationId') consultationId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    await this.authorizeConsultationRequest(consultationId, req);
     try {
       return await this.waitingRoomService.getWaitingRoomQueue(consultationId);
     } catch (error) {
       if (error instanceof HealthcareError) {
         this.errors.handleError(error, 'VideoController.getWaitingRoomQueue');
+        throw error;
+      }
+      if (error instanceof HttpException) {
         throw error;
       }
       throw this.errors.internalServerError('VideoController.getWaitingRoomQueue');
@@ -1858,15 +2111,20 @@ export class VideoController {
 
   @Post('notes')
   @HttpCode(HttpStatus.CREATED)
+  @Roles(...VIDEO_CLINICAL_STAFF_ROLES)
   @RequireResourcePermission('video', 'create')
   @ApiOperation({
     summary: 'Create medical note',
     description: 'Create a medical note during video consultation',
   })
   @ApiResponse({ status: 201, type: MedicalNoteResponseDto })
-  async createMedicalNote(@Body() dto: CreateMedicalNoteDto): Promise<MedicalNoteResponseDto> {
+  async createMedicalNote(
+    @Body() dto: CreateMedicalNoteDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<MedicalNoteResponseDto> {
+    const caller = await this.authorizeConsultationRequest(dto.consultationId, req);
     try {
-      const note = await this.medicalNotesService.createNote(dto);
+      const note = await this.medicalNotesService.createNote({ ...dto, userId: caller.userId });
       return {
         id: note.id,
         consultationId: note.consultationId,
@@ -1888,12 +2146,16 @@ export class VideoController {
         this.errors.handleError(error, 'VideoController.createMedicalNote');
         throw error;
       }
+      if (error instanceof HttpException) {
+        throw error;
+      }
       throw this.errors.internalServerError('VideoController.createMedicalNote');
     }
   }
 
   @Patch('notes/:noteId')
   @HttpCode(HttpStatus.OK)
+  @Roles(...VIDEO_CLINICAL_STAFF_ROLES)
   @RequireResourcePermission('video', 'update')
   @ApiOperation({
     summary: 'Update medical note',
@@ -1902,12 +2164,19 @@ export class VideoController {
   @ApiResponse({ status: 200, type: MedicalNoteResponseDto })
   async updateMedicalNote(
     @Param('noteId', ParseUUIDPipe) noteId: string,
-    @Body() dto: Omit<UpdateMedicalNoteDto, 'noteId'>
+    @Body() dto: Omit<UpdateMedicalNoteDto, 'noteId'>,
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<MedicalNoteResponseDto> {
+    const caller = await this.authorizeByLookup(
+      () => this.medicalNotesService.getNoteConsultationId(noteId),
+      'VideoController.updateMedicalNote',
+      req
+    );
     try {
       const note = await this.medicalNotesService.updateNote({
         ...dto,
         noteId,
+        userId: caller.userId,
       } as UpdateMedicalNoteDto);
       return {
         id: note.id,
@@ -1930,6 +2199,9 @@ export class VideoController {
         this.errors.handleError(error, 'VideoController.updateMedicalNote');
         throw error;
       }
+      if (error instanceof HttpException) {
+        throw error;
+      }
       throw this.errors.internalServerError('VideoController.updateMedicalNote');
     }
   }
@@ -1940,12 +2212,19 @@ export class VideoController {
     summary: 'Get medical notes',
     description: 'Get all medical notes for a consultation',
   })
-  async getMedicalNotes(@Param('consultationId') consultationId: string) {
+  async getMedicalNotes(
+    @Param('consultationId') consultationId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    await this.authorizeConsultationRequest(consultationId, req);
     try {
       return await this.medicalNotesService.getNotes(consultationId);
     } catch (error) {
       if (error instanceof HealthcareError) {
         this.errors.handleError(error, 'VideoController.getMedicalNotes');
+        throw error;
+      }
+      if (error instanceof HttpException) {
         throw error;
       }
       throw this.errors.internalServerError('VideoController.getMedicalNotes');
@@ -1954,6 +2233,7 @@ export class VideoController {
 
   @Post('notes/:noteId/save-to-ehr')
   @HttpCode(HttpStatus.OK)
+  @Roles(...VIDEO_CLINICAL_STAFF_ROLES)
   @RequireResourcePermission('video', 'update')
   @ApiOperation({
     summary: 'Save note to EHR',
@@ -1962,13 +2242,22 @@ export class VideoController {
   @ApiResponse({ status: 200, type: SuccessResponseDto })
   async saveNoteToEHR(
     @Param('noteId', ParseUUIDPipe) noteId: string,
-    @Body() dto: SaveNoteToEHRDto
+    @Body() _dto: SaveNoteToEHRDto,
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<{ ehrRecordId: string }> {
+    const caller = await this.authorizeByLookup(
+      () => this.medicalNotesService.getNoteConsultationId(noteId),
+      'VideoController.saveNoteToEHR',
+      req
+    );
     try {
-      return await this.medicalNotesService.saveToEHR(noteId, dto.userId);
+      return await this.medicalNotesService.saveToEHR(noteId, caller.userId);
     } catch (error) {
       if (error instanceof HealthcareError) {
         this.errors.handleError(error, 'VideoController.saveNoteToEHR');
+        throw error;
+      }
+      if (error instanceof HttpException) {
         throw error;
       }
       throw this.errors.internalServerError('VideoController.saveNoteToEHR');
@@ -1987,9 +2276,16 @@ export class VideoController {
     description: 'Create a screen annotation during video consultation',
   })
   @ApiResponse({ status: 201, type: AnnotationResponseDto })
-  async createAnnotation(@Body() dto: CreateAnnotationDto): Promise<AnnotationResponseDto> {
+  async createAnnotation(
+    @Body() dto: CreateAnnotationDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<AnnotationResponseDto> {
+    const caller = await this.authorizeConsultationRequest(dto.consultationId, req);
     try {
-      const annotation = await this.annotationService.createAnnotation(dto);
+      const annotation = await this.annotationService.createAnnotation({
+        ...dto,
+        userId: caller.userId,
+      });
       return {
         id: annotation.id,
         consultationId: annotation.consultationId,
@@ -2008,6 +2304,9 @@ export class VideoController {
         this.errors.handleError(error, 'VideoController.createAnnotation');
         throw error;
       }
+      if (error instanceof HttpException) {
+        throw error;
+      }
       throw this.errors.internalServerError('VideoController.createAnnotation');
     }
   }
@@ -2018,12 +2317,19 @@ export class VideoController {
     summary: 'Get annotations',
     description: 'Get all annotations for a consultation',
   })
-  async getAnnotations(@Param('consultationId') consultationId: string) {
+  async getAnnotations(
+    @Param('consultationId') consultationId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    await this.authorizeConsultationRequest(consultationId, req);
     try {
       return await this.annotationService.getAnnotations(consultationId);
     } catch (error) {
       if (error instanceof HealthcareError) {
         this.errors.handleError(error, 'VideoController.getAnnotations');
+        throw error;
+      }
+      if (error instanceof HttpException) {
         throw error;
       }
       throw this.errors.internalServerError('VideoController.getAnnotations');
@@ -2040,14 +2346,23 @@ export class VideoController {
   @ApiResponse({ status: 200, type: SuccessResponseDto })
   async deleteAnnotation(
     @Param('annotationId', ParseUUIDPipe) annotationId: string,
-    @Body() dto: DeleteAnnotationDto
+    @Body() _dto: DeleteAnnotationDto,
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<SuccessResponseDto> {
+    const caller = await this.authorizeByLookup(
+      () => this.annotationService.getAnnotationConsultationId(annotationId),
+      'VideoController.deleteAnnotation',
+      req
+    );
     try {
-      await this.annotationService.deleteAnnotation(annotationId, dto.userId);
+      await this.annotationService.deleteAnnotation(annotationId, caller.userId);
       return new SuccessResponseDto('Annotation deleted successfully');
     } catch (error) {
       if (error instanceof HealthcareError) {
         this.errors.handleError(error, 'VideoController.deleteAnnotation');
+        throw error;
+      }
+      if (error instanceof HttpException) {
         throw error;
       }
       throw this.errors.internalServerError('VideoController.deleteAnnotation');
@@ -2060,20 +2375,31 @@ export class VideoController {
 
   @Post('transcription')
   @HttpCode(HttpStatus.CREATED)
+  @Roles(...VIDEO_CLINICAL_STAFF_ROLES)
   @RequireResourcePermission('video', 'create')
   @ApiOperation({
     summary: 'Create transcription',
-    description: 'Create a transcription segment for video consultation',
+    description:
+      'Create a transcription segment for a video consultation. Clinical staff only: the transcript can later be saved to the EHR, so a patient must not be able to write it. The speaker is always the authenticated caller; a speakerId in the body is ignored.',
   })
   @ApiResponse({ status: 201, type: TranscriptionResponseDto })
   async createTranscription(
-    @Body() dto: CreateTranscriptionDto
+    @Body() dto: CreateTranscriptionDto,
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<TranscriptionResponseDto> {
+    const caller = await this.authorizeConsultationRequest(dto.consultationId, req);
     try {
-      return await this.transcriptionService.createTranscription(dto);
+      // The speaker comes from the token, never from the free-text field of the body.
+      return await this.transcriptionService.createTranscription({
+        ...dto,
+        speakerId: caller.userId,
+      });
     } catch (error) {
       if (error instanceof HealthcareError) {
         this.errors.handleError(error, 'VideoController.createTranscription');
+        throw error;
+      }
+      if (error instanceof HttpException) {
         throw error;
       }
       throw this.errors.internalServerError('VideoController.createTranscription');
@@ -2086,12 +2412,19 @@ export class VideoController {
     summary: 'Get transcript',
     description: 'Get full transcript for a video consultation',
   })
-  async getTranscript(@Param('consultationId') consultationId: string) {
+  async getTranscript(
+    @Param('consultationId') consultationId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    await this.authorizeConsultationRequest(consultationId, req);
     try {
       return await this.transcriptionService.getTranscript(consultationId);
     } catch (error) {
       if (error instanceof HealthcareError) {
         this.errors.handleError(error, 'VideoController.getTranscript');
+        throw error;
+      }
+      if (error instanceof HttpException) {
         throw error;
       }
       throw this.errors.internalServerError('VideoController.getTranscript');
@@ -2106,13 +2439,18 @@ export class VideoController {
   })
   async searchTranscript(
     @Param('consultationId') consultationId: string,
+    @Request() req: ClinicAuthenticatedRequest,
     @Query('q') query: string
   ) {
+    await this.authorizeConsultationRequest(consultationId, req);
     try {
       return await this.transcriptionService.searchTranscript(consultationId, query);
     } catch (error) {
       if (error instanceof HealthcareError) {
         this.errors.handleError(error, 'VideoController.searchTranscript');
+        throw error;
+      }
+      if (error instanceof HttpException) {
         throw error;
       }
       throw this.errors.internalServerError('VideoController.searchTranscript');
@@ -2121,6 +2459,7 @@ export class VideoController {
 
   @Post('transcription/:consultationId/save-to-ehr')
   @HttpCode(HttpStatus.OK)
+  @Roles(...VIDEO_CLINICAL_STAFF_ROLES)
   @RequireResourcePermission('video', 'update')
   @ApiOperation({
     summary: 'Save transcript to EHR',
@@ -2129,13 +2468,18 @@ export class VideoController {
   @ApiResponse({ status: 200, type: SuccessResponseDto })
   async saveTranscriptToEHR(
     @Param('consultationId', ParseUUIDPipe) consultationId: string,
-    @Body() dto: SaveTranscriptToEHRDto
+    @Body() _dto: SaveTranscriptToEHRDto,
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<{ ehrRecordId: string }> {
+    const caller = await this.authorizeConsultationRequest(consultationId, req);
     try {
-      return await this.transcriptionService.saveToEHR(consultationId, dto.userId);
+      return await this.transcriptionService.saveToEHR(consultationId, caller.userId);
     } catch (error) {
       if (error instanceof HealthcareError) {
         this.errors.handleError(error, 'VideoController.saveTranscriptToEHR');
+        throw error;
+      }
+      if (error instanceof HttpException) {
         throw error;
       }
       throw this.errors.internalServerError('VideoController.saveTranscriptToEHR');
@@ -2155,13 +2499,18 @@ export class VideoController {
   })
   @ApiResponse({ status: 200, type: QualityMetricsResponseDto })
   async updateQualityMetrics(
-    @Body() dto: UpdateQualityMetricsDto
+    @Body() dto: UpdateQualityMetricsDto,
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<QualityMetricsResponseDto> {
+    const caller = await this.authorizeConsultationRequest(dto.consultationId, req);
     try {
-      return await this.qualityService.updateQualityMetrics(dto);
+      return await this.qualityService.updateQualityMetrics({ ...dto, userId: caller.userId });
     } catch (error) {
       if (error instanceof HealthcareError) {
         this.errors.handleError(error, 'VideoController.updateQualityMetrics');
+        throw error;
+      }
+      if (error instanceof HttpException) {
         throw error;
       }
       throw this.errors.internalServerError('VideoController.updateQualityMetrics');
@@ -2176,13 +2525,22 @@ export class VideoController {
   })
   async getQualityMetrics(
     @Param('consultationId') consultationId: string,
-    @Param('userId') userId: string
+    @Param('userId') userId: string,
+    @Request() req: ClinicAuthenticatedRequest
   ) {
+    const caller = await this.authorizeConsultationRequest(consultationId, req);
+    if (caller.userRole === 'patient' && userId !== caller.userId) {
+      // Staff may read any participant's call quality; a patient only their own.
+      throw new ForbiddenException('You can only view your own call quality.');
+    }
     try {
       return await this.qualityService.getQualityMetrics(consultationId, userId);
     } catch (error) {
       if (error instanceof HealthcareError) {
         this.errors.handleError(error, 'VideoController.getQualityMetrics');
+        throw error;
+      }
+      if (error instanceof HttpException) {
         throw error;
       }
       throw this.errors.internalServerError('VideoController.getQualityMetrics');
@@ -2202,13 +2560,21 @@ export class VideoController {
   })
   @ApiResponse({ status: 200, type: VirtualBackgroundSettingsDto })
   async updateVirtualBackground(
-    @Body() dto: VirtualBackgroundSettingsDto
+    @Body() dto: VirtualBackgroundSettingsDto,
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<VirtualBackgroundSettingsDto> {
+    const caller = await this.authorizeConsultationRequest(dto.consultationId, req);
     try {
-      return await this.virtualBackgroundService.updateBackgroundSettings(dto);
+      return await this.virtualBackgroundService.updateBackgroundSettings({
+        ...dto,
+        userId: caller.userId,
+      });
     } catch (error) {
       if (error instanceof HealthcareError) {
         this.errors.handleError(error, 'VideoController.updateVirtualBackground');
+        throw error;
+      }
+      if (error instanceof HttpException) {
         throw error;
       }
       throw this.errors.internalServerError('VideoController.updateVirtualBackground');
@@ -2226,8 +2592,8 @@ export class VideoController {
     @Param('consultationId', ParseUUIDPipe) consultationId: string,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<VirtualBackgroundSettingsDto | null> {
+    const authenticatedUser = await this.authorizeConsultationRequest(consultationId, req);
     try {
-      const authenticatedUser = this.getAuthenticatedVideoUser(req);
       return await this.virtualBackgroundService.getBackgroundSettings(
         consultationId,
         authenticatedUser.userId
@@ -2235,6 +2601,9 @@ export class VideoController {
     } catch (error) {
       if (error instanceof HealthcareError) {
         this.errors.handleError(error, 'VideoController.getVirtualBackground');
+        throw error;
+      }
+      if (error instanceof HttpException) {
         throw error;
       }
       throw this.errors.internalServerError('VideoController.getVirtualBackground');
@@ -2271,36 +2640,62 @@ export class VideoController {
     description: 'Global monitoring of all active video consultations across all clinics.',
   })
   @ApiResponse({ status: 200, type: [VideoConsultationSessionDto] })
-  async listAllActiveSessions(): Promise<VideoConsultationSession[]> {
+  async listAllActiveSessions(
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<VideoConsultationSession[]> {
+    // SUPER_ADMIN monitors every clinic; a CLINIC_ADMIN only sees (and, fail-closed, only with) a
+    // clinic of their own: the list carries meeting links, room names and participants.
+    const { clinicId, rawRole } = this.getVideoCallerContext(req);
+    const isSuperAdmin = String(rawRole ?? '').toUpperCase() === String(Role.SUPER_ADMIN);
+    if (!isSuperAdmin && !clinicId) {
+      throw new ForbiddenException('A clinic context is required to list video sessions.');
+    }
     try {
-      return await this.videoService.listAllActiveSessions();
+      return await this.videoService.listAllActiveSessions(isSuperAdmin ? undefined : clinicId);
     } catch (_error) {
       throw this.errors.internalServerError('VideoController.listAllActiveSessions');
     }
   }
 
   @Post('admin/sessions/:id/terminate')
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Force terminate session (Super Admin)',
-    description: 'Forcefully end any active video session for security or policy enforcement.',
+    summary: 'Force terminate session (Super Admin, Clinic Admin)',
+    description:
+      "Forcefully close a running video session for security or policy enforcement: the provider room is closed (everyone is disconnected) and the session is ended. The appointment itself is not completed. A SUPER_ADMIN may terminate any clinic's session, a CLINIC_ADMIN only their own clinic's.",
   })
   @ApiParam({ name: 'id', description: 'Appointment ID' })
   @ApiResponse({ status: 200, type: SuccessResponseDto })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'No such session in your scope' })
+  @ApiResponse({
+    status: HttpStatus.CONFLICT,
+    description: 'The video provider of this session cannot terminate it',
+  })
   async terminateSession(
     @Param('id') appointmentId: string,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<SuccessResponseDto> {
+    const context = 'VideoController.terminateSession';
     try {
-      await this.videoService.endConsultation(
+      const { userId } = this.getAuthenticatedVideoUser(req);
+      await this.videoService.terminateConsultation(
         appointmentId,
-        req.user?.sub || 'SUPER_ADMIN',
-        'clinic_admin' // Map SUPER_ADMIN to admin level for service
+        userId,
+        // SUPER_ADMIN is the only role that may act outside a clinic context; a CLINIC_ADMIN is
+        // held to the clinic of the request.
+        this.getVideoCallerContext(req)
       );
       return new SuccessResponseDto('Session terminated successfully');
-    } catch (_error) {
-      throw this.errors.internalServerError('VideoController.terminateSession');
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, context);
+        throw error;
+      }
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw this.errors.internalServerError(context);
     }
   }
 

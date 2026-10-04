@@ -12,17 +12,18 @@ import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { DatabaseService } from '@infrastructure/database';
 import { AppointmentType, AppointmentStatus } from '@core/types/enums.types';
-import { isAyurvedaTreatmentType } from '@core/types/treatment-catalog.types';
-import { getVideoActiveWindowMinutes } from '@config/video.config';
 import {
   isVideoCallAppointment,
   isInPersonAppointment,
 } from '@core/types/appointment-guards.types';
-import type { InPersonAppointment } from '@core/types/appointment.types';
+import type { ProcessCheckInOptions } from '@core/types/appointment.types';
+import {
+  CheckInLocationService,
+  VIDEO_CHECK_IN_REJECTION_MESSAGE,
+} from '@services/appointments/plugins/therapy/check-in-location.service';
 import type { AppointmentBase, Doctor, PatientBase, Clinic } from '@core/types/database.types';
 import type { ClinicLocation } from '@core/types/clinic.types';
 import type {
-  CheckInData,
   CheckInResult,
   AppointmentQueuePosition,
   CheckInAppointment,
@@ -79,14 +80,6 @@ interface CheckInVerificationRecord {
 export class CheckInService {
   private readonly CHECKIN_CACHE_TTL = 1800; // 30 minutes
   private readonly QUEUE_CACHE_TTL = 300; // 5 minutes
-  private readonly BLOCKED_CHECK_IN_STATUSES = new Set<string>([
-    String(AppointmentStatus.COMPLETED),
-    String(AppointmentStatus.CANCELLED),
-    String(AppointmentStatus.NO_SHOW),
-    String(AppointmentStatus.EXPIRED),
-    'DISCHARGED',
-    'TRANSFERRED',
-  ]);
 
   constructor(
     @Inject(forwardRef(() => CacheService))
@@ -96,282 +89,10 @@ export class CheckInService {
     @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
     @Inject(forwardRef(() => AppointmentQueueService))
-    private readonly appointmentQueueService: AppointmentQueueService
+    private readonly appointmentQueueService: AppointmentQueueService,
+    @Inject(forwardRef(() => CheckInLocationService))
+    private readonly checkInLocationService: CheckInLocationService
   ) {}
-
-  private async ensureActiveInPersonCoverage(appointment: {
-    id: string;
-    clinicId?: string | null;
-    subscriptionId?: string | null;
-    isSubscriptionBased?: boolean | null;
-  }): Promise<void> {
-    if (!appointment.subscriptionId || !appointment.isSubscriptionBased) {
-      throw new BadRequestException(
-        'This in-person appointment needs an active plan before check-in'
-      );
-    }
-
-    const subscription = await this.databaseService.findSubscriptionByIdSafe(
-      appointment.subscriptionId
-    );
-    if (!subscription || subscription.clinicId !== appointment.clinicId) {
-      throw new BadRequestException('The active plan for this appointment could not be found');
-    }
-
-    if (String(subscription.status) !== 'ACTIVE' && String(subscription.status) !== 'TRIALING') {
-      throw new BadRequestException('The active plan for this appointment is no longer valid');
-    }
-
-    if (subscription.currentPeriodEnd < new Date()) {
-      throw new BadRequestException('The active plan coverage period has ended');
-    }
-  }
-
-  private async resolveCheckInLocationId(
-    locationId: string,
-    clinicId?: string | null
-  ): Promise<string> {
-    const resolvedLocation = await this.databaseService.executeHealthcareRead(async client => {
-      return await (
-        client as unknown as {
-          checkInLocation: {
-            findFirst: <T>(args: T) => Promise<{ id: string; isActive: boolean } | null>;
-          };
-        }
-      ).checkInLocation.findFirst({
-        where: {
-          OR: [{ id: locationId }, { locationId }],
-          ...(clinicId ? { clinicId } : {}),
-        },
-      } as never);
-    });
-
-    if (!resolvedLocation) {
-      throw new NotFoundException(`No check-in location is configured for location ${locationId}`);
-    }
-
-    if (!resolvedLocation.isActive) {
-      throw new BadRequestException('Check-in location is not active');
-    }
-
-    return resolvedLocation.id;
-  }
-
-  /**
-   * Public API: Check-in for appointments
-   * Validates appointment type and routes to type-specific handler
-   * @param appointmentId - The appointment ID
-   * @param userId - The user ID performing check-in
-   * @returns Check-in result
-   */
-  async checkIn(appointmentId: string, userId: string, priority?: string): Promise<CheckInResult> {
-    try {
-      // Validate appointment exists and belongs to user
-      const appointment = await this.validateAppointment(appointmentId, userId);
-
-      // Runtime validation at boundary - route to type-specific handler
-      if (isVideoCallAppointment(appointment)) {
-        throw new BadRequestException(
-          'Video appointments cannot be checked in at physical locations. Use virtual check-in through the video consultation interface.'
-        );
-      }
-
-      if (isInPersonAppointment(appointment)) {
-        // Type narrowed - cast to InPersonAppointment for type safety
-        return this.checkInInPerson(appointment, userId, priority);
-      }
-
-      throw new BadRequestException('Unsupported appointment type for physical check-in');
-    } catch (error) {
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.ERROR,
-        `Check-in failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'CheckInService.checkIn',
-        {
-          error: error instanceof Error ? error.message : String(error),
-          appointmentId,
-          userId,
-        }
-      );
-      throw error;
-    }
-  }
-
-  /**
-   * Strict type-safe check-in for IN_PERSON appointments only
-   * TypeScript prevents calling this with VIDEO_CALL or HOME_VISIT
-   * @param appointment - InPersonAppointment (type-narrowed)
-   * @param userId - The user ID performing check-in
-   * @returns Check-in result
-   */
-  private async checkInInPerson(
-    appointment: InPersonAppointment,
-    userId: string,
-    priority?: string
-  ): Promise<CheckInResult> {
-    try {
-      // No runtime type check needed - TypeScript guarantees it's IN_PERSON
-      // locationId is guaranteed to be string (non-null)
-      const now = new Date();
-      const clinicId = appointment.clinicId || '';
-      const currentStatus = String(appointment.status || '').toUpperCase();
-
-      await this.ensureActiveInPersonCoverage(appointment);
-
-      const resolvedCheckInLocationId = await this.resolveCheckInLocationId(
-        appointment.locationId,
-        clinicId
-      );
-
-      if (this.BLOCKED_CHECK_IN_STATUSES.has(currentStatus)) {
-        throw new BadRequestException('This appointment can no longer be checked in');
-      }
-
-      // 2. Confirm the appointment and record clinic arrival
-      await this.databaseService.executeHealthcareWrite(
-        async client => {
-          const typedClient = client as unknown as {
-            appointment: {
-              update: (args: { where: { id: string }; data: unknown }) => Promise<unknown>;
-            };
-            checkIn: {
-              findFirst: (args: {
-                where: { appointmentId: string; clinicId: string };
-              }) => Promise<{ id: string } | null>;
-              create: (args: {
-                data: {
-                  appointmentId: string;
-                  locationId: string;
-                  patientId: string;
-                  clinicId: string;
-                  checkedInAt: Date;
-                  coordinates?: Record<string, number> | null;
-                  deviceInfo?: Record<string, unknown> | null;
-                  isVerified: boolean;
-                  verifiedBy?: string | null;
-                  notes?: string | null;
-                };
-              }) => Promise<unknown>;
-            };
-          };
-          const existingCheckIn = await typedClient.checkIn.findFirst({
-            where: { appointmentId: appointment.id, clinicId },
-          });
-          if (existingCheckIn) {
-            throw new BadRequestException('Appointment arrival is already confirmed');
-          }
-
-          await typedClient.appointment.update({
-            where: { id: appointment.id },
-            data: {
-              status: 'CONFIRMED',
-              checkedInAt: now,
-              updatedAt: now,
-              // Stamped at confirmation so the backend scheduler can
-              // auto-expire the appointment at this time if no one
-              // completes the visit. Mirrors the scheduler's
-              // VIDEO_ACTIVE_WINDOW_MINUTES window (default 5h).
-              confirmationExpiresAt: new Date(
-                now.getTime() + getVideoActiveWindowMinutes() * 60_000
-              ),
-            },
-          });
-
-          return await typedClient.checkIn.create({
-            data: {
-              appointmentId: appointment.id,
-              locationId: resolvedCheckInLocationId,
-              patientId: appointment.patientId,
-              clinicId,
-              checkedInAt: now,
-              isVerified: false,
-              verifiedBy: null,
-              notes: 'Manual receptionist check-in',
-            },
-          });
-        },
-        {
-          userId,
-          clinicId,
-          resourceType: 'APPOINTMENT',
-          operation: 'UPDATE',
-          resourceId: appointment.id,
-          userRole: 'patient',
-          details: { status: 'CONFIRMED', checkInMethod: 'manual' },
-        }
-      );
-
-      // 3. Build the result
-      const result: CheckInResult = {
-        success: true,
-        appointmentId: appointment.id,
-        message: 'Check-in confirmed successfully',
-        checkedInAt: now.toISOString(),
-      };
-
-      // 4. Add to queue for IN_PERSON appointments
-      try {
-        const queuePosition = await this.addToQueue(
-          appointment.id,
-          appointment.doctorId,
-          appointment.locationId, // Type-safe: guaranteed non-null
-          (appointment as { domain?: string }).domain || 'clinic',
-          appointment.patientId || '',
-          clinicId,
-          priority,
-          appointment.treatmentType || appointment.type
-        );
-        result.queuePosition = queuePosition.position;
-        result.estimatedWaitTime = queuePosition.estimatedWaitTime;
-      } catch (queueError) {
-        // Queue insertion failure should not fail the check-in itself
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.WARN,
-          `Queue insertion failed after manual check-in: ${queueError instanceof Error ? queueError.message : 'Unknown error'}`,
-          'CheckInService.checkInInPerson',
-          {
-            appointmentId: appointment.id,
-            clinicId,
-            error: queueError instanceof Error ? queueError.message : String(queueError),
-          }
-        );
-      }
-
-      // 5. Invalidate relevant cache entries
-      void this.cacheService.del(`appointment:${appointment.id}`);
-      void this.cacheService.del(`queue:location:${appointment.locationId}`);
-
-      void this.loggingService.log(
-        LogType.APPOINTMENT,
-        LogLevel.INFO,
-        'Manual check-in successful (appointment confirmed, queue position assigned)',
-        'CheckInService.checkInInPerson',
-        {
-          appointmentId: appointment.id,
-          userId,
-          locationId: appointment.locationId,
-          queuePosition: result.queuePosition,
-        }
-      );
-
-      return result;
-    } catch (error) {
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.ERROR,
-        `Failed to check in in-person appointment: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'CheckInService.checkInInPerson',
-        {
-          error: error instanceof Error ? error.message : String(error),
-          appointmentId: appointment.id,
-          userId,
-        }
-      );
-      throw error;
-    }
-  }
 
   async getCheckedInAppointments(clinicId: string): Promise<CheckedInAppointmentsResponse> {
     const startTime = Date.now();
@@ -425,207 +146,86 @@ export class CheckInService {
   }
 
   /**
-   * Public API: Process check-in via QR code
-   * Validates appointment type and routes to type-specific handler
+   * Arrival confirmation for an in-person appointment (reception desk / clinical staff).
+   *
+   * A thin adapter over `CheckInLocationService.processCheckIn`, the one implementation every
+   * check-in path shares: atomic SCHEDULED -> CONFIRMED + CheckIn row, plan coverage, same-IST-day
+   * rule, receptionist location rule, and an entry in the doctor's live queue that is verified and
+   * repaired on retry. A queue failure surfaces as 503 instead of a 200 without a queue entry, and
+   * a repeated call is idempotent (no second CheckIn row).
+   *
+   * Pass the authenticated `actor` whenever one exists: it drives the ownership / receptionist
+   * location checks and decides whether the patient time window applies. A call without an actor
+   * is treated like a patient for the window (fail closed) and skips the actor checks.
+   *
    * @param appointmentId - The appointment ID
    * @param clinicId - The clinic ID
+   * @param actor - The authenticated caller, when known
    * @returns Check-in result
    */
-  async processCheckIn(appointmentId: string, clinicId: string): Promise<unknown> {
-    try {
-      // Validate appointment exists and belongs to clinic
-      const appointment = await this.validateAppointmentForClinic(appointmentId, clinicId);
-
-      // Runtime validation at boundary - route to type-specific handler
-      if (isVideoCallAppointment(appointment)) {
-        throw new BadRequestException(
-          'Video appointments cannot be checked in using QR codes. Use virtual check-in through the video consultation interface.'
-        );
-      }
-
-      if (isInPersonAppointment(appointment)) {
-        // Type narrowed - cast to InPersonAppointment for type safety
-        return Promise.resolve(this.processCheckInInPerson(appointment, clinicId));
-      }
-
-      throw new BadRequestException('Unsupported appointment type for QR check-in');
-    } catch (error) {
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.ERROR,
-        `QR check-in failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'CheckInService.processCheckIn',
-        {
-          error: error instanceof Error ? error.message : String(error),
-          appointmentId,
-          clinicId,
-        }
-      );
-      throw error;
-    }
-  }
-
-  /**
-   * Strict type-safe QR check-in for IN_PERSON appointments only
-   * Updates appointment status in DB and adds to queue.
-   * @param appointment - InPersonAppointment (type-narrowed)
-   * @param clinicId - The clinic ID
-   * @returns Check-in result
-   */
-  private async processCheckInInPerson(
-    appointment: InPersonAppointment,
-    clinicId: string
+  async processCheckIn(
+    appointmentId: string,
+    clinicId: string,
+    actor?: ProcessCheckInOptions['actor']
   ): Promise<CheckInResult> {
     try {
-      const now = new Date();
-      const currentStatus = String(appointment.status || '').toUpperCase();
-
-      if (this.BLOCKED_CHECK_IN_STATUSES.has(currentStatus)) {
-        throw new BadRequestException('This appointment can no longer be checked in');
+      // Same authorization the unified check-in applies, in the same order: clinic-scoped read
+      // (another clinic's appointment is a 404), patient ownership, no video, receptionist location.
+      const appointment = await this.checkInLocationService.getAppointmentForCheckIn(
+        appointmentId,
+        clinicId,
+        actor
+      );
+      if (!appointment.locationId) {
+        throw new BadRequestException('This appointment has no clinic location to check in at');
       }
 
-      const resolvedCheckInLocationId = await this.resolveCheckInLocationId(
-        appointment.locationId,
-        clinicId
-      );
-
-      // 1. Confirm the appointment and record clinic arrival
-      await this.databaseService.executeHealthcareWrite(
-        async client => {
-          const typedClient = client as unknown as {
-            appointment: {
-              update: (args: { where: { id: string }; data: unknown }) => Promise<unknown>;
-            };
-            checkIn: {
-              findFirst: (args: {
-                where: { appointmentId: string; clinicId: string };
-              }) => Promise<{ id: string } | null>;
-              create: (args: {
-                data: {
-                  appointmentId: string;
-                  locationId: string;
-                  patientId: string;
-                  clinicId: string;
-                  checkedInAt: Date;
-                  coordinates?: Record<string, number> | null;
-                  deviceInfo?: Record<string, unknown> | null;
-                  isVerified: boolean;
-                  verifiedBy?: string | null;
-                  notes?: string | null;
-                };
-              }) => Promise<unknown>;
-            };
-          };
-          const existingCheckIn = await typedClient.checkIn.findFirst({
-            where: { appointmentId: appointment.id, clinicId },
-          });
-          if (existingCheckIn) {
-            throw new BadRequestException('Appointment arrival is already confirmed');
-          }
-
-          await typedClient.appointment.update({
-            where: { id: appointment.id },
-            data: {
-              status: 'CONFIRMED',
-              checkedInAt: now,
-              updatedAt: now,
-              // Stamped at confirmation so the backend scheduler can
-              // auto-expire the appointment at this time if no one
-              // completes the visit. Mirrors the scheduler's
-              // VIDEO_ACTIVE_WINDOW_MINUTES window (default 5h).
-              confirmationExpiresAt: new Date(
-                now.getTime() + getVideoActiveWindowMinutes() * 60_000
-              ),
-            },
-          });
-
-          return await typedClient.checkIn.create({
-            data: {
-              appointmentId: appointment.id,
-              locationId: resolvedCheckInLocationId,
-              patientId: appointment.patientId,
-              clinicId,
-              checkedInAt: now,
-              isVerified: false,
-              verifiedBy: null,
-              notes: 'Manual receptionist QR check-in',
-            },
-          });
-        },
+      const processed = await this.checkInLocationService.processCheckIn(
         {
-          userId: 'system',
-          clinicId,
-          resourceType: 'APPOINTMENT',
-          operation: 'UPDATE',
-          resourceId: appointment.id,
-          userRole: 'system',
-          details: { status: 'CONFIRMED' },
-        }
+          appointmentId,
+          locationId: appointment.locationId,
+          patientId: appointment.patientId,
+        },
+        clinicId,
+        { ...(actor ? { actor } : {}), presence: 'skip' }
       );
 
-      // 2. Build the result
       const result: CheckInResult = {
         success: true,
-        appointmentId: appointment.id,
+        appointmentId,
         message: 'Check-in confirmed successfully',
-        checkedInAt: now.toISOString(),
+        checkedInAt: processed.checkInTime.toISOString(),
       };
 
-      // 3. Add to queue for IN_PERSON appointments
       try {
-        const queuePosition = await this.addToQueue(
-          appointment.id,
-          appointment.doctorId,
-          appointment.locationId,
-          (appointment as { domain?: string }).domain || 'clinic',
-          appointment.patientId || '',
-          clinicId
+        const position = await this.appointmentQueueService.getPatientQueuePosition(
+          appointmentId,
+          clinicId,
+          'clinic'
         );
-        result.queuePosition = queuePosition.position;
-        result.estimatedWaitTime = queuePosition.estimatedWaitTime;
-      } catch (queueError) {
-        // Queue insertion failure should not fail the check-in itself
+        result.queuePosition = position.position;
+        result.estimatedWaitTime = position.estimatedWaitTime;
+      } catch (positionError) {
+        // The position is informational; the arrival and the queue entry are already recorded.
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.WARN,
-          `Queue insertion failed after check-in: ${queueError instanceof Error ? queueError.message : 'Unknown error'}`,
-          'CheckInService.processCheckInInPerson',
-          {
-            appointmentId: appointment.id,
-            clinicId,
-            error: queueError instanceof Error ? queueError.message : String(queueError),
-          }
+          `Queue position lookup failed after check-in: ${positionError instanceof Error ? positionError.message : 'Unknown error'}`,
+          'CheckInService.processCheckIn',
+          { appointmentId, clinicId }
         );
       }
-
-      // 4. Invalidate relevant cache entries
-      void this.cacheService.del(`appointment:${appointment.id}`);
-      void this.cacheService.del(`queue:location:${appointment.locationId}`);
-      void this.cacheService.del(`queue:position:${appointment.id}:${clinicId}`);
-
-      void this.loggingService.log(
-        LogType.APPOINTMENT,
-        LogLevel.INFO,
-        'Check-in successful (appointment confirmed, queue position assigned)',
-        'CheckInService.processCheckInInPerson',
-        {
-          appointmentId: appointment.id,
-          clinicId,
-          locationId: resolvedCheckInLocationId,
-          queuePosition: result.queuePosition,
-        }
-      );
 
       return result;
     } catch (error) {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
-        `Failed to process check-in: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'CheckInService.processCheckInInPerson',
+        `Check-in failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'CheckInService.processCheckIn',
         {
           error: error instanceof Error ? error.message : String(error),
-          appointmentId: appointment.id,
+          appointmentId,
           clinicId,
         }
       );
@@ -714,7 +314,7 @@ export class CheckInService {
 
       await this.databaseService.executeHealthcareWrite(
         async client => {
-          const appointmentDelegate = client['appointment'] as {
+          const appointmentDelegate = client['appointment'] as unknown as {
             update: (args: { where: { id: string }; data: unknown }) => Promise<unknown>;
           };
           return await appointmentDelegate.update({
@@ -927,45 +527,6 @@ export class CheckInService {
   }
 
   // Helper methods
-  private async validateAppointment(
-    appointmentId: string,
-    userId: string
-  ): Promise<CheckInAppointment> {
-    // Get appointment from database
-    const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
-
-    if (!appointment) {
-      throw new NotFoundException(`Appointment ${appointmentId} not found`);
-    }
-
-    // Validate appointment belongs to user (userId should match patientId)
-    if (appointment.patientId !== userId) {
-      throw new ForbiddenException('This appointment does not belong to you');
-    }
-
-    // Validate appointment type
-    if (isVideoCallAppointment(appointment)) {
-      throw new BadRequestException(
-        'Video appointments cannot be checked in at physical locations. Use virtual check-in through the video consultation interface.'
-      );
-    }
-
-    if (!isInPersonAppointment(appointment)) {
-      throw new BadRequestException('Unsupported appointment type for physical check-in');
-    }
-
-    // Return validated appointment data
-    return {
-      id: appointment.id,
-      patientId: appointment.patientId,
-      doctorId: appointment.doctorId,
-      locationId: appointment.locationId,
-      type: appointment.type as AppointmentType,
-      status: appointment.status as AppointmentStatus,
-      domain: (appointment as unknown as { domain?: string }).domain || 'clinic',
-    };
-  }
-
   private async validateAppointmentForClinic(
     appointmentId: string,
     clinicId: string
@@ -982,11 +543,9 @@ export class CheckInService {
       throw new ForbiddenException('Appointment does not belong to this clinic');
     }
 
-    // Validate appointment type - VIDEO_CALL cannot be checked in via QR
+    // Validate appointment type - VIDEO_CALL never takes part in clinic check-in / the queue
     if (isVideoCallAppointment(appointment)) {
-      throw new BadRequestException(
-        'Video appointments cannot be checked in using QR codes. Use virtual check-in through the video consultation interface.'
-      );
+      throw new BadRequestException(VIDEO_CHECK_IN_REJECTION_MESSAGE);
     }
 
     // IN_PERSON appointments require locationId - use strict type guard
@@ -1231,7 +790,7 @@ export class CheckInService {
     }
 
     const appointments = await this.databaseService.executeHealthcareRead(async client => {
-      const appointmentDelegate = client['appointment'] as {
+      const appointmentDelegate = client['appointment'] as unknown as {
         findMany: (args: {
           where: {
             id: { in: string[] };
@@ -1401,41 +960,6 @@ export class CheckInService {
   // =============================================
 
   /**
-   * Process Ayurvedic therapy check-in with location validation
-   */
-  processAyurvedicCheckIn(
-    appointmentId: string,
-    clinicId: string,
-    checkInData: CheckInData
-  ): Promise<CheckInResult> {
-    return this.databaseService.executeHealthcareRead(async _client => {
-      const appointment = await this.validateAppointmentForClinic(appointmentId, clinicId);
-      const appointmentRecord = (await this.databaseService.findAppointmentByIdSafe(
-        appointmentId
-      )) as {
-        treatmentType?: string;
-        type?: string;
-      } | null;
-      const treatmentType = appointmentRecord?.treatmentType || appointmentRecord?.type;
-
-      if (!isAyurvedaTreatmentType(treatmentType)) {
-        throw new BadRequestException('This appointment is not classified as an Ayurvedic visit');
-      }
-
-      await this.validateAyurvedicLocation(
-        checkInData.coordinates || { lat: 0, lng: 0 },
-        checkInData.locationId,
-        clinicId
-      );
-
-      return this.checkInInPerson(
-        appointment as unknown as InPersonAppointment,
-        checkInData.userId
-      );
-    });
-  }
-
-  /**
    * Get therapy-specific queue for Ayurvedic appointments
    */
   getTherapyQueue(therapyType: string, _clinicId: string): Promise<unknown> {
@@ -1446,37 +970,6 @@ export class CheckInService {
       total: queue.length,
       retrievedAt: nowIso(),
     }));
-  }
-
-  /**
-   * Validate Ayurvedic therapy location
-   */
-  private validateAyurvedicLocation(
-    _patientCoords: { lat: number; lng: number },
-    locationId: string,
-    clinicId: string
-  ): Promise<boolean> {
-    return this.databaseService.executeHealthcareRead(async client => {
-      const typedClient = client as unknown as {
-        location: {
-          findFirst: (args: {
-            where: { id: string; clinicId: string; isActive: boolean };
-            select: { id: boolean };
-          }) => Promise<{ id: string } | null>;
-        };
-      };
-
-      const location = await typedClient.location.findFirst({
-        where: { id: locationId, clinicId, isActive: true },
-        select: { id: true },
-      });
-
-      if (!location) {
-        throw new NotFoundException(`No active Ayurvedic location found for ${locationId}`);
-      }
-
-      return true;
-    });
   }
 
   /**

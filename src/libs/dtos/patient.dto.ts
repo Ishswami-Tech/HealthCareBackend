@@ -11,9 +11,14 @@ import {
   Min,
   IsDateString,
   IsEmail,
+  IsIn,
   MaxLength,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
+import { BLOOD_GROUPS, MARITAL_STATUSES } from '@dtos/user.dto';
+
+const upperTrim = ({ value }: { value: unknown }): unknown =>
+  typeof value === 'string' ? value.trim().toUpperCase() : value;
 
 /**
  * Gender enumeration for patients
@@ -126,10 +131,26 @@ export class CreatePatientDto {
   @ApiPropertyOptional({
     example: 'O+',
     description: 'Blood group',
+    enum: BLOOD_GROUPS,
   })
   @IsOptional()
-  @IsString()
+  @Transform(upperTrim)
+  @IsIn(BLOOD_GROUPS, { message: `bloodGroup must be one of: ${BLOOD_GROUPS.join(', ')}` })
   bloodGroup?: string;
+
+  @ApiPropertyOptional({ example: 'Teacher', description: 'Occupation' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  occupation?: string;
+
+  @ApiPropertyOptional({ example: 'MARRIED', enum: MARITAL_STATUSES })
+  @IsOptional()
+  @Transform(upperTrim)
+  @IsIn(MARITAL_STATUSES, {
+    message: `maritalStatus must be one of: ${MARITAL_STATUSES.join(', ')}`,
+  })
+  maritalStatus?: string;
 
   @ApiPropertyOptional({
     example: 170,
@@ -347,10 +368,19 @@ export class UpdatePatientDto {
   @IsEnum(PatientGender)
   gender?: PatientGender;
 
-  @ApiPropertyOptional({ example: 'O+' })
+  @ApiPropertyOptional({ example: 'O+', enum: BLOOD_GROUPS })
   @IsOptional()
-  @IsString()
+  @Transform(upperTrim)
+  @IsIn(BLOOD_GROUPS, { message: `bloodGroup must be one of: ${BLOOD_GROUPS.join(', ')}` })
   bloodGroup?: string;
+
+  @ApiPropertyOptional({ example: 'MARRIED', enum: MARITAL_STATUSES })
+  @IsOptional()
+  @Transform(upperTrim)
+  @IsIn(MARITAL_STATUSES, {
+    message: `maritalStatus must be one of: ${MARITAL_STATUSES.join(', ')}`,
+  })
+  maritalStatus?: string;
 
   @ApiPropertyOptional({ example: 170, minimum: 0 })
   @IsOptional()

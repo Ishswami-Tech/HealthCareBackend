@@ -16,6 +16,7 @@ export {
   CreateReorderRuleDto,
   CreatePurchaseOrderDto,
   PurchaseOrderItemDto,
+  PurchaseOrderListQueryDto,
   BatchFilterDto,
   DispenseFefoDto,
   DispenseFefoItemDto,

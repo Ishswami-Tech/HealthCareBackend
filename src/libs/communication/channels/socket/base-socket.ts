@@ -349,9 +349,20 @@ export class BaseSocket
         },
       };
     } catch (error: unknown) {
-      safeLogError(this.loggingService, error, this.serviceName, {
-        operation: 'handleConnection',
-      });
+      // An expired access token is a routine, expected part of the reconnect
+      // flow — SocketAuthMiddleware already logs it at WARN and tells the
+      // client to refresh via a `token_expired` event. Logging it again here
+      // at ERROR (safeLogError's fixed level) turns every normal token
+      // expiry into error-tracker noise indistinguishable from a real fault.
+      if (error instanceof HealthcareError && error.code === ErrorCode.AUTH_TOKEN_EXPIRED) {
+        safeLog(this.loggingService, LogType.AUTH, LogLevel.WARN, error.message, this.serviceName, {
+          operation: 'handleConnection',
+        });
+      } else {
+        safeLogError(this.loggingService, error, this.serviceName, {
+          operation: 'handleConnection',
+        });
+      }
       return { event: 'error', data: { message: 'Connection error' } };
     }
   }

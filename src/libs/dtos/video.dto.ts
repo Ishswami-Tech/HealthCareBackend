@@ -24,14 +24,24 @@ import {
   IsUrl,
   IsBoolean,
   IsNumber,
+  IsInt,
   Min,
   Max,
+  MaxLength,
   ValidateNested,
   IsObject,
   IsArray,
 } from 'class-validator';
 import { TreatmentPlanDto, VideoCallStatus } from './appointment.dto';
 import { normalizeAppointmentId } from '@utils/appointment-id.utils';
+
+/**
+ * Upper bound of the deprecated `userId` / `userRole` body fields of the token, start and end
+ * requests. The server ignores both (identity comes from the JWT), so they are validated only as
+ * short strings: a client that still sends them, with whatever role name its own app uses, is
+ * never rejected because of them.
+ */
+const IGNORED_IDENTITY_FIELD_MAX_LENGTH = 64;
 
 /**
  * User information for video consultation
@@ -83,24 +93,26 @@ export class GenerateVideoTokenDto {
   @IsNotEmpty({ message: 'Appointment ID is required' })
   appointmentId!: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: 'user-uuid-123',
-    description: 'User ID joining the consultation',
+    description: 'Deprecated and ignored: the user is always the authenticated caller (JWT).',
+    deprecated: true,
   })
-  @IsUUID('4', { message: 'User ID must be a valid UUID' })
-  @IsNotEmpty({ message: 'User ID is required' })
-  userId!: string;
+  @IsOptional()
+  @IsString({ message: 'User ID must be a string' })
+  @MaxLength(IGNORED_IDENTITY_FIELD_MAX_LENGTH)
+  userId?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: 'patient',
-    description: 'User role in the consultation',
-    enum: ['patient', 'doctor', 'receptionist', 'clinic_admin'],
+    description:
+      'Deprecated and ignored: the role is always taken from the authenticated caller (JWT). Any value is accepted so existing clients keep working.',
+    deprecated: true,
   })
-  @IsEnum(['patient', 'doctor', 'receptionist', 'clinic_admin'], {
-    message: 'User role must be one of: patient, doctor, receptionist, clinic_admin',
-  })
-  @IsNotEmpty({ message: 'User role is required' })
-  userRole!: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin';
+  @IsOptional()
+  @IsString({ message: 'User role must be a string' })
+  @MaxLength(IGNORED_IDENTITY_FIELD_MAX_LENGTH)
+  userRole?: string;
 
   @ApiProperty({
     description: 'User information for video consultation',
@@ -126,24 +138,26 @@ export class StartVideoConsultationDto {
   @IsNotEmpty({ message: 'Appointment ID is required' })
   appointmentId!: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: 'user-uuid-123',
-    description: 'User ID starting the consultation',
+    description: 'Deprecated and ignored: the user is always the authenticated caller (JWT).',
+    deprecated: true,
   })
-  @IsUUID('4', { message: 'User ID must be a valid UUID' })
-  @IsNotEmpty({ message: 'User ID is required' })
-  userId!: string;
+  @IsOptional()
+  @IsString({ message: 'User ID must be a string' })
+  @MaxLength(IGNORED_IDENTITY_FIELD_MAX_LENGTH)
+  userId?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: 'patient',
-    description: 'User role in the consultation',
-    enum: ['patient', 'doctor', 'receptionist', 'clinic_admin'],
+    description:
+      'Deprecated and ignored: the role is always taken from the authenticated caller (JWT). Any value is accepted so existing clients keep working.',
+    deprecated: true,
   })
-  @IsEnum(['patient', 'doctor', 'receptionist', 'clinic_admin'], {
-    message: 'User role must be one of: patient, doctor, receptionist, clinic_admin',
-  })
-  @IsNotEmpty({ message: 'User role is required' })
-  userRole!: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin';
+  @IsOptional()
+  @IsString({ message: 'User role must be a string' })
+  @MaxLength(IGNORED_IDENTITY_FIELD_MAX_LENGTH)
+  userRole?: string;
 }
 
 /**
@@ -160,24 +174,26 @@ export class EndVideoConsultationDto {
   @IsNotEmpty({ message: 'Appointment ID is required' })
   appointmentId!: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: 'user-uuid-123',
-    description: 'User ID ending the consultation',
+    description: 'Deprecated and ignored: the user is always the authenticated caller (JWT).',
+    deprecated: true,
   })
-  @IsUUID('4', { message: 'User ID must be a valid UUID' })
-  @IsNotEmpty({ message: 'User ID is required' })
-  userId!: string;
+  @IsOptional()
+  @IsString({ message: 'User ID must be a string' })
+  @MaxLength(IGNORED_IDENTITY_FIELD_MAX_LENGTH)
+  userId?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: 'patient',
-    description: 'User role in the consultation',
-    enum: ['patient', 'doctor', 'receptionist', 'clinic_admin'],
+    description:
+      'Deprecated and ignored: the role is always taken from the authenticated caller (JWT). Any value is accepted so existing clients keep working.',
+    deprecated: true,
   })
-  @IsEnum(['patient', 'doctor', 'receptionist', 'clinic_admin'], {
-    message: 'User role must be one of: patient, doctor, receptionist, clinic_admin',
-  })
-  @IsNotEmpty({ message: 'User role is required' })
-  userRole!: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin';
+  @IsOptional()
+  @IsString({ message: 'User role must be a string' })
+  @MaxLength(IGNORED_IDENTITY_FIELD_MAX_LENGTH)
+  userRole?: string;
 
   @ApiPropertyOptional({
     example: 'Patient felt better after consultation',
@@ -1863,4 +1879,35 @@ export class BackgroundPresetResponseDto {
 
   @ApiProperty()
   isDefault!: boolean;
+}
+
+/**
+ * Patient rating for a completed video consultation
+ * @class RateVideoConsultationDto
+ */
+export class RateVideoConsultationDto {
+  @ApiProperty({ description: 'Star rating from 1 to 5', minimum: 1, maximum: 5, example: 5 })
+  @Type(() => Number)
+  @IsInt({ message: 'Rating must be a whole number between 1 and 5' })
+  @Min(1, { message: 'Rating must be between 1 and 5' })
+  @Max(5, { message: 'Rating must be between 1 and 5' })
+  rating!: number;
+
+  @ApiPropertyOptional({
+    description: 'Optional feedback comment (trimmed, up to 1000 characters)',
+    example: 'Very helpful',
+    maxLength: 1000,
+  })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }): unknown =>
+    typeof value === 'string' ? value.trim() : value
+  )
+  @IsString({ message: 'Comment must be a string' })
+  @MaxLength(1000, { message: 'Comment must be at most 1000 characters' })
+  comment?: string;
+
+  @ApiPropertyOptional({ description: 'Video consultation ID (informational)' })
+  @IsOptional()
+  @IsString({ message: 'Consultation ID must be a string' })
+  consultationId?: string;
 }

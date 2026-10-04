@@ -216,6 +216,27 @@ export class VideoMedicalNotesService {
   }
 
   /**
+   * The consultation a note belongs to. Endpoints addressed by note id use it to authorise the
+   * caller against that consultation's appointment before touching the note.
+   *
+   * @throws NotFoundException when the note does not exist
+   */
+  async getNoteConsultationId(noteId: string): Promise<string> {
+    const note = await this.databaseService.executeHealthcareRead(
+      async (client: PrismaTransactionClient) => {
+        const delegate = getVideoConsultationNoteDelegate(client);
+        return (await delegate.findUnique({
+          where: { id: noteId },
+        })) as VideoConsultationNoteDbModel | null;
+      }
+    );
+    if (!note) {
+      throw new NotFoundException(`Note ${noteId} not found`);
+    }
+    return note.consultationId;
+  }
+
+  /**
    * Update a medical note
    */
   async updateNote(dto: UpdateNoteDto): Promise<MedicalNote> {

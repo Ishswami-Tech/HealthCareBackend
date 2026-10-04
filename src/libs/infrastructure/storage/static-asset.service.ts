@@ -9,7 +9,11 @@
  */
 
 import { Injectable } from '@nestjs/common';
-import { S3StorageService, UploadResult } from './s3-storage.service';
+import {
+  PRIVATE_ASSET_URL_TTL_SECONDS,
+  S3StorageService,
+  UploadResult,
+} from './s3-storage.service';
 import { LoggingService } from '@logging';
 import { LogType, LogLevel } from '@core/types';
 
@@ -23,7 +27,14 @@ export enum AssetType {
   MEDICAL_RECORD = 'medical-records',
   IMAGE = 'images',
   DOCUMENT = 'documents',
+  LIBRARY_COVER = 'library-covers',
 }
+
+/**
+ * Folders holding patient-uploaded / clinical files. Objects here are stored
+ * PRIVATE and handed to clients as presigned URLs (see `resolveSignedUrl`).
+ */
+const SIGNED_URL_FOLDERS: readonly string[] = [AssetType.DOCUMENT, AssetType.MEDICAL_RECORD];
 
 /**
  * Static Asset Service
@@ -183,6 +194,85 @@ export class StaticAssetService {
 
     // Local storage - return relative path
     return key;
+  }
+
+  /**
+   * Presigned GET URL (default 15 minutes) for an object key of the configured
+   * bucket. Throws when S3 is not enabled. The URL is a bearer credential: it is
+   * never logged.
+   */
+  async getSignedDownloadUrl(
+    key: string,
+    ttlSeconds: number = PRIVATE_ASSET_URL_TTL_SECONDS
+  ): Promise<string> {
+    return await this.s3StorageService.getSignedDownloadUrl(key, ttlSeconds);
+  }
+
+  /**
+   * URL a client can use to open a stored document / medical-record file.
+   *
+   * - own-bucket object under `documents/` or `medical-records/` -> short-lived
+   *   presigned GET URL (also fine for legacy public-read objects)
+   * - local-disk fallback (`/storage/...`), S3 disabled, foreign host, other
+   *   folder, traversal attempt -> the stored value, unchanged
+   * - presigning failure -> the stored value plus a warning (the URL is never
+   *   logged); a listing must not fail because one object could not be signed
+   *
+   * `options.boundTo` ties the signature to the ROW the URL was read from: the object
+   * key must contain at least one of these ids (record id / patient id / user id; the
+   * writers put them into the object name), otherwise the stored value is returned
+   * unsigned. So a stored URL that points at somebody else's object can never be turned
+   * into a valid presigned link. An empty list never matches (fail closed).
+   *
+   * Never throws.
+   */
+  async resolveSignedUrl(
+    storedUrl: string,
+    ttlSeconds: number = PRIVATE_ASSET_URL_TTL_SECONDS,
+    options: { readonly boundTo?: ReadonlyArray<string | null | undefined> } = {}
+  ): Promise<string> {
+    if (!storedUrl || !this.s3StorageService.isS3Enabled()) {
+      return storedUrl;
+    }
+    const key = this.s3StorageService.resolveOwnedObjectKey(storedUrl, SIGNED_URL_FOLDERS);
+    if (!key) {
+      return storedUrl;
+    }
+    if (options.boundTo !== undefined) {
+      const markers = options.boundTo.filter(
+        (marker): marker is string => typeof marker === 'string' && marker.length > 0
+      );
+      if (!markers.some(marker => key.includes(marker))) {
+        await this.loggingService
+          .log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            'A stored private asset URL does not belong to its row; it was not presigned',
+            'StaticAssetService',
+            { folder: key.split('/')[0] }
+          )
+          .catch(() => undefined);
+        return storedUrl;
+      }
+    }
+
+    try {
+      return await this.getSignedDownloadUrl(key, ttlSeconds);
+    } catch (error) {
+      await this.loggingService
+        .log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Could not presign a private asset URL; returning the stored URL',
+          'StaticAssetService',
+          {
+            folder: key.split('/')[0],
+            error: error instanceof Error ? error.message : String(error),
+          }
+        )
+        .catch(() => undefined);
+      return storedUrl;
+    }
   }
 
   /**

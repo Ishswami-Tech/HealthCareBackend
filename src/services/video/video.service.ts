@@ -19,14 +19,17 @@ import {
   OnModuleInit,
   OnModuleDestroy,
   BadRequestException,
+  ConflictException,
   NotFoundException,
   ForbiddenException,
   Inject,
   forwardRef,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { ModuleRef as _ModuleRef } from '@nestjs/core';
 import { ConfigService } from '@config/config.service';
-import { getVideoActiveWindowMinutes } from '@config/video.config';
+import { getVideoActiveWindowMinutes, getVideoEarlyJoinMinutes } from '@config/video.config';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { Prisma } from '@infrastructure/database/prisma/generated/client';
 import { JobType, JobPriorityLevel } from '@core/types/queue.types';
@@ -44,10 +47,11 @@ import { VideoProviderFactory } from '@services/video/providers/video-provider.f
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events/event.service';
 import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
-import { AppointmentStatus } from '@core/types/enums.types';
+import { AppointmentStatus, Role } from '@core/types/enums.types';
 // Legacy queue constant removed � uses JobType.VIDEO_RECORDING via HEALTHCARE_QUEUE
 // Future use: VIDEO_TRANSCODING_QUEUE, VIDEO_ANALYTICS_QUEUE
 import { HealthcareError } from '@core/errors';
+import { extractErrorMessage } from '@core/errors/error-message.util';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { isVideoCallAppointment } from '@core/types/appointment-guards.types';
 import { isVideoSlotAwaitingConfirmation } from '@services/appointments/core/appointment-state-contract';
@@ -67,27 +71,38 @@ import {
 import { RbacService } from '@core/rbac/rbac.service';
 import { BillingService } from '@services/billing/billing.service';
 import { normalizeAppointmentId } from '@utils/appointment-id.utils';
-import { parseIstDateTime, nowIso } from '../../libs/utils/date-time.util';
+import { parseIstDateTime, nowIso } from '@utils/date-time.util';
+import {
+  VIDEO_END_FORBIDDEN_MESSAGE,
+  assertParticipantOrClinicStaff,
+  isClinicAdminRole,
+  isFamilyMemberOwner,
+  isPatientOwner,
+  resolveVideoBookerUserId,
+  resolveVideoCompletionActor,
+  type VideoAccessAppointment,
+  type VideoBookerAppointment,
+  type VideoCallerContext,
+  type VideoCallerRole,
+  type VideoCompletionActor,
+} from '@services/video/video-access.helpers';
+import {
+  buildVideoLifecycleRouting,
+  claimDoctorStart,
+  claimPendingCompletionEvent,
+  emitAppointmentCompletedWithRetry,
+  hasCompletionEventPending,
+  isProviderUnavailableError,
+  markCompletionEventPending,
+  type CompletedAppointmentRef,
+} from '@services/video/video-completion.helpers';
+import {
+  isAppointmentPaid,
+  type AppointmentPaymentLike,
+} from '@services/appointments/core/appointment-payment.util';
+import { findTerminatingProvider } from '@services/video/providers/video-provider.helpers';
 
 export type { VideoCall, VideoCallSettings };
-
-type AppointmentPaymentLike = {
-  payment?: { status?: string | null } | Array<{ status?: string | null }> | null;
-  paymentStatus?: string | null;
-  billing?: {
-    paymentStatus?: string | null;
-    status?: string | null;
-    paid?: boolean | null;
-  } | null;
-  invoice?: {
-    paymentStatus?: string | null;
-    status?: string | null;
-    paid?: boolean | null;
-  } | null;
-  paymentCompleted?: boolean | null;
-  isPaid?: boolean | null;
-  paid?: boolean | null;
-};
 
 type AppointmentVideoNameSource = {
   id: string;
@@ -128,6 +143,40 @@ type VideoSessionAccessContext = {
   userRole?: string;
 };
 
+type SummaryUser = {
+  id: string;
+  name?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+};
+
+/** An appointment with what the post-call summary and the rating need (see loadAppointmentForSummary). */
+type ConsultationSummaryAppointment = {
+  id: string;
+  clinicId: string;
+  /** User who created the appointment (the patient, an account holder, or staff). */
+  userId?: string | null;
+  familyMemberId?: string | null;
+  date: Date;
+  time: string;
+  duration: number;
+  status: string;
+  type: string;
+  doctorId: string;
+  patientId: string;
+  metadata: unknown;
+  patient: { id: string; userId: string; user?: SummaryUser | null } | null;
+  doctor: {
+    id: string;
+    userId: string;
+    specialization?: string | null;
+    user?: SummaryUser | null;
+  } | null;
+};
+
+/** First HTTP status that counts as a server-side failure (the client message is hidden). */
+const SERVER_ERROR_STATUS_MIN = 500;
+
 const GLOBAL_VIDEO_PROVIDER_SETTING_KEY = 'global_video_provider';
 const DEFAULT_GLOBAL_VIDEO_PROVIDER: VideoProviderType = 'daily';
 
@@ -138,6 +187,23 @@ type VideoProviderSettingRow = {
 @Injectable()
 export class VideoService implements OnModuleInit, OnModuleDestroy {
   private static readonly VIDEO_ACTIVE_WINDOW_MINUTES = getVideoActiveWindowMinutes();
+  private static readonly VIDEO_EARLY_JOIN_MINUTES = getVideoEarlyJoinMinutes();
+  /**
+   * Appointment statuses a consultation can be STARTED from (the doctor's start moves them to
+   * IN_PROGRESS). Ending is stricter: only an IN_PROGRESS visit can be completed.
+   */
+  private static readonly CONSULTATION_OPEN_STATUSES: readonly AppointmentStatus[] = [
+    AppointmentStatus.IN_PROGRESS,
+    AppointmentStatus.CONFIRMED,
+    AppointmentStatus.SCHEDULED,
+  ];
+  /** VideoConsultation statuses of a call that is over (see markConsultationEnded). */
+  private static readonly FINISHED_CONSULTATION_STATUSES: ReadonlySet<string> = new Set([
+    'COMPLETED',
+    'ENDED',
+    'CANCELLED',
+  ]);
+  private static readonly RATING_LOCK_TTL_SECONDS = 30;
   private provider: IVideoProvider | undefined;
   private readonly VIDEO_CACHE_TTL = 1800; // 30 minutes
   private readonly CALL_CACHE_TTL = 300; // 5 minutes
@@ -294,14 +360,21 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
       return healthyProvider;
     } catch (error) {
-      // No provider available
+      // No provider available. The cause goes to the log, never into the exception metadata the
+      // client receives.
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `No video provider is available: ${extractErrorMessage(error) ?? 'Unknown error'}`,
+        'VideoService.getProvider',
+        { preferredProvider }
+      );
       throw new HealthcareError(
         ErrorCode.SERVICE_UNAVAILABLE,
         'Video service is currently unavailable. Please try again later or contact support.',
         undefined,
         {
           note: 'Both video providers are unavailable. Core healthcare features remain available.',
-          error: error instanceof Error ? error.message : 'Unknown error',
         },
         'VideoService.getProvider'
       );
@@ -462,7 +535,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       throw new HealthcareError(
         ErrorCode.SERVICE_UNAVAILABLE,
         'Video service is currently unavailable. Please try again later or contact support.',
-        undefined,
+        HttpStatus.SERVICE_UNAVAILABLE,
         {
           note: 'No enabled video providers are available.',
         },
@@ -499,7 +572,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       ErrorCode.INTERNAL_SERVER_ERROR,
       'Video provider failed',
       undefined,
-      { operation: operationName, originalError: String(lastError) },
+      { operation: operationName },
       operationName
     );
   }
@@ -608,16 +681,21 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Generate meeting token for video consultation
+   *
+   * @param caller - clinic and platform role of the requester (from the validated request).
+   *   Required for the clinic-isolation check: without a clinic the call is rejected for every
+   *   role except a SUPER_ADMIN `rawRole`.
    */
   async generateMeetingToken(
     appointmentId: string,
     userId: string,
-    userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin',
+    userRole: VideoCallerRole,
     userInfo: {
       displayName: string;
       email: string;
       avatar?: string;
-    }
+    },
+    caller?: VideoCallerContext
   ): Promise<VideoTokenResponse> {
     let resolvedAppointmentId = normalizeAppointmentId(appointmentId);
 
@@ -653,44 +731,18 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         throw new HealthcareError(
           ErrorCode.APPOINTMENT_NOT_FOUND,
           'No appointment found',
-          undefined,
-          { rawAppointmentId: appointmentId, resolvedAppointmentId },
+          HttpStatus.NOT_FOUND,
+          { appointmentId: resolvedAppointmentId },
           'VideoService.generateMeetingToken'
         );
       }
 
+      // 2. Authorise before revealing anything about the appointment (status, payment, window):
+      // the caller must belong to the appointment's clinic and be a participant or clinic staff.
+      await this.authorizeVideoCaller(appointment, userId, userRole, caller);
+
       this.ensureAppointmentJoinable(appointment, userRole);
-
-      // 2. Validate User Authorization
-      // Ensure the requesting user is a participant in this appointment
-      const isPatient = userRole === 'patient';
-      const isDoctor = userRole === 'doctor'; // or 'assistant_doctor'
-
-      if (isPatient) {
-        // Match against userId passed (which corresponds to User.id)
-        // appointment.patient.userId is the User.id link
-        if (appointment.patient?.userId !== userId && appointment.patientId !== userId) {
-          throw new HealthcareError(
-            ErrorCode.AUTH_INSUFFICIENT_PERMISSIONS,
-            'You are not authorized to join this appointment.',
-            undefined,
-            { userId, appointmentId: resolvedAppointmentId },
-            'VideoService.generateMeetingToken'
-          );
-        }
-      }
-
-      if (isDoctor) {
-        if (appointment.doctor?.userId !== userId && appointment.doctorId !== userId) {
-          throw new HealthcareError(
-            ErrorCode.AUTH_INSUFFICIENT_PERMISSIONS,
-            'You are not authorized to join this appointment.',
-            undefined,
-            { userId, appointmentId: resolvedAppointmentId },
-            'VideoService.generateMeetingToken'
-          );
-        }
-      }
+      this.ensureWithinPatientJoinWindow(appointment, userRole);
 
       const preferredProvider = await this.resolveEffectivePreferredProvider(appointment);
 
@@ -701,29 +753,12 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         preferredProvider
       );
     } catch (error: unknown) {
-      const errorMessage: string = error instanceof Error ? error.message : 'Unknown error';
-      const currentProvider: IVideoProvider | undefined = this.provider;
-      const providerName: string = currentProvider?.providerName ?? 'unknown';
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.ERROR,
-        `Video provider failed: ${errorMessage}`,
+      this.logLifecycleFailure('VideoService.generateMeetingToken', resolvedAppointmentId, error);
+      throw this.toVideoLifecycleError(
+        error,
         'VideoService.generateMeetingToken',
-        {
-          appointmentId: resolvedAppointmentId,
-          provider: providerName,
-          error: errorMessage,
-        }
-      );
-      if (error instanceof Error) {
-        throw error;
-      }
-      throw new HealthcareError(
-        ErrorCode.INTERNAL_SERVER_ERROR,
-        'Video provider failed',
-        undefined,
-        { appointmentId: resolvedAppointmentId, originalError: String(error) },
-        'VideoService.generateMeetingToken'
+        resolvedAppointmentId,
+        'Could not generate the video meeting token'
       );
     }
   }
@@ -799,7 +834,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       clinicId,
     });
 
-    await this.triggerAppointmentRefund(resolvedAppointmentId, clinicId, rejectionReason);
+    // No refund: a visit that does not happen ends here and the patient books a new one.
 
     const appointmentRecord = updatedAppointment as unknown as Record<string, unknown>;
     const resolvePersonName = (value: unknown, fallback: string): string => {
@@ -974,42 +1009,37 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    if (!this.isAppointmentPaid(appointment)) {
+    if (!isAppointmentPaid(appointment)) {
       throw new ForbiddenException('Payment is required before joining this video appointment.');
     }
   }
 
-  private isAppointmentPaid(appointment: AppointmentPaymentLike): boolean {
-    if (
-      appointment.paymentCompleted === true ||
-      appointment.isPaid === true ||
-      appointment.paid === true
-    ) {
-      return true;
+  /**
+   * Patients may only join inside the join window (EARLY_JOIN minutes before the visit until the
+   * active window after its start) - the same window getConsultationAccessState reports. Doctors,
+   * nurses and admins are not gated so they can open the room early, as before.
+   */
+  private ensureWithinPatientJoinWindow(
+    appointment: { date?: Date | string | null; time?: string | null; duration?: number | null },
+    userRole: VideoCallerRole
+  ): void {
+    if (userRole !== 'patient') {
+      return;
     }
 
-    // All recognized payment-complete statuses across providers
-    // PAID/COMPLETED: generic, SUCCESS: Cashfree, CAPTURED: Razorpay
-    const PAID_STATUSES = ['PAID', 'COMPLETED', 'SUCCESS', 'CAPTURED'];
+    const scheduledWindow = this.resolveAppointmentVideoWindow(appointment);
+    if (!scheduledWindow?.startTime || !scheduledWindow.endTime) {
+      // No parseable schedule: same behaviour as the status endpoint (nothing to enforce).
+      return;
+    }
 
-    const paymentEntries = Array.isArray(appointment.payment)
-      ? appointment.payment
-      : appointment.payment
-        ? [appointment.payment]
-        : [];
-
-    return (
-      paymentEntries.some(payment =>
-        PAID_STATUSES.includes(String(payment.status || '').toUpperCase())
-      ) ||
-      PAID_STATUSES.includes(String(appointment.paymentStatus || '').toUpperCase()) ||
-      PAID_STATUSES.includes(String(appointment.billing?.paymentStatus || '').toUpperCase()) ||
-      PAID_STATUSES.includes(String(appointment.billing?.status || '').toUpperCase()) ||
-      appointment.billing?.paid === true ||
-      PAID_STATUSES.includes(String(appointment.invoice?.paymentStatus || '').toUpperCase()) ||
-      PAID_STATUSES.includes(String(appointment.invoice?.status || '').toUpperCase()) ||
-      appointment.invoice?.paid === true
-    );
+    const opensAt =
+      scheduledWindow.startTime.getTime() - VideoService.VIDEO_EARLY_JOIN_MINUTES * 60_000;
+    const closesAt = scheduledWindow.endTime.getTime();
+    const now = Date.now();
+    if (now < opensAt || now > closesAt) {
+      throw new ForbiddenException(VideoService.joinWindowMessage());
+    }
   }
 
   async getConsultationAccessState(
@@ -1035,12 +1065,14 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     }
 
     const appointmentStatus = String(appointment.status || '').toUpperCase();
-    const paymentCompleted = this.isAppointmentPaid(appointment as AppointmentPaymentLike);
+    const paymentCompleted = isAppointmentPaid(appointment as AppointmentPaymentLike);
     const paymentRequired =
       String(appointment.type || '').toUpperCase() === 'VIDEO_CALL' && !paymentCompleted;
     const scheduledWindow = this.resolveAppointmentVideoWindow(appointment);
     const joinWindowStart = scheduledWindow?.startTime
-      ? new Date(scheduledWindow.startTime.getTime() - 20 * 60_000)
+      ? new Date(
+          scheduledWindow.startTime.getTime() - VideoService.VIDEO_EARLY_JOIN_MINUTES * 60_000
+        )
       : null;
     const joinWindowEnd = scheduledWindow?.endTime ?? null;
     const confirmedSlotIndex = (
@@ -1071,13 +1103,17 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       })
     ) {
       joinBlockedReason = 'This video request is awaiting slot confirmation.';
-    } else if (accessContext?.userRole === 'patient' && paymentRequired && !paymentCompleted) {
+    } else if (
+      // The controller passes the platform role ('PATIENT'); the lifecycle code uses 'patient'.
+      String(accessContext?.userRole ?? '').toLowerCase() === 'patient' &&
+      paymentRequired &&
+      !paymentCompleted
+    ) {
       joinBlockedReason = 'Payment is required before joining this video appointment.';
     } else if (joinWindowStart && joinWindowEnd) {
       const now = new Date();
       if (now < joinWindowStart || now > joinWindowEnd) {
-        joinBlockedReason =
-          'Join opens 20 minutes before your visit and stays open for 5 hours after start.';
+        joinBlockedReason = VideoService.joinWindowMessage();
       }
     }
 
@@ -1208,28 +1244,514 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     return { startTime, endTime };
   }
 
+  /** The one sentence about the join window; its numbers come from the two window settings. */
+  private static joinWindowMessage(): string {
+    const late = VideoService.VIDEO_ACTIVE_WINDOW_MINUTES;
+    const lateText =
+      late % 60 === 0 ? `${late / 60} ${late === 60 ? 'hour' : 'hours'}` : `${late} minutes`;
+    return `Join opens ${VideoService.VIDEO_EARLY_JOIN_MINUTES} minutes before your visit and stays open for ${lateText} after start.`;
+  }
+
+  // ============================================================================
+  // Post-call summary & rating
+  // ============================================================================
+
+  private async loadAppointmentForSummary(appointmentId: string) {
+    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
+    const userSelect = { select: { id: true, name: true, firstName: true, lastName: true } };
+    const appointment = await this.databaseService.executeRead(async prisma => {
+      const tx = prisma as unknown as Prisma.TransactionClient;
+      return await tx.appointment.findUnique({
+        where: { id: resolvedAppointmentId },
+        include: {
+          patient: { include: { user: userSelect } },
+          doctor: { include: { user: userSelect } },
+        },
+      });
+    });
+    if (!appointment) {
+      throw new HealthcareError(
+        ErrorCode.APPOINTMENT_NOT_FOUND,
+        'No appointment found',
+        HttpStatus.NOT_FOUND,
+        { appointmentId: resolvedAppointmentId },
+        'VideoService.loadAppointmentForSummary'
+      );
+    }
+    return appointment as unknown as ConsultationSummaryAppointment;
+  }
+
+  private displayName(
+    user:
+      | { name?: string | null; firstName?: string | null; lastName?: string | null }
+      | null
+      | undefined,
+    fallback: string
+  ): string {
+    const full = `${user?.firstName ?? ''} ${user?.lastName ?? ''}`.trim();
+    return (user?.name && user.name.trim()) || full || fallback;
+  }
+
+  /**
+   * Summary of a video consultation: appointment info, doctor/patient names,
+   * actual start/end/duration from the VideoConsultation row, and any rating.
+   *
+   * The caller is authorised with the same rules as joining, starting and ending the call
+   * (`authorizeVideoCaller`): the patient, the account that booked it and the owner of the family
+   * dependent it is for, the appointment's doctor (or an assistant of its clinic) and clinic
+   * admins. Another clinic's appointment answers 404, a non-participant 403.
+   */
+  async getConsultationSummary(
+    appointmentId: string,
+    userId: string,
+    userRole: VideoCallerRole,
+    caller?: VideoCallerContext
+  ): Promise<{
+    appointmentId: string;
+    consultationId: string | null;
+    status: string;
+    appointmentStatus: string;
+    appointmentDate: string;
+    appointmentTime: string;
+    scheduledDurationMinutes: number;
+    startTime: string | null;
+    endTime: string | null;
+    durationSeconds: number;
+    doctorName: string;
+    doctorSpecialization: string | null;
+    patientName: string;
+    participants: Array<{ userId: string; name: string; role: string }>;
+    rating: { average: number; count: number } | null;
+    myRating: { rating: number; comment?: string; ratedAt: string } | null;
+  }> {
+    const appointment = await this.loadAppointmentForSummary(appointmentId);
+    await this.authorizeVideoCaller(appointment, userId, userRole, caller);
+
+    const consultation = await this.databaseService.executeHealthcareRead(async prisma => {
+      const delegate = getVideoConsultationDelegate(prisma);
+      return await delegate.findFirst({ where: { appointmentId: appointment.id } });
+    });
+
+    const start = consultation?.startTime ? new Date(consultation.startTime) : null;
+    const end = consultation?.endTime ? new Date(consultation.endTime) : null;
+    let durationSeconds = 0;
+    if (typeof consultation?.duration === 'number' && consultation.duration > 0) {
+      durationSeconds = consultation.duration;
+    } else if (start && end) {
+      durationSeconds = Math.max(0, Math.floor((end.getTime() - start.getTime()) / 1000));
+    }
+
+    const doctorName = this.displayName(appointment.doctor?.user, 'Doctor');
+    const patientName = this.displayName(appointment.patient?.user, 'Patient');
+    const metadata =
+      appointment.metadata && typeof appointment.metadata === 'object'
+        ? (appointment.metadata as Record<string, unknown>)
+        : {};
+    const storedRating = metadata['consultationRating'] as
+      { rating?: number; comment?: string; ratedAt?: string } | undefined;
+    const myRating =
+      storedRating && typeof storedRating.rating === 'number'
+        ? {
+            rating: storedRating.rating,
+            ...(storedRating.comment ? { comment: storedRating.comment } : {}),
+            ratedAt: storedRating.ratedAt || '',
+          }
+        : null;
+
+    return {
+      appointmentId: appointment.id,
+      consultationId: consultation?.id ?? null,
+      status: String(consultation?.status || appointment.status || '').toLowerCase(),
+      appointmentStatus: String(appointment.status),
+      appointmentDate: new Date(appointment.date).toISOString(),
+      appointmentTime: appointment.time,
+      scheduledDurationMinutes: appointment.duration,
+      startTime: start ? start.toISOString() : null,
+      endTime: end ? end.toISOString() : null,
+      durationSeconds,
+      doctorName,
+      doctorSpecialization: appointment.doctor?.specialization ?? null,
+      patientName,
+      participants: [
+        ...(appointment.doctor
+          ? [{ userId: appointment.doctor.userId, name: doctorName, role: 'doctor' }]
+          : []),
+        ...(appointment.patient
+          ? [{ userId: appointment.patient.userId, name: patientName, role: 'patient' }]
+          : []),
+      ],
+      rating: myRating ? { average: myRating.rating, count: 1 } : null,
+      myRating,
+    };
+  }
+
+  /**
+   * Store the patient's rating for a consultation. Persisted as a Review row
+   * (doctor ratings/analytics) and mirrored in appointment.metadata.consultationRating
+   * so a repeat submission updates the same review.
+   *
+   * The caller is authorised BEFORE the lock is taken, so someone who is not a participant can
+   * neither rate nor make the real patient's submission fail with 409 by holding the lock. A
+   * per-appointment cache lock then serialises submissions: two concurrent submits would
+   * otherwise both create a Review.
+   */
+  async rateConsultation(
+    appointmentId: string,
+    userId: string,
+    rating: number,
+    comment?: string,
+    clinicId?: string
+  ): Promise<{ success: boolean; rating: number; comment?: string; reviewId: string }> {
+    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
+    const appointment = await this.authorizeConsultationRating(
+      resolvedAppointmentId,
+      userId,
+      clinicId
+    );
+
+    const lockKey = `video:rate:${resolvedAppointmentId}`;
+    const acquired = await this.cacheService.acquireLock(
+      lockKey,
+      VideoService.RATING_LOCK_TTL_SECONDS
+    );
+    if (!acquired) {
+      throw new ConflictException('Your rating is already being submitted. Please try again.');
+    }
+
+    try {
+      return await this.submitConsultationRating(appointment, userId, rating, comment);
+    } finally {
+      try {
+        await this.cacheService.releaseLock(lockKey);
+      } catch (releaseError) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Failed to release rating lock: ${extractErrorMessage(releaseError) ?? 'Unknown error'}`,
+          'VideoService.rateConsultation',
+          { appointmentId: resolvedAppointmentId }
+        );
+      }
+    }
+  }
+
+  /**
+   * Load the appointment and check the caller may rate it: the appointment's patient, the account
+   * that booked it or the owner of the family dependent it is for (the same rules as joining the
+   * call). Another clinic's appointment must look like it does not exist (404), a non-participant
+   * gets 403, and only video visits can be rated.
+   */
+  private async authorizeConsultationRating(
+    appointmentId: string,
+    userId: string,
+    clinicId: string | undefined
+  ): Promise<ConsultationSummaryAppointment> {
+    const appointment = await this.loadAppointmentForSummary(appointmentId);
+    await this.authorizeVideoCaller(appointment, userId, 'patient', {
+      clinicId,
+      rawRole: Role.PATIENT,
+    });
+    if (String(appointment.type).toUpperCase() !== 'VIDEO_CALL') {
+      throw new BadRequestException('Only video consultations can be rated here.');
+    }
+    return appointment;
+  }
+
+  private async submitConsultationRating(
+    appointment: ConsultationSummaryAppointment,
+    userId: string,
+    rating: number,
+    comment: string | undefined
+  ): Promise<{ success: boolean; rating: number; comment?: string; reviewId: string }> {
+    const status = String(appointment.status).toUpperCase();
+    if (!['COMPLETED', 'IN_PROGRESS'].includes(status)) {
+      throw new BadRequestException('You can rate a consultation once it has taken place.');
+    }
+
+    const value = Math.round(Math.min(5, Math.max(1, Number(rating))));
+    const trimmedComment = comment?.trim() || undefined;
+
+    const reviewId = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const tx = client as unknown as Prisma.TransactionClient;
+
+        // Read the metadata again inside the lock and change only the one key, instead of
+        // writing back a snapshot taken at the start of the request.
+        const fresh = await tx.appointment.findUnique({
+          where: { id: appointment.id },
+          select: { metadata: true },
+        });
+        const currentMetadata =
+          fresh?.metadata && typeof fresh.metadata === 'object' && !Array.isArray(fresh.metadata)
+            ? (fresh.metadata as Record<string, unknown>)
+            : {};
+        const previous = currentMetadata['consultationRating'] as { reviewId?: string } | undefined;
+
+        let review: { id: string } | null = null;
+        if (previous?.reviewId) {
+          review = await tx.review
+            .update({
+              where: { id: previous.reviewId },
+              data: { rating: value, comment: trimmedComment ?? null },
+            })
+            .catch(() => null);
+        }
+        if (!review) {
+          review = await tx.review.create({
+            data: {
+              rating: value,
+              comment: trimmedComment ?? null,
+              patientId: appointment.patientId,
+              doctorId: appointment.doctorId,
+              clinicId: appointment.clinicId,
+            },
+          });
+        }
+
+        const patchedMetadata: Record<string, unknown> = {
+          ...currentMetadata,
+          consultationRating: {
+            reviewId: review.id,
+            rating: value,
+            ...(trimmedComment ? { comment: trimmedComment } : {}),
+            ratedBy: userId,
+            ratedAt: new Date().toISOString(),
+          },
+        };
+        await tx.appointment.update({
+          where: { id: appointment.id },
+          data: { metadata: patchedMetadata as Prisma.InputJsonValue },
+        });
+        return review.id;
+      },
+      {
+        userId,
+        userRole: 'PATIENT',
+        clinicId: appointment.clinicId,
+        operation: 'RATE_VIDEO_CONSULTATION',
+        resourceType: 'APPOINTMENT',
+        resourceId: appointment.id,
+        timestamp: new Date(),
+      }
+    );
+
+    return {
+      success: true,
+      rating: value,
+      ...(trimmedComment ? { comment: trimmedComment } : {}),
+      reviewId,
+    };
+  }
+
+  // ============================================================================
+  // Lifecycle authorization & error mapping
+  // ============================================================================
+
+  /**
+   * Authorise a caller for a video appointment (clinic isolation + participant/staff rules).
+   * All the role logic lives in assertParticipantOrClinicStaff; this only resolves the one fact
+   * that needs the database: whether the caller owns the family dependent the visit is for.
+   */
+  private async authorizeVideoCaller(
+    appointment: VideoAccessAppointment & {
+      patientId?: string | null | undefined;
+      familyMemberId?: string | null | undefined;
+    },
+    userId: string,
+    role: VideoCallerRole,
+    caller?: VideoCallerContext
+  ): Promise<void> {
+    const mayOwnDependent =
+      role === 'patient' &&
+      Boolean(appointment.familyMemberId) &&
+      Boolean(appointment.patientId) &&
+      appointment.clinicId === caller?.clinicId &&
+      !isPatientOwner(appointment, userId);
+    const ownsFamilyMember = mayOwnDependent
+      ? await isFamilyMemberOwner(
+          this.databaseService,
+          String(appointment.familyMemberId),
+          String(appointment.patientId),
+          userId
+        )
+      : false;
+
+    assertParticipantOrClinicStaff(appointment, {
+      userId,
+      role,
+      clinicId: caller?.clinicId,
+      rawRole: caller?.rawRole,
+      ownsFamilyMember,
+    });
+  }
+
+  /**
+   * The booking account to notify next to the patient (see resolveVideoBookerUserId): never the
+   * doctor, a receptionist or any other staff user who happened to create the appointment. A
+   * failed lookup only costs the booker's notification, never the lifecycle step it follows.
+   */
+  private async resolveBookerForNotification(
+    appointment: VideoBookerAppointment & { id: string }
+  ): Promise<string | undefined> {
+    try {
+      return await resolveVideoBookerUserId(this.databaseService, appointment);
+    } catch (error: unknown) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Could not resolve the booking account for a video notification: ${extractErrorMessage(error) ?? 'Unknown error'}`,
+        'VideoService.resolveBookerForNotification',
+        { appointmentId: appointment.id }
+      );
+      return undefined;
+    }
+  }
+
+  /**
+   * Authorise a caller for the appointment behind an appointment id OR a consultation id
+   * (optionally written `video-session-<id>`), the two identifiers the video endpoints accept.
+   *
+   * Every video endpoint addressed by such an id calls this BEFORE it reads or writes anything, so
+   * access never rests on the RBAC `video:*` permission alone (which every PATIENT holds).
+   * Applies the same rules as token/start/end/leave: other clinic -> 404, not a participant -> 403.
+   *
+   * @returns the resolved appointment id (and the consultation id when the id was one)
+   * @throws NotFoundException when no appointment can be resolved or it belongs to another clinic
+   * @throws ForbiddenException when the caller is not a participant or authorised clinic staff
+   */
+  async authorizeConsultationAccess(
+    appointmentOrConsultationId: string,
+    userId: string,
+    userRole: VideoCallerRole,
+    caller?: VideoCallerContext
+  ): Promise<{ appointmentId: string; consultationId: string | null }> {
+    const requestedId = normalizeAppointmentId(
+      String(appointmentOrConsultationId ?? '').replace(/^video-session-/, '')
+    );
+
+    try {
+      if (!requestedId) {
+        throw new NotFoundException('Appointment not found');
+      }
+
+      // One lookup answers both id kinds: a consultation row (matched by its id or its appointment)
+      // names the appointment; without a row the id is taken to be the appointment id itself.
+      const consultation = await this.databaseService.executeHealthcareRead(async prisma => {
+        const delegate = getVideoConsultationDelegate(prisma);
+        return await delegate.findFirst({
+          where: { OR: [{ id: requestedId }, { appointmentId: requestedId }] },
+        });
+      });
+      const appointmentId = consultation?.appointmentId ?? requestedId;
+
+      const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+      if (!appointment) {
+        throw new NotFoundException('Appointment not found');
+      }
+
+      await this.authorizeVideoCaller(appointment, userId, userRole, caller);
+      return { appointmentId: appointment.id, consultationId: consultation?.id ?? null };
+    } catch (error: unknown) {
+      this.logLifecycleFailure('VideoService.authorizeConsultationAccess', requestedId, error);
+      throw this.toVideoLifecycleError(
+        error,
+        'VideoService.authorizeConsultationAccess',
+        requestedId,
+        'Could not verify access to the video consultation'
+      );
+    }
+  }
+
+  /**
+   * Log a lifecycle failure. The raw message and stack go to the logger only; expected client
+   * errors (4xx) are logged as warnings, everything else as errors.
+   */
+  private logLifecycleFailure(context: string, appointmentId: string, error: unknown): void {
+    const isClientError =
+      error instanceof HttpException && error.getStatus() < SERVER_ERROR_STATUS_MIN;
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      isClientError ? LogLevel.WARN : LogLevel.ERROR,
+      `Video lifecycle request failed: ${extractErrorMessage(error) ?? 'Unknown error'}`,
+      context,
+      {
+        appointmentId,
+        provider: this.provider?.providerName ?? 'unknown',
+        error: extractErrorMessage(error) ?? 'Unknown error',
+        ...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
+      }
+    );
+  }
+
+  /**
+   * Map an error thrown while running a consultation lifecycle step to what the client sees.
+   *
+   * - HTTP errors below 500 (NotFound/Forbidden/BadRequest/Conflict, including HealthcareError
+   *   with such a status) are intentional and pass through untouched.
+   * - A recognised "provider unavailable / timed out" error becomes a 503.
+   * - Everything else (Prisma, TypeError, wrapped DB errors, ...) becomes a plain 500.
+   *
+   * The client message is always a fixed string chosen by the caller. The raw message, stack and
+   * metadata of the original error are never copied into the response: they are logged by
+   * `logLifecycleFailure`.
+   */
+  private toVideoLifecycleError(
+    error: unknown,
+    context: string,
+    appointmentId: string,
+    fallbackMessage: string
+  ): Error {
+    if (error instanceof HttpException && error.getStatus() < SERVER_ERROR_STATUS_MIN) {
+      return error;
+    }
+
+    if (isProviderUnavailableError(error)) {
+      return new HealthcareError(
+        ErrorCode.EXTERNAL_SERVICE_UNAVAILABLE,
+        `${fallbackMessage}. The video service is temporarily unavailable, please try again shortly.`,
+        HttpStatus.SERVICE_UNAVAILABLE,
+        { appointmentId },
+        context
+      );
+    }
+
+    return new HealthcareError(
+      ErrorCode.INTERNAL_SERVER_ERROR,
+      fallbackMessage,
+      HttpStatus.INTERNAL_SERVER_ERROR,
+      { appointmentId },
+      context
+    );
+  }
+
+  /** Uncached read of an appointment with what the lifecycle checks need. */
+  private async loadAppointmentForLifecycle(appointmentId: string) {
+    return await this.databaseService.executeRead(async prisma => {
+      const tx = prisma as unknown as Prisma.TransactionClient;
+      return await tx.appointment.findUnique({
+        where: { id: appointmentId },
+        include: {
+          payment: true,
+          patient: true,
+          doctor: true,
+        },
+      });
+    });
+  }
+
   /**
    * Start consultation session
    */
   async startConsultation(
     appointmentId: string,
     userId: string,
-    userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
+    userRole: VideoCallerRole,
+    caller?: VideoCallerContext
   ): Promise<VideoConsultationSession> {
     let resolvedAppointmentId = normalizeAppointmentId(appointmentId);
 
     try {
-      let appointment = await this.databaseService.executeRead(async prisma => {
-        const tx = prisma as unknown as Prisma.TransactionClient;
-        return await tx.appointment.findUnique({
-          where: { id: resolvedAppointmentId },
-          include: {
-            payment: true,
-            patient: true,
-            doctor: true,
-          },
-        });
-      });
+      let appointment = await this.loadAppointmentForLifecycle(resolvedAppointmentId);
 
       // Fallback: If the provided ID is actually a VideoConsultation ID
       if (!appointment) {
@@ -1242,17 +1764,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
         if (videoSession?.appointmentId) {
           resolvedAppointmentId = videoSession.appointmentId;
-          appointment = await this.databaseService.executeRead(async prisma => {
-            const tx = prisma as unknown as Prisma.TransactionClient;
-            return await tx.appointment.findUnique({
-              where: { id: resolvedAppointmentId },
-              include: {
-                payment: true,
-                patient: true,
-                doctor: true,
-              },
-            });
-          });
+          appointment = await this.loadAppointmentForLifecycle(resolvedAppointmentId);
         }
       }
 
@@ -1260,26 +1772,41 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         throw new HealthcareError(
           ErrorCode.APPOINTMENT_NOT_FOUND,
           'No appointment found',
-          undefined,
+          HttpStatus.NOT_FOUND,
           { appointmentId: resolvedAppointmentId },
           'VideoService.startConsultation'
         );
       }
 
+      await this.authorizeVideoCaller(appointment, userId, userRole, caller);
       this.ensureAppointmentJoinable(appointment, userRole);
+      this.ensureWithinPatientJoinWindow(appointment, userRole);
 
       const session: VideoConsultationSession = await this.withProviderFallback(
         'VideoService.startConsultation',
         provider => provider.startConsultation(resolvedAppointmentId, userId, userRole)
       );
 
-      if (String(appointment.status) !== String(AppointmentStatus.IN_PROGRESS)) {
-        await this.databaseService.updateAppointmentSafe(resolvedAppointmentId, {
-          status: AppointmentStatus.IN_PROGRESS,
-        });
-      }
+      // Anyone allowed in can open and join the call once the join window is open (15 minutes
+      // before the visit): a confirmed patient does not need the doctor to be there first.
+      // Only the appointment STATUS waits for the doctor. It becomes IN_PROGRESS when the
+      // doctor joins; a patient (or front-desk staff) alone in the room leaves it CONFIRMED,
+      // so the visit can still be rescheduled if the doctor never comes.
+      // Only the doctor's FIRST start tells the patient, and the database decides which start is
+      // the first: the conditional `startedAt` stamp is the claim, so two devices or a double tap
+      // notify once and a failed stamp does not re-notify on every rejoin.
+      const firstDoctorStart =
+        userRole === 'doctor'
+          ? await this.markAppointmentStartedByDoctor(appointment, userId)
+          : false;
+      // Only a first start notifies, so only then does the booking account have to be resolved.
+      const bookerUserId = firstDoctorStart
+        ? await this.resolveBookerForNotification(appointment)
+        : undefined;
 
-      // Emit event
+      // Emit event. The envelope carries who to notify (the notification rule reads `userId`
+      // and `metadata`, never `payload`); the listener tells the patient only when the doctor
+      // starts, so a rejoin or a patient opening the room does not notify anyone.
       const now: number = Date.now();
       const timestamp: string = new Date(now).toISOString();
       await this.eventService.emitEnterprise('video.consultation.started', {
@@ -1290,6 +1817,11 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         timestamp,
         source: 'VideoService',
         version: '1.0.0',
+        ...buildVideoLifecycleRouting(
+          appointment,
+          { actorRole: userRole, firstStart: firstDoctorStart },
+          bookerUserId
+        ),
         payload: {
           appointmentId: resolvedAppointmentId,
           sessionId: session.id,
@@ -1301,74 +1833,242 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
       return this.attachAppointmentNamesToSession(session, appointment);
     } catch (error: unknown) {
-      const errorMessage: string = error instanceof Error ? error.message : 'Unknown error';
-      const currentProvider: IVideoProvider | undefined = this.provider;
-      const providerName: string = currentProvider?.providerName ?? 'unknown';
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.ERROR,
-        `Video provider failed: ${errorMessage}`,
+      this.logLifecycleFailure('VideoService.startConsultation', resolvedAppointmentId, error);
+      throw this.toVideoLifecycleError(
+        error,
         'VideoService.startConsultation',
-        {
-          appointmentId: resolvedAppointmentId,
-          provider: providerName,
-          error: errorMessage,
-        }
-      );
-      if (error instanceof Error) {
-        throw error;
-      }
-      throw new HealthcareError(
-        ErrorCode.INTERNAL_SERVER_ERROR,
-        'Video provider failed',
-        undefined,
-        { appointmentId: resolvedAppointmentId, originalError: String(error) },
-        'VideoService.startConsultation'
-      );
-    }
-  }
-
-  private async triggerAppointmentRefund(
-    appointmentId: string,
-    clinicId: string,
-    reason: string
-  ): Promise<void> {
-    try {
-      const payments = await this.databaseService.findPaymentsSafe({
-        appointmentId,
-        status: 'COMPLETED',
-      });
-
-      for (const payment of payments) {
-        await this.billingService.refundPayment(clinicId, payment.id, undefined, reason);
-      }
-    } catch (error) {
-      await this.loggingService.log(
-        LogType.PAYMENT,
-        LogLevel.WARN,
-        `Failed to trigger refund for video appointment ${appointmentId}: ${error instanceof Error ? error.message : String(error)}`,
-        'VideoService.triggerAppointmentRefund',
-        { appointmentId, clinicId }
+        resolvedAppointmentId,
+        'Could not start the video consultation'
       );
     }
   }
 
   /**
+   * The doctor opened the call: move the appointment to IN_PROGRESS and stamp `startedAt` once
+   * (the scheduler's "visit began" reminder logic reads it). The stamp is the claim of the
+   * doctor's first start (see claimDoctorStart); both writes are conditional on the appointment
+   * still being open and scoped to its clinic.
+   *
+   * A visit that is not paid for stays as it is: the doctor may open the room (doctors are not
+   * payment-gated for joining), but the status never flips, so the visit cannot be completed
+   * through the end route either.
+   *
+   * Non-fatal on purpose: the video session is already live, so a failed status transition must
+   * not turn a successful start into an error.
+   *
+   * @returns true only when this call was the doctor's first start of the visit
+   */
+  private async markAppointmentStartedByDoctor(
+    appointment: {
+      id: string;
+      clinicId: string;
+      patientId: string;
+      doctorId: string;
+      status: unknown;
+      startedAt?: Date | null;
+    } & AppointmentPaymentLike,
+    userId: string
+  ): Promise<boolean> {
+    if (!isAppointmentPaid(appointment)) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Doctor opened the call of an unpaid video visit; the appointment status is unchanged',
+        'VideoService.startConsultation',
+        { appointmentId: appointment.id }
+      );
+      return false;
+    }
+
+    try {
+      const outcome = await claimDoctorStart(
+        this.databaseService,
+        appointment,
+        userId,
+        VideoService.CONSULTATION_OPEN_STATUSES
+      );
+      if (outcome.changed) {
+        await this.invalidateAppointmentCacheQuietly(appointment);
+      }
+      return outcome.firstStart;
+    } catch (statusError) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Failed to mark appointment IN_PROGRESS: ${extractErrorMessage(statusError) ?? 'Unknown error'}`,
+        'VideoService.startConsultation',
+        { appointmentId: appointment.id }
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Someone who cannot complete the visit used the end route (anyone but the appointment's doctor
+   * or a clinic admin). The consultation stays open for them to finish.
+   *
+   * - A PATIENT (or the account that booked / the owner of the dependent) is leaving the call:
+   *   this only records the leave and returns the current session, so clients that call the end
+   *   route as "leave" keep working.
+   * - Front-desk staff, nurses and a SUPER_ADMIN cannot end the consultation: 403, instead of the
+   *   old "success" that changed nothing. A SUPER_ADMIN who must close a running call uses
+   *   `terminateConsultation`.
+   *
+   * Authorisation comes first for every role, so another clinic's appointment still answers 404.
+   */
+  private async recordParticipantLeftConsultation(
+    appointmentId: string,
+    userId: string,
+    userRole: VideoCallerRole,
+    caller?: VideoCallerContext
+  ): Promise<VideoConsultationSession> {
+    const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+    if (!appointment) {
+      throw new HealthcareError(
+        ErrorCode.APPOINTMENT_NOT_FOUND,
+        'No appointment found',
+        HttpStatus.NOT_FOUND,
+        { appointmentId },
+        'VideoService.endConsultation'
+      );
+    }
+
+    await this.authorizeVideoCaller(appointment, userId, userRole, caller);
+
+    if (userRole !== 'patient') {
+      throw new ForbiddenException(VIDEO_END_FORBIDDEN_MESSAGE);
+    }
+
+    const session: VideoConsultationSession =
+      (await this.getConsultationSession(appointmentId)) ??
+      this.buildPlaceholderConsultationSession(
+        appointment as unknown as Parameters<VideoService['buildPlaceholderConsultationSession']>[0]
+      );
+
+    void this.loggingService.log(
+      LogType.APPOINTMENT,
+      LogLevel.INFO,
+      `Participant (${userRole}) left video consultation for appointment ${appointmentId}`,
+      'VideoService.endConsultation',
+      { appointmentId, userId, userRole, sessionId: session.id }
+    );
+
+    const now: number = Date.now();
+    await this.eventService.emitEnterprise('video.consultation.participant.left', {
+      eventId: `video-consultation-participant-left-${appointmentId}-${now}`,
+      eventType: 'video.consultation.participant.left',
+      category: EventCategory.SYSTEM,
+      priority: EventPriority.NORMAL,
+      timestamp: new Date(now).toISOString(),
+      source: 'VideoService',
+      version: '1.0.0',
+      payload: {
+        appointmentId,
+        sessionId: session.id,
+        userId,
+        userRole,
+        provider: this.provider?.providerName ?? 'unknown',
+      },
+    });
+
+    return session;
+  }
+
+  /**
    * End consultation session
+   *
+   * Only the appointment's own doctor, or a CLINIC_ADMIN of the appointment's clinic, completes
+   * the visit (an admin's completion is written to the audit log with the admin's id and role).
+   * A patient calling this is recorded as leaving; every other role (assistant doctor, nurse,
+   * receptionist, SUPER_ADMIN) gets 403, and another clinic's appointment 404. The visit must have
+   * STARTED (IN_PROGRESS): a CONFIRMED or SCHEDULED one answers 409 "has not started", the same
+   * contract AppointmentsService.completeAppointment applies.
+   *
+   * Completing is idempotent: an already COMPLETED appointment is returned as-is and no event is
+   * emitted again, except that a completion event that could not be announced earlier (see
+   * emitAppointmentCompleted) is announced exactly once by the next end request.
    */
   async endConsultation(
     appointmentId: string,
     userId: string,
-    userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin',
-    sessionNotes?: string
+    userRole: VideoCallerRole,
+    sessionNotes?: string,
+    caller?: VideoCallerContext
   ): Promise<VideoConsultationSession> {
     const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
 
     try {
-      const session: VideoConsultationSession = await this.withProviderFallback(
-        'VideoService.endConsultation',
-        provider => provider.endConsultation(resolvedAppointmentId, userId, userRole)
-      );
+      // Only the doctor (or a clinic admin) ends the session and completes the visit. A patient
+      // leaving the call is recorded as a leave (the visit stays open); any other role is
+      // rejected.
+      const callerRole = String(userRole).toLowerCase();
+      const canCompleteVisit =
+        callerRole === 'doctor' ||
+        (callerRole === 'clinic_admin' && isClinicAdminRole(caller?.rawRole));
+      if (!canCompleteVisit) {
+        return await this.recordParticipantLeftConsultation(
+          resolvedAppointmentId,
+          userId,
+          userRole,
+          caller
+        );
+      }
+
+      const appointment = await this.loadAppointmentForLifecycle(resolvedAppointmentId);
+      if (!appointment) {
+        throw new HealthcareError(
+          ErrorCode.APPOINTMENT_NOT_FOUND,
+          'No appointment found',
+          HttpStatus.NOT_FOUND,
+          { appointmentId: resolvedAppointmentId },
+          'VideoService.endConsultation'
+        );
+      }
+
+      await this.authorizeVideoCaller(appointment, userId, userRole, caller);
+
+      // Authorised for the appointment is not enough: an assistant doctor (or a therapist who is
+      // not this appointment's doctor) may join but may not complete it.
+      const completionActor = resolveVideoCompletionActor(appointment, {
+        userId,
+        role: userRole,
+        rawRole: caller?.rawRole,
+      });
+      if (!completionActor) {
+        throw new ForbiddenException(VIDEO_END_FORBIDDEN_MESSAGE);
+      }
+
+      const appointmentStatus = String(appointment.status).toUpperCase();
+      if (appointmentStatus === String(AppointmentStatus.COMPLETED)) {
+        await this.reconcilePendingCompletionEvent(appointment, userId);
+        return await this.buildAlreadyCompletedSession(appointment);
+      }
+      if (appointmentStatus !== String(AppointmentStatus.IN_PROGRESS)) {
+        throw VideoService.consultationNotEndableError(appointmentStatus);
+      }
+
+      let session: VideoConsultationSession;
+      try {
+        session = await this.withProviderFallback('VideoService.endConsultation', provider =>
+          provider.endConsultation(resolvedAppointmentId, userId, userRole)
+        );
+      } catch (providerError) {
+        // No VideoConsultation row (the call never reached the provider): the authorised
+        // doctor can still close the visit, so describe the appointment instead of failing.
+        // Any other provider failure is a real failure and is rethrown.
+        const existing = await this.databaseService.executeHealthcareRead(async prisma => {
+          const delegate = getVideoConsultationDelegate(prisma);
+          return await delegate.findFirst({ where: { appointmentId: resolvedAppointmentId } });
+        });
+        if (existing) {
+          throw providerError;
+        }
+        session = {
+          ...this.buildPlaceholderConsultationSession(appointment),
+          status: 'COMPLETED',
+          endTime: new Date(),
+        };
+      }
 
       // Save session notes if provided
       if (sessionNotes) {
@@ -1379,43 +2079,28 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       // Calculate duration
       let duration: number | undefined;
       if (session.startTime && session.endTime) {
-        const startTimeMs: number = session.startTime.getTime();
-        const endTimeMs: number = session.endTime.getTime();
-        duration = Math.floor((endTimeMs - startTimeMs) / 1000);
+        const startTimeMs: number = new Date(session.startTime).getTime();
+        const endTimeMs: number = new Date(session.endTime).getTime();
+        if (Number.isFinite(startTimeMs) && Number.isFinite(endTimeMs)) {
+          duration = Math.max(0, Math.floor((endTimeMs - startTimeMs) / 1000));
+        }
       }
 
-      // Transition the actual Appointment to COMPLETED status
-      try {
-        await this.databaseService.executeHealthcareWrite(
-          async client => {
-            const transaction = client as Prisma.TransactionClient;
-            await transaction.appointment.update({
-              where: { id: resolvedAppointmentId },
-              data: { status: AppointmentStatus.COMPLETED },
-            });
-          },
-          {
-            userId,
-            userRole: String(userRole).toUpperCase(),
-            clinicId: '', // We don't have clinicId here, but it can be empty string or retrieved
-            operation: 'UPDATE_APPOINTMENT',
-            resourceType: 'APPOINTMENT',
-            resourceId: resolvedAppointmentId,
-            ipAddress: 'internal',
-            userAgent: 'VideoService',
-          }
-        );
-      } catch (dbError) {
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.ERROR,
-          `Failed to update appointment status to COMPLETED: ${dbError instanceof Error ? dbError.message : String(dbError)}`,
-          'VideoService.endConsultation',
-          { appointmentId: resolvedAppointmentId }
-        );
+      // Transition the Appointment to COMPLETED. This write is NOT best-effort: if it fails the
+      // request fails, so the doctor never sees "ended" for a visit that is still open.
+      const completion = await this.completeAppointmentOnEnd(appointment, userId, completionActor);
+      if (completion === 'already_completed') {
+        // A concurrent request completed it first and already emitted the events.
+        return session;
+      }
+      if (completionActor === 'clinic_admin') {
+        this.auditAdminCompletion(appointment, userId);
       }
 
-      // Emit event
+      // Emit event. The envelope carries who to notify (the patient and, when different and
+      // eligible, the account that booked the visit); the notification rule reads `userId` and
+      // `metadata`.
+      const bookerUserId = await this.resolveBookerForNotification(appointment);
       const now: number = Date.now();
       const timestamp: string = new Date(now).toISOString();
       await this.eventService.emitEnterprise('video.consultation.ended', {
@@ -1426,6 +2111,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         timestamp,
         source: 'VideoService',
         version: '1.0.0',
+        ...buildVideoLifecycleRouting(appointment, { actorRole: userRole }, bookerUserId),
         payload: {
           appointmentId: resolvedAppointmentId,
           sessionId: session.id,
@@ -1436,29 +2122,336 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
       return session;
     } catch (error: unknown) {
-      const errorMessage: string = error instanceof Error ? error.message : 'Unknown error';
-      const currentProvider: IVideoProvider | undefined = this.provider;
-      const providerName: string = currentProvider?.providerName ?? 'unknown';
+      this.logLifecycleFailure('VideoService.endConsultation', resolvedAppointmentId, error);
+      throw this.toVideoLifecycleError(
+        error,
+        'VideoService.endConsultation',
+        resolvedAppointmentId,
+        'Could not end the video consultation'
+      );
+    }
+  }
+
+  /** Audit trail for a visit a clinic admin completed on the doctor's behalf. */
+  private auditAdminCompletion(
+    appointment: { id: string; clinicId: string },
+    userId: string
+  ): void {
+    void this.loggingService.log(
+      LogType.AUDIT,
+      LogLevel.INFO,
+      'Video consultation ended by a clinic admin',
+      'VideoService.endConsultation',
+      {
+        appointmentId: appointment.id,
+        clinicId: appointment.clinicId,
+        endedBy: userId,
+        endedByRole: Role.CLINIC_ADMIN,
+      }
+    );
+  }
+
+  /**
+   * 409 for an appointment that cannot be ended. A CONFIRMED or SCHEDULED visit never started
+   * (no doctor start flipped it to IN_PROGRESS, which also requires it to be paid), so it answers
+   * "has not started" rather than naming a status the user did not cause.
+   */
+  private static consultationNotEndableError(status: string): ConflictException {
+    if (
+      status === String(AppointmentStatus.CONFIRMED) ||
+      status === String(AppointmentStatus.SCHEDULED)
+    ) {
+      return new ConflictException('This consultation has not started');
+    }
+    const label = status.toLowerCase().replace(/_/g, ' ');
+    return new ConflictException(
+      `This consultation cannot be ended because the appointment is ${label}.`
+    );
+  }
+
+  /**
+   * Set the appointment to COMPLETED, but only if it is IN_PROGRESS and in the caller's clinic
+   * (compare-and-set on the previous status, the same IN_PROGRESS-only contract as
+   * AppointmentsService.completeAppointment: a visit that never started cannot be completed here).
+   * Returns 'already_completed' when a concurrent request got there first; throws when the
+   * appointment moved to a state that cannot be completed (for example it was cancelled
+   * meanwhile) or when the write itself fails.
+   *
+   * AppointmentsService owns the validated status machine but cannot be injected here (its
+   * module imports the video module), so this is a narrow conditional write; it should be
+   * unified with AppointmentsService.completeAppointment later.
+   */
+  private async completeAppointmentOnEnd(
+    appointment: {
+      id: string;
+      clinicId: string;
+      patientId: string;
+      doctorId: string;
+      type?: unknown;
+      date?: unknown;
+      time?: unknown;
+      duration?: unknown;
+    },
+    userId: string,
+    actor: VideoCompletionActor = 'doctor'
+  ): Promise<'completed' | 'already_completed'> {
+    const completedAt = new Date();
+    const result = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const tx = client as unknown as Prisma.TransactionClient;
+        return await tx.appointment.updateMany({
+          where: {
+            id: appointment.id,
+            clinicId: appointment.clinicId,
+            status: AppointmentStatus.IN_PROGRESS,
+          },
+          data: { status: AppointmentStatus.COMPLETED, completedAt },
+        });
+      },
+      {
+        userId,
+        userRole: actor === 'clinic_admin' ? Role.CLINIC_ADMIN : Role.DOCTOR,
+        clinicId: appointment.clinicId,
+        operation: 'UPDATE_APPOINTMENT',
+        resourceType: 'APPOINTMENT',
+        resourceId: appointment.id,
+        timestamp: completedAt,
+        details: { status: AppointmentStatus.COMPLETED, source: 'VideoService.endConsultation' },
+      }
+    );
+
+    if (result.count > 0) {
+      await this.invalidateAppointmentCacheQuietly(appointment);
+      // This call performed the transition (the compare-and-set matched), so it alone announces
+      // it. The 'already_completed' paths below never emit: the route that won already did.
+      await this.emitAppointmentCompleted(appointment, userId, completedAt);
+      return 'completed';
+    }
+
+    const currentStatus = await this.readAppointmentStatus(appointment.id, appointment.clinicId);
+    if (currentStatus === String(AppointmentStatus.COMPLETED)) {
+      return 'already_completed';
+    }
+    throw VideoService.consultationNotEndableError(currentStatus ?? 'unavailable');
+  }
+
+  /**
+   * Announce that this request completed the appointment, with the envelope and payload shape
+   * AppointmentsService.completeAppointment uses, so payout readiness (billing), follow-up/EHR
+   * listeners and the patient notification run for a visit completed through the video end route
+   * as well. The patient gets one generic "updated" notification: the listener de-duplicates it
+   * if the other completion route also fires.
+   *
+   * `EventService.emitEnterprise` never throws, it resolves with `{ success: false }`, so the
+   * result is checked and the emit retried once. If it still fails the completion stays committed
+   * (the request does not fail) but a `completionEventPending` marker is stored on the
+   * appointment, and the next end request re-announces it once (reconcilePendingCompletionEvent).
+   */
+  private async emitAppointmentCompleted(
+    appointment: CompletedAppointmentRef,
+    userId: string,
+    completedAt: Date
+  ): Promise<void> {
+    const outcome = await emitAppointmentCompletedWithRetry(
+      this.eventService,
+      appointment,
+      userId,
+      completedAt
+    );
+    if (outcome.delivered) {
+      return;
+    }
+
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.WARN,
+      `Failed to emit appointment.completed after video end (${outcome.attempts} attempts): ${outcome.failure ?? 'unknown error'}`,
+      'VideoService.emitAppointmentCompleted',
+      { appointmentId: appointment.id }
+    );
+    try {
+      await markCompletionEventPending(this.databaseService, appointment, userId);
+    } catch (markerError: unknown) {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
-        `Video provider failed: ${errorMessage}`,
-        'VideoService.endConsultation',
+        `Could not record the pending appointment.completed announcement: ${extractErrorMessage(markerError) ?? 'Unknown error'}`,
+        'VideoService.emitAppointmentCompleted',
+        { appointmentId: appointment.id }
+      );
+    }
+  }
+
+  /**
+   * An end request found the appointment already COMPLETED. If its completion event was never
+   * announced (the marker is set), take the marker and announce it: of any number of concurrent or
+   * repeated requests exactly one clears the marker and emits. Never fails the end request.
+   */
+  private async reconcilePendingCompletionEvent(
+    appointment: CompletedAppointmentRef & { metadata?: unknown; completedAt?: Date | null },
+    userId: string
+  ): Promise<void> {
+    if (!hasCompletionEventPending(appointment.metadata)) {
+      return;
+    }
+
+    try {
+      const claimed = await claimPendingCompletionEvent(this.databaseService, appointment, userId);
+      if (claimed) {
+        await this.emitAppointmentCompleted(
+          appointment,
+          userId,
+          appointment.completedAt ?? new Date()
+        );
+      }
+    } catch (reconcileError: unknown) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Could not re-announce appointment.completed: ${extractErrorMessage(reconcileError) ?? 'Unknown error'}`,
+        'VideoService.reconcilePendingCompletionEvent',
+        { appointmentId: appointment.id }
+      );
+    }
+  }
+
+  private async readAppointmentStatus(
+    appointmentId: string,
+    clinicId: string
+  ): Promise<string | null> {
+    const row = await this.databaseService.executeHealthcareRead(async client => {
+      const tx = client as unknown as Prisma.TransactionClient;
+      return await tx.appointment.findFirst({
+        where: { id: appointmentId, clinicId },
+        select: { status: true },
+      });
+    });
+    return row ? String(row.status).toUpperCase() : null;
+  }
+
+  /** Cache invalidation after a committed write must never fail the request. */
+  private async invalidateAppointmentCacheQuietly(appointment: {
+    id: string;
+    clinicId: string;
+    patientId: string;
+    doctorId: string;
+  }): Promise<void> {
+    try {
+      await this.cacheService.invalidateAppointmentCache(
+        appointment.id,
+        appointment.patientId,
+        appointment.doctorId,
+        appointment.clinicId
+      );
+    } catch (cacheError) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Failed to invalidate appointment cache: ${extractErrorMessage(cacheError) ?? 'Unknown error'}`,
+        'VideoService.invalidateAppointmentCacheQuietly',
+        { appointmentId: appointment.id }
+      );
+    }
+  }
+
+  /** Response for ending a consultation whose appointment is already COMPLETED. */
+  private async buildAlreadyCompletedSession(appointment: {
+    id: string;
+    completedAt?: Date | null;
+  }): Promise<VideoConsultationSession> {
+    const existing = await this.getConsultationSession(appointment.id);
+    if (existing) {
+      return existing;
+    }
+    return {
+      ...this.buildPlaceholderConsultationSession(
+        appointment as unknown as Parameters<VideoService['buildPlaceholderConsultationSession']>[0]
+      ),
+      status: 'COMPLETED',
+      endTime: appointment.completedAt ?? null,
+    };
+  }
+
+  /**
+   * Admin force-terminate of a running session (`admin/sessions/:id/terminate`): SUPER_ADMIN for
+   * any clinic, CLINIC_ADMIN only inside their own (another clinic's appointment answers 404).
+   *
+   * It really closes the call: the provider room is deleted (everyone in it is ejected) and the
+   * VideoConsultation row is ended. The APPOINTMENT is deliberately left alone - the treating
+   * doctor can still complete it through the end route or the expiry job can close it - so no
+   * `appointment.completed` event, payout or patient notification happens here.
+   *
+   * A provider that cannot close its rooms answers 409 instead of pretending to succeed, and a
+   * provider failure leaves the row untouched so the admin can retry. Errors reach the client
+   * only as fixed messages; the raw cause goes to the log. A session that already ended is a
+   * success (`alreadyEnded`) and does not call the provider again.
+   *
+   * @param appointmentOrConsultationId - appointment id or consultation id (`video-session-<id>`)
+   */
+  async terminateConsultation(
+    appointmentOrConsultationId: string,
+    userId: string,
+    caller: VideoCallerContext
+  ): Promise<{ appointmentId: string; alreadyEnded: boolean }> {
+    const { appointmentId } = await this.authorizeConsultationAccess(
+      appointmentOrConsultationId,
+      userId,
+      'clinic_admin',
+      caller
+    );
+
+    try {
+      const consultation = await this.databaseService.executeHealthcareRead(async prisma => {
+        const delegate = getVideoConsultationDelegate(prisma);
+        return await delegate.findFirst({ where: { appointmentId } });
+      });
+      if (!consultation) {
+        throw new NotFoundException('No video session was found for this appointment.');
+      }
+      if (VideoService.FINISHED_CONSULTATION_STATUSES.has(consultation.status)) {
+        return { appointmentId, alreadyEnded: true };
+      }
+
+      const provider = findTerminatingProvider(
+        this.providerFactory.getProvidersInOrder(),
+        consultation.roomId
+      );
+      if (!provider) {
+        throw new ConflictException(
+          'This video session cannot be force-terminated for its video provider.'
+        );
+      }
+
+      await provider.terminateRoom(consultation.roomId);
+      await provider.endConsultation(appointmentId, userId, 'clinic_admin');
+      await this.invalidateAppointmentCacheQuietly({
+        id: appointmentId,
+        clinicId: consultation.clinicId,
+        patientId: consultation.patientId,
+        doctorId: consultation.doctorId,
+      });
+
+      void this.loggingService.log(
+        LogType.SECURITY,
+        LogLevel.WARN,
+        'Video session force-terminated by an administrator',
+        'VideoService.terminateConsultation',
         {
-          appointmentId: resolvedAppointmentId,
-          provider: providerName,
-          error: errorMessage,
+          appointmentId,
+          consultationId: consultation.id,
+          terminatedBy: userId,
+          terminatedByRole: caller.rawRole ?? 'unknown',
+          provider: provider.providerName,
         }
       );
-      if (error instanceof Error) {
-        throw error;
-      }
-      throw new HealthcareError(
-        ErrorCode.INTERNAL_SERVER_ERROR,
-        'Video provider failed',
-        undefined,
-        { appointmentId: resolvedAppointmentId, originalError: String(error) },
-        'VideoService.endConsultation'
+      return { appointmentId, alreadyEnded: false };
+    } catch (error: unknown) {
+      this.logLifecycleFailure('VideoService.terminateConsultation', appointmentId, error);
+      throw this.toVideoLifecycleError(
+        error,
+        'VideoService.terminateConsultation',
+        appointmentId,
+        'Could not terminate the video session'
       );
     }
   }
@@ -1522,9 +2515,10 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * List all active sessions (Super Admin)
+   * List active sessions: every clinic's for a SUPER_ADMIN, or only those of `clinicId` when it is
+   * given (a CLINIC_ADMIN must never see another clinic's rooms, meeting links or participants).
    */
-  async listAllActiveSessions(): Promise<VideoConsultationSession[]> {
+  async listAllActiveSessions(clinicId?: string): Promise<VideoConsultationSession[]> {
     try {
       const providers = this.providerFactory.getProvidersInOrder();
       for (const provider of providers) {
@@ -1532,7 +2526,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           if (provider.listActiveSessions) {
             const sessions = await provider.listActiveSessions();
             this.provider = provider;
-            return sessions;
+            return clinicId ? await this.filterSessionsToClinic(sessions, clinicId) : sessions;
           }
         } catch (error) {
           void this.loggingService.log(
@@ -1557,6 +2551,29 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       );
       return [];
     }
+  }
+
+  /** Keep only the sessions whose appointment belongs to `clinicId`. */
+  private async filterSessionsToClinic(
+    sessions: VideoConsultationSession[],
+    clinicId: string
+  ): Promise<VideoConsultationSession[]> {
+    const appointmentIds = [...new Set(sessions.map(session => session.appointmentId))].filter(
+      (id): id is string => typeof id === 'string' && id.length > 0
+    );
+    if (appointmentIds.length === 0) {
+      return [];
+    }
+
+    const rows = await this.databaseService.executeHealthcareRead(async client => {
+      const tx = client as unknown as Prisma.TransactionClient;
+      return await tx.appointment.findMany({
+        where: { id: { in: appointmentIds }, clinicId },
+        select: { id: true },
+      });
+    });
+    const inClinic = new Set(rows.map(row => row.id));
+    return sessions.filter(session => inClinic.has(session.appointmentId));
   }
 
   /**
@@ -1699,7 +2716,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         ErrorCode.INTERNAL_SERVER_ERROR,
         'Failed to report technical issue',
         undefined,
-        { appointmentId: resolvedAppointmentId, userId, issueType, originalError: String(error) },
+        { appointmentId: resolvedAppointmentId, userId, issueType },
         'VideoService.reportTechnicalIssue'
       );
     }
@@ -1943,7 +2960,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         ErrorCode.INTERNAL_SERVER_ERROR,
         'Failed to start recording',
         undefined,
-        { callId, userId, originalError: String(error) },
+        { callId, userId },
         'VideoService.startRecording'
       );
     }
@@ -2007,7 +3024,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         ErrorCode.INTERNAL_SERVER_ERROR,
         'Failed to stop recording',
         undefined,
-        { callId, userId, originalError: String(error) },
+        { callId, userId },
         'VideoService.stopRecording'
       );
     }
@@ -2096,7 +3113,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         ErrorCode.INTERNAL_SERVER_ERROR,
         'Failed to end video call',
         undefined,
-        { callId, userId, originalError: String(error) },
+        { callId, userId },
         'VideoService.endVideoCall'
       );
     }
@@ -2162,7 +3179,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         ErrorCode.INTERNAL_SERVER_ERROR,
         'Failed to share medical image',
         undefined,
-        { callId, userId, originalError: String(error) },
+        { callId, userId },
         'VideoService.shareMedicalImage'
       );
     }
@@ -2241,7 +3258,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         ErrorCode.INTERNAL_SERVER_ERROR,
         'Failed to get video call history',
         undefined,
-        { userId, clinicId, originalError: String(error) },
+        { userId, clinicId },
         'VideoService.getVideoCallHistory'
       );
     }
@@ -2825,6 +3842,16 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
   private async fetchVideoCallHistory(userId: string, clinicId?: string): Promise<VideoCall[]> {
     try {
+      // VideoConsultation.patientId/doctorId hold Patient.id / Doctor.id, not User.id —
+      // resolve the caller's role records so patients and doctors actually see their calls.
+      const roleIds = await this.databaseService.executeRead(async prisma => {
+        const tx = prisma as unknown as Prisma.TransactionClient;
+        const [patient, doctor] = await Promise.all([
+          tx.patient.findUnique({ where: { userId }, select: { id: true } }),
+          tx.doctor.findUnique({ where: { userId }, select: { id: true } }),
+        ]);
+        return { patientId: patient?.id, doctorId: doctor?.id };
+      });
       const consultations = await this.databaseService.executeHealthcareRead(async client => {
         const delegate = getVideoConsultationDelegate(client);
         return await delegate.findMany({
@@ -2833,6 +3860,8 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
             OR: [
               { patientId: userId },
               { doctorId: userId },
+              ...(roleIds.patientId ? [{ patientId: roleIds.patientId }] : []),
+              ...(roleIds.doctorId ? [{ doctorId: roleIds.doctorId }] : []),
               {
                 participants: {
                   some: {
@@ -2852,7 +3881,64 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         });
       });
 
+      const appointmentIds = Array.from(new Set(consultations.map(c => c.appointmentId)));
+      const userName = (
+        u:
+          | { name?: string | null; firstName?: string | null; lastName?: string | null }
+          | null
+          | undefined
+      ): string | undefined =>
+        (u?.name && u.name.trim()) ||
+        `${u?.firstName ?? ''} ${u?.lastName ?? ''}`.trim() ||
+        undefined;
+      const appointmentInfo = new Map<
+        string,
+        { doctorName?: string; patientName?: string; date?: string; time?: string; status?: string }
+      >();
+      if (appointmentIds.length > 0) {
+        const nameSelect = { select: { name: true, firstName: true, lastName: true } };
+        const appointments = await this.databaseService.executeRead(async prisma => {
+          const tx = prisma as unknown as Prisma.TransactionClient;
+          return await tx.appointment.findMany({
+            where: { id: { in: appointmentIds } },
+            select: {
+              id: true,
+              date: true,
+              time: true,
+              status: true,
+              doctor: { select: { user: nameSelect } },
+              patient: { select: { user: nameSelect } },
+            },
+          });
+        });
+        for (const a of appointments) {
+          const doctorName = userName(a.doctor?.user);
+          const patientName = userName(a.patient?.user);
+          appointmentInfo.set(a.id, {
+            ...(doctorName ? { doctorName } : {}),
+            ...(patientName ? { patientName } : {}),
+            date: new Date(a.date).toISOString(),
+            time: a.time,
+            status: String(a.status),
+          });
+        }
+      }
       const videoCalls: VideoCall[] = consultations.map(consultation => ({
+        ...(appointmentInfo.get(consultation.appointmentId)?.doctorName
+          ? { doctorName: appointmentInfo.get(consultation.appointmentId)?.doctorName }
+          : {}),
+        ...(appointmentInfo.get(consultation.appointmentId)?.patientName
+          ? { patientName: appointmentInfo.get(consultation.appointmentId)?.patientName }
+          : {}),
+        ...(appointmentInfo.get(consultation.appointmentId)?.date
+          ? { appointmentDate: appointmentInfo.get(consultation.appointmentId)?.date }
+          : {}),
+        ...(appointmentInfo.get(consultation.appointmentId)?.time
+          ? { appointmentTime: appointmentInfo.get(consultation.appointmentId)?.time }
+          : {}),
+        ...(appointmentInfo.get(consultation.appointmentId)?.status
+          ? { appointmentStatus: appointmentInfo.get(consultation.appointmentId)?.status }
+          : {}),
         id: consultation.id,
         appointmentId: consultation.appointmentId,
         patientId: consultation.patientId,

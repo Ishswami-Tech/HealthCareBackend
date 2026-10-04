@@ -24,16 +24,28 @@ export function computeConfirmationExpiresAt(appointment: {
   time?: string | null;
   type?: string | null;
 }): Date | null {
+  const start = computeAppointmentStartTime(appointment);
+  if (!start) return null;
+
+  return new Date(start.getTime() + getVideoActiveWindowMinutes() * 60_000);
+}
+
+/**
+ * The scheduled start instant of an appointment: its IST calendar day (`date`) combined with the
+ * wall-clock `time` ("HH:mm"). Null when the date is missing or the pair does not parse. Used for
+ * the ISO `startTime` the check-in candidate lists return next to the raw date/time pair.
+ */
+export function computeAppointmentStartTime(appointment: {
+  date?: Date | string | null;
+  time?: string | null;
+}): Date | null {
   if (!appointment?.date) return null;
 
-  const rawDate = appointment.date;
-  const dateStr = formatDateKeyInIST(rawDate);
+  const dateStr = formatDateKeyInIST(appointment.date);
   const timeStr = String(appointment.time || '00:00');
 
   const start = new Date(`${dateStr}T${timeStr}+05:30`);
-  if (Number.isNaN(start.getTime())) return null;
-
-  return new Date(start.getTime() + getVideoActiveWindowMinutes() * 60_000);
+  return Number.isNaN(start.getTime()) ? null : start;
 }
 
 /**

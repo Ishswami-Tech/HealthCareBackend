@@ -15,6 +15,7 @@ import {
   IsDateString,
   Matches,
   MaxLength,
+  IsIn,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { PartialType, OmitType } from '@nestjs/mapped-types';
@@ -32,6 +33,24 @@ export enum Gender {
   FEMALE = 'FEMALE',
   OTHER = 'OTHER',
 }
+
+/** Marital status values the patient profile accepts. */
+export const MARITAL_STATUSES = [
+  'SINGLE',
+  'MARRIED',
+  'DIVORCED',
+  'WIDOWED',
+  'SEPARATED',
+  'OTHER',
+] as const;
+export type MaritalStatus = (typeof MARITAL_STATUSES)[number];
+
+/** ABO / Rh blood groups the patient profile accepts. */
+export const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] as const;
+export type BloodGroup = (typeof BLOOD_GROUPS)[number];
+
+const upperTrim = ({ value }: { value: unknown }): unknown =>
+  typeof value === 'string' ? value.trim().toUpperCase() : value;
 
 /**
  * Data Transfer Object for Emergency Contact
@@ -415,6 +434,24 @@ export class SimpleCreateUserDto {
   @IsString({ message: 'Occupation must be a string' })
   @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
   occupation?: string;
+
+  @ApiPropertyOptional({
+    enum: MARITAL_STATUSES,
+    example: 'MARRIED',
+    description: 'Marital status',
+  })
+  @IsOptional()
+  @Transform(upperTrim)
+  @IsIn(MARITAL_STATUSES, {
+    message: `maritalStatus must be one of: ${MARITAL_STATUSES.join(', ')}`,
+  })
+  maritalStatus?: MaritalStatus;
+
+  @ApiPropertyOptional({ enum: BLOOD_GROUPS, example: 'O+', description: 'Blood group' })
+  @IsOptional()
+  @Transform(upperTrim)
+  @IsIn(BLOOD_GROUPS, { message: `bloodGroup must be one of: ${BLOOD_GROUPS.join(', ')}` })
+  bloodGroup?: BloodGroup;
 
   @ApiPropertyOptional({ example: 'Sunrise School', description: 'Organization / employer' })
   @IsOptional()
@@ -1002,6 +1039,24 @@ export class UpdateUserProfileDto {
   @IsString({ message: 'Occupation must be a string' })
   @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
   occupation?: string;
+
+  @ApiPropertyOptional({
+    enum: MARITAL_STATUSES,
+    example: 'MARRIED',
+    description: 'Marital status',
+  })
+  @IsOptional()
+  @Transform(upperTrim)
+  @IsIn(MARITAL_STATUSES, {
+    message: `maritalStatus must be one of: ${MARITAL_STATUSES.join(', ')}`,
+  })
+  maritalStatus?: MaritalStatus;
+
+  @ApiPropertyOptional({ enum: BLOOD_GROUPS, example: 'O+', description: 'Blood group' })
+  @IsOptional()
+  @Transform(upperTrim)
+  @IsIn(BLOOD_GROUPS, { message: `bloodGroup must be one of: ${BLOOD_GROUPS.join(', ')}` })
+  bloodGroup?: BloodGroup;
 
   @ApiPropertyOptional({ example: 'Sunrise School', description: 'Organization / employer' })
   @IsOptional()

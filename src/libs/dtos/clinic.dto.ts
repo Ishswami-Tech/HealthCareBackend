@@ -6,15 +6,29 @@ import {
   IsUUID,
   IsNotEmpty,
   ValidateNested,
+  ValidateIf,
   IsNumber,
   Min,
   Max,
+  MinLength,
+  MaxLength,
   IsUrl,
   IsBoolean,
   IsObject,
   Matches,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+
+/** "  text  " -> "text"; non-strings pass through untouched for the type validator to reject. */
+const trimString = ({ value }: { value: unknown }): unknown =>
+  typeof value === 'string' ? value.trim() : value;
+/** Blank optional URLs ("") are treated as "not sent" instead of failing @IsUrl. */
+const blankToUndefined = ({ value }: { value: unknown }): unknown =>
+  typeof value === 'string' && value.trim() === '' ? undefined : trimString({ value });
+/** Working hours arrive either as the stored string or as a per-day object; both are accepted. */
+const isWorkingHoursShape = (value: unknown): boolean =>
+  typeof value === 'string' ||
+  (typeof value === 'object' && value !== null && !Array.isArray(value));
 
 /**
  * Clinic status enumeration
@@ -44,38 +58,214 @@ export enum ClinicType {
   SURGICAL = 'SURGERY',
 }
 
-// Clinic Location DTOs (defined before CreateClinicDto to avoid forward reference)
+// Clinic Location DTOs (defined before CreateClinicDto to avoid forward reference).
+// Every property carries a validator: the controllers run whitelist + forbidNonWhitelisted, which
+// rejects any field that has none (so these DTOs used to refuse every create / update body).
 export class CreateClinicLocationDto {
+  @ApiProperty({ example: 'Main Branch', minLength: 2, maxLength: 100 })
+  @IsString({ message: 'Location name must be a string' })
+  @IsNotEmpty({ message: 'Location name is required' })
+  @MinLength(2, { message: 'Location name must be at least 2 characters long' })
+  @MaxLength(100, { message: 'Location name cannot exceed 100 characters' })
+  @Transform(trimString)
   name!: string;
+
+  @ApiProperty({ example: '12 MG Road', minLength: 3, maxLength: 200 })
+  @IsString({ message: 'Address must be a string' })
+  @IsNotEmpty({ message: 'Address is required' })
+  @MinLength(3, { message: 'Address must be at least 3 characters long' })
+  @MaxLength(200, { message: 'Address cannot exceed 200 characters' })
+  @Transform(trimString)
   address!: string;
+
+  @ApiProperty({ example: 'Pune', maxLength: 50 })
+  @IsString({ message: 'City must be a string' })
+  @IsNotEmpty({ message: 'City is required' })
+  @MaxLength(50, { message: 'City cannot exceed 50 characters' })
+  @Transform(trimString)
   city!: string;
+
+  @ApiProperty({ example: 'Maharashtra', maxLength: 50 })
+  @IsString({ message: 'State must be a string' })
+  @IsNotEmpty({ message: 'State is required' })
+  @MaxLength(50, { message: 'State cannot exceed 50 characters' })
+  @Transform(trimString)
   state!: string;
+
+  @ApiProperty({ example: 'India', maxLength: 50 })
+  @IsString({ message: 'Country must be a string' })
+  @IsNotEmpty({ message: 'Country is required' })
+  @MaxLength(50, { message: 'Country cannot exceed 50 characters' })
+  @Transform(trimString)
   country!: string;
-  zipCode!: string;
-  phone!: string;
-  email!: string;
-  timezone!: string;
+
+  @ApiPropertyOptional({ example: '411001', maxLength: 20 })
+  @IsOptional()
+  @IsString({ message: 'Zip code must be a string' })
+  @MaxLength(20, { message: 'Zip code cannot exceed 20 characters' })
+  @Transform(trimString)
+  zipCode?: string;
+
+  @ApiPropertyOptional({ example: '+919876543210', maxLength: 20 })
+  @IsOptional()
+  @IsString({ message: 'Phone number must be a string' })
+  @MaxLength(20, { message: 'Phone number cannot exceed 20 characters' })
+  @Transform(trimString)
+  phone?: string;
+
+  @ApiPropertyOptional({ example: 'branch@clinic.com', maxLength: 254 })
+  @IsOptional()
+  @IsString({ message: 'Email must be a string' })
+  @MaxLength(254, { message: 'Email cannot exceed 254 characters' })
+  @Transform(({ value }): unknown =>
+    typeof value === 'string' ? value.toLowerCase().trim() : value
+  )
+  email?: string;
+
+  @ApiPropertyOptional({ example: 'Asia/Kolkata', maxLength: 64 })
+  @IsOptional()
+  @IsString({ message: 'Timezone must be a string' })
+  @MaxLength(64, { message: 'Timezone cannot exceed 64 characters' })
+  @Transform(trimString)
+  timezone?: string;
+
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  @IsBoolean({ message: 'isActive must be a boolean' })
   isActive?: boolean;
+
+  @ApiPropertyOptional({ example: 18.5204, minimum: -90, maximum: 90 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({}, { message: 'Latitude must be a number' })
+  @Min(-90, { message: 'Latitude must be between -90 and 90' })
+  @Max(90, { message: 'Latitude must be between -90 and 90' })
   latitude?: number;
+
+  @ApiPropertyOptional({ example: 73.8567, minimum: -180, maximum: 180 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({}, { message: 'Longitude must be a number' })
+  @Min(-180, { message: 'Longitude must be between -180 and 180' })
+  @Max(180, { message: 'Longitude must be between -180 and 180' })
   longitude?: number;
-  workingHours?: Record<string, { start: string; end: string } | null>;
+
+  @ApiPropertyOptional({
+    description: 'Per-day working hours object, or the stored display string',
+    example: { monday: { start: '09:00', end: '17:00' }, sunday: null },
+  })
+  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
+  @Transform(({ value }): unknown => (isWorkingHoursShape(value) ? value : undefined))
+  workingHours?: Record<string, { start: string; end: string } | null> | string;
+
+  @ApiPropertyOptional({ description: 'Location settings as a JSON object' })
+  @IsOptional()
+  @IsObject({ message: 'Settings must be an object' })
   settings?: Record<string, unknown>;
 }
 
 export class UpdateClinicLocationDto {
+  @ApiPropertyOptional({ example: 'Main Branch', minLength: 2, maxLength: 100 })
+  @IsOptional()
+  @IsString({ message: 'Location name must be a string' })
+  @MinLength(2, { message: 'Location name must be at least 2 characters long' })
+  @MaxLength(100, { message: 'Location name cannot exceed 100 characters' })
+  @Transform(trimString)
   name?: string;
+
+  @ApiPropertyOptional({ example: '12 MG Road', minLength: 3, maxLength: 200 })
+  @IsOptional()
+  @IsString({ message: 'Address must be a string' })
+  @MinLength(3, { message: 'Address must be at least 3 characters long' })
+  @MaxLength(200, { message: 'Address cannot exceed 200 characters' })
+  @Transform(trimString)
   address?: string;
+
+  @ApiPropertyOptional({ example: 'Pune', maxLength: 50 })
+  @IsOptional()
+  @IsString({ message: 'City must be a string' })
+  @MaxLength(50, { message: 'City cannot exceed 50 characters' })
+  @Transform(trimString)
   city?: string;
+
+  @ApiPropertyOptional({ example: 'Maharashtra', maxLength: 50 })
+  @IsOptional()
+  @IsString({ message: 'State must be a string' })
+  @MaxLength(50, { message: 'State cannot exceed 50 characters' })
+  @Transform(trimString)
   state?: string;
+
+  @ApiPropertyOptional({ example: 'India', maxLength: 50 })
+  @IsOptional()
+  @IsString({ message: 'Country must be a string' })
+  @MaxLength(50, { message: 'Country cannot exceed 50 characters' })
+  @Transform(trimString)
   country?: string;
+
+  @ApiPropertyOptional({ example: '411001', maxLength: 20 })
+  @IsOptional()
+  @IsString({ message: 'Zip code must be a string' })
+  @MaxLength(20, { message: 'Zip code cannot exceed 20 characters' })
+  @Transform(trimString)
   zipCode?: string;
+
+  @ApiPropertyOptional({ example: '+919876543210', maxLength: 20 })
+  @IsOptional()
+  @IsString({ message: 'Phone number must be a string' })
+  @MaxLength(20, { message: 'Phone number cannot exceed 20 characters' })
+  @Transform(trimString)
   phone?: string;
+
+  @ApiPropertyOptional({ example: 'branch@clinic.com', maxLength: 254 })
+  @IsOptional()
+  @IsString({ message: 'Email must be a string' })
+  @MaxLength(254, { message: 'Email cannot exceed 254 characters' })
+  @Transform(({ value }): unknown =>
+    typeof value === 'string' ? value.toLowerCase().trim() : value
+  )
   email?: string;
+
+  @ApiPropertyOptional({ example: 'Asia/Kolkata', maxLength: 64 })
+  @IsOptional()
+  @IsString({ message: 'Timezone must be a string' })
+  @MaxLength(64, { message: 'Timezone cannot exceed 64 characters' })
+  @Transform(trimString)
   timezone?: string;
+
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  @IsBoolean({ message: 'isActive must be a boolean' })
   isActive?: boolean;
+
+  @ApiPropertyOptional({ example: 18.5204, minimum: -90, maximum: 90 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({}, { message: 'Latitude must be a number' })
+  @Min(-90, { message: 'Latitude must be between -90 and 90' })
+  @Max(90, { message: 'Latitude must be between -90 and 90' })
   latitude?: number;
+
+  @ApiPropertyOptional({ example: 73.8567, minimum: -180, maximum: 180 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({}, { message: 'Longitude must be a number' })
+  @Min(-180, { message: 'Longitude must be between -180 and 180' })
+  @Max(180, { message: 'Longitude must be between -180 and 180' })
   longitude?: number;
-  workingHours?: Record<string, { start: string; end: string } | null>;
+
+  @ApiPropertyOptional({
+    description: 'Per-day working hours object, or the stored display string',
+    example: { monday: { start: '09:00', end: '17:00' }, sunday: null },
+  })
+  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
+  @Transform(({ value }): unknown => (isWorkingHoursShape(value) ? value : undefined))
+  workingHours?: Record<string, { start: string; end: string } | null> | string;
+
+  @ApiPropertyOptional({ description: 'Location settings as a JSON object' })
+  @IsOptional()
+  @IsObject({ message: 'Settings must be an object' })
   settings?: Record<string, unknown>;
 }
 
@@ -101,9 +291,9 @@ export class CreateClinicDto {
   })
   @IsString({ message: 'Clinic name must be a string' })
   @IsNotEmpty({ message: 'Clinic name is required' })
-  @Min(2, { message: 'Clinic name must be at least 2 characters long' })
-  @Max(100, { message: 'Clinic name cannot exceed 100 characters' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @MinLength(2, { message: 'Clinic name must be at least 2 characters long' })
+  @MaxLength(100, { message: 'Clinic name cannot exceed 100 characters' })
+  @Transform(trimString)
   name!: string;
 
   @ApiProperty({
@@ -124,62 +314,64 @@ export class CreateClinicDto {
   })
   @IsString({ message: 'Address must be a string' })
   @IsNotEmpty({ message: 'Address is required' })
-  @Min(5, { message: 'Address must be at least 5 characters long' })
-  @Max(200, { message: 'Address cannot exceed 200 characters' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @MinLength(5, { message: 'Address must be at least 5 characters long' })
+  @MaxLength(200, { message: 'Address cannot exceed 200 characters' })
+  @Transform(trimString)
   address!: string;
 
-  @ApiProperty({
+  // city / state / country / zipCode are not columns of Clinic; they describe the main location.
+  // Optional here: the super-admin form sends them inside `mainLocation` only.
+  @ApiPropertyOptional({
     example: 'New York',
-    description: 'Clinic city',
+    description: 'Clinic city (falls back to mainLocation.city)',
     minLength: 2,
     maxLength: 50,
   })
+  @IsOptional()
   @IsString({ message: 'City must be a string' })
-  @IsNotEmpty({ message: 'City is required' })
-  @Min(2, { message: 'City must be at least 2 characters long' })
-  @Max(50, { message: 'City cannot exceed 50 characters' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
-  city!: string;
+  @MinLength(2, { message: 'City must be at least 2 characters long' })
+  @MaxLength(50, { message: 'City cannot exceed 50 characters' })
+  @Transform(trimString)
+  city?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: 'NY',
-    description: 'Clinic state/province',
+    description: 'Clinic state/province (falls back to mainLocation.state)',
     minLength: 2,
     maxLength: 50,
   })
+  @IsOptional()
   @IsString({ message: 'State must be a string' })
-  @IsNotEmpty({ message: 'State is required' })
-  @Min(2, { message: 'State must be at least 2 characters long' })
-  @Max(50, { message: 'State cannot exceed 50 characters' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
-  state!: string;
+  @MinLength(2, { message: 'State must be at least 2 characters long' })
+  @MaxLength(50, { message: 'State cannot exceed 50 characters' })
+  @Transform(trimString)
+  state?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: 'USA',
-    description: 'Clinic country',
+    description: 'Clinic country (falls back to mainLocation.country)',
     minLength: 2,
     maxLength: 50,
   })
+  @IsOptional()
   @IsString({ message: 'Country must be a string' })
-  @IsNotEmpty({ message: 'Country is required' })
-  @Min(2, { message: 'Country must be at least 2 characters long' })
-  @Max(50, { message: 'Country cannot exceed 50 characters' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
-  country!: string;
+  @MinLength(2, { message: 'Country must be at least 2 characters long' })
+  @MaxLength(50, { message: 'Country cannot exceed 50 characters' })
+  @Transform(trimString)
+  country?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: '10001',
-    description: 'Clinic zip/postal code',
+    description: 'Clinic zip/postal code (falls back to mainLocation.zipCode)',
     minLength: 3,
     maxLength: 20,
   })
+  @IsOptional()
   @IsString({ message: 'Zip code must be a string' })
-  @IsNotEmpty({ message: 'Zip code is required' })
-  @Min(3, { message: 'Zip code must be at least 3 characters long' })
-  @Max(20, { message: 'Zip code cannot exceed 20 characters' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
-  zipCode!: string;
+  @MinLength(3, { message: 'Zip code must be at least 3 characters long' })
+  @MaxLength(20, { message: 'Zip code cannot exceed 20 characters' })
+  @Transform(trimString)
+  zipCode?: string;
 
   @ApiProperty({
     example: '+1234567890',
@@ -204,14 +396,21 @@ export class CreateClinicDto {
 
   @ApiPropertyOptional({
     example: 'https://www.mainstreetmedical.com',
-    description: 'Clinic website URL',
+    description: 'Clinic website URL (an empty string is treated as not sent)',
   })
   @IsOptional()
+  @Transform(blankToUndefined)
   @IsUrl({}, { message: 'Website must be a valid URL' })
   website?: string;
 
+  @ApiPropertyOptional({
+    example: 'Mon-Fri 9AM-7PM, Sat 10AM-3PM',
+    description: 'Display text for the opening hours (stored in settings.operatingHours)',
+  })
+  @IsOptional()
   @IsString({ message: 'Operating hours must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @MaxLength(500, { message: 'Operating hours cannot exceed 500 characters' })
+  @Transform(trimString)
   operatingHours?: string;
 
   @ApiPropertyOptional({
@@ -285,10 +484,11 @@ export class CreateClinicDto {
   databaseName?: string;
 
   @ApiPropertyOptional({
-    description: 'The logo URL of the clinic',
+    description: 'The logo URL of the clinic (an empty string is treated as not sent)',
     example: 'https://ayurvedalay.com/logos/aadesh.png',
   })
   @IsOptional()
+  @Transform(blankToUndefined)
   @IsString()
   @IsUrl()
   logo?: string;
@@ -448,9 +648,9 @@ export class UpdateClinicDto {
   })
   @IsOptional()
   @IsString({ message: 'Clinic name must be a string' })
-  @Min(2, { message: 'Clinic name must be at least 2 characters long' })
-  @Max(100, { message: 'Clinic name cannot exceed 100 characters' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @MinLength(2, { message: 'Clinic name must be at least 2 characters long' })
+  @MaxLength(100, { message: 'Clinic name cannot exceed 100 characters' })
+  @Transform(trimString)
   name?: string;
 
   @ApiPropertyOptional({
@@ -469,53 +669,54 @@ export class UpdateClinicDto {
   })
   @IsOptional()
   @IsString({ message: 'Address must be a string' })
-  @Min(5, { message: 'Address must be at least 5 characters long' })
-  @Max(200, { message: 'Address cannot exceed 200 characters' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @MinLength(5, { message: 'Address must be at least 5 characters long' })
+  @MaxLength(200, { message: 'Address cannot exceed 200 characters' })
+  @Transform(trimString)
   address?: string;
 
+  // city / state / country / zipCode are applied to the clinic's main (first active) location.
   @ApiPropertyOptional({
     example: 'Los Angeles',
-    description: 'New clinic city',
+    description: 'New clinic city (written to the main location)',
   })
   @IsOptional()
   @IsString({ message: 'City must be a string' })
-  @Min(2, { message: 'City must be at least 2 characters long' })
-  @Max(50, { message: 'City cannot exceed 50 characters' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @MinLength(2, { message: 'City must be at least 2 characters long' })
+  @MaxLength(50, { message: 'City cannot exceed 50 characters' })
+  @Transform(trimString)
   city?: string;
 
   @ApiPropertyOptional({
     example: 'CA',
-    description: 'New clinic state/province',
+    description: 'New clinic state/province (written to the main location)',
   })
   @IsOptional()
   @IsString({ message: 'State must be a string' })
-  @Min(2, { message: 'State must be at least 2 characters long' })
-  @Max(50, { message: 'State cannot exceed 50 characters' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @MinLength(2, { message: 'State must be at least 2 characters long' })
+  @MaxLength(50, { message: 'State cannot exceed 50 characters' })
+  @Transform(trimString)
   state?: string;
 
   @ApiPropertyOptional({
     example: 'USA',
-    description: 'New clinic country',
+    description: 'New clinic country (written to the main location)',
   })
   @IsOptional()
   @IsString({ message: 'Country must be a string' })
-  @Min(2, { message: 'Country must be at least 2 characters long' })
-  @Max(50, { message: 'Country cannot exceed 50 characters' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @MinLength(2, { message: 'Country must be at least 2 characters long' })
+  @MaxLength(50, { message: 'Country cannot exceed 50 characters' })
+  @Transform(trimString)
   country?: string;
 
   @ApiPropertyOptional({
     example: '90210',
-    description: 'New clinic zip/postal code',
+    description: 'New clinic zip/postal code (written to the main location)',
   })
   @IsOptional()
   @IsString({ message: 'Zip code must be a string' })
-  @Min(3, { message: 'Zip code must be at least 3 characters long' })
-  @Max(20, { message: 'Zip code cannot exceed 20 characters' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @MinLength(3, { message: 'Zip code must be at least 3 characters long' })
+  @MaxLength(20, { message: 'Zip code cannot exceed 20 characters' })
+  @Transform(trimString)
   zipCode?: string;
 
   @ApiPropertyOptional({
@@ -539,19 +740,21 @@ export class UpdateClinicDto {
 
   @ApiPropertyOptional({
     example: 'https://www.newclinic.com',
-    description: 'New clinic website URL',
+    description: 'New clinic website URL (an empty string is treated as not sent)',
   })
   @IsOptional()
+  @Transform(blankToUndefined)
   @IsUrl({}, { message: 'Website must be a valid URL' })
   website?: string;
 
   @ApiPropertyOptional({
     example: 'Mon-Fri 9AM-7PM, Sat 10AM-3PM',
-    description: 'New clinic operating hours',
+    description: 'New clinic operating hours (stored in settings.operatingHours)',
   })
   @IsOptional()
   @IsString({ message: 'Operating hours must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @MaxLength(500, { message: 'Operating hours cannot exceed 500 characters' })
+  @Transform(trimString)
   operatingHours?: string;
 
   @ApiPropertyOptional({
@@ -571,10 +774,11 @@ export class UpdateClinicDto {
   description?: string;
 
   @ApiPropertyOptional({
-    description: 'Clinic logo URL',
+    description: 'Clinic logo URL (an empty string is treated as not sent)',
     example: 'https://clinic.com/logo.png',
   })
   @IsOptional()
+  @Transform(blankToUndefined)
   @IsString()
   @IsUrl()
   logo?: string;

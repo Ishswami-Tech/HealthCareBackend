@@ -90,6 +90,28 @@ interface CashfreeOrderStatusResponse {
   order_tags?: Record<string, string> | null;
 }
 
+/** Hard ceiling for the best-effort "how was it paid" lookup. */
+const PAID_PAYMENT_GROUP_TIMEOUT_MS = 3000;
+/** Bounded memo of orderId -> payment group so replayed callbacks skip the extra call. */
+const PAID_PAYMENT_GROUP_CACHE_LIMIT = 500;
+const paidPaymentGroupByOrder = new Map<string, string>();
+
+function rememberPaidPaymentGroup(orderId: string, group: string): void {
+  if (paidPaymentGroupByOrder.size >= PAID_PAYMENT_GROUP_CACHE_LIMIT) {
+    const oldest = paidPaymentGroupByOrder.keys().next();
+    if (!oldest.done) {
+      paidPaymentGroupByOrder.delete(oldest.value);
+    }
+  }
+  paidPaymentGroupByOrder.set(orderId, group);
+}
+
+/** One entry of GET /orders/{order_id}/payments (only the fields read here). */
+interface CashfreeOrderPayment {
+  payment_status?: string; // SUCCESS, FAILED, PENDING, ...
+  payment_group?: string; // upi, credit_card, debit_card, net_banking, wallet, ...
+}
+
 interface CashfreeRefundRequest {
   refund_amount: number; // Currency unit (required)
   refund_id: string;
@@ -272,6 +294,57 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
     }
 
     return response.data;
+  }
+
+  /**
+   * How a paid order was paid (upi, credit_card, net_banking, ...). The order itself does not
+   * carry it, so this reads the order's payments. Best effort: it must never fail or slow down
+   * payment verification, so the lookup is raced against a hard timeout (the request-level
+   * timeout alone does not bound retries/queueing inside the HTTP client) and a resolved group
+   * is remembered per order, so replayed callbacks/webhooks do not call Cashfree again.
+   */
+  private async fetchPaidPaymentGroup(orderId: string): Promise<string | undefined> {
+    if (!this.httpService) {
+      return undefined;
+    }
+
+    const known = paidPaymentGroupByOrder.get(orderId);
+    if (known) {
+      return known;
+    }
+
+    const lookup: Promise<string | undefined> = this.httpService
+      .get<CashfreeOrderPayment[]>(`${this.baseUrl}/orders/${orderId}/payments`, {
+        headers: this.getHeaders(),
+        timeout: PAID_PAYMENT_GROUP_TIMEOUT_MS,
+        retries: 0,
+        suppressErrorLogging: true,
+      })
+      .then(response => {
+        const payments = Array.isArray(response.data) ? response.data : [];
+        const paid = payments.find(
+          payment => String(payment.payment_status || '').toUpperCase() === 'SUCCESS'
+        );
+        return paid?.payment_group || undefined;
+      })
+      .catch((): undefined => undefined);
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<undefined>(resolve => {
+      timer = setTimeout(() => resolve(undefined), PAID_PAYMENT_GROUP_TIMEOUT_MS);
+    });
+
+    try {
+      const group = await Promise.race([lookup, deadline]);
+      if (group) {
+        rememberPaidPaymentGroup(orderId, group);
+      }
+      return group;
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
   }
 
   async verify(): Promise<boolean> {
@@ -557,6 +630,10 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         status = 'pending';
       }
 
+      // Saved on the payment record so the invoice can show "Paid via ...".
+      const paymentMethod =
+        status === 'completed' ? await this.fetchPaidPaymentGroup(data.order_id) : undefined;
+
       return {
         paymentId: data.order_id,
         status,
@@ -567,6 +644,7 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         timestamp: new Date(data.created_at || Date.now()),
         metadata: {
           order_status: data.order_status,
+          ...(paymentMethod ? { paymentMethod } : {}),
           // Lets BillingService bind a gateway order that has no local payment
           // record (e.g. created by the payment bridge) to its appointment.
           ...(data.order_tags ? { order_tags: data.order_tags } : {}),
