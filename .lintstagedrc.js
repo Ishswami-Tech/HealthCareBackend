@@ -6,8 +6,9 @@
  */
 
 module.exports = {
-  // TypeScript files
-  '**/*.ts': ['eslint --fix', 'prettier --write'],
+  // TypeScript files (ESLint on src/, Prettier on all)
+  'src/**/*.ts': ['eslint --fix', 'prettier --write'],
+  'tests/**/*.ts': ['prettier --write'],
 
   // JavaScript files (exclude scripts from ESLint - they use CommonJS and don't need TypeScript rules)
   '**/*.js': [

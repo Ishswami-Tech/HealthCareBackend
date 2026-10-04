@@ -299,10 +299,15 @@ export class BaseSocket
             this.serviceName
           );
         } catch (authError) {
-          safeLogError(this.loggingService, authError, this.serviceName, {
-            clientId,
-            operation: 'authentication',
-          });
+          // The middleware already reports recoverable expiry and asks the client to refresh.
+          if (!(
+            authError instanceof HealthcareError && authError.code === ErrorCode.AUTH_TOKEN_EXPIRED
+          )) {
+            safeLogError(this.loggingService, authError, this.serviceName, {
+              clientId,
+              operation: 'authentication',
+            });
+          }
           client.disconnect();
           return {
             event: 'error',

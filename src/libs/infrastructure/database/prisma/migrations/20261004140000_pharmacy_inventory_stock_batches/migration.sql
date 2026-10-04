@@ -124,7 +124,7 @@ BEGIN
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'StockBatch_clinicId_fkey') THEN
     ALTER TABLE "StockBatch" ADD CONSTRAINT "StockBatch_clinicId_fkey"
-      FOREIGN KEY ("clinicId") REFERENCES "Clinic"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+      FOREIGN KEY ("clinicId") REFERENCES "clinics"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'StockBatch_quantityOnHand_nonneg_chk') THEN
     ALTER TABLE "StockBatch" ADD CONSTRAINT "StockBatch_quantityOnHand_nonneg_chk"
@@ -136,11 +136,11 @@ BEGIN
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'StockTransfer_sourceClinicId_fkey') THEN
     ALTER TABLE "StockTransfer" ADD CONSTRAINT "StockTransfer_sourceClinicId_fkey"
-      FOREIGN KEY ("sourceClinicId") REFERENCES "Clinic"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+      FOREIGN KEY ("sourceClinicId") REFERENCES "clinics"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'StockTransfer_destinationClinicId_fkey') THEN
     ALTER TABLE "StockTransfer" ADD CONSTRAINT "StockTransfer_destinationClinicId_fkey"
-      FOREIGN KEY ("destinationClinicId") REFERENCES "Clinic"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+      FOREIGN KEY ("destinationClinicId") REFERENCES "clinics"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'StockTransferItem_transferId_fkey') THEN
     ALTER TABLE "StockTransferItem" ADD CONSTRAINT "StockTransferItem_transferId_fkey"

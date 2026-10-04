@@ -76,7 +76,7 @@ services:
       FRONTEND_URL: http://localhost:3000
       
       # CORS Configuration
-      CORS_ORIGIN: http://localhost:3000,http://localhost:8081,http://localhost:8082,http://localhost:8088,http://localhost:8443
+      CORS_ORIGIN: http://localhost:3000,http://127.0.0.1:3000,http://localhost:8081,http://localhost:8082,http://localhost:8088,http://localhost:8443
       CORS_CREDENTIALS: "true"
       
       # Service URLs

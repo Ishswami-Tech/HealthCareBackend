@@ -55,8 +55,6 @@ import type {
   ApplicationConfig,
   MiddlewareConfig,
 } from '@core/types/framework.types';
-import { spawn, ChildProcess } from 'child_process';
-import * as path from 'path';
 
 ensurePhonePeClassTransformerCompatibility();
 
@@ -1056,10 +1054,6 @@ async function bootstrap() {
       urlsConfig.redisCommander ||
       configService.getEnv('REDIS_COMMANDER_URL') ||
       'http://localhost:8082';
-    const _prismaStudioUrl =
-      urlsConfig.prismaStudio ||
-      configService.getEnv('PRISMA_STUDIO_URL') ||
-      'http://localhost:5555';
     const _loggerUrl = '/logger';
 
     // Check if app is available before configuring Swagger
@@ -1186,162 +1180,6 @@ async function bootstrap() {
       if (envConfig.app.environment === 'development') {
         logger.log('Development services:');
         logger.log(`- Redis Commander: ${envConfig.urls.redisCommander}`);
-        logger.log(`- Prisma Studio: ${envConfig.urls.prismaStudio}`);
-
-        // Auto-start Prisma Studio in development mode
-        // Use ConfigService (which uses dotenv) for environment variable access
-        if (configService?.getEnvBoolean('ENABLE_PRISMA_STUDIO', true)) {
-          // Function to start Prisma Studio with retry logic
-          const startPrismaStudio = (retryCount = 0): void => {
-            const maxRetries = 3;
-            const retryDelay = 5000; // 5 seconds between retries
-
-            try {
-              // Prisma 7: Use --config flag instead of --schema
-              // Run Prisma Studio with config file from the prisma directory
-              const prismaDir = path.join(
-                process.cwd(),
-                'src',
-                'libs',
-                'infrastructure',
-                'database',
-                'prisma'
-              );
-              const prismaConfigPath = path.join(prismaDir, 'prisma.config.js');
-
-              logger.log(
-                `[Prisma Studio] Starting Prisma Studio${retryCount > 0 ? ` (retry ${retryCount}/${maxRetries})` : ''}...`
-              );
-
-              const prismaStudioProcess = spawn(
-                'npx',
-                [
-                  'prisma',
-                  'studio',
-                  '--config',
-                  prismaConfigPath,
-                  '--port',
-                  '5555',
-                  '--browser',
-                  'none', // Don't open browser automatically
-                ],
-                {
-                  cwd: prismaDir, // Run from prisma directory for better compatibility
-                  stdio: ['ignore', 'pipe', 'pipe'], // Capture output for debugging
-                  detached: false, // Keep attached to parent process
-                  shell: true, // Use shell for Windows compatibility
-                  env: {
-                    ...process.env,
-                    // Ensure Prisma can find the schema and config
-                    PRISMA_SCHEMA_PATH: path.join(prismaDir, 'schema.prisma'),
-                    // Use DIRECT_URL if available (clean connection string), otherwise clean DATABASE_URL
-                    // Prisma Studio needs a clean PostgreSQL connection string without Prisma-specific parameters
-                    // Use ConfigService (which uses dotenv) for environment variable access
-                    DATABASE_URL:
-                      configService?.getEnv('DIRECT_URL') ||
-                      (configService?.getDatabaseConfig()?.url || '').replace(
-                        /[?&](connection_limit|pool_timeout|statement_timeout|idle_in_transaction_session_timeout|connect_timeout|pool_size|max_connections)=[^&]*/g,
-                        ''
-                      ),
-                  },
-                }
-              );
-
-              // Log Prisma Studio output for debugging
-              let hasLoggedStartup = false;
-
-              prismaStudioProcess.stdout?.on('data', (data: Buffer) => {
-                const output = data.toString().trim();
-
-                // Log startup messages
-                if (!hasLoggedStartup && output) {
-                  logger.log(`[Prisma Studio] ${output}`);
-                  if (
-                    output.toLowerCase().includes('running') ||
-                    output.toLowerCase().includes('started')
-                  ) {
-                    hasLoggedStartup = true;
-                  }
-                }
-              });
-
-              prismaStudioProcess.stderr?.on('data', (data: Buffer) => {
-                const errorMsg = data.toString().trim();
-                if (errorMsg && !errorMsg.includes('DeprecationWarning')) {
-                  logger.warn(`[Prisma Studio] ${errorMsg}`);
-                }
-              });
-
-              prismaStudioProcess.on('error', (error: Error) => {
-                logger.warn(`[Prisma Studio] Failed to start: ${error.message}`);
-                // Retry if we haven't exceeded max retries
-                if (retryCount < maxRetries) {
-                  logger.log(`[Prisma Studio] Retrying in ${retryDelay / 1000} seconds...`);
-                  setTimeout(() => startPrismaStudio(retryCount + 1), retryDelay);
-                } else {
-                  logger.error(
-                    `[Prisma Studio] Failed to start after ${maxRetries} retries. You can start it manually with: yarn prisma:studio`
-                  );
-                }
-              });
-
-              prismaStudioProcess.on('exit', (code: number | null) => {
-                if (code !== null && code !== 0) {
-                  logger.warn(`[Prisma Studio] Exited with code ${code}`);
-                  // Retry if we haven't exceeded max retries and it's not a normal shutdown
-                  if (retryCount < maxRetries && code !== 0) {
-                    logger.log(`[Prisma Studio] Retrying in ${retryDelay / 1000} seconds...`);
-                    setTimeout(() => startPrismaStudio(retryCount + 1), retryDelay);
-                  } else if (code !== 0) {
-                    logger.error(
-                      `[Prisma Studio] Failed to start after ${maxRetries} retries. You can start it manually with: yarn prisma:studio`
-                    );
-                  }
-                } else {
-                  logger.log(`[Prisma Studio] Stopped gracefully`);
-                }
-              });
-
-              // Wait a bit to verify Prisma Studio starts successfully
-              setTimeout(() => {
-                if (prismaStudioProcess.killed) {
-                  logger.warn('[Prisma Studio] Process was killed');
-                  // Retry if we haven't exceeded max retries
-                  if (retryCount < maxRetries) {
-                    logger.log(`[Prisma Studio] Retrying in ${retryDelay / 1000} seconds...`);
-                    setTimeout(() => startPrismaStudio(retryCount + 1), retryDelay);
-                  }
-                } else {
-                  logger.log('[Prisma Studio] Started successfully in background');
-                  logger.log(`[Prisma Studio] Access at: ${envConfig.urls.prismaStudio}`);
-                }
-              }, 3000); // Wait 3 seconds to check if process is still running
-
-              // Store process reference for cleanup
-              (global as { prismaStudioProcess?: ChildProcess }).prismaStudioProcess =
-                prismaStudioProcess;
-            } catch (prismaStudioError) {
-              logger.warn(
-                `[Prisma Studio] Failed to auto-start: ${prismaStudioError instanceof Error ? prismaStudioError.message : String(prismaStudioError)}`
-              );
-              // Retry if we haven't exceeded max retries
-              if (retryCount < maxRetries) {
-                logger.log(`[Prisma Studio] Retrying in ${retryDelay / 1000} seconds...`);
-                setTimeout(() => startPrismaStudio(retryCount + 1), retryDelay);
-              } else {
-                logger.error(
-                  `[Prisma Studio] Failed to start after ${maxRetries} retries. You can start it manually with: yarn prisma:studio`
-                );
-              }
-            }
-          };
-
-          // Start Prisma Studio (with automatic retry on failure)
-          // Delay startup slightly to ensure database is ready
-          setTimeout(() => {
-            startPrismaStudio();
-          }, 3000); // Wait 3 seconds after app starts to ensure database is ready
-        }
       }
 
       // Setup graceful shutdown handlers using GracefulShutdownService

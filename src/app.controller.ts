@@ -232,8 +232,6 @@ export class AppController {
       const loggerHealth = healthServices['logger'];
       const communicationHealth = (healthServices as { communication?: ServiceHealth })
         .communication;
-      const prismaStudioStatus = (healthServices as { prismaStudio?: ServiceHealth }).prismaStudio
-        ?.status;
       const redisCommanderStatus = (healthServices as { redisCommander?: ServiceHealth })
         .redisCommander?.status;
 
@@ -275,7 +273,6 @@ export class AppController {
       const isLoggerRunning = loggerHealth?.status === 'healthy';
       const isSocketRunning = socketStatus === 'healthy';
       const isCommunicationRunning = communicationStatus === 'healthy';
-      const isPrismaStudioRunning = prismaStudioStatus === 'healthy';
       const isRedisCommanderRunning = redisCommanderStatus === 'healthy';
 
       // Define all services with real-time status based on actual health checks
@@ -369,24 +366,13 @@ export class AppController {
         });
       }
 
-      if (!isProduction || isPrismaStudioRunning) {
-        allServices.push({
-          name: 'Prisma Studio',
-          description: 'PostgreSQL database management through Prisma.',
-          url: urlsConfig.prismaStudio || this.configService.getEnv('PRISMA_STUDIO_URL') || '',
-          active: isPrismaStudioRunning, // Active if Prisma Studio health check passes
-          category: 'Database',
-          devOnly: !isProduction,
-        });
-      }
-
       // Filter services based on environment
       // Production/Staging: Only show essential services (worker, api, redis, postgres)
       // Development: Show all services
       const services = isProduction
         ? allServices.filter((service: ServiceInfo) => {
             // In production/staging, only show: API Documentation, Queue Dashboard, Logger, WebSocket, Communication
-            // Hide: Prisma Studio, Redis Commander (unless Redis is provider)
+            // Hide Redis Commander unless Redis is provider
             const essentialServices = [
               'API Documentation',
               'Queue Dashboard',

@@ -57,6 +57,7 @@ function createHarness(contact: Record<string, unknown> | null) {
     cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
     invalidateCache: jest.fn().mockResolvedValue(undefined),
     invalidateCacheByPattern: jest.fn().mockResolvedValue(undefined),
+    invalidateUserDataCache: jest.fn().mockResolvedValue(0),
     invalidateCacheByTag: jest.fn().mockResolvedValue(undefined),
     invalidateDoctorCache: jest.fn().mockResolvedValue(undefined),
     del: jest.fn().mockResolvedValue(undefined),

@@ -2715,16 +2715,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         // In Docker: Use container names or localhost
         // In local: Use localhost
 
-        // Prisma Studio URL - typically runs on the same pod/container
-        // Get from ConfigService (reads from .env files) - NO HARDCODED FALLBACKS
         const urlsConfig = this.config?.getUrlsConfig();
-        if (!urlsConfig?.prismaStudio && !this.config?.getEnv('PRISMA_STUDIO_URL')) {
-          throw new Error(
-            'PRISMA_STUDIO_URL must be configured in environment variables or config'
-          );
-        }
-        const prismaStudioUrl: string =
-          urlsConfig?.prismaStudio || this.config?.getEnv('PRISMA_STUDIO_URL') || '';
 
         // Redis Commander URL - can be in different pod/service in Kubernetes
         // Get from ConfigService (reads from .env files) - NO HARDCODED FALLBACKS
@@ -2774,9 +2765,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         }
 
         // Check services with environment-aware fallback URLs
-        const healthCheckPromises: Array<Promise<ServiceHealth>> = [
-          this.checkExternalServiceWithFallback('Prisma Studio', [prismaStudioUrl], 2000),
-        ];
+        const healthCheckPromises: Array<Promise<ServiceHealth>> = [];
 
         // Check Redis Commander for both Redis and Dragonfly in dev mode
         // Dragonfly is Redis-compatible, so Redis Commander can manage it
@@ -2788,42 +2777,11 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
         const healthCheckResults = await Promise.allSettled(healthCheckPromises);
 
-        // Extract results - Prisma Studio is always included
         // Redis Commander is included if Redis provider OR dev mode
-        const prismaStudioHealth = healthCheckResults[0];
         const redisCommanderHealth =
-          (isRedisProvider || isDevMode) && healthCheckResults.length > 1
-            ? healthCheckResults[1]
+          (isRedisProvider || isDevMode) && healthCheckResults.length > 0
+            ? healthCheckResults[0]
             : undefined;
-
-        // Handle Prisma Studio health
-        if (prismaStudioHealth && prismaStudioHealth.status === 'fulfilled') {
-          result.services.prismaStudio = prismaStudioHealth.value;
-        } else {
-          // Extract error details from rejected promise
-          let errorDetails =
-            prismaStudioHealth && prismaStudioHealth.status === 'rejected'
-              ? prismaStudioHealth.reason instanceof Error
-                ? prismaStudioHealth.reason.message
-                : String(prismaStudioHealth.reason)
-              : 'Prisma Studio is not accessible';
-
-          // During startup grace period, show a more helpful message
-          if (isInStartupGracePeriod) {
-            errorDetails = `Prisma Studio is starting up... (${Math.round((this.EXTERNAL_SERVICE_STARTUP_GRACE_PERIOD - timeSinceStart) / 1000)}s remaining)`;
-          }
-
-          // During startup grace period or in dev mode, mark as 'healthy' to avoid false negatives
-          // The service is likely starting up and will be available soon
-          // In dev mode, we're more lenient since services might be accessible from host
-          result.services.prismaStudio = {
-            status:
-              isInStartupGracePeriod || isDevMode ? ('healthy' as const) : ('unhealthy' as const),
-            responseTime: 0,
-            lastChecked: nowIso(),
-            details: errorDetails,
-          };
-        }
 
         // Set Redis Commander status for both Redis and Dragonfly (in dev mode)
         // Dragonfly is Redis-compatible, so Redis Commander can manage it

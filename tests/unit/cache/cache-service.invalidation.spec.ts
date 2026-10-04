@@ -48,6 +48,35 @@ function globToRegExp(pattern: string): RegExp {
 }
 
 describe('CacheService targeted invalidations', () => {
+  describe('invalidateUserDataCache', () => {
+    it('reaches user data in the clinic without matching session, OTP or auth state', async () => {
+      const spy = createService();
+      await spy.service.invalidateUserDataCache(USER, 'c1');
+      const matches = (key: string): boolean =>
+        spy.patterns.some(pattern => globToRegExp(`${pattern}:v*`).test(key));
+      expect(matches(`users:one:v5:${USER}:c1:v1`)).toBe(true);
+      expect(matches(`clinic:c1:user:${USER}:profile:handler:v1`)).toBe(true);
+      expect(matches(`healthcare:user:${USER}:clinic:c1:permissions:v1`)).toBe(true);
+      expect(matches(`clinic:c2:user:${USER}:profile:handler:v1`)).toBe(false);
+      expect(matches(`clinic:c1:user:another-user:profile:v1`)).toBe(false);
+      for (const key of [
+        `auth:user:${USER}:attempts:v1`,
+        `user_sessions:${USER}:v1`,
+        `session:user:${USER}:v1`,
+        `otp:${USER}:v1`,
+      ])
+        expect(matches(key)).toBe(false);
+      expect(spy.tags).toEqual([`user:${USER}`, `doctor:${USER}`]);
+    });
+
+    it('escapes glob metacharacters in IDs so they cannot widen a delete', async () => {
+      const spy = createService();
+      await spy.service.invalidateUserDataCache('user*', 'clinic?');
+      expect(spy.patterns).toContain('user:user\\*:*');
+      expect(spy.patterns).toContain('clinic:clinic\\?:user:user\\*:*');
+    });
+  });
+
   describe('invalidateVideoCacheForAppointment', () => {
     it('invalidates the appointment tag the video read routes register', async () => {
       const spy = createService();

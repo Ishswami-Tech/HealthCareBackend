@@ -271,8 +271,7 @@ export class AuthController {
   // reuse. Token refresh must always execute fresh - it is not a
   // cacheable read.
   @InvalidateCache({
-    patterns: ['auth:login_attempt:*', 'user:{userId}:*'],
-    tags: ['login_attempts', 'user_sessions'],
+    patterns: ['user:{userId}:*'],
   })
   @ApiOperation({
     summary: 'Refresh access token',
@@ -649,8 +648,8 @@ export class AuthController {
   @Post('reset-password')
   @HttpCode(HttpStatus.OK)
   @InvalidateCache({
-    patterns: ['auth:password_reset:*', 'user:{userId}:*', 'auth:refresh_token:{userId}:*'],
-    tags: ['auth', 'password_reset', 'user_profiles', 'refresh_tokens'],
+    patterns: ['user:{userId}:*'],
+    tags: ['user_profiles'],
   })
   @ApiOperation({
     summary: 'Reset password with token',
@@ -738,8 +737,8 @@ export class AuthController {
   @RateLimitAPI({ points: 5, duration: 900 }) // 5 requests per 15 minutes - prevents brute force
   @ApiBearerAuth()
   @InvalidateCache({
-    patterns: ['user:{userId}:*', 'user_profiles', 'auth'],
-    tags: ['user_profiles', 'auth'],
+    patterns: ['user:{userId}:*'],
+    tags: ['user_profiles'],
   })
   @ApiOperation({
     summary: 'Change password (authenticated user)',
@@ -937,10 +936,7 @@ export class AuthController {
   // login). @RateLimitAPI() below is the correct, safe mechanism for
   // attempt limiting.
   @RateLimitAPI({ points: 5, duration: 900 }) // 5 attempts per 15 minutes
-  @InvalidateCache({
-    patterns: ['auth:otp_request:{contact}:*', 'auth:login_attempt:*'],
-    tags: ['otp_requests', 'login_attempts'],
-  })
+  // OtpService owns exact-key OTP cleanup; generic cache invalidation must preserve auth state.
   @ApiOperation({
     summary: 'Verify OTP and login',
     description:

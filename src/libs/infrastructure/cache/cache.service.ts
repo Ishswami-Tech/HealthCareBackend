@@ -705,6 +705,21 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return this.invalidateCacheByPattern(pattern);
   }
 
+  /** Invalidate user data without scanning authentication/session namespaces for the user's id. */
+  async invalidateUserDataCache(userId: string, clinicId?: string): Promise<number> {
+    const id = escapeGlobLiteral(userId);
+    const clinic = clinicId ? escapeGlobLiteral(clinicId) : '*';
+    const roots = [`user:${id}:*`, `users:one:${id}:*`, `users:one:v5:${id}:*`];
+    let count = await this.invalidateCacheByTag(`user:${userId}`);
+    count += await this.invalidateCacheByTag(`doctor:${userId}`);
+    for (const root of roots) {
+      for (const pattern of [root, `healthcare:${root}`, `clinic:${clinic}:${root}`]) {
+        count += await this.invalidateCacheByPattern(pattern);
+      }
+    }
+    return count;
+  }
+
   async invalidateAppointmentCache(
     appointmentId: string,
     patientId?: string,

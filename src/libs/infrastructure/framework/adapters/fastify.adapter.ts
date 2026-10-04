@@ -26,7 +26,7 @@
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { INestApplication, Logger, LogLevel } from '@nestjs/common';
-import type { FastifyInstance } from 'fastify';
+import fastify, { type FastifyInstance } from 'fastify';
 import { getEnvBoolean, getEnvWithDefault } from '@config/environment/utils';
 import {
   IFrameworkAdapter,
@@ -47,6 +47,32 @@ import fastifySession from '@fastify/session';
 // Using proper TypeScript types (no 'any') per coding standards
 type FastifyPlugin = Parameters<NestFastifyApplication['register']>[0];
 type FastifyPluginOptions = Parameters<NestFastifyApplication['register']>[1];
+
+function resolveNestLogLevels(environment: string): LogLevel[] {
+  const configuredLevel = getEnvWithDefault(
+    'LOG_LEVEL',
+    environment === 'production' ? 'info' : 'debug'
+  ).toLowerCase();
+
+  switch (configuredLevel) {
+    case 'silent':
+    case 'off':
+      return ['error'];
+    case 'fatal':
+    case 'error':
+      return ['error', 'fatal'];
+    case 'warn':
+      return ['error', 'fatal', 'warn'];
+    case 'debug':
+      return ['error', 'fatal', 'warn', 'log', 'debug'];
+    case 'verbose':
+    case 'trace':
+      return ['error', 'fatal', 'warn', 'log', 'debug', 'verbose'];
+    case 'info':
+    default:
+      return ['error', 'fatal', 'warn', 'log'];
+  }
+}
 
 /**
  * Fastify Framework Adapter Implementation
@@ -105,8 +131,10 @@ export class FastifyFrameworkAdapter implements IFastifyFrameworkAdapter {
     const fastifyAdapterOptions: Record<string, unknown> = {
       // Omit logger option - Fastify will use default no-op logger
       // Custom LoggingService handles all logging via NestJS logger system
-      disableRequestLogging: true, // Disable Fastify request logging - LoggingInterceptor handles this
-      requestIdLogLabel: 'requestId',
+      logController: new fastify.LogController({
+        disableRequestLogging: true, // LoggingInterceptor handles request logging
+        requestIdLogLabel: 'requestId',
+      }),
       requestIdHeader: options.isHorizontalScaling
         ? `x-request-id-${options.instanceId}`
         : 'x-request-id',
@@ -149,10 +177,7 @@ export class FastifyFrameworkAdapter implements IFastifyFrameworkAdapter {
           fastifyAdapterOptions as unknown as ConstructorParameters<typeof FastifyAdapter>[0]
         ),
         {
-          logger:
-            options.environment === 'production'
-              ? (['error', 'warn'] as LogLevel[])
-              : (['error', 'warn', 'log'] as LogLevel[]),
+          logger: resolveNestLogLevels(options.environment),
           bufferLogs: true,
           cors: false, // Will be configured separately via SecurityConfigService
           rawBody: true,

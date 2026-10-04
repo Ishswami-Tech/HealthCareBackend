@@ -328,11 +328,7 @@ export class AuthService {
       // Invalidate user profile cache
       await this.cacheService.invalidatePatientCache(userId, clinicId);
 
-      // Invalidate user-specific caches. Entries written by the HealthcareCacheInterceptor are
-      // clinic-prefixed (`clinic:<id>:user:<userId>:...`), so the tag is the reliable path and the
-      // pattern needs a leading `*` to reach the prefix.
-      await this.cacheService.invalidateCacheByTag(`user:${userId}`);
-      await this.cacheService.invalidateCacheByPattern(`*user:${userId}:*`);
+      await this.cacheService.invalidateUserDataCache(userId, clinicId);
 
       // Invalidate clinic-specific caches if clinicId provided
       if (clinicId) {

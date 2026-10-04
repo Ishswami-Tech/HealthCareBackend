@@ -235,14 +235,15 @@ export class SocketAuthMiddleware {
   private extractToken(client: Socket): string | null {
     const handshake = client.handshake as SocketHandshake;
 
-    const cookieToken = this.extractCookieToken(handshake.headers?.cookie);
-    if (cookieToken) {
-      return cookieToken;
-    }
-
+    // A refreshed handshake token must take precedence over a stale browser cookie.
     const authToken = this.normalizeTokenValue(handshake.auth?.token ?? null);
     if (authToken) {
       return authToken;
+    }
+
+    const cookieToken = this.extractCookieToken(handshake.headers?.cookie);
+    if (cookieToken) {
+      return cookieToken;
     }
 
     const queryToken = this.normalizeTokenValue(handshake.query?.['token'] ?? null);

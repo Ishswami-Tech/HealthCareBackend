@@ -2073,15 +2073,12 @@ export class UsersService {
     await Promise.all([
       this.cacheService.invalidateCache(`users:one:v5:${userId}:global`),
       this.cacheService.invalidateCache(`users:one:${userId}`),
-      this.cacheService.invalidateCacheByPattern(`*users:one:*${userId}*`),
-      this.cacheService.invalidateCacheByPattern(`*${userId}*`),
+      this.cacheService.invalidateUserDataCache(userId, clinicId),
       this.cacheService.invalidateDoctorCache(userId, clinicId),
       this.cacheService.invalidateCacheByTag('users'),
       this.cacheService.invalidateCacheByTag(`user:${userId}`),
       this.cacheService.invalidateCacheByTag('user_details'),
       this.cacheService.invalidateCacheByTag('doctors'),
-      this.cacheService.invalidateCacheByPattern(`*availability*${userId}*`),
-      this.cacheService.invalidateCacheByPattern(`*doctor*${userId}*availability*`),
     ]);
   }
 
@@ -2604,9 +2601,7 @@ export class UsersService {
       // Invalidate cache
       await this.cacheService.del(`user:${userId}`);
       await this.cacheService.del(`user:${userId}:profile`);
-      // Invalidate all user-related cache entries (including findUserByIdSafe's query cache)
-      await this.cacheService.invalidateCacheByPattern(`*${userId}*`);
-      await this.cacheService.invalidateCacheByTag(`user:${userId}`);
+      await this.cacheService.invalidateUserDataCache(userId);
 
       await this.loggingService.log(
         LogType.AUDIT,

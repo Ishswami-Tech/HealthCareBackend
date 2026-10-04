@@ -456,20 +456,19 @@ export class AppointmentNotificationService {
 
       const directUser = await this.databaseService.findUserByIdSafe(patientId);
       if (directUser?.id) {
-        await this.loggingService.log(
-          LogType.NOTIFICATION,
-          LogLevel.WARN,
-          'Patient record not found, falling back to patientId as userId',
-          'AppointmentNotificationService.resolvePatientUserId',
-          {
-            notificationId,
-            patientId,
-            userId: directUser.id,
-          }
-        );
-
         return directUser.id;
       }
+
+      await this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.WARN,
+        'Patient notification recipient could not be resolved from patientId or userId',
+        'AppointmentNotificationService.resolvePatientUserId',
+        {
+          notificationId,
+          patientId,
+        }
+      );
 
       return null;
     } catch (error) {

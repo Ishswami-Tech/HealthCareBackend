@@ -169,7 +169,7 @@ configMapGenerator:
     behavior: merge
     literals:
       - NODE_ENV=production
-      - LOG_LEVEL=warn
+      - LOG_LEVEL=info
       - MAX_CONNECTIONS=500
       - POOL_SIZE=100
       - RATE_LIMIT_MAX=10000
