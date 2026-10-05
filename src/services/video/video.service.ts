@@ -2043,7 +2043,10 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         await this.reconcilePendingCompletionEvent(appointment, userId);
         return await this.buildAlreadyCompletedSession(appointment);
       }
-      if (appointmentStatus !== String(AppointmentStatus.IN_PROGRESS)) {
+      if (
+        appointmentStatus !== String(AppointmentStatus.IN_PROGRESS) &&
+        appointmentStatus !== String(AppointmentStatus.CONFIRMED)
+      ) {
         throw VideoService.consultationNotEndableError(appointmentStatus);
       }
 
@@ -2203,7 +2206,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           where: {
             id: appointment.id,
             clinicId: appointment.clinicId,
-            status: AppointmentStatus.IN_PROGRESS,
+            status: { in: [AppointmentStatus.IN_PROGRESS, AppointmentStatus.CONFIRMED] },
           },
           data: { status: AppointmentStatus.COMPLETED, completedAt },
         });
