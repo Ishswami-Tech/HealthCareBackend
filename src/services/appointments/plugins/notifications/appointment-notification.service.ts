@@ -19,6 +19,7 @@ import {
   type SocketEventPrimitive,
 } from '@communication/channels/socket/socket.service';
 import { DatabaseService } from '@infrastructure/database';
+import { mergeAppointmentFacts } from './notification-template-facts';
 import { EmailTemplate } from '@core/types';
 import { findTreatmentCatalogEntryOrUndefined } from '@core/types/treatment-catalog.types';
 import type {
@@ -123,7 +124,8 @@ export class AppointmentNotificationService {
   /**
    * Send appointment notification through multiple channels
    */
-  async sendNotification(notificationData: NotificationData): Promise<NotificationResult> {
+  async sendNotification(requestedNotificationData: NotificationData): Promise<NotificationResult> {
+    const notificationData = await this.withAppointmentFacts(requestedNotificationData);
     const notificationId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const sentChannels: string[] = [];
     const failedChannels: string[] = [];
@@ -640,6 +642,30 @@ export class AppointmentNotificationService {
   }
 
   /**
+   * Template data arrives from many producers with placeholder defaults and raw timestamps. The
+   * appointment row is the source of truth for names, date and time, so it is read once here and
+   * merged in (see mergeAppointmentFacts); a lookup failure sends the producer's values as-is.
+   */
+  private async withAppointmentFacts(data: NotificationData): Promise<NotificationData> {
+    try {
+      const appointment = await this.databaseService.findAppointmentByIdSafe(data.appointmentId);
+      return { ...data, templateData: mergeAppointmentFacts(data.templateData, appointment) };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.WARN,
+        'Could not load the appointment to complete notification template data; sending producer values',
+        'AppointmentNotificationService',
+        {
+          appointmentId: data.appointmentId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      return data;
+    }
+  }
+
+  /**
    * Send WhatsApp notification
    * Supports multi-tenant communication via clinicId
    */
@@ -761,8 +787,11 @@ export class AppointmentNotificationService {
       }
 
       // CC WhatsApp to clinic/owner phone for reminder and appointment update notifications
-      const ccPhone = '7218378311';
+      // Clinic/owner copy of each patient notification. Configurable; the default keeps the
+      // number that has been receiving these copies. Set it empty to turn the copy off.
+      const ccPhone = this.configService.getEnv('APPOINTMENT_NOTIFICATION_CC_PHONE', '7218378311');
       if (
+        ccPhone &&
         ['reminder', 'updated', 'confirmation', 'created', 'cancellation', 'expired'].includes(type)
       ) {
         try {

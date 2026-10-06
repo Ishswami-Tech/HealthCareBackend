@@ -698,7 +698,7 @@ export class AppointmentFollowUpService {
           patientName: 'Patient', // This should be fetched from user data
           doctorName: 'Doctor', // This should be fetched from user data
           appointmentDate: formatDateKeyInIST(followUp.scheduledFor),
-          appointmentTime: '10:00', // This should be fetched from appointment data
+          appointmentTime: '', // completed from the appointment row by AppointmentNotificationService
           location: 'Clinic', // This should be fetched from clinic data
           clinicName: 'Healthcare Clinic', // This should be fetched from clinic data
           notes: followUp.instructions,
@@ -740,7 +740,7 @@ export class AppointmentFollowUpService {
           patientName: 'Patient', // This should be fetched from user data
           doctorName: 'Doctor', // This should be fetched from user data
           appointmentDate: formatDateKeyInIST(followUp.scheduledFor),
-          appointmentTime: '10:00', // This should be fetched from appointment data
+          appointmentTime: '', // completed from the appointment row by AppointmentNotificationService
           location: 'Clinic', // This should be fetched from clinic data
           clinicName: 'Healthcare Clinic', // This should be fetched from clinic data
           notes: followUp.instructions,

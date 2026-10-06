@@ -207,6 +207,32 @@ export function formatAppointmentReminderTemplateParams(
 }
 
 /**
+ * Formats the "doctor has joined" template parameters for WhatsApp.
+ * Body: "Hello {{1}}, {{2}} has joined your video consultation. Please join now."
+ * @param patientName - Patient name
+ * @param doctorName - Doctor name
+ * @param joinUrl - Link into the call, rendered as the template's URL button
+ */
+export function formatDoctorJoinedTemplateParams(
+  patientName: string,
+  doctorName: string,
+  joinUrl?: string
+): WhatsAppTemplateComponent[] {
+  const components: WhatsAppTemplateComponent[] = [
+    {
+      type: 'body',
+      parameters: [
+        { type: 'text', text: normalizeTemplateText(patientName, 'Patient') },
+        { type: 'text', text: normalizeTemplateText(doctorName, 'Your doctor') },
+      ],
+    },
+  ];
+
+  components.push(...buildDetailsButton(joinUrl));
+  return components;
+}
+
+/**
  * Formats payment receipt template parameters for WhatsApp
  * @param recipientName - Recipient name
  * @param receiptNumber - Receipt number

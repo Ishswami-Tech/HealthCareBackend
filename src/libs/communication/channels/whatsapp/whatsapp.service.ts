@@ -13,6 +13,7 @@ import {
   formatOTPTemplateParams,
   formatAppointmentConfirmationTemplateParams,
   formatAppointmentReminderTemplateParams,
+  formatDoctorJoinedTemplateParams,
   formatPaymentReceiptTemplateParams,
   formatDoctorDailySummaryTemplateParams,
   formatDoctorNoAppointmentsTemplateParams,
@@ -278,6 +279,96 @@ export class WhatsAppService {
         LogType.SYSTEM,
         LogLevel.ERROR,
         `Failed to send appointment reminder via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'WhatsAppService',
+        { stack: (error as Error)?.stack }
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Wording for the appointment-reminder template's "when" slot when it carries the
+   * doctor-joined notice: "...appointment with {doctor} at this moment: your doctor has joined
+   * the call, please join now."
+   */
+  private static readonly DOCTOR_JOINED_FALLBACK_WHEN_TEXT =
+    'this moment: your doctor has joined the call, please join now';
+
+  /**
+   * Tells the patient the doctor has joined the video consultation.
+   *
+   * Always an approved template: Meta delivers free-form text only inside a 24-hour window the
+   * patient opened by writing to the clinic, and a clinic-sent reminder does not open one. Uses
+   * the dedicated template when configured (WHATSAPP_DOCTOR_JOINED_TEMPLATE_ID or the clinic's
+   * `doctorJoined`), otherwise the appointment-reminder template with the join-now wording in
+   * its "when" slot and the join link on its URL button.
+   */
+  async sendDoctorJoinedNotice(
+    phoneNumber: string,
+    patientName: string,
+    doctorName: string,
+    joinUrl?: string,
+    clinicId?: string
+  ): Promise<boolean> {
+    if (!this.whatsAppConfig.enabled && !clinicId) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'WhatsApp service is disabled. Simulating successful doctor-joined notice.',
+        'WhatsAppService'
+      );
+      return true;
+    }
+
+    try {
+      const formattedPhone = this.formatPhoneNumber(phoneNumber);
+      let dedicatedTemplateId = this.whatsAppConfig.doctorJoinedTemplateId;
+      let reminderTemplateId = this.whatsAppConfig.appointmentReminderTemplateId;
+
+      if (clinicId) {
+        const clinicData = await this.clinicTemplateService.getClinicTemplateData(clinicId);
+        if (clinicData) {
+          dedicatedTemplateId = clinicData.templateIds.doctorJoined || dedicatedTemplateId;
+          reminderTemplateId = clinicData.templateIds.appointmentReminder || reminderTemplateId;
+        }
+      }
+
+      if (dedicatedTemplateId) {
+        await this.sendTemplateMessage(
+          formattedPhone,
+          dedicatedTemplateId,
+          formatDoctorJoinedTemplateParams(patientName, doctorName, joinUrl),
+          clinicId
+        );
+      } else {
+        await this.sendTemplateMessage(
+          formattedPhone,
+          reminderTemplateId,
+          formatAppointmentReminderTemplateParams(
+            patientName,
+            'video consultation',
+            doctorName,
+            WhatsAppService.DOCTOR_JOINED_FALLBACK_WHEN_TEXT,
+            joinUrl,
+            'video consultation'
+          ),
+          clinicId
+        );
+      }
+
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Doctor-joined notice sent to ${phoneNumber} via WhatsApp`,
+        'WhatsAppService',
+        { template: dedicatedTemplateId ? 'doctor_joined' : 'appointment_reminder_fallback' }
+      );
+      return true;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to send doctor-joined notice via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'WhatsAppService',
         { stack: (error as Error)?.stack }
       );
