@@ -7,7 +7,7 @@ import { DatabaseService } from '@infrastructure/database/database.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { EventService } from '@infrastructure/events/event.service';
-import { HealthcareErrorsService } from '@core/errors';
+import { HealthcareError, HealthcareErrorsService } from '@core/errors';
 import { LogType, LogLevel } from '@core/types';
 import { EmailService } from '@communication/channels/email/email.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
@@ -16,6 +16,7 @@ import { RbacService } from '@core/rbac/rbac.service';
 import { QueueService, JobPriority } from '@infrastructure/queue';
 import { JobType } from '@core/types/queue.types';
 import { JwtAuthService } from './core/jwt.service';
+import { classifyRefreshFailure } from './core/refresh-failure.util';
 import { SocialAuthService } from './core/social-auth.service';
 import { OtpService } from './core/otp.service';
 import { normalizeAuthPhoneNumber } from './core/phone-normalizer.util';
@@ -888,17 +889,51 @@ export class AuthService {
         sessionMetadata?.ipAddress || refreshTokenDto.ipAddress
       );
     } catch (_error) {
+      // Errors raised above (e.g. a missing refresh token) already carry the right code.
+      if (_error instanceof HealthcareError) {
+        throw _error;
+      }
+
+      const context = 'AuthService.refreshToken';
+      const errorName = _error instanceof Error ? _error.name : 'UnknownError';
+      const errorMessage = _error instanceof Error ? _error.message : String(_error);
+      const failure = classifyRefreshFailure(errorName, errorMessage);
+
+      // Every failure used to be collapsed into AUTH_TOKEN_EXPIRED with a detail-free console
+      // line, so an expired, forged, revoked or infrastructure failure all read as "Your session
+      // has expired". Keep the real reason in the message and map it to the right class: 401 when
+      // the client must log in again, 503 when it should retry without dropping its session.
       await this.logging.log(
         LogType.SYSTEM,
-        LogLevel.ERROR,
-        'Enhanced token refresh failed',
-        'AuthService.refreshToken',
+        failure === 'unexpected' ? LogLevel.ERROR : LogLevel.WARN,
+        `Token refresh failed (${failure}): ${errorName}: ${errorMessage}`,
+        context,
         {
-          error: _error instanceof Error ? _error.message : String(_error),
-          stack: _error instanceof Error ? _error.stack : undefined,
+          failure,
+          errorName,
+          error: errorMessage,
+          stack: failure === 'unexpected' && _error instanceof Error ? _error.stack : undefined,
         }
       );
-      throw this.errors.tokenExpired('AuthService.refreshToken');
+
+      switch (failure) {
+        case 'expired':
+          throw this.errors.tokenExpired(context);
+        case 'revoked':
+          throw this.errors.authenticationError(
+            'Refresh token has been revoked. Please log in again.',
+            context,
+            { reason: failure }
+          );
+        case 'invalid':
+          throw this.errors.authenticationError(
+            'Invalid refresh token. Please log in again.',
+            context,
+            { reason: failure, errorName }
+          );
+        default:
+          throw this.errors.serviceUnavailable('token refresh', context);
+      }
     }
   }
 

@@ -3849,10 +3849,11 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       // resolve the caller's role records so patients and doctors actually see their calls.
       const roleIds = await this.databaseService.executeRead(async prisma => {
         const tx = prisma as unknown as Prisma.TransactionClient;
-        const [patient, doctor] = await Promise.all([
-          tx.patient.findUnique({ where: { userId }, select: { id: true } }),
-          tx.doctor.findUnique({ where: { userId }, select: { id: true } }),
-        ]);
+        // Sequential on purpose: inside the callback both queries share one pg client, and
+        // issuing them concurrently triggers pg's "client.query() when the client is already
+        // executing a query" deprecation, which becomes a hard error in pg@9.
+        const patient = await tx.patient.findUnique({ where: { userId }, select: { id: true } });
+        const doctor = await tx.doctor.findUnique({ where: { userId }, select: { id: true } });
         return { patientId: patient?.id, doctorId: doctor?.id };
       });
       const consultations = await this.databaseService.executeHealthcareRead(async client => {
