@@ -3853,7 +3853,7 @@ export class BillingService implements OnModuleInit {
   private getDefaultAppointmentPrice(appointmentType: string): number {
     const prices: Record<string, number> = {
       IN_PERSON: 1251,
-      VIDEO_CALL: 1251,
+      VIDEO_CALL: 1350,
       HOME_VISIT: 1500,
     };
     return prices[appointmentType] || 1251;
