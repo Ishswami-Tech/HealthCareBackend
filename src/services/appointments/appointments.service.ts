@@ -3635,6 +3635,20 @@ export class AppointmentsService {
     )) as { availableSlots: string[] };
 
     if (!availability.availableSlots || !availability.availableSlots.includes(newTime)) {
+      void this.loggingService.log(
+        LogType.APPOINTMENT,
+        LogLevel.WARN,
+        `Reschedule refused: ${newDate} ${newTime} is not an open slot for the doctor`,
+        context,
+        {
+          appointmentId,
+          doctorId: before.doctorId,
+          appointmentType: before.type,
+          requested: { newDate, newTime },
+          openSlotCount: availability.availableSlots?.length ?? 0,
+          openSlotsSample: (availability.availableSlots ?? []).slice(0, 8),
+        }
+      );
       throw this.errors.appointmentSlotUnavailable(`${newDate} ${newTime}`, context);
     }
 
@@ -3743,6 +3757,15 @@ export class AppointmentsService {
 
     const bookingLockAcquired = await this.cacheService.acquireLock(bookingLockKey, 15);
     if (!bookingLockAcquired) {
+      // Another booking or reschedule holds this very slot right now (or the lock store is not
+      // reachable: acquireLock reports both as "not acquired"). Say which request was refused.
+      void this.loggingService.log(
+        LogType.APPOINTMENT,
+        LogLevel.WARN,
+        `Reschedule refused: the slot lock for ${newDate} ${newTime} is held`,
+        context,
+        { appointmentId, doctorId: appointment.doctorId, requested: { newDate, newTime } }
+      );
       throw this.errors.appointmentSlotUnavailable(`${newDate} ${newTime}`, context);
     }
 
