@@ -40,6 +40,15 @@ export class ClinicConfirmationPlugin extends BaseAppointmentPlugin {
     super(loggingService);
   }
 
+  /** What was injected as the confirmation service, for the log when its handler is missing. */
+  private describeConfirmationService(): string {
+    const injected = this.confirmationService as unknown;
+    if (!injected) return 'nothing';
+    const name = (injected as { constructor?: { name?: string } }).constructor?.name ?? 'object';
+    const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(injected) ?? {});
+    return `${name}, methods: ${methods.join(',')}`;
+  }
+
   async process(data: unknown): Promise<unknown> {
     const pluginData = data as ConfirmationPluginData;
     await this.logPluginAction('Processing clinic confirmation operation', {
@@ -105,11 +114,14 @@ export class ClinicConfirmationPlugin extends BaseAppointmentPlugin {
           );
         }
 
-        await this.logPluginError('Completion handler unavailable, returning fallback result', {
-          operation: pluginData.operation,
-          appointmentId: pluginData.appointmentId,
-          doctorId: pluginData.doctorId,
-        });
+        await this.logPluginError(
+          `Completion handler unavailable, returning fallback result (injected: ${this.describeConfirmationService()})`,
+          {
+            operation: pluginData.operation,
+            appointmentId: pluginData.appointmentId,
+            doctorId: pluginData.doctorId,
+          }
+        );
 
         return {
           success: true,

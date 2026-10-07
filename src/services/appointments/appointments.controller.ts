@@ -2534,10 +2534,12 @@ export class AppointmentsController {
         message: result.message,
       };
     } catch (error) {
+      // A refused request (slot taken, visit not movable) is the caller's to fix, not a fault.
+      const refusedByRule = error instanceof HttpException && error.getStatus() < 500;
       await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to reschedule appointment ${appointmentId}: ${error instanceof Error ? error.message : String(error)}`,
+        refusedByRule ? LogType.APPOINTMENT : LogType.ERROR,
+        refusedByRule ? LogLevel.WARN : LogLevel.ERROR,
+        `Failed to reschedule appointment ${appointmentId} to ${newDate} ${newTime}: ${error instanceof Error ? error.message : String(error)}`,
         'AppointmentsController.rescheduleAppointment',
         { appointmentId, newDate, newTime, clinicId }
       );
