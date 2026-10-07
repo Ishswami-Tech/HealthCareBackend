@@ -553,6 +553,62 @@ export class LoggingService {
     }
   }
 
+  private static readonly MAX_TERMINAL_ERROR_DETAIL_LENGTH = 300;
+
+  /**
+   * Personal data that error text from the database layer or a provider can embed (query
+   * arguments, webhook payloads). Masked before anything reaches stdout, whose retention and
+   * access are looser than the dashboard store that keeps the full metadata.
+   */
+  private static readonly TERMINAL_PII_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
+    [/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '<email>'],
+    [/(?:\+?\d{1,3}[\s-]?)?\(?\d{3,5}\)?[\s-]?\d{3,5}[\s-]?\d{3,5}/g, '<phone>'],
+  ];
+
+  /**
+   * Terminal suffix for the `error` (or `_error`) field callers put in metadata, so the real
+   * failure reaches the container log instead of only the dashboard store. Only the first line
+   * is used (Prisma puts the query arguments on the following lines), emails and phone numbers
+   * are masked, and the result is clipped. Empty when there is nothing to add or the message
+   * already contains it. Never throws: a logging helper must not turn into an unhandled
+   * rejection behind the callers' `void log(...)`.
+   */
+  private formatErrorDetail(
+    metadata: Record<string, unknown> | undefined,
+    message: string
+  ): string {
+    try {
+      if (!metadata) {
+        return '';
+      }
+      const raw = metadata['error'] ?? metadata['_error'];
+      if (raw === undefined || raw === null || raw === '') {
+        return '';
+      }
+      const text =
+        typeof raw === 'string'
+          ? raw
+          : raw instanceof Error
+            ? raw.message
+            : (this.safeStringify(raw) ?? '[unserialisable error value]');
+      const firstLine = text.split(/\r?\n/)[0] ?? '';
+      const detail = LoggingService.TERMINAL_PII_PATTERNS.reduce(
+        (acc, [pattern, replacement]) => acc.replace(pattern, replacement),
+        firstLine.replace(/\s+/g, ' ').trim()
+      );
+      if (!detail || message.includes(detail)) {
+        return '';
+      }
+      const errorName =
+        typeof metadata['errorName'] === 'string' ? `${metadata['errorName']}: ` : '';
+      const maxLength = LoggingService.MAX_TERMINAL_ERROR_DETAIL_LENGTH;
+      const clipped = detail.length > maxLength ? `${detail.slice(0, maxLength)}...` : detail;
+      return ` | error: ${errorName}${clipped}`;
+    } catch {
+      return '';
+    }
+  }
+
   /**
    * JSON.stringify that never throws. Metadata can carry request objects with
    * circular references (multipart streams) or BigInt values; a throw here
@@ -687,7 +743,11 @@ export class LoggingService {
         const contextColor = '\x1b[36m'; // Cyan
         const resetColor = '\x1b[0m';
 
-        const coloredMessage = `${levelColor}[${level}]${resetColor} ${contextColor}[${context}]${resetColor} ${message}`;
+        // WARN/ERROR lines used to print only the message, so the `error` a caller put in
+        // metadata (the actual JWT / database / provider failure) never reached the container
+        // log and survived only in the dashboard store. Append it here.
+        const errorDetail = this.formatErrorDetail(metadata, message);
+        const coloredMessage = `${levelColor}[${level}]${resetColor} ${contextColor}[${context}]${resetColor} ${message}${errorDetail}`;
         // Terminal output - using console.warn which is allowed by ESLint config
         // This provides visibility in both development and production (with reduced noise in production)
         console.warn(coloredMessage);

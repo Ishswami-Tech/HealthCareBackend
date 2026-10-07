@@ -128,12 +128,29 @@ export class JwtAuthGuard implements CanActivate {
   private readonly ATTEMPT_WINDOW = 30 * 60;
 
   /**
-   * Session inactivity threshold (15 minutes)
+   * Default session inactivity threshold in seconds (15 minutes), used when
+   * SESSION_INACTIVITY_THRESHOLD is not set.
+   */
+  private static readonly DEFAULT_SESSION_INACTIVITY_SECONDS = 15 * 60;
+
+  /**
+   * Session inactivity threshold in milliseconds.
+   *
+   * Read from SESSION_INACTIVITY_THRESHOLD (seconds), the same variable
+   * rate-limit.config.ts documents, so the deployed value is honoured. This
+   * used to be a hardcoded 15 minutes, which silently ignored the 2400 set in
+   * production.
    *
    * @private
-   * @readonly
    */
-  private readonly SESSION_ACTIVITY_THRESHOLD = 15 * 60 * 1000;
+  private get SESSION_ACTIVITY_THRESHOLD(): number {
+    return (
+      this.configService.getEnvNumber(
+        'SESSION_INACTIVITY_THRESHOLD',
+        JwtAuthGuard.DEFAULT_SESSION_INACTIVITY_SECONDS
+      ) * 1000
+    );
+  }
 
   /**
    * Maximum number of concurrent sessions per user.
@@ -682,9 +699,10 @@ export class JwtAuthGuard implements CanActivate {
       ipAddress: fullSession.ipAddress || 'unknown',
     };
 
-    // Check inactivity threshold and log a warning.
-    // MED-4 FIX: Previously the if-block was empty — the threshold was computed
-    // but never acted upon, making the 15-minute inactivity window a dead letter.
+    // Record (not enforce) a return after inactivity. The public /auth/refresh route never
+    // touches session activity, so a user whose tab kept refreshing tokens in the background
+    // trips this on the first authenticated call back. That is routine, hence DEBUG: at WARN it
+    // was the most frequent line in the production log and changed nothing.
     const lastActivityMs = new Date(lastActivityAt).getTime();
     const inactivityDuration = Date.now() - lastActivityMs;
     if (inactivityDuration > this.SESSION_ACTIVITY_THRESHOLD) {
@@ -692,7 +710,7 @@ export class JwtAuthGuard implements CanActivate {
       const logger = this.loggingService as LoggingService;
       void logger.log(
         LogType.AUTH,
-        LogLevel.WARN,
+        LogLevel.DEBUG,
         'Session has been inactive beyond the activity threshold',
         'JwtAuthGuard',
         {

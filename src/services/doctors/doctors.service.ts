@@ -521,24 +521,29 @@ export class DoctorsService {
 
     return await this.databaseService.executeHealthcareRead(async client => {
       const tx = client as unknown as Prisma.TransactionClient;
-      const [rows, stats] = await Promise.all([
-        tx.review.findMany({
-          where,
-          orderBy: { createdAt: 'desc' },
-          skip: (safePage - 1) * safeLimit,
-          take: safeLimit,
-          select: {
-            id: true,
-            rating: true,
-            comment: true,
-            createdAt: true,
-            patient: {
-              select: { user: { select: { firstName: true, lastName: true, name: true } } },
-            },
+      // Sequential on purpose: both queries share one pg client inside this callback, and
+      // running them concurrently triggers pg's "client.query() when the client is already
+      // executing a query" deprecation, which becomes a hard error in pg@9.
+      const rows = await tx.review.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (safePage - 1) * safeLimit,
+        take: safeLimit,
+        select: {
+          id: true,
+          rating: true,
+          comment: true,
+          createdAt: true,
+          patient: {
+            select: { user: { select: { firstName: true, lastName: true, name: true } } },
           },
-        }),
-        tx.review.aggregate({ where, _avg: { rating: true }, _count: { _all: true } }),
-      ]);
+        },
+      });
+      const stats = await tx.review.aggregate({
+        where,
+        _avg: { rating: true },
+        _count: { _all: true },
+      });
       const total = stats._count._all;
       return {
         items: rows.map(r => ({

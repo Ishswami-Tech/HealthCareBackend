@@ -4,7 +4,6 @@ import { AppointmentNotificationService } from './appointment-notification.servi
 import { ClinicTemplateService } from '@communication/services/clinic-template.service';
 import { LoggingService } from '@infrastructure/logging';
 import type { NotificationData } from '@core/types/appointment.types';
-import { formatDateKeyInIST } from '../../../../libs/utils/date-time.util';
 
 function resolveText(value: unknown, fallback = ''): string {
   if (typeof value === 'string') {
@@ -243,10 +242,10 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
       priority: pluginData.priority || 'normal',
       channels: pluginData.channels || ['email', 'whatsapp', 'push'],
       templateData: {
-        patientName: pluginData.patientName || 'Patient',
-        doctorName: pluginData.doctorName || 'Doctor',
-        appointmentDate: pluginData.appointmentDate || formatDateKeyInIST(new Date()),
-        appointmentTime: pluginData.appointmentTime || '10:00',
+        patientName: pluginData.patientName || '',
+        doctorName: pluginData.doctorName || '',
+        appointmentDate: pluginData.appointmentDate || '',
+        appointmentTime: pluginData.appointmentTime || '',
         location: pluginData.location || 'Clinic',
         clinicName: await this.resolveClinicName(pluginData),
         appointmentType: pluginData.appointmentType || '',
@@ -279,10 +278,10 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
       priority: pluginData.priority || 'high',
       channels: pluginData.channels || ['email', 'whatsapp', 'push', 'socket'],
       templateData: {
-        patientName: pluginData.patientName || 'Patient',
-        doctorName: pluginData.doctorName || 'Doctor',
-        appointmentDate: pluginData.appointmentDate || formatDateKeyInIST(new Date()),
-        appointmentTime: pluginData.appointmentTime || '10:00',
+        patientName: pluginData.patientName || '',
+        doctorName: pluginData.doctorName || '',
+        appointmentDate: pluginData.appointmentDate || '',
+        appointmentTime: pluginData.appointmentTime || '',
         location: pluginData.location || 'Clinic',
         clinicName: await this.resolveClinicName(pluginData),
         appointmentType: pluginData.appointmentType || '',
@@ -317,10 +316,10 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
       priority: pluginData.priority || 'normal',
       channels: pluginData.channels || ['email', 'whatsapp', 'push'],
       templateData: {
-        patientName: pluginData.patientName || 'Patient',
-        doctorName: pluginData.doctorName || 'Doctor',
-        appointmentDate: pluginData.appointmentDate || formatDateKeyInIST(new Date()),
-        appointmentTime: pluginData.appointmentTime || '10:00',
+        patientName: pluginData.patientName || '',
+        doctorName: pluginData.doctorName || '',
+        appointmentDate: pluginData.appointmentDate || '',
+        appointmentTime: pluginData.appointmentTime || '',
         location: pluginData.location || 'Clinic',
         clinicName: await this.resolveClinicName(pluginData),
         appointmentType: pluginData.appointmentType || '',
@@ -354,10 +353,10 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
       priority: pluginData.priority || 'normal',
       channels: pluginData.channels || ['email', 'whatsapp', 'push', 'socket'],
       templateData: {
-        patientName: pluginData.patientName || 'Patient',
-        doctorName: pluginData.doctorName || 'Doctor',
-        appointmentDate: pluginData.appointmentDate || formatDateKeyInIST(new Date()),
-        appointmentTime: pluginData.appointmentTime || '10:00',
+        patientName: pluginData.patientName || '',
+        doctorName: pluginData.doctorName || '',
+        appointmentDate: pluginData.appointmentDate || '',
+        appointmentTime: pluginData.appointmentTime || '',
         location: pluginData.location || 'Clinic',
         clinicName: await this.resolveClinicName(pluginData),
         appointmentType: pluginData.appointmentType || '',
@@ -390,10 +389,10 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
       priority: pluginData.priority || 'normal',
       channels: pluginData.channels || ['email', 'whatsapp', 'push', 'socket'],
       templateData: {
-        patientName: pluginData.patientName || 'Patient',
-        doctorName: pluginData.doctorName || 'Doctor',
-        appointmentDate: pluginData.appointmentDate || formatDateKeyInIST(new Date()),
-        appointmentTime: pluginData.appointmentTime || '10:00',
+        patientName: pluginData.patientName || '',
+        doctorName: pluginData.doctorName || '',
+        appointmentDate: pluginData.appointmentDate || '',
+        appointmentTime: pluginData.appointmentTime || '',
         location: pluginData.location || 'Clinic',
         clinicName: await this.resolveClinicName(pluginData),
         appointmentType: pluginData.appointmentType || '',

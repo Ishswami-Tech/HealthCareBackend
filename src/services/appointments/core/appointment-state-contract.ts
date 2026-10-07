@@ -4,6 +4,10 @@ import { BadRequestException } from '@nestjs/common';
 export const APPOINTMENT_STATUS_TRANSITIONS: Record<string, string[]> = {
   PENDING: ['SCHEDULED', 'CANCELLED', 'EXPIRED', 'RESCHEDULED'],
   SCHEDULED: ['CONFIRMED', 'CANCELLED', 'EXPIRED', 'RESCHEDULED'],
+  // COMPLETED is deliberately absent here. The one sanctioned shortcut, a CONFIRMED *video* visit
+  // whose join window has opened, lives in AppointmentsService.completeAppointment (and the video
+  // end route), so the doctor's complete flow owns it and the generic update / scheduler cannot
+  // take it.
   CONFIRMED: ['IN_PROGRESS', 'NO_SHOW', 'EXPIRED'],
   WAITING: ['IN_PROGRESS', 'NO_SHOW', 'CANCELLED', 'EXPIRED'],
   ON_HOLD: ['SCHEDULED', 'CANCELLED', 'RESCHEDULED'],

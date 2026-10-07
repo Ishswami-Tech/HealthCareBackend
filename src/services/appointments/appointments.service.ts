@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfigService } from '@config/config.service';
-import { getVideoActiveWindowMinutes } from '@config/video.config';
+import { getVideoActiveWindowMinutes, getVideoEarlyJoinMinutes } from '@config/video.config';
 
 // Infrastructure Services
 import { CacheService } from '@infrastructure/cache/cache.service';
@@ -140,6 +140,8 @@ interface CompletionAppointmentRow {
   userId: string;
   type: string;
   status: string;
+  date?: Date | string | null;
+  time?: string | null;
   metadata?: unknown;
   completedAt?: Date | string | null;
   doctor?: { id: string; userId: string } | null;
@@ -1743,6 +1745,31 @@ export class AppointmentsService {
     }
 
     return parseIstDateTime(appointment.date, appointment.time);
+  }
+
+  /**
+   * Whether a video visit's join window has opened: its scheduled start minus the early-join
+   * allowance has passed. Gates the CONFIRMED -> COMPLETED shortcut in completeAppointment so a
+   * visit booked for later cannot be completed ahead of time. A row without a parseable schedule
+   * fails closed.
+   */
+  private hasVideoJoinWindowOpened(appointment: {
+    date?: Date | string | null;
+    time?: string | null;
+  }): boolean {
+    if (!appointment.date || !appointment.time) {
+      return false;
+    }
+    const date = appointment.date instanceof Date ? appointment.date : new Date(appointment.date);
+    if (Number.isNaN(date.getTime())) {
+      return false;
+    }
+    const scheduledStart = parseIstDateTime(date, appointment.time);
+    if (!scheduledStart) {
+      return false;
+    }
+    const opensAt = scheduledStart.getTime() - getVideoEarlyJoinMinutes() * 60_000;
+    return Date.now() >= opensAt;
   }
 
   private resolveVideoAppointmentRescheduleDeadline(appointment: {
@@ -5170,14 +5197,35 @@ export class AppointmentsService {
 
       // The state contract decides: only IN_PROGRESS -> COMPLETED. CANCELLED, EXPIRED, NO_SHOW,
       // unpaid PENDING and every not-yet-started visit are refused.
-      if (!isValidAppointmentStatusTransition(currentStatus, String(AppointmentStatus.COMPLETED))) {
+      //
+      // One exception, mirroring the video end route (VideoService.completeAppointmentOnEnd): a
+      // CONFIRMED video visit may be completed directly once its join window has opened. A video
+      // visit only reaches IN_PROGRESS through POST /video/consultation/start, and when the doctor
+      // runs the call without that hop the status stays CONFIRMED. Refusing here left paid visits
+      // to be auto-expired by the scheduler five hours later instead of being completed. The
+      // join-window gate keeps a visit booked for later from being completed (and billed) early.
+      const isVideoVisit = isVideoCallAppointmentType(appointmentRecord.type);
+      const isConfirmedVideoVisit =
+        isVideoVisit && currentStatus === String(AppointmentStatus.CONFIRMED);
+      const completableConfirmedVideoVisit =
+        isConfirmedVideoVisit && this.hasVideoJoinWindowOpened(appointmentRecord);
+      if (isConfirmedVideoVisit && !completableConfirmedVideoVisit) {
+        throw this.errors.businessRuleViolation(
+          'A confirmed video visit can be completed only once its join window has opened.',
+          context
+        );
+      }
+      if (
+        !completableConfirmedVideoVisit &&
+        !isValidAppointmentStatusTransition(currentStatus, String(AppointmentStatus.COMPLETED))
+      ) {
         throw this.errors.businessRuleViolation(
           `Only an appointment that is in progress can be completed (this one is ${currentStatus.toLowerCase().replace(/_/g, ' ')}).`,
           context
         );
       }
 
-      if (isVideoCallAppointmentType(appointmentRecord.type)) {
+      if (isVideoVisit) {
         // The same definition of "paid" the video room uses to let the patient in: a visit that
         // is joinable must never be un-completable.
         if (!isAppointmentPaid(appointmentRecord)) {

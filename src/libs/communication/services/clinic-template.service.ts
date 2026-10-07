@@ -34,6 +34,7 @@ export interface ClinicTemplateData {
     prescription?: string;
     doctorDailySummary?: string;
     doctorNoAppointments?: string;
+    doctorJoined?: string;
   };
 }
 
@@ -158,6 +159,12 @@ export class ClinicTemplateService {
               }
             : {}),
           ...(whatsappTemplates?.['reminder'] && { reminder: whatsappTemplates['reminder'] }),
+          ...(whatsappTemplates?.['doctorJoined'] || whatsappTemplates?.['doctor_joined']
+            ? {
+                doctorJoined:
+                  whatsappTemplates?.['doctorJoined'] || whatsappTemplates?.['doctor_joined'],
+              }
+            : {}),
           ...(whatsappTemplates?.['receipt'] ||
           whatsappTemplates?.['paymentReceipt'] ||
           whatsappTemplates?.['payment_receipt'] ||

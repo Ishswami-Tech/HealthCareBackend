@@ -9,10 +9,12 @@ import { ProviderFactory } from '@communication/adapters/factories/provider.fact
 import { CommunicationConfigService } from '@communication/config/communication-config.service';
 import { DatabaseService } from '@infrastructure/database';
 import { ClinicTemplateService } from '@communication/services/clinic-template.service';
+import { humanizeVisitWhen } from '@utils/appointment-when.util';
 import {
   formatOTPTemplateParams,
   formatAppointmentConfirmationTemplateParams,
   formatAppointmentReminderTemplateParams,
+  formatDoctorJoinedTemplateParams,
   formatPaymentReceiptTemplateParams,
   formatDoctorDailySummaryTemplateParams,
   formatDoctorNoAppointmentsTemplateParams,
@@ -252,6 +254,9 @@ export class WhatsAppService {
         }
       }
 
+      // Callers pass whatever they hold (ISO timestamps, "YYYY-MM-DD", "14:00"); the patient
+      // must always read "Tue, 6 Oct 2026 at 2:00 PM".
+      const when = humanizeVisitWhen(appointmentDate, appointmentTime);
       await this.sendTemplateMessage(
         formattedPhone,
         templateId,
@@ -259,7 +264,7 @@ export class WhatsAppService {
           patientName,
           appointmentType,
           doctorName,
-          `${appointmentDate} at ${appointmentTime}`,
+          when.time ? `${when.date} at ${when.time}` : when.date,
           detailsUrl,
           serviceLabel
         ),
@@ -278,6 +283,96 @@ export class WhatsAppService {
         LogType.SYSTEM,
         LogLevel.ERROR,
         `Failed to send appointment reminder via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'WhatsAppService',
+        { stack: (error as Error)?.stack }
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Wording for the appointment-reminder template's "when" slot when it carries the
+   * doctor-joined notice: "...appointment with {doctor} at this moment: your doctor has joined
+   * the call, please join now."
+   */
+  private static readonly DOCTOR_JOINED_FALLBACK_WHEN_TEXT =
+    'this moment: your doctor has joined the call, please join now';
+
+  /**
+   * Tells the patient the doctor has joined the video consultation.
+   *
+   * Always an approved template: Meta delivers free-form text only inside a 24-hour window the
+   * patient opened by writing to the clinic, and a clinic-sent reminder does not open one. Uses
+   * the dedicated template when configured (WHATSAPP_DOCTOR_JOINED_TEMPLATE_ID or the clinic's
+   * `doctorJoined`), otherwise the appointment-reminder template with the join-now wording in
+   * its "when" slot and the join link on its URL button.
+   */
+  async sendDoctorJoinedNotice(
+    phoneNumber: string,
+    patientName: string,
+    doctorName: string,
+    joinUrl?: string,
+    clinicId?: string
+  ): Promise<boolean> {
+    if (!this.whatsAppConfig.enabled && !clinicId) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'WhatsApp service is disabled. Simulating successful doctor-joined notice.',
+        'WhatsAppService'
+      );
+      return true;
+    }
+
+    try {
+      const formattedPhone = this.formatPhoneNumber(phoneNumber);
+      let dedicatedTemplateId = this.whatsAppConfig.doctorJoinedTemplateId;
+      let reminderTemplateId = this.whatsAppConfig.appointmentReminderTemplateId;
+
+      if (clinicId) {
+        const clinicData = await this.clinicTemplateService.getClinicTemplateData(clinicId);
+        if (clinicData) {
+          dedicatedTemplateId = clinicData.templateIds.doctorJoined || dedicatedTemplateId;
+          reminderTemplateId = clinicData.templateIds.appointmentReminder || reminderTemplateId;
+        }
+      }
+
+      if (dedicatedTemplateId) {
+        await this.sendTemplateMessage(
+          formattedPhone,
+          dedicatedTemplateId,
+          formatDoctorJoinedTemplateParams(patientName, doctorName, joinUrl),
+          clinicId
+        );
+      } else {
+        await this.sendTemplateMessage(
+          formattedPhone,
+          reminderTemplateId,
+          formatAppointmentReminderTemplateParams(
+            patientName,
+            'video consultation',
+            doctorName,
+            WhatsAppService.DOCTOR_JOINED_FALLBACK_WHEN_TEXT,
+            joinUrl,
+            'video consultation'
+          ),
+          clinicId
+        );
+      }
+
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Doctor-joined notice sent to ${phoneNumber} via WhatsApp`,
+        'WhatsAppService',
+        { template: dedicatedTemplateId ? 'doctor_joined' : 'appointment_reminder_fallback' }
+      );
+      return true;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to send doctor-joined notice via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'WhatsAppService',
         { stack: (error as Error)?.stack }
       );
@@ -314,6 +409,9 @@ export class WhatsAppService {
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
       const normalizedAppointmentType = appointmentType.trim() || 'in-person';
+      // Callers pass whatever they hold (ISO timestamps, "YYYY-MM-DD", "14:00"); the recipient
+      // must always read "Tue, 6 Oct 2026" and "2:00 PM".
+      const when = humanizeVisitWhen(appointmentDate, appointmentTime);
       let templateId = this.whatsAppConfig.appointmentConfirmationTemplateId;
 
       if (clinicId) {
@@ -331,8 +429,8 @@ export class WhatsAppService {
               doctorName,
               normalizedAppointmentType,
               patientName,
-              appointmentDate,
-              appointmentTime,
+              when.date,
+              when.time,
               detailsUrl,
               serviceLabel
             )
@@ -340,8 +438,8 @@ export class WhatsAppService {
               patientName,
               normalizedAppointmentType,
               doctorName,
-              appointmentDate,
-              appointmentTime,
+              when.date,
+              when.time,
               detailsUrl,
               serviceLabel
             );

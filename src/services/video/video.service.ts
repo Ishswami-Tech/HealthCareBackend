@@ -184,6 +184,22 @@ type VideoProviderSettingRow = {
   settingValue: string | null;
 };
 
+/**
+ * What recording a doctor's start needs from an appointment row: the claim (status, startedAt,
+ * payment state), the booker lookup, and the event routing (patient / doctor user ids).
+ */
+type ConsultationStartAppointment = {
+  id: string;
+  clinicId: string;
+  patientId: string;
+  doctorId: string;
+  status: unknown;
+  startedAt?: Date | null;
+  patient?: { userId?: string | null } | null;
+  doctor?: { userId?: string | null } | null;
+} & AppointmentPaymentLike &
+  VideoBookerAppointment;
+
 @Injectable()
 export class VideoService implements OnModuleInit, OnModuleDestroy {
   private static readonly VIDEO_ACTIVE_WINDOW_MINUTES = getVideoActiveWindowMinutes();
@@ -204,6 +220,8 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     'CANCELLED',
   ]);
   private static readonly RATING_LOCK_TTL_SECONDS = 30;
+  /** Caller id used for internal token requests (meeting-URL lookups); never a real join. */
+  private static readonly SYSTEM_CALLER_USER_ID = 'system';
   private provider: IVideoProvider | undefined;
   private readonly VIDEO_CACHE_TTL = 1800; // 30 minutes
   private readonly CALL_CACHE_TTL = 300; // 5 minutes
@@ -746,12 +764,38 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
       const preferredProvider = await this.resolveEffectivePreferredProvider(appointment);
 
-      return await this.withProviderFallback(
+      const tokenResponse = await this.withProviderFallback(
         'VideoService.generateMeetingToken',
         provider =>
           provider.generateMeetingToken(resolvedAppointmentId, userId, userRole, userInfo),
         preferredProvider
       );
+
+      // The web client's Join button only asks for a token and never calls the start route, so a
+      // doctor's join used to leave the visit CONFIRMED (to be auto-expired hours later) and the
+      // patient was never told the doctor had arrived. Record the doctor's start here as well.
+      // Idempotent: only the first doctor start changes anything, and the token minted for the
+      // meeting-URL lookup (system caller) is not a join.
+      if (userRole === 'doctor' && userId !== VideoService.SYSTEM_CALLER_USER_ID) {
+        try {
+          await this.recordConsultationStart(appointment, resolvedAppointmentId, userId, userRole, {
+            emitOnlyOnFirstDoctorStart: true,
+          });
+        } catch (startError: unknown) {
+          // The token is already minted and the start claim, if it landed, is idempotent: a
+          // retry would no longer count as the first start. A failure to announce the start must
+          // therefore be logged, never turned into a failed join.
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Doctor join recorded but the start notice failed: ${extractErrorMessage(startError) ?? 'Unknown error'}`,
+            'VideoService.generateMeetingToken',
+            { appointmentId: resolvedAppointmentId }
+          );
+        }
+      }
+
+      return tokenResponse;
     } catch (error: unknown) {
       this.logLifecycleFailure('VideoService.generateMeetingToken', resolvedAppointmentId, error);
       throw this.toVideoLifecycleError(
@@ -1792,43 +1836,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       // Only the appointment STATUS waits for the doctor. It becomes IN_PROGRESS when the
       // doctor joins; a patient (or front-desk staff) alone in the room leaves it CONFIRMED,
       // so the visit can still be rescheduled if the doctor never comes.
-      // Only the doctor's FIRST start tells the patient, and the database decides which start is
-      // the first: the conditional `startedAt` stamp is the claim, so two devices or a double tap
-      // notify once and a failed stamp does not re-notify on every rejoin.
-      const firstDoctorStart =
-        userRole === 'doctor'
-          ? await this.markAppointmentStartedByDoctor(appointment, userId)
-          : false;
-      // Only a first start notifies, so only then does the booking account have to be resolved.
-      const bookerUserId = firstDoctorStart
-        ? await this.resolveBookerForNotification(appointment)
-        : undefined;
-
-      // Emit event. The envelope carries who to notify (the notification rule reads `userId`
-      // and `metadata`, never `payload`); the listener tells the patient only when the doctor
-      // starts, so a rejoin or a patient opening the room does not notify anyone.
-      const now: number = Date.now();
-      const timestamp: string = new Date(now).toISOString();
-      await this.eventService.emitEnterprise('video.consultation.started', {
-        eventId: `video-consultation-started-${resolvedAppointmentId}-${now}`,
-        eventType: 'video.consultation.started',
-        category: EventCategory.SYSTEM,
-        priority: EventPriority.HIGH,
-        timestamp,
-        source: 'VideoService',
-        version: '1.0.0',
-        ...buildVideoLifecycleRouting(
-          appointment,
-          { actorRole: userRole, firstStart: firstDoctorStart },
-          bookerUserId
-        ),
-        payload: {
-          appointmentId: resolvedAppointmentId,
-          sessionId: session.id,
-          userId,
-          userRole,
-          provider: this.provider?.providerName ?? 'unknown',
-        },
+      await this.recordConsultationStart(appointment, resolvedAppointmentId, userId, userRole, {
+        sessionId: session.id,
+        emitOnlyOnFirstDoctorStart: false,
       });
 
       return this.attachAppointmentNamesToSession(session, appointment);
@@ -1858,6 +1868,82 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
    *
    * @returns true only when this call was the doctor's first start of the visit
    */
+  /**
+   * The doctor-start claim plus the `video.consultation.started` event, shared by the explicit
+   * start route and by the meeting-token request.
+   *
+   * Only the doctor's FIRST start tells the patient, and the database decides which start is the
+   * first: the conditional `startedAt` stamp is the claim, so two devices or a double tap notify
+   * once and a failed stamp does not re-notify on every rejoin. Only a first start notifies, so
+   * only then is the booking account resolved. The envelope carries who to notify (the
+   * notification rule reads `userId` and `metadata`, never `payload`); the listener tells the
+   * patient only when the doctor starts, so a rejoin or a patient opening the room notifies
+   * nobody. `joinUrl` rides along so the WhatsApp notice can offer a tap-to-join button.
+   *
+   * @returns true when this call recorded the doctor's first start
+   */
+  private async recordConsultationStart(
+    appointment: ConsultationStartAppointment,
+    resolvedAppointmentId: string,
+    userId: string,
+    userRole: VideoCallerRole,
+    options: { sessionId?: string; emitOnlyOnFirstDoctorStart: boolean }
+  ): Promise<boolean> {
+    const firstDoctorStart =
+      userRole === 'doctor'
+        ? await this.markAppointmentStartedByDoctor(appointment, userId)
+        : false;
+    if (options.emitOnlyOnFirstDoctorStart && !firstDoctorStart) {
+      return false;
+    }
+
+    const bookerUserId = firstDoctorStart
+      ? await this.resolveBookerForNotification(appointment)
+      : undefined;
+    const joinUrl = this.buildPatientJoinUrl(resolvedAppointmentId);
+
+    const now: number = Date.now();
+    await this.eventService.emitEnterprise('video.consultation.started', {
+      eventId: `video-consultation-started-${resolvedAppointmentId}-${now}`,
+      eventType: 'video.consultation.started',
+      category: EventCategory.SYSTEM,
+      priority: EventPriority.HIGH,
+      timestamp: new Date(now).toISOString(),
+      source: 'VideoService',
+      version: '1.0.0',
+      ...buildVideoLifecycleRouting(
+        appointment,
+        {
+          actorRole: userRole,
+          firstStart: firstDoctorStart,
+          ...(joinUrl ? { joinUrl } : {}),
+        },
+        bookerUserId
+      ),
+      payload: {
+        appointmentId: resolvedAppointmentId,
+        ...(options.sessionId ? { sessionId: options.sessionId } : {}),
+        userId,
+        userRole,
+        provider: this.provider?.providerName ?? 'unknown',
+      },
+    });
+
+    return firstDoctorStart;
+  }
+
+  /** The patient's link into the call. Empty when no public frontend URL is configured. */
+  private buildPatientJoinUrl(appointmentId: string): string {
+    const frontendBaseUrl =
+      this.configService.getEnv('FRONTEND_URL') ||
+      this.configService.getEnv('NEXT_PUBLIC_APP_URL') ||
+      '';
+    if (!frontendBaseUrl) {
+      return '';
+    }
+    return `${frontendBaseUrl.replace(/\/+$/, '')}/meet/${encodeURIComponent(appointmentId)}`;
+  }
+
   private async markAppointmentStartedByDoctor(
     appointment: {
       id: string;
@@ -3319,10 +3405,12 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
   private async generateMeetingUrl(appointmentId: string): Promise<string> {
     // Use provider to generate meeting URL
-    const tokenResponse = await this.generateMeetingToken(appointmentId, 'system', 'doctor', {
-      displayName: 'System',
-      email: '',
-    });
+    const tokenResponse = await this.generateMeetingToken(
+      appointmentId,
+      VideoService.SYSTEM_CALLER_USER_ID,
+      'doctor',
+      { displayName: 'System', email: '' }
+    );
     return tokenResponse.meetingUrl;
   }
 
@@ -3849,10 +3937,11 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       // resolve the caller's role records so patients and doctors actually see their calls.
       const roleIds = await this.databaseService.executeRead(async prisma => {
         const tx = prisma as unknown as Prisma.TransactionClient;
-        const [patient, doctor] = await Promise.all([
-          tx.patient.findUnique({ where: { userId }, select: { id: true } }),
-          tx.doctor.findUnique({ where: { userId }, select: { id: true } }),
-        ]);
+        // Sequential on purpose: inside the callback both queries share one pg client, and
+        // issuing them concurrently triggers pg's "client.query() when the client is already
+        // executing a query" deprecation, which becomes a hard error in pg@9.
+        const patient = await tx.patient.findUnique({ where: { userId }, select: { id: true } });
+        const doctor = await tx.doctor.findUnique({ where: { userId }, select: { id: true } });
         return { patientId: patient?.id, doctorId: doctor?.id };
       });
       const consultations = await this.databaseService.executeHealthcareRead(async client => {

@@ -15,6 +15,7 @@ import { DeliveryStatus } from '@core/types';
 // Infrastructure services - Use direct imports to avoid TDZ issues with barrel exports
 import { EventService } from '@infrastructure/events/event.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
+import { resolveUserDisplayName } from '@utils/display-name.util';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import {
@@ -1429,6 +1430,52 @@ export class CommunicationService implements OnModuleInit {
   }
 
   /**
+   * "Your doctor has joined", as an approved template with the patient's name, the doctor's name
+   * and a tap-to-join button. Names come from the appointment row, not from the event, so the
+   * push and socket payloads stay name-free for lock screens.
+   */
+  private async sendDoctorJoinedWhatsApp(
+    request: CommunicationRequest,
+    phoneNumber: string,
+    clinicId: string | undefined
+  ): Promise<boolean> {
+    const rawMetadata = request.data?.['metadata'];
+    const metadata =
+      rawMetadata && typeof rawMetadata === 'object'
+        ? (rawMetadata as Record<string, unknown>)
+        : {};
+    const appointmentId =
+      typeof metadata['appointmentId'] === 'string' ? metadata['appointmentId'] : '';
+    const joinUrl = typeof metadata['joinUrl'] === 'string' ? metadata['joinUrl'] : undefined;
+
+    let patientName = '';
+    let doctorName = '';
+    if (appointmentId) {
+      try {
+        const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+        patientName = resolveUserDisplayName(appointment?.patient?.user);
+        doctorName = resolveUserDisplayName(appointment?.doctor?.user);
+      } catch (error) {
+        void this.loggingService.log(
+          LogType.NOTIFICATION,
+          LogLevel.WARN,
+          'Could not load appointment names for the doctor-joined WhatsApp notice',
+          'CommunicationService',
+          { appointmentId, error: error instanceof Error ? error.message : String(error) }
+        );
+      }
+    }
+
+    return await this.whatsAppService.sendDoctorJoinedNotice(
+      phoneNumber,
+      patientName,
+      doctorName,
+      joinUrl,
+      clinicId
+    );
+  }
+
+  /**
    * Send WhatsApp message
    * Supports multi-tenant communication via clinicId
    */
@@ -1453,14 +1500,17 @@ export class CommunicationService implements OnModuleInit {
           ? (request.metadata['clinicId'] as string | undefined)
           : undefined;
 
-      // Use WhatsApp service to send message
-      // Pass clinicId for multi-tenant provider routing
-      const message = `*${request.title}*\n\n${request.body}`;
-      const success = await this.whatsAppService.sendCustomMessage(
-        recipient.phoneNumber,
-        message,
-        clinicId
-      );
+      // Business-initiated WhatsApp must be an approved template unless the patient wrote to the
+      // clinic in the last 24 hours, and a clinic-sent reminder does not open that window. Events
+      // with a template-backed notice use it; everything else keeps the free-text path.
+      const success =
+        request.data?.['eventType'] === 'video.consultation.started'
+          ? await this.sendDoctorJoinedWhatsApp(request, recipient.phoneNumber, clinicId)
+          : await this.whatsAppService.sendCustomMessage(
+              recipient.phoneNumber,
+              `*${request.title}*\n\n${request.body}`,
+              clinicId
+            );
 
       return {
         channel: 'whatsapp',

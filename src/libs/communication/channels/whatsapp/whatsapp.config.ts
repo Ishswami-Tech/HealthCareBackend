@@ -65,6 +65,16 @@ export class WhatsAppConfig {
     );
   }
 
+  /**
+   * Optional dedicated template for "your doctor has joined the video consultation". When unset,
+   * WhatsAppService falls back to the appointment-reminder template so the notice still goes out
+   * as an approved template. Expected body: "Hello {{1}}, {{2}} has joined your video
+   * consultation. Please join now." with a URL button for the join link.
+   */
+  get doctorJoinedTemplateId(): string {
+    return this.getConfig<string>('WHATSAPP_DOCTOR_JOINED_TEMPLATE_ID', '');
+  }
+
   get receiptTemplateId(): string {
     return WhatsAppConfig.RECEIPT_TEMPLATE_ID;
   }

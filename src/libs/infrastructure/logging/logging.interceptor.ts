@@ -93,10 +93,13 @@ export class LoggingInterceptor implements NestInterceptor {
           const endTime = Date.now();
           const duration = endTime - startTime;
 
-          // Always log errors
+          // A 4xx is the client or a business rule being told "no" and is expected traffic
+          // (invalid OTP, expired visit, refused completion); only a 5xx is a failure of ours.
+          // Logging every refused request at ERROR buried the real failures in production.
+          const statusCode = (error as { status?: number }).status || 500;
           void this.loggingService.log(
             LogType.ERROR,
-            LogLevel.ERROR,
+            statusCode >= 500 ? LogLevel.ERROR : LogLevel.WARN,
             `${method} ${url} failed: ${(error as Error).message}`,
             'API',
             {
@@ -106,7 +109,7 @@ export class LoggingInterceptor implements NestInterceptor {
               error: {
                 message: (error as Error).message,
                 code: (error as { code?: string }).code || 'UNKNOWN_ERROR',
-                statusCode: (error as { status?: number }).status || 500,
+                statusCode,
               },
             }
           );

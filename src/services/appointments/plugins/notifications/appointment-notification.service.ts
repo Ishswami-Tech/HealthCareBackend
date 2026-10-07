@@ -19,6 +19,7 @@ import {
   type SocketEventPrimitive,
 } from '@communication/channels/socket/socket.service';
 import { DatabaseService } from '@infrastructure/database';
+import { mergeAppointmentFacts } from './notification-template-facts';
 import { EmailTemplate } from '@core/types';
 import { findTreatmentCatalogEntryOrUndefined } from '@core/types/treatment-catalog.types';
 import type {
@@ -123,7 +124,8 @@ export class AppointmentNotificationService {
   /**
    * Send appointment notification through multiple channels
    */
-  async sendNotification(notificationData: NotificationData): Promise<NotificationResult> {
+  async sendNotification(requestedNotificationData: NotificationData): Promise<NotificationResult> {
+    const notificationData = await this.withAppointmentFacts(requestedNotificationData);
     const notificationId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const sentChannels: string[] = [];
     const failedChannels: string[] = [];
@@ -640,6 +642,37 @@ export class AppointmentNotificationService {
   }
 
   /**
+   * Template data arrives from many producers with placeholder defaults and raw timestamps. The
+   * appointment row is the source of truth for names, date and time, so it is read once here and
+   * merged in (see mergeAppointmentFacts); a lookup failure sends the producer's values as-is.
+   */
+  private async withAppointmentFacts(data: NotificationData): Promise<NotificationData> {
+    try {
+      const appointment = await this.databaseService.findAppointmentByIdSafe(data.appointmentId);
+      return {
+        ...data,
+        templateData: mergeAppointmentFacts(data.templateData, appointment, {
+          // A follow-up notice names the future follow-up date; its appointmentId is the visit
+          // it follows, whose date and time must not replace it.
+          rowDescribesVisit: data.type !== 'follow_up',
+        }),
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.WARN,
+        'Could not load the appointment to complete notification template data; sending producer values',
+        'AppointmentNotificationService',
+        {
+          appointmentId: data.appointmentId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      return data;
+    }
+  }
+
+  /**
    * Send WhatsApp notification
    * Supports multi-tenant communication via clinicId
    */
@@ -716,18 +749,22 @@ export class AppointmentNotificationService {
             );
             didSend = true;
           } else if (role === 'doctor') {
-            const customMessage = this.buildDoctorNewAppointmentMessage(
+            // The doctor's copy used to be free text, which Meta refuses with 131047
+            // ("Re-engagement message") unless the doctor replied within the last 24 hours.
+            // The confirmation template addressed to the doctor is always deliverable.
+            await this.whatsAppService.sendAppointmentConfirmation(
+              phone,
               templateData.patientName,
               templateData.doctorName,
               templateData.appointmentDate,
               templateData.appointmentTime,
               templateData.location,
-              templateData.clinicName,
+              clinicId,
+              detailsUrl,
               appointmentType,
-              serviceLabel,
-              detailsUrl
+              role,
+              serviceLabel
             );
-            await this.whatsAppService.sendCustomMessage(phone, customMessage, clinicId);
             didSend = true;
           }
         } else if (type === 'reminder' || type === 'updated') {
@@ -761,20 +798,26 @@ export class AppointmentNotificationService {
       }
 
       // CC WhatsApp to clinic/owner phone for reminder and appointment update notifications
-      const ccPhone = '7218378311';
+      // Clinic/owner copy of each patient notification. Configurable; the default keeps the
+      // number that has been receiving these copies. Set it empty to turn the copy off.
+      const ccPhone = this.configService.getEnv('APPOINTMENT_NOTIFICATION_CC_PHONE', '7218378311');
       if (
+        ccPhone &&
         ['reminder', 'updated', 'confirmation', 'created', 'cancellation', 'expired'].includes(type)
       ) {
         try {
-          const ccMessage = this.buildClinicCCMessage(
+          const ccSent = await this.sendClinicCopy(
             type,
+            ccPhone,
             templateData,
             appointmentType,
             serviceLabel,
-            detailsUrl
+            detailsUrl,
+            clinicId
           );
-          await this.whatsAppService.sendCustomMessage(ccPhone, ccMessage, clinicId);
-          deliveryResults.push({ role: 'clinic_cc' as const, phone: ccPhone });
+          if (ccSent) {
+            deliveryResults.push({ role: 'clinic_cc' as const, phone: ccPhone });
+          }
         } catch (ccError) {
           await this.loggingService.log(
             LogType.NOTIFICATION,
@@ -857,7 +900,8 @@ export class AppointmentNotificationService {
     if (deviceTokens.length === 0) {
       await this.loggingService.log(
         LogType.ERROR,
-        LogLevel.WARN,
+        // Expected for patients who only use the web app; nothing to act on.
+        LogLevel.INFO,
         `Skipping push notification - no device tokens found`,
         'AppointmentNotificationService.sendPushNotification',
         {
@@ -1153,34 +1197,62 @@ export class AppointmentNotificationService {
     return `${normalizedFrontendUrl}/patient/appointments?appointmentId=${encodeURIComponent(appointmentId)}`;
   }
 
-  private buildDoctorNewAppointmentMessage(
-    patientName: string,
-    doctorName: string,
-    appointmentDate: string,
-    appointmentTime: string,
-    location?: string,
-    clinicName?: string,
-    appointmentType?: string,
-    serviceLabel?: string,
-    detailsUrl?: string
-  ): string {
-    const clinicLabel = resolveText(clinicName, 'Healthcare Clinic');
-    const typeLabel = resolveText(appointmentType, 'in-person').toUpperCase();
-    const serviceLabelText = resolveText(serviceLabel, typeLabel);
-    const locationLabel = resolveText(location, clinicLabel);
-    const joinLink = detailsUrl ? `\nJoin link: ${detailsUrl}` : '';
+  /**
+   * The clinic/owner copy of a patient notification. Meta delivers free text only inside a
+   * 24-hour window the recipient opened by replying (error 131047 otherwise), so the copy rides
+   * the approved confirmation or reminder template, with the greeting slot marking it as a copy.
+   * Cancellation and expiry have no template and stay free text.
+   */
+  private async sendClinicCopy(
+    type: NotificationData['type'],
+    ccPhone: string,
+    templateData: NotificationData['templateData'],
+    appointmentType: string,
+    serviceLabel: string | undefined,
+    detailsUrl: string | undefined,
+    clinicId: string | undefined
+  ): Promise<boolean> {
+    const copyGreeting = `${resolveText(templateData.patientName, 'Patient')} (clinic copy)`;
 
-    return [
-      `New ${serviceLabelText} appointment booked for ${doctorName}`,
-      '',
-      `Patient: ${patientName}`,
-      `Date: ${appointmentDate}`,
-      `Time: ${appointmentTime}`,
-      `Location: ${locationLabel}`,
-      `${joinLink}`.trim(),
-    ]
-      .filter(Boolean)
-      .join('\n');
+    if (type === 'confirmation' || type === 'created') {
+      return await this.whatsAppService.sendAppointmentConfirmation(
+        ccPhone,
+        copyGreeting,
+        templateData.doctorName,
+        templateData.appointmentDate,
+        templateData.appointmentTime,
+        templateData.location,
+        clinicId,
+        detailsUrl,
+        appointmentType,
+        'patient',
+        serviceLabel
+      );
+    }
+
+    if (type === 'reminder' || type === 'updated') {
+      return await this.whatsAppService.sendAppointmentReminder(
+        ccPhone,
+        copyGreeting,
+        templateData.doctorName,
+        templateData.appointmentDate,
+        templateData.appointmentTime,
+        templateData.location,
+        clinicId,
+        detailsUrl,
+        appointmentType,
+        serviceLabel
+      );
+    }
+
+    const ccMessage = this.buildClinicCCMessage(
+      type,
+      templateData,
+      appointmentType,
+      serviceLabel,
+      detailsUrl
+    );
+    return await this.whatsAppService.sendCustomMessage(ccPhone, ccMessage, clinicId);
   }
 
   private buildClinicCCMessage(
