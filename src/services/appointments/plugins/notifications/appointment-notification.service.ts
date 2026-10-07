@@ -649,7 +649,14 @@ export class AppointmentNotificationService {
   private async withAppointmentFacts(data: NotificationData): Promise<NotificationData> {
     try {
       const appointment = await this.databaseService.findAppointmentByIdSafe(data.appointmentId);
-      return { ...data, templateData: mergeAppointmentFacts(data.templateData, appointment) };
+      return {
+        ...data,
+        templateData: mergeAppointmentFacts(data.templateData, appointment, {
+          // A follow-up notice names the future follow-up date; its appointmentId is the visit
+          // it follows, whose date and time must not replace it.
+          rowDescribesVisit: data.type !== 'follow_up',
+        }),
+      };
     } catch (error) {
       await this.loggingService.log(
         LogType.NOTIFICATION,

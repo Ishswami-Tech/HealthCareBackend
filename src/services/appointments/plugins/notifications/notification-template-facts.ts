@@ -1,5 +1,10 @@
 import type { NotificationData } from '@core/types/appointment.types';
-import { formatDateInIST, formatTimeInIST, parseIstDateTime } from '@utils/date-time.util';
+import {
+  formatVisitDateLabel,
+  formatVisitTimeFromClock,
+  humanizeVisitDate,
+  humanizeVisitTime,
+} from '@utils/appointment-when.util';
 import { resolveUserDisplayName } from '@utils/display-name.util';
 
 type TemplateData = NotificationData['templateData'];
@@ -14,6 +19,15 @@ export interface AppointmentFactsSource {
   patient?: { user?: PersonUser | null } | null;
   doctor?: { user?: PersonUser | null } | null;
   clinic?: { name?: string | null } | null;
+}
+
+export interface MergeAppointmentFactsOptions {
+  /**
+   * Whether the row's date and time describe the visit being announced. False for a follow-up
+   * notice: its date is the future follow-up while its appointmentId is the visit it follows.
+   * Defaults to true.
+   */
+  rowDescribesVisit?: boolean;
 }
 
 /** Values producers pass when they have no real one; never shown to a patient as-is. */
@@ -31,14 +45,7 @@ export function isPlaceholderText(value: unknown, placeholders: ReadonlySet<stri
 
 /** "Tue, 6 Oct 2026" in IST; '' when the date is missing or unparseable. */
 export function formatAppointmentDateLabel(date: Date | string | null | undefined): string {
-  const label = formatDateInIST(date, {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
-  // en-IN writes "Tue, 6 Oct, 2026"; drop the comma before the year.
-  return label.replace(/,\s*(\d{4})$/, ' $1');
+  return formatVisitDateLabel(date);
 }
 
 /** "2:00 PM" in IST from the row's date plus "HH:mm" time; '' when either is missing. */
@@ -46,39 +53,26 @@ export function formatAppointmentTimeLabel(
   date: Date | string | null | undefined,
   time: string | null | undefined
 ): string {
-  if (!date || !time) {
-    return '';
-  }
-  const dateValue = date instanceof Date ? date : new Date(date);
-  if (Number.isNaN(dateValue.getTime())) {
-    return '';
-  }
-  const start = parseIstDateTime(dateValue, time);
-  if (!start) {
-    return '';
-  }
-  return formatTimeInIST(start, {
-    hour: 'numeric',
-    minute: '2-digit',
-    second: undefined,
-    hour12: true,
-  })
-    .replace(/\u202f/g, ' ')
-    .replace(/\s?(am|pm)$/i, match => match.toUpperCase())
-    .trim();
+  return formatVisitTimeFromClock(date, time);
 }
 
 /**
- * Complete the template data from the appointment row. The row wins for names, date and time:
- * producers were passing "Patient", "Doctor", "10:00", ISO timestamps and +05:30 offsets, and
- * patients saw all of it verbatim. The payload fills only what the row cannot.
+ * Complete the template data from the appointment row. The row wins for names, date and time
+ * (unless `rowDescribesVisit` is false): producers were passing "Patient", "Doctor", "10:00",
+ * ISO timestamps and +05:30 offsets, and patients saw all of it verbatim. Whatever the payload
+ * still supplies is humanized too, so a raw timestamp never reaches a message even without a row.
  */
 export function mergeAppointmentFacts(
   templateData: TemplateData,
-  appointment: AppointmentFactsSource | null | undefined
+  appointment: AppointmentFactsSource | null | undefined,
+  options: MergeAppointmentFactsOptions = {}
 ): TemplateData {
+  const rowDescribesVisit = options.rowDescribesVisit ?? true;
+  const payloadDate = humanizeVisitDate(templateData.appointmentDate);
+  const payloadTime = humanizeVisitTime(templateData.appointmentTime, templateData.appointmentDate);
+
   if (!appointment) {
-    return templateData;
+    return { ...templateData, appointmentDate: payloadDate, appointmentTime: payloadTime };
   }
 
   const payloadPatientName = isPlaceholderText(templateData.patientName, PLACEHOLDER_NAMES)
@@ -91,9 +85,10 @@ export function mergeAppointmentFacts(
   const patientName = resolveUserDisplayName(appointment.patient?.user) || payloadPatientName;
   const doctorName = resolveUserDisplayName(appointment.doctor?.user) || payloadDoctorName;
   const appointmentDate =
-    formatAppointmentDateLabel(appointment.date) || templateData.appointmentDate;
+    (rowDescribesVisit && formatAppointmentDateLabel(appointment.date)) || payloadDate;
   const appointmentTime =
-    formatAppointmentTimeLabel(appointment.date, appointment.time) || templateData.appointmentTime;
+    (rowDescribesVisit && formatAppointmentTimeLabel(appointment.date, appointment.time)) ||
+    payloadTime;
   const clinicName = (appointment.clinic?.name || '').trim() || templateData.clinicName;
   const location = isPlaceholderText(templateData.location, PLACEHOLDER_LOCATIONS)
     ? clinicName

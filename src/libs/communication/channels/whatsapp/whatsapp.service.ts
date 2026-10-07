@@ -9,6 +9,7 @@ import { ProviderFactory } from '@communication/adapters/factories/provider.fact
 import { CommunicationConfigService } from '@communication/config/communication-config.service';
 import { DatabaseService } from '@infrastructure/database';
 import { ClinicTemplateService } from '@communication/services/clinic-template.service';
+import { humanizeVisitWhen } from '@utils/appointment-when.util';
 import {
   formatOTPTemplateParams,
   formatAppointmentConfirmationTemplateParams,
@@ -253,6 +254,9 @@ export class WhatsAppService {
         }
       }
 
+      // Callers pass whatever they hold (ISO timestamps, "YYYY-MM-DD", "14:00"); the patient
+      // must always read "Tue, 6 Oct 2026 at 2:00 PM".
+      const when = humanizeVisitWhen(appointmentDate, appointmentTime);
       await this.sendTemplateMessage(
         formattedPhone,
         templateId,
@@ -260,7 +264,7 @@ export class WhatsAppService {
           patientName,
           appointmentType,
           doctorName,
-          `${appointmentDate} at ${appointmentTime}`,
+          when.time ? `${when.date} at ${when.time}` : when.date,
           detailsUrl,
           serviceLabel
         ),
@@ -405,6 +409,9 @@ export class WhatsAppService {
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
       const normalizedAppointmentType = appointmentType.trim() || 'in-person';
+      // Callers pass whatever they hold (ISO timestamps, "YYYY-MM-DD", "14:00"); the recipient
+      // must always read "Tue, 6 Oct 2026" and "2:00 PM".
+      const when = humanizeVisitWhen(appointmentDate, appointmentTime);
       let templateId = this.whatsAppConfig.appointmentConfirmationTemplateId;
 
       if (clinicId) {
@@ -422,8 +429,8 @@ export class WhatsAppService {
               doctorName,
               normalizedAppointmentType,
               patientName,
-              appointmentDate,
-              appointmentTime,
+              when.date,
+              when.time,
               detailsUrl,
               serviceLabel
             )
@@ -431,8 +438,8 @@ export class WhatsAppService {
               patientName,
               normalizedAppointmentType,
               doctorName,
-              appointmentDate,
-              appointmentTime,
+              when.date,
+              when.time,
               detailsUrl,
               serviceLabel
             );

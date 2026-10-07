@@ -44,13 +44,30 @@ describe('notification template facts', () => {
     expect(merged.clinicName).toBe('Viddhakarma Clinic');
   });
 
-  it('keeps a real producer location and leaves the data untouched without a row', () => {
-    const merged = mergeAppointmentFacts(
+  it('keeps a real producer location, and humanizes the payload even without a row', () => {
+    const withLocation = mergeAppointmentFacts(
       { ...producerTemplate, location: 'Room 4' },
       appointmentRow
     );
-    expect(merged.location).toBe('Room 4');
-    expect(mergeAppointmentFacts(producerTemplate, null)).toEqual(producerTemplate);
+    expect(withLocation.location).toBe('Room 4');
+
+    const withoutRow = mergeAppointmentFacts(producerTemplate, null);
+    expect(withoutRow).toEqual({
+      ...producerTemplate,
+      appointmentDate: 'Tue, 6 Oct 2026',
+      appointmentTime: '10:00 AM',
+    });
+  });
+
+  it('keeps the follow-up date when the row is the visit being followed up', () => {
+    const merged = mergeAppointmentFacts(
+      { ...producerTemplate, appointmentDate: '2026-10-20', appointmentTime: '' },
+      appointmentRow,
+      { rowDescribesVisit: false }
+    );
+    expect(merged.appointmentDate).toBe('Tue, 20 Oct 2026');
+    expect(merged.appointmentTime).toBe('');
+    expect(merged.patientName).toBe('Aadesh Bhujbal');
   });
 
   it('falls back to the producer name when the row has no user name', () => {
