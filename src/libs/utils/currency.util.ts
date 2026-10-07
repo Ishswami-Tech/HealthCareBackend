@@ -22,6 +22,22 @@ const PAID_PAYMENT_STATUSES: ReadonlySet<string> = new Set([
 ]);
 
 /** Canonical status normalisation: trim, collapse spaces/hyphens to `_`, upper-case. */
+/**
+ * Formats an amount already expressed in major units (rupees), e.g. `Payment.amount`, which
+ * the billing tables store as a rupee float. Use formatCurrencyFromMinorUnits only for
+ * provider amounts carried in paise.
+ */
+export function formatCurrency(amount: number, currency = 'INR', locale = 'en-IN'): string {
+  const normalizedAmount = Number.isFinite(amount) ? amount : 0;
+
+  return new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(normalizedAmount);
+}
+
 export function normalizePaymentStatus(value: unknown): string {
   if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
     return '';

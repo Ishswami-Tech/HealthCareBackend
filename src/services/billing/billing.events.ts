@@ -8,7 +8,8 @@ import { EmailService } from '@communication/channels/email/email.service';
 import { EmailTemplatesService } from '@communication/channels/email/email-templates.service';
 import { LogType, LogLevel, AppointmentStatus, PaymentStatus } from '@core/types';
 import type { AppointmentWithRelations } from '@core/types';
-import { formatCurrencyFromMinorUnits } from '@utils/currency.util';
+import { formatCurrency } from '@utils/currency.util';
+import { humanizeVisitWhen } from '@utils/appointment-when.util';
 import { resolvePaidConfirmationExpiresAt } from './billing-payment-finalisation.util';
 
 /**
@@ -566,16 +567,21 @@ export class BillingEventsListener {
               ? confirmedAppointmentRecord['paymentAmount']
               : (payload.amount ?? 0));
           const appointmentLink = buildAppointmentDetailsUrl(appointmentId, appointmentType);
-          const appointmentDate = resolveRecordValue(
-            confirmedAppointmentRecord['date'] ??
-              confirmedAppointmentRecord['appointmentDate'] ??
-              appointment.date
+          // The row's `date` is a Date (resolveRecordValue turned it into '', which is why the
+          // admin email showed an empty Date row) and `time` is a "16:30" clock. Both the admin
+          // email and the confirmed event carry IST labels: "Tue, 7 Oct 2026", "4:30 PM".
+          const visitWhen = humanizeVisitWhen(
+            (confirmedAppointmentRecord['date'] as Date | string | undefined) ??
+              (confirmedAppointmentRecord['appointmentDate'] as Date | string | undefined) ??
+              appointment.date,
+            resolveRecordValue(
+              confirmedAppointmentRecord['time'] ??
+                confirmedAppointmentRecord['appointmentTime'] ??
+                appointment.time
+            )
           );
-          const appointmentTime = resolveRecordValue(
-            confirmedAppointmentRecord['time'] ??
-              confirmedAppointmentRecord['appointmentTime'] ??
-              appointment.time
-          );
+          const appointmentDate = visitWhen.date;
+          const appointmentTime = visitWhen.time;
           await this.eventService.emit('appointment.confirmed', {
             appointmentId,
             clinicId: resolvedClinicId,
@@ -922,7 +928,8 @@ export class BillingEventsListener {
   }): Promise<void> {
     try {
       const subject = `Payment Received — ${details.patientName} / ${details.clinicName}`;
-      const formattedAmount = formatCurrencyFromMinorUnits(details.amount ?? 0);
+      // Payment.amount is stored in rupees; the paise formatter rendered 1251 as "₹12.51".
+      const formattedAmount = formatCurrency(details.amount ?? 0);
       const body = `
         <h2>New Payment Received</h2>
         <p>A patient payment has been confirmed. Details below:</p>
@@ -937,7 +944,7 @@ export class BillingEventsListener {
           <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">Location</td><td style="padding: 8px 12px;">${details.locationName}</td></tr>
           <tr><td style="padding: 8px 12px; font-weight: bold;">Amount</td><td style="padding: 8px 12px;">${formattedAmount}</td></tr>
           <tr><td style="padding: 8px 12px; font-weight: bold;">Payment ID</td><td style="padding: 8px 12px;">${details.paymentId}</td></tr>
-          <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">PhonePe Payment ID</td><td style="padding: 8px 12px;">${details.phonePePaymentId || details.paymentId}</td></tr>
+          <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">Transaction Reference</td><td style="padding: 8px 12px;">${details.phonePePaymentId || details.paymentId}</td></tr>
           <tr><td style="padding: 8px 12px; font-weight: bold;">Appointment Link</td><td style="padding: 8px 12px;"><a href="${details.appointmentLink || '#'}" target="_blank" rel="noreferrer noopener">${details.appointmentLink || 'Open appointment'}</a></td></tr>
           <tr style="background: #f5f5f5;"><td style="padding: 8px 12px; font-weight: bold;">Appointment ID</td><td style="padding: 8px 12px;">${details.appointmentId}</td></tr>
         </table>

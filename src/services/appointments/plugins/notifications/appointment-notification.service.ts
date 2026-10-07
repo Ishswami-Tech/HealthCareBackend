@@ -749,18 +749,22 @@ export class AppointmentNotificationService {
             );
             didSend = true;
           } else if (role === 'doctor') {
-            const customMessage = this.buildDoctorNewAppointmentMessage(
+            // The doctor's copy used to be free text, which Meta refuses with 131047
+            // ("Re-engagement message") unless the doctor replied within the last 24 hours.
+            // The confirmation template addressed to the doctor is always deliverable.
+            await this.whatsAppService.sendAppointmentConfirmation(
+              phone,
               templateData.patientName,
               templateData.doctorName,
               templateData.appointmentDate,
               templateData.appointmentTime,
               templateData.location,
-              templateData.clinicName,
+              clinicId,
+              detailsUrl,
               appointmentType,
-              serviceLabel,
-              detailsUrl
+              role,
+              serviceLabel
             );
-            await this.whatsAppService.sendCustomMessage(phone, customMessage, clinicId);
             didSend = true;
           }
         } else if (type === 'reminder' || type === 'updated') {
@@ -802,15 +806,18 @@ export class AppointmentNotificationService {
         ['reminder', 'updated', 'confirmation', 'created', 'cancellation', 'expired'].includes(type)
       ) {
         try {
-          const ccMessage = this.buildClinicCCMessage(
+          const ccSent = await this.sendClinicCopy(
             type,
+            ccPhone,
             templateData,
             appointmentType,
             serviceLabel,
-            detailsUrl
+            detailsUrl,
+            clinicId
           );
-          await this.whatsAppService.sendCustomMessage(ccPhone, ccMessage, clinicId);
-          deliveryResults.push({ role: 'clinic_cc' as const, phone: ccPhone });
+          if (ccSent) {
+            deliveryResults.push({ role: 'clinic_cc' as const, phone: ccPhone });
+          }
         } catch (ccError) {
           await this.loggingService.log(
             LogType.NOTIFICATION,
@@ -893,7 +900,8 @@ export class AppointmentNotificationService {
     if (deviceTokens.length === 0) {
       await this.loggingService.log(
         LogType.ERROR,
-        LogLevel.WARN,
+        // Expected for patients who only use the web app; nothing to act on.
+        LogLevel.INFO,
         `Skipping push notification - no device tokens found`,
         'AppointmentNotificationService.sendPushNotification',
         {
@@ -1189,34 +1197,62 @@ export class AppointmentNotificationService {
     return `${normalizedFrontendUrl}/patient/appointments?appointmentId=${encodeURIComponent(appointmentId)}`;
   }
 
-  private buildDoctorNewAppointmentMessage(
-    patientName: string,
-    doctorName: string,
-    appointmentDate: string,
-    appointmentTime: string,
-    location?: string,
-    clinicName?: string,
-    appointmentType?: string,
-    serviceLabel?: string,
-    detailsUrl?: string
-  ): string {
-    const clinicLabel = resolveText(clinicName, 'Healthcare Clinic');
-    const typeLabel = resolveText(appointmentType, 'in-person').toUpperCase();
-    const serviceLabelText = resolveText(serviceLabel, typeLabel);
-    const locationLabel = resolveText(location, clinicLabel);
-    const joinLink = detailsUrl ? `\nJoin link: ${detailsUrl}` : '';
+  /**
+   * The clinic/owner copy of a patient notification. Meta delivers free text only inside a
+   * 24-hour window the recipient opened by replying (error 131047 otherwise), so the copy rides
+   * the approved confirmation or reminder template, with the greeting slot marking it as a copy.
+   * Cancellation and expiry have no template and stay free text.
+   */
+  private async sendClinicCopy(
+    type: NotificationData['type'],
+    ccPhone: string,
+    templateData: NotificationData['templateData'],
+    appointmentType: string,
+    serviceLabel: string | undefined,
+    detailsUrl: string | undefined,
+    clinicId: string | undefined
+  ): Promise<boolean> {
+    const copyGreeting = `${resolveText(templateData.patientName, 'Patient')} (clinic copy)`;
 
-    return [
-      `New ${serviceLabelText} appointment booked for ${doctorName}`,
-      '',
-      `Patient: ${patientName}`,
-      `Date: ${appointmentDate}`,
-      `Time: ${appointmentTime}`,
-      `Location: ${locationLabel}`,
-      `${joinLink}`.trim(),
-    ]
-      .filter(Boolean)
-      .join('\n');
+    if (type === 'confirmation' || type === 'created') {
+      return await this.whatsAppService.sendAppointmentConfirmation(
+        ccPhone,
+        copyGreeting,
+        templateData.doctorName,
+        templateData.appointmentDate,
+        templateData.appointmentTime,
+        templateData.location,
+        clinicId,
+        detailsUrl,
+        appointmentType,
+        'patient',
+        serviceLabel
+      );
+    }
+
+    if (type === 'reminder' || type === 'updated') {
+      return await this.whatsAppService.sendAppointmentReminder(
+        ccPhone,
+        copyGreeting,
+        templateData.doctorName,
+        templateData.appointmentDate,
+        templateData.appointmentTime,
+        templateData.location,
+        clinicId,
+        detailsUrl,
+        appointmentType,
+        serviceLabel
+      );
+    }
+
+    const ccMessage = this.buildClinicCCMessage(
+      type,
+      templateData,
+      appointmentType,
+      serviceLabel,
+      detailsUrl
+    );
+    return await this.whatsAppService.sendCustomMessage(ccPhone, ccMessage, clinicId);
   }
 
   private buildClinicCCMessage(
