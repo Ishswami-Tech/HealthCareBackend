@@ -777,9 +777,22 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       // Idempotent: only the first doctor start changes anything, and the token minted for the
       // meeting-URL lookup (system caller) is not a join.
       if (userRole === 'doctor' && userId !== VideoService.SYSTEM_CALLER_USER_ID) {
-        await this.recordConsultationStart(appointment, resolvedAppointmentId, userId, userRole, {
-          emitOnlyOnFirstDoctorStart: true,
-        });
+        try {
+          await this.recordConsultationStart(appointment, resolvedAppointmentId, userId, userRole, {
+            emitOnlyOnFirstDoctorStart: true,
+          });
+        } catch (startError: unknown) {
+          // The token is already minted and the start claim, if it landed, is idempotent: a
+          // retry would no longer count as the first start. A failure to announce the start must
+          // therefore be logged, never turned into a failed join.
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Doctor join recorded but the start notice failed: ${extractErrorMessage(startError) ?? 'Unknown error'}`,
+            'VideoService.generateMeetingToken',
+            { appointmentId: resolvedAppointmentId }
+          );
+        }
       }
 
       return tokenResponse;
