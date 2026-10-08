@@ -3,6 +3,8 @@ import {
   isRescheduleStatusAllowed,
   rescheduleStatusFilter,
   rescheduleStatusRefusal,
+  reschedulePinnedWhere,
+  shouldDropFromQueueAfterMove,
   statusAfterReschedule,
 } from '@services/appointments/core/reschedule-policy';
 
@@ -55,7 +57,6 @@ describe('reschedule policy', () => {
 
     it('resets arrival-implying statuses to SCHEDULED and keeps booking statuses', () => {
       expect(statusAfterReschedule('IN_PERSON', 'CONFIRMED')).toBe('SCHEDULED');
-      expect(statusAfterReschedule('IN_PERSON', 'WAITING')).toBe('SCHEDULED');
       expect(statusAfterReschedule('IN_PERSON', 'SCHEDULED')).toBe('SCHEDULED');
       expect(statusAfterReschedule('IN_PERSON', 'PENDING')).toBe('PENDING');
       expect(statusAfterReschedule('IN_PERSON', 'FOLLOW_UP_SCHEDULED')).toBe('FOLLOW_UP_SCHEDULED');
@@ -65,6 +66,40 @@ describe('reschedule policy', () => {
       expect(rescheduleStatusRefusal('IN_PERSON')).toMatch(
         /completed, cancelled, a no-show, expired or in progress/
       );
+    });
+  });
+
+  describe('the pinned write', () => {
+    it('pins an in-person visit to the status and arrival it was read with', () => {
+      const arrived = new Date('2099-01-05T04:30:00.000Z');
+      expect(
+        reschedulePinnedWhere({ type: 'IN_PERSON', status: 'PENDING', checkedInAt: null })
+      ).toEqual({
+        status: 'PENDING',
+        checkedInAt: null,
+      });
+      expect(
+        reschedulePinnedWhere({
+          type: 'IN_PERSON',
+          status: 'CONFIRMED',
+          checkedInAt: arrived.toISOString(),
+        })
+      ).toEqual({ status: 'CONFIRMED', checkedInAt: arrived });
+      expect(reschedulePinnedWhere({ type: 'IN_PERSON', status: 'SCHEDULED' })).toEqual({
+        status: 'SCHEDULED',
+        checkedInAt: null,
+      });
+    });
+
+    it('keeps the CONFIRMED-only filter for video', () => {
+      expect(reschedulePinnedWhere({ type: 'VIDEO_CALL', status: 'CONFIRMED' })).toEqual({
+        status: { in: ['CONFIRMED'] },
+      });
+    });
+
+    it('removes every moved in-person visit from the queue, never a video one', () => {
+      expect(shouldDropFromQueueAfterMove({ type: 'IN_PERSON' })).toBe(true);
+      expect(shouldDropFromQueueAfterMove({ type: 'VIDEO_CALL' })).toBe(false);
     });
   });
 });

@@ -73,3 +73,28 @@ export function rescheduleStatusFilter(type: unknown): { in: string[] } | { notI
     ? { in: [VIDEO_RESCHEDULABLE_STATUS] }
     : { notIn: [...IN_PERSON_NON_RESCHEDULABLE_STATUSES] };
 }
+
+/** What the reschedule write pins in its where clause besides id and clinic. */
+export interface ReschedulePinInput {
+  readonly type: unknown;
+  readonly status: unknown;
+  readonly checkedInAt?: Date | string | null;
+}
+
+/**
+ * The status/arrival part of the conditional reschedule write. A video visit is pinned to its one
+ * reschedulable status. An in-person visit is pinned to the exact status and arrival time that
+ * the policy decision and the new status were computed from, so a check-in, a payment
+ * confirmation or a consultation start that commits between the read and the write makes the
+ * write match nothing (409) instead of being silently overwritten.
+ */
+export function reschedulePinnedWhere(row: ReschedulePinInput): Record<string, unknown> {
+  if (isVideoAppointmentType(row.type)) return { status: rescheduleStatusFilter(row.type) };
+  const checkedInAt = row.checkedInAt ? new Date(row.checkedInAt) : null;
+  return { status: row.status, checkedInAt };
+}
+
+/** True when the visit may be sitting in a queue and so must be removed after a move. */
+export function shouldDropFromQueueAfterMove(row: { type: unknown }): boolean {
+  return !isVideoAppointmentType(row.type);
+}

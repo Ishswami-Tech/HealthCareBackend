@@ -96,8 +96,9 @@ import { isAppointmentPaid } from './core/appointment-payment.util';
 import {
   isRescheduleStatusAllowed,
   isVideoAppointmentType,
-  rescheduleStatusFilter,
+  reschedulePinnedWhere,
   rescheduleStatusRefusal,
+  shouldDropFromQueueAfterMove,
   statusAfterReschedule,
 } from './core/reschedule-policy';
 import {
@@ -3523,7 +3524,7 @@ export class AppointmentsService {
           where: {
             id: row.id,
             clinicId,
-            status: rescheduleStatusFilter(row.type),
+            ...reschedulePinnedWhere(row),
           },
           data,
         });
@@ -3575,7 +3576,9 @@ export class AppointmentsService {
     before: RescheduleAppointmentRow,
     clinicId: string
   ): Promise<void> {
-    if (isVideoAppointmentType(before.type) || !before.checkedInAt || !before.doctorId) return;
+    // Not gated on before.checkedInAt: a check-in may have committed after that read, and removal
+    // is a no-op for a visit that is not queued.
+    if (!shouldDropFromQueueAfterMove(before) || !before.doctorId) return;
     try {
       await this.appointmentQueueService.removePatientFromQueue(
         before.id,

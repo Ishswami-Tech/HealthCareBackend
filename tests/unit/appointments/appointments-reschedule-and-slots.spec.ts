@@ -178,7 +178,9 @@ describe('AppointmentsService.rescheduleAppointment under locks (finding 11)', (
       expect(write?.args['where']).toEqual({
         id: 'appt-1',
         clinicId: CLINIC,
-        status: { notIn: ['COMPLETED', 'CANCELLED', 'NO_SHOW', 'EXPIRED', 'IN_PROGRESS'] },
+        // pinned to what was read, so a check-in or confirmation in between is a 409
+        status: 'SCHEDULED',
+        checkedInAt: null,
       });
       expect(stored(harness)['time']).toBe('11:00');
       expect(stored(harness)['status']).toBe('SCHEDULED');
@@ -228,6 +230,33 @@ describe('AppointmentsService.rescheduleAppointment under locks (finding 11)', (
       expect(stored(harness)['time']).toBe('10:00');
       expect(stored(harness)['status']).toBe('IN_PROGRESS');
       expect(harness.cache.heldLocks.size).toBe(0);
+    });
+
+    it('a check-in that commits between the read and the write is not overwritten: 409', async () => {
+      seed();
+      changeRowBeforeTheWrite({
+        status: 'CONFIRMED',
+        checkedInAt: new Date('2099-01-05T04:30:00.000Z'),
+      });
+
+      const error = await rejection(reschedule());
+
+      expect(error.getStatus()).toBe(409);
+      expect(stored(harness)['time']).toBe('10:00');
+      expect(stored(harness)['status']).toBe('CONFIRMED');
+    });
+
+    it('a payment confirmation between the read and the write is not written back as PENDING: 409', async () => {
+      harness.db.insert(
+        'appointment',
+        appointmentRow({ status: 'PENDING', checkedInAt: null, metadata: {} })
+      );
+      changeRowBeforeTheWrite({ status: 'CONFIRMED' });
+
+      const error = await rejection(reschedule());
+
+      expect(error.getStatus()).toBe(409);
+      expect(stored(harness)['status']).toBe('CONFIRMED');
     });
 
     it('a cancellation that commits between the read and the write is not overwritten: 409', async () => {
