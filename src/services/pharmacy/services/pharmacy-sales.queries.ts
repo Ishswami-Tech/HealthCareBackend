@@ -33,6 +33,7 @@ interface SalesClient {
     aggregate: (args: unknown) => Promise<{ _sum: { totalAmount: number | null } }>;
     findMany: (args: unknown) => Promise<PaidInvoiceRow[]>;
   };
+  prescription: { count: (args: unknown) => Promise<number> };
   prescriptionItem: {
     groupBy: (
       args: unknown
@@ -65,7 +66,17 @@ const paidInvoiceWhere = (clinicId: string, range: DateRange) => ({
   paidAt: { gte: range.from, lt: range.to },
 });
 
-/** Revenue, best seller (by dispensed units) of the period and prescriptions dispensed this month. */
+/**
+ * Revenue, best seller (by dispensed units) of the period and prescriptions dispensed this month.
+ *
+ * Known limitation: a prescription item dispensed over several visits carries ONE dispensedAt (the
+ * latest dispense) and its running total dispensedQuantity. Both the best seller and the sales
+ * report attribute the whole quantity to that last dispense, so a partial dispense on day 1 and a
+ * top-up on day 3 count entirely on day 3 (and in the period containing day 3). The per-event
+ * quantities live in the dispenseEventHistory JSON column, but legacy rows have none and the
+ * best-seller aggregate is a SQL groupBy that cannot read it, so period boundaries are exact only
+ * for the common single-dispense item.
+ */
 export async function loadDashboardMetrics(
   databaseService: DatabaseService,
   clinicId: string,
@@ -77,7 +88,7 @@ export async function loadDashboardMetrics(
 
   return await databaseService.executeHealthcareRead(async client => {
     const db = client as unknown as SalesClient;
-    const [revenue, topRows, monthItems] = await Promise.all([
+    const [revenue, topRows, monthlyDispensed] = await Promise.all([
       db.invoice.aggregate({
         where: paidInvoiceWhere(clinicId, range),
         _sum: { totalAmount: true },
@@ -89,10 +100,10 @@ export async function loadDashboardMetrics(
         orderBy: { _sum: { dispensedQuantity: 'desc' } },
         take: 1,
       }),
-      db.prescriptionItem.findMany({
-        where: dispensedWhere(clinicId, month),
-        distinct: ['prescriptionId'],
-        select: { prescriptionId: true },
+      // Distinct prescriptions with at least one item dispensed this month, counted by the
+      // database (no rows are loaded).
+      db.prescription.count({
+        where: { clinicId, items: { some: dispensedWhere(clinicId, month) } },
       }),
     ]);
 
@@ -104,12 +115,16 @@ export async function loadDashboardMetrics(
     return {
       totalRevenue: Math.round((revenue._sum.totalAmount ?? 0) * 100) / 100,
       topSellingMedicine: top?.name ?? null,
-      monthlyDispensed: monthItems.length,
+      monthlyDispensed,
     };
   });
 }
 
-/** Dispensed totals with a per-day or per-medicine breakdown for `from`..`to` (IST, inclusive). */
+/**
+ * Dispensed totals with a per-day or per-medicine breakdown for `from`..`to` (IST, inclusive).
+ * An item dispensed in several visits is counted whole on the day of its LAST dispense (see the
+ * limitation on {@link loadDashboardMetrics}).
+ */
 export async function loadSalesReport(
   databaseService: DatabaseService,
   clinicId: string,
