@@ -399,9 +399,13 @@ export class NotificationEventListener implements OnModuleInit {
           });
         }
         if (payload.clinicId) {
-          recipients.push({
-            socketRoom: `clinic:${payload.clinicId}:doctors`,
-          });
+          // The medicine desk screens listen as PHARMACIST (and the prescribing doctors); sockets
+          // join `clinic:<id>:role:<ROLE>` on connect, so those are the rooms that reach them.
+          for (const role of ['PHARMACIST', 'DOCTOR']) {
+            recipients.push({
+              socketRoom: `clinic:${payload.clinicId}:role:${role}`,
+            });
+          }
         }
         return recipients;
       },
