@@ -100,3 +100,10 @@ export function statusAfterReceipt(
 ): 'PARTIALLY_RECEIVED' | 'RECEIVED' {
   return lines.every(l => l.receivedQuantity >= l.quantity) ? 'RECEIVED' : 'PARTIALLY_RECEIVED';
 }
+
+/** True for a database unique-constraint violation (Prisma P2002). */
+export function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'P2002'
+  );
+}

@@ -3,6 +3,7 @@ import {
   PurchaseOrderReceiptError,
   allocateReceipt,
   isReceivableStatus,
+  isUniqueViolation,
   statusAfterReceipt,
 } from '@services/pharmacy-inventory/services/purchase-order-receipt.util';
 
@@ -76,5 +77,20 @@ describe('purchase order receipt rules', () => {
         { quantity: 2, receivedQuantity: 1 },
       ])
     ).toBe('PARTIALLY_RECEIVED');
+  });
+
+  it('recognises a unique-constraint violation by its Prisma code', () => {
+    expect(isUniqueViolation({ code: 'P2002' })).toBe(true);
+    expect(isUniqueViolation({ code: 'P2025' })).toBe(false);
+    expect(isUniqueViolation(new Error('boom'))).toBe(false);
+    expect(isUniqueViolation(null)).toBe(false);
+  });
+
+  it('a receipt that completes the last open line closes the order (status is derived from all lines)', () => {
+    const afterBothConcurrentReceipts = [
+      { quantity: 10, receivedQuantity: 10 },
+      { quantity: 5, receivedQuantity: 5 },
+    ];
+    expect(statusAfterReceipt(afterBothConcurrentReceipts)).toBe('RECEIVED');
   });
 });

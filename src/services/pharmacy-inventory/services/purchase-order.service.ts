@@ -22,6 +22,7 @@ import {
   PurchaseOrderReceiptError,
   allocateReceipt,
   isReceivableStatus,
+  isUniqueViolation,
   statusAfterReceipt,
 } from './purchase-order-receipt.util';
 
@@ -354,6 +355,14 @@ export class PurchaseOrderService {
 
     const result = await this.db.prisma.$transaction(async tx => {
       const client = tx as unknown as ReceiptTx;
+      // Serialize receipts of one PO on its row. Two receipts on different lines would otherwise
+      // each compute the final status from a snapshot that lacks the other's increment and leave
+      // a fully received PO PARTIALLY_RECEIVED. The second receipt waits here until the first
+      // commits, and every read below then sees its increments (READ COMMITTED).
+      await client.purchaseOrder.updateMany({
+        where: { id: poId, clinicId },
+        data: { updatedAt: now },
+      });
       const po = await client.purchaseOrder.findFirst({
         where: { id: poId, clinicId },
         include: { items: true },
@@ -439,21 +448,34 @@ export class PurchaseOrderService {
           });
           batchId = lot.id;
         } else {
-          const created = await client.stockBatch.create({
-            data: {
-              productId: line.productId,
-              clinicId,
-              lotNumber: request.batchNumber,
-              manufactureDate,
-              expiryDate,
-              quantityReceived: request.quantityReceived,
-              quantityOnHand: request.quantityReceived,
-              costPrice: request.unitCost ?? line.unitPrice ?? null,
-              medicineName: line.description ?? null,
-              createdById: userId,
-            },
-            select: { id: true },
-          });
+          // A concurrent first receipt of the same new lot (another PO) loses the unique
+          // (clinic, product, lot) race. The transaction is aborted by then, so answer 409 and
+          // let the caller retry, which tops the lot up instead of creating it.
+          let created: { id: string };
+          try {
+            created = await client.stockBatch.create({
+              data: {
+                productId: line.productId,
+                clinicId,
+                lotNumber: request.batchNumber,
+                manufactureDate,
+                expiryDate,
+                quantityReceived: request.quantityReceived,
+                quantityOnHand: request.quantityReceived,
+                costPrice: request.unitCost ?? line.unitPrice ?? null,
+                medicineName: line.description ?? null,
+                createdById: userId,
+              },
+              select: { id: true },
+            });
+          } catch (error) {
+            if (isUniqueViolation(error)) {
+              throw new ConflictException(
+                `Batch ${request.batchNumber} was just received by someone else, retry the receipt.`
+              );
+            }
+            throw error;
+          }
           batchId = created.id;
         }
 
