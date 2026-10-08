@@ -17,6 +17,8 @@ export {
   CreatePurchaseOrderDto,
   PurchaseOrderItemDto,
   PurchaseOrderListQueryDto,
+  ReceivePurchaseOrderDto,
+  ReceivePurchaseOrderItemDto,
   BatchFilterDto,
   DispenseFefoDto,
   DispenseFefoItemDto,
