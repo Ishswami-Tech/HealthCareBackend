@@ -399,13 +399,13 @@ export class NotificationEventListener implements OnModuleInit {
           });
         }
         if (payload.clinicId) {
-          // The medicine desk screens listen as PHARMACIST (and the prescribing doctors); sockets
-          // join `clinic:<id>:role:<ROLE>` on connect, so those are the rooms that reach them.
-          for (const role of ['PHARMACIST', 'DOCTOR']) {
-            recipients.push({
-              socketRoom: `clinic:${payload.clinicId}:role:${role}`,
-            });
-          }
+          // The medicine desk screens listen as PHARMACIST; sockets join
+          // `clinic:<id>:role:<ROLE>` on connect. The payload carries patient and medication
+          // details, so it must NOT go to a clinic-wide DOCTOR room: the prescribing doctor is
+          // already reached through `user:<doctorId>` above.
+          recipients.push({
+            socketRoom: `clinic:${payload.clinicId}:role:PHARMACIST`,
+          });
         }
         return recipients;
       },
