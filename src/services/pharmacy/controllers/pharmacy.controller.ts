@@ -25,6 +25,8 @@ import {
   ReversePrescriptionDispenseDto,
   PharmacyBatchAuditQueryDto,
   PharmacyStatsDto,
+  PharmacyStatsQueryDto,
+  PharmacySalesQueryDto,
   CreateSupplierDto,
   UpdateSupplierDto,
   RecordCashPaymentDto,
@@ -427,13 +429,40 @@ export class PharmacyController {
   @Get('stats')
   @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN)
   @RequireResourcePermission('prescriptions', 'read')
-  @Cache({ ttl: 1800, tags: ['pharmacy', 'stats'], priority: 'low' })
+  // The cache key is clinic scoped and carries a digest of the query, so ?period= and the
+  // clinic are both part of it (see HealthcareCacheInterceptor.finalizeTemplateKey).
+  @Cache({ ttl: 300, tags: ['pharmacy', 'stats'], priority: 'low' })
   @RateLimitAPI()
   @ApiOperation({ summary: 'Get pharmacy statistical summary' })
-  async getStats(@Request() req: ClinicAuthenticatedRequest): Promise<PharmacyStatsDto> {
+  async getStats(
+    @Request() req: ClinicAuthenticatedRequest,
+    @Query() query: PharmacyStatsQueryDto
+  ): Promise<PharmacyStatsDto> {
     // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
     const clinicId = req.clinicContext?.clinicId;
-    return this.pharmacyService.getStats(clinicId);
+    return this.pharmacyService.getStats(clinicId, query.period);
+  }
+
+  /**
+   * @endpoint GET /pharmacy/sales
+   * @access PHARMACIST, CLINIC_ADMIN, SUPER_ADMIN
+   * @description Dispensed totals (prescriptions, units, paid revenue) with a per-day or
+   *              per-medicine breakdown for from..to
+   */
+  @Get('sales')
+  @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('prescriptions', 'read')
+  @Cache({ ttl: 300, tags: ['pharmacy', 'sales'], priority: 'low' })
+  @RateLimitAPI()
+  @ApiOperation({ summary: 'Pharmacy sales report (dispensed totals and breakdown)' })
+  async getSales(
+    @Request() req: ClinicAuthenticatedRequest,
+    @Query() query: PharmacySalesQueryDto
+  ) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new ForbiddenException('Clinic context required');
+    return this.pharmacyService.getSalesReport(clinicId, query);
   }
 
   // ============ Supplier Management ============
@@ -451,7 +480,7 @@ export class PharmacyController {
   }
 
   @Post('suppliers')
-  @Roles(Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('inventory', 'create')
   @ApiOperation({ summary: 'Add a new supplier' })
   async addSupplier(@Body() dto: CreateSupplierDto, @Request() req: ClinicAuthenticatedRequest) {
@@ -462,7 +491,7 @@ export class PharmacyController {
   }
 
   @Patch('suppliers/:id')
-  @Roles(Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('inventory', 'update')
   @ApiOperation({ summary: 'Update supplier details' })
   async updateSupplier(

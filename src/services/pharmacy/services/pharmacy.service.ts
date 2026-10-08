@@ -25,6 +25,13 @@ import {
   resolveMedicineTypeInput,
 } from '@dtos/pharmacy.dto';
 import { formatDateKeyInIST } from '@utils/date-time.util';
+import { loadDashboardMetrics, loadSalesReport } from './pharmacy-sales.queries';
+import {
+  DEFAULT_STATS_PERIOD,
+  type SalesGroupBy,
+  type SalesReport,
+  type StatsPeriod,
+} from './pharmacy-sales.util';
 import { buildPrescriptionPdf } from './prescription-pdf.util';
 import { LogLevel, LogType, AppointmentQueueCategory } from '@core/types';
 import { PrismaDelegateArgs, PrismaTransactionClientWithDelegates } from '@core/types/prisma.types';
@@ -3514,7 +3521,27 @@ export class PharmacyService {
     return { fileName: `prescription-${desk.prescriptionNumber}.pdf`, buffer };
   }
 
-  async getStats(clinicId?: string) {
+  /** Dispensed totals with a per-day or per-medicine breakdown, clinic scoped. */
+  async getSalesReport(
+    clinicId: string,
+    query: { from?: string; to?: string; groupBy?: SalesGroupBy }
+  ): Promise<SalesReport> {
+    return await loadSalesReport(this.databaseService, clinicId, {
+      ...(query.from ? { from: query.from } : {}),
+      ...(query.to ? { to: query.to } : {}),
+      groupBy: query.groupBy ?? 'day',
+    });
+  }
+
+  async getStats(clinicId?: string, period: StatsPeriod = DEFAULT_STATS_PERIOD) {
+    const metrics = clinicId
+      ? await loadDashboardMetrics(this.databaseService, clinicId, period)
+      : { totalRevenue: 0, topSellingMedicine: null, monthlyDispensed: 0 };
+    const counts = await this.getStatCounts(clinicId);
+    return { ...counts, ...metrics };
+  }
+
+  private async getStatCounts(clinicId?: string) {
     // Simple count stats
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
@@ -3656,11 +3683,21 @@ export class PharmacyService {
     return await this.databaseService.executeHealthcareWrite(
       async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-          supplier: { update: (args: PrismaDelegateArgs) => Promise<unknown> };
+          supplier: {
+            updateMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+            findFirst: (args: PrismaDelegateArgs) => Promise<unknown>;
+          };
         };
-        return await typedClient.supplier.update({
-          where: { id } as PrismaDelegateArgs,
+        // Clinic scoped: a supplier id of another clinic matches nothing.
+        const updated = await typedClient.supplier.updateMany({
+          where: { id, clinicId } as PrismaDelegateArgs,
           data: dto as unknown as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+        if (updated.count !== 1) {
+          throw new NotFoundException('Supplier not found');
+        }
+        return await typedClient.supplier.findFirst({
+          where: { id, clinicId } as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
       },
       {
