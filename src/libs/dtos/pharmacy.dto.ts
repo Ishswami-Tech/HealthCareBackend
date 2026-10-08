@@ -321,6 +321,7 @@ export class UpdateSupplierDto {
 
   @ApiPropertyOptional({ example: true })
   @IsOptional()
+  @IsBoolean()
   isActive?: boolean;
 }
 

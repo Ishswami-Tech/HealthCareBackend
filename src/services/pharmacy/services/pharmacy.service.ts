@@ -43,6 +43,10 @@ import { AppointmentQueueService } from '@infrastructure/queue';
 import { InventoryService } from '@services/pharmacy-inventory/services/inventory.service';
 import { ExpiryAlertService } from '@services/pharmacy-inventory/services/expiry-alert.service';
 import {
+  PHARMACY_SUPPLIER_CACHE_TAGS,
+  invalidatePharmacyCacheTags,
+} from '@services/pharmacy-inventory/services/pharmacy-cache-invalidation.util';
+import {
   isPatientRole,
   isPatientTargetAllowed,
   resolvePatientAccessScope,
@@ -3655,7 +3659,7 @@ export class PharmacyService {
   }
 
   async addSupplier(dto: CreateSupplierDto, clinicId: string) {
-    return await this.databaseService.executeHealthcareWrite(
+    const created = await this.databaseService.executeHealthcareWrite(
       async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
           supplier: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
@@ -3677,10 +3681,22 @@ export class PharmacyService {
         details: { name: (dto as unknown as Record<string, unknown>)['name'] },
       }
     );
+    // GET /pharmacy/suppliers is cached for an hour: show the new supplier at once.
+    await this.invalidateSupplierCache('supplier-created');
+    return created;
+  }
+
+  private async invalidateSupplierCache(reason: string): Promise<void> {
+    await invalidatePharmacyCacheTags(
+      this.cacheService,
+      this.loggingService,
+      PHARMACY_SUPPLIER_CACHE_TAGS,
+      reason
+    );
   }
 
   async updateSupplier(id: string, dto: UpdateSupplierDto, clinicId: string) {
-    return await this.databaseService.executeHealthcareWrite(
+    const updatedSupplier = await this.databaseService.executeHealthcareWrite(
       async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
           supplier: {
@@ -3690,7 +3706,7 @@ export class PharmacyService {
         };
         // Clinic scoped: a supplier id of another clinic matches nothing.
         const updated = await typedClient.supplier.updateMany({
-          where: { id, clinicId } as PrismaDelegateArgs,
+          where: { id, clinicId, deletedAt: null } as PrismaDelegateArgs,
           data: dto as unknown as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
         if (updated.count !== 1) {
@@ -3710,6 +3726,8 @@ export class PharmacyService {
         details: dto as unknown as Record<string, unknown>,
       }
     );
+    await this.invalidateSupplierCache('supplier-updated');
+    return updatedSupplier;
   }
 
   async findLowStock(clinicId?: string) {

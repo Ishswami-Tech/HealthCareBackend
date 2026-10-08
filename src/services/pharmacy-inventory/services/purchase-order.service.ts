@@ -19,6 +19,10 @@ import type {
   ReceivePurchaseOrderDto,
 } from '../dto/pharmacy-inventory.dto';
 import {
+  PHARMACY_STOCK_CACHE_TAGS,
+  invalidatePharmacyCacheTags,
+} from './pharmacy-cache-invalidation.util';
+import {
   PurchaseOrderReceiptError,
   allocateReceipt,
   isReceivableStatus,
@@ -527,6 +531,13 @@ export class PurchaseOrderService {
       result.productIds.map(productId =>
         this.cache.del(`pharmacy:inventory:onhand:${clinicId}:${productId}`)
       )
+    );
+    // Stock changed: the cached stats, sales and low-stock responses are stale now.
+    await invalidatePharmacyCacheTags(
+      this.cache,
+      this.logger,
+      PHARMACY_STOCK_CACHE_TAGS,
+      'purchase-order-received'
     );
     await this.events.emit('pharmacy.purchaseOrder.received', {
       poId,
