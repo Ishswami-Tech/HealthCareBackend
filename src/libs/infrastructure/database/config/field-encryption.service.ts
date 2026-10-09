@@ -1,42 +1,53 @@
 /**
  * Field Encryption Service
- * =========================
- * Provides AES-256-GCM encryption for PHI fields (phone, address, etc.).
+ * ========================
+ * AES-256-GCM encryption for PHI stored in database columns (see field-crypto.util.ts for the
+ * envelope format and why HKDF, not PBKDF2, derives the per-value key).
  *
- * This service is the **building block** for at-rest field encryption. It is
- * exposed so that:
- *   1. Services can opt in by calling `fieldEncryption.encrypt(plainText)`
- *      before passing data to Prisma.
- *   2. Services can opt in by calling `fieldEncryption.decrypt(cipherText)`
- *      after reading from Prisma.
- *   3. Future Prisma `$extends` result middleware can transparently wrap the
- *      encryption without changing call sites.
+ * Opt-in per call site (through DatabaseService.encryptPhiField / decryptPhiField):
+ *   - `encrypt(value, aad)` before writing, `decrypt(value, aad)` after reading.
+ *   - `aad` binds a value to its row and column, e.g. `patient_visits.presentComplaints:<id>`.
  *
- * Migration strategy:
- *   - New writes use encrypt()
- *   - Existing plaintext records are encrypted via a one-off migration script
- *   - Reads decrypt on the way out, falling back to plaintext for legacy rows
+ * Rollout without a big-bang migration:
+ *   - No key configured: `encrypt` returns the plaintext and `decrypt` returns plaintext rows as
+ *     they are. Nothing changes until FIELD_ENCRYPTION_KEY is set. In production this logs an
+ *     ERROR at every start, because stored PHI is then not encrypted.
+ *   - Key set: new writes are encrypted; existing plaintext rows still read fine (they carry no
+ *     `enc:v2:` prefix) and are encrypted by a one-off backfill.
+ *   - A value that carries the prefix but cannot be decrypted (wrong key, altered, moved to another
+ *     row) is an error, never silently returned: ciphertext must not reach a screen.
+ *   - FIELD_ENCRYPTION_REQUIRED=true refuses to start without a key. Turn it on in production once
+ *     the key is provisioned (setting it before the key exists would stop the API from starting).
+ *     The setting is parsed strictly: an unrecognised value stops startup instead of meaning "off".
  *
- * Storage format (base64): salt(32B) + iv(16B) + authTag(16B) + ciphertext
+ * Key: 32 random bytes (`openssl rand -base64 32`). Passphrases are rejected.
+ * Rotation: put the new key in FIELD_ENCRYPTION_KEY and the old one(s) in
+ * FIELD_ENCRYPTION_KEY_PREVIOUS (comma separated). Old values keep opening; new writes use the new
+ * key; re-encrypt, then drop the old key.
  */
 
-import { Inject, Injectable, forwardRef } from '@nestjs/common';
+import { HttpStatus, Inject, Injectable, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config';
-import * as crypto from 'crypto';
 import { LoggingService } from '@infrastructure/logging';
-import { LogType, LogLevel } from '@core/types';
-
-const ALGORITHM = 'aes-256-gcm';
-const SALT_LENGTH = 32;
-const IV_LENGTH = 16;
-const TAG_LENGTH = 16;
-const KEY_LENGTH = 32;
-const ITERATIONS = 100_000;
+import { LogLevel, LogType } from '@core/types';
+import { ErrorCode } from '@core/errors/error-codes.enum';
+import { HealthcareError } from '@core/errors/healthcare-error.class';
+import {
+  ENVELOPE_PREFIX,
+  decryptField,
+  encryptField,
+  hashField,
+  isEncryptedEnvelope,
+  parseBooleanFlag,
+  parseMasterKey,
+  parseMasterKeyList,
+} from './field-crypto.util';
 
 @Injectable()
 export class FieldEncryptionService {
-  private readonly encryptionKey: Buffer;
-  private readonly enabled: boolean;
+  private readonly serviceName = 'FieldEncryptionService';
+  private readonly masterKey: Buffer | null;
+  private readonly readKeys: readonly Buffer[];
 
   constructor(
     @Inject(forwardRef(() => ConfigService))
@@ -44,114 +55,119 @@ export class FieldEncryptionService {
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {
-    const rawKey = this.configService.get<string>('FIELD_ENCRYPTION_KEY', '');
-    this.enabled = Boolean(rawKey);
-
-    if (this.enabled) {
-      this.encryptionKey = crypto.createHash('sha256').update(rawKey).digest();
-    } else {
-      this.encryptionKey = Buffer.alloc(0);
-    }
-  }
-
-  /**
-   * Returns true if a FIELD_ENCRYPTION_KEY was provided at startup.
-   * When disabled, encrypt() returns plaintext and decrypt() returns input.
-   */
-  isEnabled(): boolean {
-    return this.enabled;
-  }
-
-  /**
-   * Encrypt a plaintext value. Returns null if input is null/empty.
-   * If encryption is disabled (no key configured), returns plaintext as-is.
-   */
-  encrypt(plaintext: string | null | undefined): string | null {
-    if (!plaintext || plaintext.trim() === '') return null;
-    if (!this.enabled) return plaintext;
-
-    try {
-      const salt = crypto.randomBytes(SALT_LENGTH);
-      const iv = crypto.randomBytes(IV_LENGTH);
-      const key = crypto.pbkdf2Sync(this.encryptionKey, salt, ITERATIONS, KEY_LENGTH, 'sha512');
-
-      const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
-      let encrypted = cipher.update(plaintext, 'utf8', 'hex');
-      encrypted += cipher.final('hex');
-
-      const tag = cipher.getAuthTag();
-      const combined = Buffer.concat([salt, iv, tag, Buffer.from(encrypted, 'hex')]);
-      return combined.toString('base64');
-    } catch (error) {
-      void this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        'Field encryption failed',
-        'FieldEncryptionService',
-        { error: error instanceof Error ? error.message : String(error) }
+    const isProduction = String(this.configService.get('NODE_ENV', '')) === 'production';
+    const { required, current, previous } = this.readSettings();
+    if (!current && required) {
+      throw this.configError(
+        'FIELD_ENCRYPTION_REQUIRED is true but FIELD_ENCRYPTION_KEY is not set'
       );
-      throw error;
+    }
+
+    this.masterKey = current;
+    this.readKeys = current ? [current, ...previous] : [];
+    if (!current) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        isProduction ? LogLevel.ERROR : LogLevel.WARN,
+        'FIELD_ENCRYPTION_KEY is not set: clinical text fields are stored unencrypted',
+        this.serviceName
+      );
     }
   }
 
-  /**
-   * Decrypt a ciphertext value. Returns null if input is null.
-   *
-   * If the input does not look like an encrypted blob (i.e. is not valid base64
-   * of the expected length), it's returned as-is. This makes the function
-   * safe to call on legacy plaintext rows during the migration window.
-   */
-  decrypt(ciphertext: string | null | undefined): string | null {
-    if (!ciphertext) return null;
-    if (!this.enabled) return ciphertext;
-
+  /** Reads and validates the encryption settings; an invalid setting stops startup. */
+  private readSettings(): { required: boolean; current: Buffer | null; previous: Buffer[] } {
     try {
-      const combined = Buffer.from(ciphertext, 'base64');
-      // Magic-number check: must be at least the header size
-      const minLength = SALT_LENGTH + IV_LENGTH + TAG_LENGTH;
-      if (combined.length < minLength) {
-        return ciphertext;
-      }
+      const rawKey = this.configService.get<string>('FIELD_ENCRYPTION_KEY', '');
+      const rawPrevious = this.configService.get<string>('FIELD_ENCRYPTION_KEY_PREVIOUS', '');
+      return {
+        required: parseBooleanFlag(
+          this.configService.get('FIELD_ENCRYPTION_REQUIRED', ''),
+          'FIELD_ENCRYPTION_REQUIRED'
+        ),
+        current: rawKey ? parseMasterKey(rawKey) : null,
+        previous: rawPrevious ? parseMasterKeyList(rawPrevious) : [],
+      };
+    } catch (error) {
+      throw this.configError(error instanceof Error ? error.message : 'Invalid encryption setting');
+    }
+  }
 
-      const salt = combined.subarray(0, SALT_LENGTH);
-      const iv = combined.subarray(SALT_LENGTH, SALT_LENGTH + IV_LENGTH);
-      const tag = combined.subarray(SALT_LENGTH + IV_LENGTH, SALT_LENGTH + IV_LENGTH + TAG_LENGTH);
-      const encrypted = combined.subarray(SALT_LENGTH + IV_LENGTH + TAG_LENGTH);
+  /** True when a valid key was configured at startup. */
+  isEnabled(): boolean {
+    return this.masterKey !== null;
+  }
 
-      const key = crypto.pbkdf2Sync(this.encryptionKey, salt, ITERATIONS, KEY_LENGTH, 'sha512');
-      const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
-      decipher.setAuthTag(tag);
+  /**
+   * Encrypts a value for storage. Null/empty input returns null; with no key configured the
+   * plaintext is returned unchanged (see rollout notes above). Text that itself starts with the
+   * envelope prefix is refused whether or not a key is set: it would be mistaken for ciphertext
+   * on every later read.
+   */
+  encrypt(plaintext: string | null | undefined, aad = ''): string | null {
+    if (plaintext === null || plaintext === undefined || plaintext.trim() === '') return null;
+    if (isEncryptedEnvelope(plaintext.trim())) {
+      throw new HealthcareError(
+        ErrorCode.VALIDATION_ERROR,
+        `Text may not start with "${ENVELOPE_PREFIX}"`,
+        HttpStatus.BAD_REQUEST,
+        undefined,
+        this.serviceName
+      );
+    }
+    if (!this.masterKey) return plaintext;
+    return encryptField(this.masterKey, plaintext, aad);
+  }
 
-      let decrypted = decipher.update(encrypted, undefined, 'utf8');
-      decrypted += decipher.final('utf8');
-      return decrypted;
+  /**
+   * Reads a stored value. Plaintext (legacy rows, or rows written while no key was set) is
+   * returned as it is; an encrypted value is decrypted. Throws when an encrypted value cannot be
+   * read, so ciphertext never reaches a caller as if it were text.
+   */
+  decrypt(stored: string | null | undefined, aad = ''): string | null {
+    if (stored === null || stored === undefined || stored === '') return null;
+    if (!isEncryptedEnvelope(stored)) return stored;
+    if (this.readKeys.length === 0) {
+      throw this.unreadable('encrypted value found but FIELD_ENCRYPTION_KEY is not configured');
+    }
+    try {
+      return decryptField(this.readKeys, stored, aad);
     } catch {
-      // Not a valid blob — assume legacy plaintext and return as-is
-      return ciphertext;
+      throw this.unreadable(
+        'encrypted value could not be opened (no matching key, altered, or moved to another row)'
+      );
     }
   }
 
   /**
-   * Compute a deterministic, lower-case, normalized HMAC-SHA256 hash of the
-   * input for use with @unique constraints (cannot use ciphertext because
-   * it's randomized).
-   *
-   * If encryption is disabled, returns lower-case trimmed plaintext so lookups
-   * still work during the migration window.
+   * Deterministic keyed hash for equality lookups or unique constraints on an encrypted value
+   * (ciphertext is randomised, so it cannot be compared). With no key it returns the trimmed,
+   * lower-cased plaintext so lookups keep working during rollout.
    */
   hash(plaintext: string | null | undefined): string | null {
     if (!plaintext || plaintext.trim() === '') return null;
+    const normalised = plaintext.trim().toLowerCase();
+    return this.masterKey ? hashField(this.masterKey, normalised) : normalised;
+  }
 
-    try {
-      if (!this.enabled) {
-        return plaintext.trim().toLowerCase();
-      }
-      return crypto
-        .createHmac('sha256', this.encryptionKey)
-        .update(plaintext.trim().toLowerCase())
-        .digest('hex');
-    } catch {
-      return null;
-    }
+  private configError(message: string): HealthcareError {
+    return new HealthcareError(
+      ErrorCode.CONFIGURATION_ERROR,
+      message,
+      HttpStatus.INTERNAL_SERVER_ERROR,
+      undefined,
+      this.serviceName
+    );
+  }
+
+  private unreadable(reason: string): HealthcareError {
+    void this.loggingService.log(LogType.ERROR, LogLevel.ERROR, reason, this.serviceName);
+    return new HealthcareError(
+      ErrorCode.INTERNAL_SERVER_ERROR,
+      'A protected field could not be read',
+      HttpStatus.INTERNAL_SERVER_ERROR,
+      undefined,
+      this.serviceName
+    );
   }
 }

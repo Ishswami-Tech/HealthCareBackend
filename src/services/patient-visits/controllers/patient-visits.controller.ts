@@ -92,10 +92,15 @@ export class PatientVisitsController {
     @Query('offset') offset: string | undefined,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<{ visits: PatientVisitResponse[]; total: number }> {
-    return this.visitsService.listVisitsForPatient(patientId, this.requireClinic(req), {
-      ...(limit !== undefined ? { limit: Number.parseInt(limit, 10) } : {}),
-      ...(offset !== undefined ? { offset: Number.parseInt(offset, 10) } : {}),
-    });
+    return this.visitsService.listVisitsForPatient(
+      patientId,
+      this.requireClinic(req),
+      {
+        ...this.intOption('limit', limit),
+        ...this.intOption('offset', offset),
+      },
+      this.actor(req)
+    );
   }
 
   @Get(':visitId')
@@ -105,7 +110,7 @@ export class PatientVisitsController {
     @Param('visitId') visitId: string,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<PatientVisitResponse> {
-    return this.visitsService.getVisitById(visitId, this.requireClinic(req));
+    return this.visitsService.getVisitById(visitId, this.requireClinic(req), this.actor(req));
   }
 
   @Patch(':visitId')
@@ -131,7 +136,7 @@ export class PatientVisitsController {
     @Param('visitId') visitId: string,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<VisitCaseSheetResponse> {
-    return this.visitsService.getCaseSheet(visitId, this.requireClinic(req));
+    return this.visitsService.getCaseSheet(visitId, this.requireClinic(req), this.actor(req));
   }
 
   @Put(':visitId/vitals-examination')
@@ -158,7 +163,12 @@ export class PatientVisitsController {
     @Param('visitId') visitId: string,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<VisitVitalsExaminationResponse | null> {
-    return this.vitalsService.getForVisit(visitId, this.requireClinic(req));
+    const clinicId = this.requireClinic(req);
+    const vitals = await this.vitalsService.getForVisit(visitId, clinicId);
+    await this.visitsService.auditVisitRead(visitId, clinicId, this.actor(req), 'VISIT_VITALS', [
+      'vitals',
+    ]);
+    return vitals;
   }
 
   @Put(':visitId/classical-exams')
@@ -188,7 +198,16 @@ export class PatientVisitsController {
     @Param('visitId') visitId: string,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<ClassicalExamFindingResponse[]> {
-    return this.classicalExamService.getFindingsForVisit(visitId, this.requireClinic(req));
+    const clinicId = this.requireClinic(req);
+    const findings = await this.classicalExamService.getFindingsForVisit(visitId, clinicId);
+    await this.visitsService.auditVisitRead(
+      visitId,
+      clinicId,
+      this.actor(req),
+      'VISIT_CLASSICAL_EXAMS',
+      ['classicalExams']
+    );
+    return findings;
   }
 
   private requireClinic(req: ClinicAuthenticatedRequest): string {
@@ -199,10 +218,20 @@ export class PatientVisitsController {
     return clinicId;
   }
 
+  /** `?limit=abc` is ignored (the default applies) instead of reaching the query as NaN. */
+  private intOption(name: 'limit' | 'offset', value: string | undefined): Record<string, number> {
+    if (value === undefined) return {};
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) ? { [name]: parsed } : {};
+  }
+
   private actor(req: ClinicAuthenticatedRequest): VisitActor {
+    const userAgent = req.headers['user-agent'];
     return {
       ...(req.user?.sub ? { userId: req.user.sub } : {}),
       ...(req.user?.role ? { role: req.user.role } : {}),
+      ...(req.ip ? { ipAddress: req.ip } : {}),
+      ...(typeof userAgent === 'string' ? { userAgent: userAgent.slice(0, 256) } : {}),
     };
   }
 }

@@ -3475,7 +3475,10 @@ export class PharmacyService {
           dateOfBirth?: Date | string | null;
         } | null;
       } | null;
-      doctor?: { user?: { id?: string | null; name?: string | null } | null } | null;
+      doctor?: {
+        licenseNumber?: string | null;
+        user?: { id?: string | null; name?: string | null } | null;
+      } | null;
     };
 
     if (isPatientCaller) {
@@ -3510,6 +3513,7 @@ export class PharmacyService {
       patientGender: desk.patientGender,
       patientNumber: desk.patientNumber,
       doctorName: prescription.doctor?.user?.name || 'Doctor',
+      doctorRegistrationNumber: prescription.doctor?.licenseNumber?.trim() || null,
       diagnosis: prescription.diagnosis ?? null,
       notes: prescription.notes ?? null,
       status: String(prescription.status),

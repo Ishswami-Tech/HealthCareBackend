@@ -5,6 +5,7 @@
  * and the visit-scoped case-sheet aggregate.
  */
 
+import { randomUUID } from 'crypto';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { DatabaseService } from '@infrastructure/database';
@@ -25,11 +26,37 @@ import type {
 } from '@dtos/patient-visit.dto';
 import type { ClassicalExamFindingResponse } from '@services/ayurveda/dto/classical-exam.dto';
 import { ClassicalExamService } from '@services/ayurveda/services/classical-exam.service';
+import { PhiAuditService } from '@services/compliance/services/phi-audit.service';
+import { UhidAllocatorService } from '@services/compliance/services/uhid-allocator.service';
 import { VisitVitalsExaminationService } from '@services/patient-visits/services/visit-vitals-examination.service';
+
+/**
+ * Free-text clinical fields stored encrypted (AES-256-GCM) once FIELD_ENCRYPTION_KEY is set.
+ * Selectable values (`nidra`, `habits`, flags) and identifiers stay plain so they remain queryable.
+ * Every value is bound to its visit and column, see DatabaseService.encryptPhiField.
+ */
+const ENCRYPTED_VISIT_TEXT_FIELDS = [
+  'presentIllness',
+  'presentComplaints',
+  'knownCaseOf',
+  'pastHistoryNotes',
+  'nidraNotes',
+  'foodAllergyNotes',
+  'drugAllergyNotes',
+] as const;
+type EncryptedVisitTextField = (typeof ENCRYPTED_VISIT_TEXT_FIELDS)[number];
+
+/** Shown in place of a stored field that cannot be decrypted, so one bad row cannot hide a whole list. */
+export const UNREADABLE_FIELD_MARKER = '[protected field could not be read]';
+
+const visitFieldAad = (field: string, visitId: string): string =>
+  `patient_visits.${field}:${visitId}`;
 
 export interface VisitActor {
   userId?: string;
   role?: string;
+  ipAddress?: string;
+  userAgent?: string;
 }
 
 /**
@@ -172,7 +199,9 @@ export class PatientVisitsService {
     private readonly eventService: EventService,
     private readonly vitalsService: VisitVitalsExaminationService,
     private readonly classicalExamService: ClassicalExamService,
-    private readonly moduleRef: ModuleRef
+    private readonly moduleRef: ModuleRef,
+    private readonly phiAudit: PhiAuditService,
+    private readonly uhidAllocator: UhidAllocatorService
   ) {}
 
   private getBillingService(): BillingServiceLike | null {
@@ -230,6 +259,7 @@ export class PatientVisitsService {
       );
     }
     const patientId = patient.id;
+    await this.ensureUhidBestEffort(patientId, clinicId);
 
     const doctorId = effectiveDto.doctorId ?? (await this.resolveActorDoctorId(actor));
     const clinicCode = await this.resolveClinicCode(clinicId);
@@ -240,8 +270,11 @@ export class PatientVisitsService {
         async client => {
           const tc = client as unknown as VisitClient;
           const opdNumber = await this.allocateOpdNumber(tc, clinicId, clinicCode);
+          // The id is chosen here so encrypted fields can be bound to it before the insert.
+          const visitId = randomUUID();
           return tc.patientVisit.create({
             data: {
+              id: visitId,
               opdNumber,
               patientId,
               clinicId,
@@ -252,9 +285,13 @@ export class PatientVisitsService {
                 : new Date(),
               specialCaseFlags: effectiveDto.specialCaseFlags ?? [],
               internationalId: this.cleanText(effectiveDto.internationalId),
-              presentIllness: this.cleanText(effectiveDto.presentIllness),
-              presentComplaints: this.cleanText(effectiveDto.presentComplaints),
-              knownCaseOf: this.cleanText(effectiveDto.knownCaseOf),
+              presentIllness: this.sealText('presentIllness', effectiveDto.presentIllness, visitId),
+              presentComplaints: this.sealText(
+                'presentComplaints',
+                effectiveDto.presentComplaints,
+                visitId
+              ),
+              knownCaseOf: this.sealText('knownCaseOf', effectiveDto.knownCaseOf, visitId),
               createdBy: actor.userId ?? null,
             } as PrismaDelegateArgs,
           } as PrismaDelegateArgs);
@@ -449,14 +486,37 @@ export class PatientVisitsService {
     }
   }
 
-  async getVisitById(visitId: string, clinicId: string): Promise<PatientVisitResponse> {
-    return this.toResponse(await this.findVisitRow(visitId, clinicId));
+  async getVisitById(
+    visitId: string,
+    clinicId: string,
+    actor?: VisitActor
+  ): Promise<PatientVisitResponse> {
+    const row = await this.findVisitRow(visitId, clinicId);
+    await this.auditRead(actor, row, 'PATIENT_VISIT', ['visit']);
+    return this.toResponse(row);
+  }
+
+  /**
+   * Records that `actor` read a part of a visit (vitals, exam findings, ...) served by another
+   * service. Called by the controller for those reads; a no-op without an authenticated actor.
+   */
+  async auditVisitRead(
+    visitId: string,
+    clinicId: string,
+    actor: VisitActor | undefined,
+    resourceType: string,
+    fields: readonly string[]
+  ): Promise<void> {
+    if (!actor?.userId) return;
+    const row = await this.findVisitRow(visitId, clinicId);
+    await this.auditRead(actor, row, resourceType, fields);
   }
 
   async listVisitsForPatient(
     patientId: string,
     clinicId: string,
-    options: { limit?: number; offset?: number } = {}
+    options: { limit?: number; offset?: number } = {},
+    actor?: VisitActor
   ): Promise<{ visits: PatientVisitResponse[]; total: number }> {
     const limit = Math.min(Math.max(options.limit ?? 20, 1), 100);
     const offset = Math.max(options.offset ?? 0, 0);
@@ -477,6 +537,21 @@ export class PatientVisitsService {
       return { rows, total };
     });
 
+    if (actor?.userId) {
+      await this.phiAudit.record({
+        userId: actor.userId,
+        userRole: actor.role ?? 'unknown',
+        patientId,
+        clinicId,
+        action: 'VIEW',
+        resourceType: 'PATIENT_VISIT_LIST',
+        resourceId: patientId,
+        fields: ['visit'],
+        purpose: 'treatment',
+        ...(actor.ipAddress ? { ipAddress: actor.ipAddress } : {}),
+        ...(actor.userAgent ? { userAgent: actor.userAgent } : {}),
+      });
+    }
     return { visits: result.rows.map(row => this.toResponse(row)), total: result.total };
   }
 
@@ -506,7 +581,9 @@ export class PatientVisitsService {
     for (const field of textFields) {
       const value = dto[field];
       if (typeof value === 'string') {
-        data[field] = this.cleanText(value);
+        data[field] = this.isEncryptedTextField(field)
+          ? this.sealText(field, value, visitId)
+          : this.cleanText(value);
       }
     }
 
@@ -538,8 +615,21 @@ export class PatientVisitsService {
    * cached: a case-sheet is edited continuously during a consultation, so a
    * cached copy would be stale within seconds of any save.
    */
-  async getCaseSheet(visitId: string, clinicId: string): Promise<VisitCaseSheetResponse> {
+  async getCaseSheet(
+    visitId: string,
+    clinicId: string,
+    actor?: VisitActor
+  ): Promise<VisitCaseSheetResponse> {
     const visitRow = await this.findVisitRow(visitId, clinicId);
+    await this.auditRead(actor, visitRow, 'CASE_SHEET', [
+      'visit',
+      'vitals',
+      'classicalExams',
+      'familyHistory',
+      'medications',
+      'medicalHistory',
+      'labReports',
+    ]);
     const [vitalsExamination, classicalExams] = await Promise.all([
       this.vitalsService.getForVisit(visitId, clinicId),
       this.classicalExamService.getFindingsForVisit(visitId, clinicId),
@@ -736,6 +826,85 @@ export class PatientVisitsService {
     return `OPD-${clinicCode}-${year}-${nextSequence.toString().padStart(6, '0')}`;
   }
 
+  private isEncryptedTextField(field: string): field is EncryptedVisitTextField {
+    return (ENCRYPTED_VISIT_TEXT_FIELDS as readonly string[]).includes(field);
+  }
+
+  /** Trim, then encrypt for storage (plaintext while no encryption key is configured). */
+  private sealText(
+    field: EncryptedVisitTextField,
+    value: string | undefined,
+    visitId: string
+  ): string | null {
+    return this.databaseService.encryptPhiField(
+      this.cleanText(value),
+      visitFieldAad(field, visitId)
+    );
+  }
+
+  /** Read a stored text field: decrypts, and passes legacy plaintext rows through. */
+  private openText(
+    field: EncryptedVisitTextField,
+    stored: string | null | undefined,
+    visitId: string
+  ): string | null {
+    try {
+      return this.databaseService.decryptPhiField(stored, visitFieldAad(field, visitId));
+    } catch (error) {
+      // FieldEncryptionService has already logged the reason at ERROR level. Degrade this one
+      // field instead of failing the visit list, the case sheet and every FHIR read with it.
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'A protected visit field could not be read',
+        'PatientVisitsService',
+        { visitId, field, error: error instanceof Error ? error.message : String(error) }
+      );
+      return UNREADABLE_FIELD_MARKER;
+    }
+  }
+
+  private async auditRead(
+    actor: VisitActor | undefined,
+    row: PatientVisitRow,
+    resourceType: string,
+    fields: readonly string[]
+  ): Promise<void> {
+    if (!actor?.userId) return;
+    await this.phiAudit.record({
+      userId: actor.userId,
+      userRole: actor.role ?? 'unknown',
+      patientId: row.patientId,
+      clinicId: row.clinicId,
+      action: 'VIEW',
+      resourceType,
+      resourceId: row.id,
+      fields,
+      purpose: 'treatment',
+      ...(actor.ipAddress ? { ipAddress: actor.ipAddress } : {}),
+      ...(actor.userAgent ? { userAgent: actor.userAgent } : {}),
+    });
+  }
+
+  /**
+   * Every patient gets a UHID at their first registration in a clinic. Registration must not fail
+   * because of it (it can be issued afterwards from the identifiers endpoint), so a failure is
+   * logged and the visit proceeds.
+   */
+  private async ensureUhidBestEffort(patientId: string, clinicId: string): Promise<void> {
+    try {
+      await this.uhidAllocator.ensureUhid(patientId, clinicId);
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        'Could not issue a UHID during visit registration',
+        'PatientVisitsService',
+        { patientId, clinicId, error: error instanceof Error ? error.message : String(error) }
+      );
+    }
+  }
+
   private cleanText(value: string | undefined): string | null {
     if (value === undefined) return null;
     const trimmed = value.trim();
@@ -765,15 +934,15 @@ export class PatientVisitsService {
       appointmentId: row.appointmentId ?? null,
       specialCaseFlags: (row.specialCaseFlags ?? []) as SpecialCaseFlag[],
       internationalId: row.internationalId ?? null,
-      presentIllness: row.presentIllness ?? null,
-      presentComplaints: row.presentComplaints ?? null,
-      knownCaseOf: row.knownCaseOf ?? null,
-      pastHistoryNotes: row.pastHistoryNotes ?? null,
+      presentIllness: this.openText('presentIllness', row.presentIllness, row.id),
+      presentComplaints: this.openText('presentComplaints', row.presentComplaints, row.id),
+      knownCaseOf: this.openText('knownCaseOf', row.knownCaseOf, row.id),
+      pastHistoryNotes: this.openText('pastHistoryNotes', row.pastHistoryNotes, row.id),
       habits: row.habits ?? null,
       nidra: row.nidra ?? null,
-      nidraNotes: row.nidraNotes ?? null,
-      foodAllergyNotes: row.foodAllergyNotes ?? null,
-      drugAllergyNotes: row.drugAllergyNotes ?? null,
+      nidraNotes: this.openText('nidraNotes', row.nidraNotes, row.id),
+      foodAllergyNotes: this.openText('foodAllergyNotes', row.foodAllergyNotes, row.id),
+      drugAllergyNotes: this.openText('drugAllergyNotes', row.drugAllergyNotes, row.id),
       createdBy: row.createdBy ?? null,
       createdAt: new Date(row.createdAt).toISOString(),
       updatedAt: new Date(row.updatedAt).toISOString(),

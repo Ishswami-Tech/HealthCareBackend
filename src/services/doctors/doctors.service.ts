@@ -42,6 +42,14 @@ export interface DoctorFeeSplitInput {
   inPersonDoctorFee?: number | null;
 }
 
+/** Identity fields of a doctor needed to describe them as an external practitioner (FHIR). */
+export interface DoctorPractitionerSummary {
+  id: string;
+  name: string | null;
+  licenseNumber: string | null;
+  qualification: string | null;
+}
+
 export interface DoctorProfileActor {
   userId: string;
   role: string;
@@ -559,6 +567,32 @@ export class DoctorsService {
     );
 
     return result;
+  }
+
+  /** Doctors (by Doctor.id) who practise in `clinicId`; ids outside the clinic are omitted. */
+  async getPractitionerSummaries(
+    doctorIds: readonly string[],
+    clinicId: string
+  ): Promise<DoctorPractitionerSummary[]> {
+    if (doctorIds.length === 0) return [];
+    const rows = await this.databaseService.executeHealthcareRead(async client => {
+      const tx = client as unknown as Prisma.TransactionClient;
+      return await tx.doctor.findMany({
+        where: { id: { in: [...doctorIds] }, clinics: { some: { clinicId } } },
+        select: {
+          id: true,
+          licenseNumber: true,
+          qualification: true,
+          user: { select: { name: true } },
+        },
+      });
+    });
+    return rows.map(row => ({
+      id: row.id,
+      name: row.user?.name ?? null,
+      licenseNumber: row.licenseNumber ?? null,
+      qualification: row.qualification ?? null,
+    }));
   }
 
   // ---------------------------------------------------------------------------
