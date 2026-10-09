@@ -94,6 +94,14 @@ import {
 } from './core/appointment-state-contract';
 import { isAppointmentPaid } from './core/appointment-payment.util';
 import {
+  isRescheduleStatusAllowed,
+  isVideoAppointmentType,
+  reschedulePinnedWhere,
+  rescheduleStatusRefusal,
+  shouldDropFromQueueAfterMove,
+  statusAfterReschedule,
+} from './core/reschedule-policy';
+import {
   findConflictingSlotKind,
   loadDoctorDayAppointments,
   slotConflictMessage,
@@ -3399,42 +3407,12 @@ export class AppointmentsService {
     const context = 'AppointmentsService.rescheduleAppointment';
     const status = String(row.status).toUpperCase();
 
-    if (
-      [
-        String(AppointmentStatus.CANCELLED),
-        String(AppointmentStatus.EXPIRED),
-        String(AppointmentStatus.COMPLETED),
-      ].includes(status)
-    ) {
-      throw this.errors.validationError(
-        'status',
-        `This appointment cannot be rescheduled because it is already ${status.toLowerCase()}.`,
-        context
-      );
-    }
-
-    // Reschedule is allowed for CONFIRMED appointments, and for in-person visits that
-    // are still SCHEDULED (booked, awaiting clinic arrival — they never pass through
-    // CONFIRMED before the patient checks in).
-    const isInPersonVisit = String(row.type) !== 'VIDEO_CALL';
-    const isReschedulableStatus =
-      status === String(AppointmentStatus.CONFIRMED) ||
-      (isInPersonVisit && status === String(AppointmentStatus.SCHEDULED));
-    if (!isReschedulableStatus) {
-      throw this.errors.validationError(
-        'status',
-        'Only confirmed appointments can be rescheduled.',
-        context
-      );
-    }
-
-    // Once the patient has arrived and joined the clinic queue the visit can't be moved.
-    if (isInPersonVisit && row.checkedInAt) {
-      throw this.errors.validationError(
-        'status',
-        'You have already checked in for this visit. Please ask the reception desk to change it.',
-        context
-      );
+    // Video visits move only while CONFIRMED; in-person visits move in any state except the
+    // ones that are over or under way (see core/reschedule-policy.ts). A checked-in in-person
+    // visit may move: claimReschedule resets it and the queue entry is dropped afterwards.
+    const isInPersonVisit = !isVideoAppointmentType(row.type);
+    if (!isRescheduleStatusAllowed(row.type, status)) {
+      throw this.errors.validationError('status', rescheduleStatusRefusal(row.type), context);
     }
 
     // Video appointment: enforce 5-hour reschedule window
@@ -3480,9 +3458,9 @@ export class AppointmentsService {
 
   /**
    * Moves the appointment with a conditional, clinic-scoped write: it only matches while the row
-   * is still in a reschedulable status and the patient has not checked in. A check-in (or another
-   * reschedule) that committed after the fresh read is therefore never overwritten; the caller
-   * gets a 409 instead. The slot is written exactly as validated, in the same statement.
+   * is still in a reschedulable status. A consultation start, completion or cancellation (or
+   * another reschedule) that committed after the fresh read is therefore never overwritten; the
+   * caller gets a 409 instead. The slot is written exactly as validated, in the same statement.
    */
   private async claimReschedule(params: {
     row: RescheduleAppointmentRow;
@@ -3509,12 +3487,13 @@ export class AppointmentsService {
     //
     // A video visit is only rescheduled while CONFIRMED (paid), and moving it does not undo the
     // payment, so it stays CONFIRMED on the new slot with its window re-stamped from the new
-    // slot. In-clinic visits go back to SCHEDULED, their normal state until the patient checks in.
+    // slot. An in-clinic visit keeps a booking-level status, and anything that implied arrival
+    // (confirmed, checked in, waiting) goes back to SCHEDULED, with its arrival time cleared.
     const newVideoStart = isVideo ? parseIstDateTime(new Date(newDate), newTime) : null;
     const data: Record<string, unknown> = {
       date: new Date(newDate),
       time: newTime,
-      status: isVideo ? AppointmentStatus.CONFIRMED : AppointmentStatus.SCHEDULED,
+      status: statusAfterReschedule(row.type, row.status),
       ...(isVideo ? { paymentExpiresAt: null } : {}),
       ...(isVideo && newVideoStart
         ? {
@@ -3525,7 +3504,7 @@ export class AppointmentsService {
         : {}),
       proposedSlots: [],
       confirmedSlotIndex: null,
-      // The where clause already requires it to be null; a reset status never keeps an arrival.
+      // A moved visit never keeps an arrival for the old slot.
       checkedInAt: null,
       metadata: {
         ...metadata,
@@ -3534,9 +3513,6 @@ export class AppointmentsService {
       },
       updatedAt: movedAt,
     };
-    const reschedulableStatuses = isVideo
-      ? [String(AppointmentStatus.CONFIRMED)]
-      : [String(AppointmentStatus.CONFIRMED), String(AppointmentStatus.SCHEDULED)];
 
     const claim = await this.databaseService.executeHealthcareWrite(
       async client => {
@@ -3548,8 +3524,7 @@ export class AppointmentsService {
           where: {
             id: row.id,
             clinicId,
-            status: { in: reschedulableStatuses },
-            checkedInAt: null,
+            ...reschedulePinnedWhere(row),
           },
           data,
         });
@@ -3592,6 +3567,35 @@ export class AppointmentsService {
   }
 
   private static readonly MAX_RESCHEDULES = 2;
+
+  /**
+   * A checked-in in-person visit that was moved must not stay in today's queue for the old slot.
+   * The queue lives in the cache, outside the database write, so this is best effort and logged.
+   */
+  private async dropMovedVisitFromQueue(
+    before: RescheduleAppointmentRow,
+    clinicId: string
+  ): Promise<void> {
+    // Not gated on before.checkedInAt: a check-in may have committed after that read, and removal
+    // is a no-op for a visit that is not queued.
+    if (!shouldDropFromQueueAfterMove(before) || !before.doctorId) return;
+    try {
+      await this.appointmentQueueService.removePatientFromQueue(
+        before.id,
+        before.doctorId,
+        clinicId,
+        'clinic'
+      );
+    } catch (queueError) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Queue cleanup after reschedule failed: ${queueError instanceof Error ? queueError.message : String(queueError)}`,
+        'AppointmentsService.rescheduleAppointment',
+        { appointmentId: before.id, doctorId: before.doctorId, clinicId }
+      );
+    }
+  }
 
   /**
    * Everything that must see the same appointment, under the locks: the fresh read and the policy
@@ -3793,6 +3797,8 @@ export class AppointmentsService {
     }
 
     const { before, rescheduleCount } = outcome;
+
+    await this.dropMovedVisitFromQueue(before, clinicId);
 
     // The write above bypasses the database layer's own invalidation: drop the stale detail and
     // list entries now so the read below, and any concurrent reader, see the new slot.

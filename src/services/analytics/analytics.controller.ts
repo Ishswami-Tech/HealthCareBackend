@@ -1,4 +1,12 @@
-import { Controller, Get, Query, Request, UseGuards, BadRequestException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Query,
+  Request,
+  UseGuards,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiHeader } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
@@ -9,6 +17,7 @@ import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Role } from '@core/types/enums.types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { AnalyticsService, type AnalyticsQueryFilters } from './analytics.service';
+import { DoctorEarningsQueryDto } from './dto/doctor-earnings-query.dto';
 
 @ApiTags('analytics')
 @Controller('analytics')
@@ -33,6 +42,25 @@ export class AnalyticsController {
     const clinicId = req.clinicContext?.clinicId;
     if (!clinicId) throw new BadRequestException('Clinic ID is required');
     return await this.analyticsService.getDashboardStats(clinicId, period);
+  }
+
+  /**
+   * The signed-in doctor's own earnings (paid consultations, per day). Always the caller's own
+   * data: the doctor is resolved from the token, never from a parameter.
+   */
+  @Get('doctor/me/earnings')
+  @Roles(Role.DOCTOR)
+  @RequireResourcePermission('analytics', 'read')
+  @ApiOperation({ summary: "Get the signed-in doctor's own earnings" })
+  async getMyEarnings(
+    @Request() req: ClinicAuthenticatedRequest,
+    @Query() query: DoctorEarningsQueryDto
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new BadRequestException('Clinic ID is required');
+    const userId = req.user?.sub ?? req.user?.id;
+    if (!userId) throw new ForbiddenException('Authenticated user required');
+    return await this.analyticsService.getDoctorOwnEarnings(userId, clinicId, query);
   }
 
   @Get('appointments')

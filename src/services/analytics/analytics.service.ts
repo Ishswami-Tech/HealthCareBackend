@@ -1,10 +1,47 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  forwardRef,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { AppointmentAnalyticsService } from '../appointments/plugins/analytics/appointment-analytics.service';
 import { BillingService } from '../billing/billing.service';
 import { DatabaseService } from '@infrastructure/database';
 import type { AnalyticsFilter, AppointmentMetrics } from '@core/types/appointment.types';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
+import { formatDateKeyInIST } from '@utils/date-time.util';
+import {
+  SalesRangeError,
+  resolveSalesRange,
+} from '@services/pharmacy/services/pharmacy-sales.util';
+import {
+  summarizeDoctorEarnings,
+  type DoctorEarningsSummary,
+  type PaidConsultationRow,
+} from './doctor-earnings.util';
+
+/** Most paid consultations one earnings summary reads; a larger window must be narrowed. */
+const MAX_EARNINGS_ROWS = 20_000;
+
+interface DoctorEarningsClient {
+  doctor: {
+    findFirst: (args: unknown) => Promise<{ id: string } | null>;
+  };
+  doctorClinic: {
+    findFirst: (args: unknown) => Promise<{ doctorId: string } | null>;
+  };
+  payment: {
+    findMany: (args: unknown) => Promise<
+      Array<{
+        amount: number;
+        refundAmount: number | null;
+        appointment: { id: string; date: Date } | null;
+      }>
+    >;
+  };
+}
 
 export type AnalyticsQueryFilters = Partial<AnalyticsFilter> & {
   period?: string;
@@ -142,6 +179,85 @@ export class AnalyticsService {
   async getQueueAnalytics(clinicId: string, filters: AnalyticsQueryFilters = {}) {
     const range = this.getDateRange(filters.period ?? 'month');
     return await this.appointmentAnalytics.getWaitTimeAnalytics(clinicId, range);
+  }
+
+  /**
+   * The signed-in doctor's own earnings: completed payments of consultations booked with them
+   * in this clinic, grouped by appointment day (IST), net of refunds. A caller who is not a
+   * doctor of this clinic gets 403; nobody can ask for another doctor's figures.
+   */
+  async getDoctorOwnEarnings(
+    userId: string,
+    clinicId: string,
+    query: { from?: string; to?: string }
+  ): Promise<DoctorEarningsSummary> {
+    let range: { from: Date; to: Date };
+    try {
+      range = resolveSalesRange(query.from, query.to);
+    } catch (error) {
+      if (error instanceof SalesRangeError) {
+        throw new BadRequestException(error.message);
+      }
+      throw error;
+    }
+
+    const rows = await this.databaseService.executeHealthcareRead(async client => {
+      const db = client as unknown as DoctorEarningsClient;
+      const doctor = await db.doctor.findFirst({ where: { userId }, select: { id: true } });
+      if (!doctor) {
+        throw new ForbiddenException('Only a doctor can read their own earnings');
+      }
+      const member = await db.doctorClinic.findFirst({
+        where: { doctorId: doctor.id, clinicId },
+        select: { doctorId: true },
+      });
+      if (!member) {
+        throw new ForbiddenException('You are not a doctor of this clinic');
+      }
+      return await db.payment.findMany({
+        where: {
+          clinicId,
+          status: 'COMPLETED',
+          appointment: {
+            is: {
+              doctorId: doctor.id,
+              clinicId,
+              date: { gte: range.from, lt: range.to },
+            },
+          },
+        },
+        select: {
+          amount: true,
+          refundAmount: true,
+          appointment: { select: { id: true, date: true } },
+        },
+        take: MAX_EARNINGS_ROWS + 1,
+      });
+    });
+
+    if (rows.length > MAX_EARNINGS_ROWS) {
+      throw new BadRequestException('Too many payments in this range. Narrow the date range.');
+    }
+
+    const paid: PaidConsultationRow[] = rows.flatMap(row =>
+      row.appointment
+        ? [
+            {
+              appointmentId: row.appointment.id,
+              appointmentDate: row.appointment.date,
+              amount: row.amount,
+              refundAmount: row.refundAmount,
+            },
+          ]
+        : []
+    );
+    return summarizeDoctorEarnings(
+      {
+        from: formatDateKeyInIST(range.from),
+        to: formatDateKeyInIST(new Date(range.to.getTime() - 1)),
+      },
+      paid
+    );
   }
 
   private getDateRange(period: string): { from: Date; to: Date } {

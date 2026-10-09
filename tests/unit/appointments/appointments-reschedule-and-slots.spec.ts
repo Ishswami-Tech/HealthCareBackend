@@ -84,8 +84,24 @@ describe('AppointmentsService.rescheduleAppointment under locks (finding 11)', (
     harness.service.rescheduleAppointment('appt-1', NEW_DATE, time, userId, CLINIC, role);
 
   describe('decides on the fresh row, not on the 30-minute cached detail', () => {
-    it('refuses a visit that checked in after the cached copy was taken (400, nothing written)', async () => {
+    it('moves an in-person visit that checked in after the cached copy: back to SCHEDULED, out of the queue', async () => {
       seed({ status: 'CONFIRMED', checkedInAt: new Date('2099-01-05T04:30:00.000Z') });
+      harness.cache.cache.mockImplementation(async () =>
+        appointmentRow({ status: 'SCHEDULED', checkedInAt: null, metadata: {} })
+      );
+
+      const result = await reschedule();
+
+      expect(result.success).toBe(true);
+      expect(stored(harness)['time']).toBe('11:00');
+      expect(stored(harness)['status']).toBe('SCHEDULED');
+      expect(stored(harness)['checkedInAt']).toBeNull();
+      expect(harness.queue.removePatientFromQueue).toHaveBeenCalledTimes(1);
+      expect(harness.cache.heldLocks.size).toBe(0);
+    });
+
+    it('refuses a visit whose consultation started after the cached copy was taken (400, nothing written)', async () => {
+      seed({ status: 'IN_PROGRESS' });
       harness.cache.cache.mockImplementation(async () =>
         appointmentRow({ status: 'SCHEDULED', checkedInAt: null, metadata: {} })
       );
@@ -93,10 +109,9 @@ describe('AppointmentsService.rescheduleAppointment under locks (finding 11)', (
       const error = await rejection(reschedule());
 
       expect(error.getStatus()).toBe(400);
-      expect(error.message).toContain('already checked in');
+      expect(error.message).toContain('in progress');
       expect(appointmentUpdates(harness)).toHaveLength(0);
       expect(stored(harness)['time']).toBe('10:00');
-      expect(harness.cache.heldLocks.size).toBe(0);
     });
 
     it('refuses a visit that already used its reschedules, whatever the cached count says', async () => {
@@ -152,7 +167,7 @@ describe('AppointmentsService.rescheduleAppointment under locks (finding 11)', (
       });
     }
 
-    it('writes only while the row is reschedulable, unchecked-in and in this clinic', async () => {
+    it('writes only while the row is reschedulable and in this clinic', async () => {
       seed();
 
       const result = await reschedule();
@@ -163,7 +178,8 @@ describe('AppointmentsService.rescheduleAppointment under locks (finding 11)', (
       expect(write?.args['where']).toEqual({
         id: 'appt-1',
         clinicId: CLINIC,
-        status: { in: ['CONFIRMED', 'SCHEDULED'] },
+        // pinned to what was read, so a check-in or confirmation in between is a 409
+        status: 'SCHEDULED',
         checkedInAt: null,
       });
       expect(stored(harness)['time']).toBe('11:00');
@@ -200,23 +216,47 @@ describe('AppointmentsService.rescheduleAppointment under locks (finding 11)', (
         id: 'appt-1',
         clinicId: CLINIC,
         status: { in: ['CONFIRMED'] },
-        checkedInAt: null,
       });
       expect(stored(harness)['status']).toBe('CONFIRMED');
     });
 
-    it('a check-in that commits between the fresh read and the write is not overwritten: 409', async () => {
+    it('a consultation that starts between the fresh read and the write is not overwritten: 409', async () => {
       seed();
-      const checkedInAt = new Date('2099-01-05T04:30:00.000Z');
-      changeRowBeforeTheWrite({ status: 'CONFIRMED', checkedInAt });
+      changeRowBeforeTheWrite({ status: 'IN_PROGRESS' });
 
       const error = await rejection(reschedule());
 
       expect(error.getStatus()).toBe(409);
       expect(stored(harness)['time']).toBe('10:00');
-      expect(stored(harness)['checkedInAt']).toBe(checkedInAt);
-      expect(stored(harness)['status']).toBe('CONFIRMED');
+      expect(stored(harness)['status']).toBe('IN_PROGRESS');
       expect(harness.cache.heldLocks.size).toBe(0);
+    });
+
+    it('a check-in that commits between the read and the write is not overwritten: 409', async () => {
+      seed();
+      changeRowBeforeTheWrite({
+        status: 'CONFIRMED',
+        checkedInAt: new Date('2099-01-05T04:30:00.000Z'),
+      });
+
+      const error = await rejection(reschedule());
+
+      expect(error.getStatus()).toBe(409);
+      expect(stored(harness)['time']).toBe('10:00');
+      expect(stored(harness)['status']).toBe('CONFIRMED');
+    });
+
+    it('a payment confirmation between the read and the write is not written back as PENDING: 409', async () => {
+      harness.db.insert(
+        'appointment',
+        appointmentRow({ status: 'PENDING', checkedInAt: null, metadata: {} })
+      );
+      changeRowBeforeTheWrite({ status: 'CONFIRMED' });
+
+      const error = await rejection(reschedule());
+
+      expect(error.getStatus()).toBe(409);
+      expect(stored(harness)['status']).toBe('CONFIRMED');
     });
 
     it('a cancellation that commits between the read and the write is not overwritten: 409', async () => {

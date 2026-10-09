@@ -321,6 +321,7 @@ export class UpdateSupplierDto {
 
   @ApiPropertyOptional({ example: true })
   @IsOptional()
+  @IsBoolean()
   isActive?: boolean;
 }
 
@@ -729,6 +730,40 @@ export class PharmacyBatchAuditQueryDto {
   endDate?: string;
 }
 
+export class PharmacyStatsQueryDto {
+  @ApiPropertyOptional({
+    enum: ['day', 'week', 'month', 'year'],
+    default: 'month',
+    description: 'Window of totalRevenue and topSellingMedicine',
+  })
+  @IsOptional()
+  @IsIn(['day', 'week', 'month', 'year'])
+  period?: 'day' | 'week' | 'month' | 'year';
+}
+
+export class PharmacySalesQueryDto {
+  @ApiPropertyOptional({
+    example: '2026-10-01',
+    description: 'First day (IST), default 1st of this month',
+  })
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-10-31',
+    description: 'Last day (IST, inclusive), default today',
+  })
+  @IsOptional()
+  @IsDateString()
+  to?: string;
+
+  @ApiPropertyOptional({ enum: ['day', 'medicine'], default: 'day' })
+  @IsOptional()
+  @IsIn(['day', 'medicine'])
+  groupBy?: 'day' | 'medicine';
+}
+
 export class PharmacyStatsDto {
   @ApiProperty({ example: 150, description: 'Total medicines in stock' })
   totalMedicines!: number;
@@ -738,4 +773,17 @@ export class PharmacyStatsDto {
 
   @ApiProperty({ example: 12, description: 'Prescriptions pending today' })
   pendingPrescriptions!: number;
+
+  @ApiProperty({ example: 15400.5, description: 'Paid pharmacy invoices in the period (rupees)' })
+  totalRevenue!: number;
+
+  @ApiProperty({
+    example: 'Paracetamol 500mg',
+    nullable: true,
+    description: 'Medicine with the most units dispensed in the period',
+  })
+  topSellingMedicine!: string | null;
+
+  @ApiProperty({ example: 87, description: 'Prescriptions dispensed in the current month' })
+  monthlyDispensed!: number;
 }

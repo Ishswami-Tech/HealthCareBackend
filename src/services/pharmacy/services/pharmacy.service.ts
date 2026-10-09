@@ -25,6 +25,13 @@ import {
   resolveMedicineTypeInput,
 } from '@dtos/pharmacy.dto';
 import { formatDateKeyInIST } from '@utils/date-time.util';
+import { loadDashboardMetrics, loadSalesReport } from './pharmacy-sales.queries';
+import {
+  DEFAULT_STATS_PERIOD,
+  type SalesGroupBy,
+  type SalesReport,
+  type StatsPeriod,
+} from './pharmacy-sales.util';
 import { buildPrescriptionPdf } from './prescription-pdf.util';
 import { LogLevel, LogType, AppointmentQueueCategory } from '@core/types';
 import { PrismaDelegateArgs, PrismaTransactionClientWithDelegates } from '@core/types/prisma.types';
@@ -35,6 +42,10 @@ import { PaymentProvider } from '@core/types/payment.types';
 import { AppointmentQueueService } from '@infrastructure/queue';
 import { InventoryService } from '@services/pharmacy-inventory/services/inventory.service';
 import { ExpiryAlertService } from '@services/pharmacy-inventory/services/expiry-alert.service';
+import {
+  PHARMACY_SUPPLIER_CACHE_TAGS,
+  invalidatePharmacyCacheTags,
+} from '@services/pharmacy-inventory/services/pharmacy-cache-invalidation.util';
 import {
   isPatientRole,
   isPatientTargetAllowed,
@@ -3514,7 +3525,27 @@ export class PharmacyService {
     return { fileName: `prescription-${desk.prescriptionNumber}.pdf`, buffer };
   }
 
-  async getStats(clinicId?: string) {
+  /** Dispensed totals with a per-day or per-medicine breakdown, clinic scoped. */
+  async getSalesReport(
+    clinicId: string,
+    query: { from?: string; to?: string; groupBy?: SalesGroupBy }
+  ): Promise<SalesReport> {
+    return await loadSalesReport(this.databaseService, clinicId, {
+      ...(query.from ? { from: query.from } : {}),
+      ...(query.to ? { to: query.to } : {}),
+      groupBy: query.groupBy ?? 'day',
+    });
+  }
+
+  async getStats(clinicId?: string, period: StatsPeriod = DEFAULT_STATS_PERIOD) {
+    const metrics = clinicId
+      ? await loadDashboardMetrics(this.databaseService, clinicId, period)
+      : { totalRevenue: 0, topSellingMedicine: null, monthlyDispensed: 0 };
+    const counts = await this.getStatCounts(clinicId);
+    return { ...counts, ...metrics };
+  }
+
+  private async getStatCounts(clinicId?: string) {
     // Simple count stats
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
@@ -3628,7 +3659,7 @@ export class PharmacyService {
   }
 
   async addSupplier(dto: CreateSupplierDto, clinicId: string) {
-    return await this.databaseService.executeHealthcareWrite(
+    const created = await this.databaseService.executeHealthcareWrite(
       async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
           supplier: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
@@ -3650,17 +3681,39 @@ export class PharmacyService {
         details: { name: (dto as unknown as Record<string, unknown>)['name'] },
       }
     );
+    // GET /pharmacy/suppliers is cached for an hour: show the new supplier at once.
+    await this.invalidateSupplierCache('supplier-created');
+    return created;
+  }
+
+  private async invalidateSupplierCache(reason: string): Promise<void> {
+    await invalidatePharmacyCacheTags(
+      this.cacheService,
+      this.loggingService,
+      PHARMACY_SUPPLIER_CACHE_TAGS,
+      reason
+    );
   }
 
   async updateSupplier(id: string, dto: UpdateSupplierDto, clinicId: string) {
-    return await this.databaseService.executeHealthcareWrite(
+    const updatedSupplier = await this.databaseService.executeHealthcareWrite(
       async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-          supplier: { update: (args: PrismaDelegateArgs) => Promise<unknown> };
+          supplier: {
+            updateMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+            findFirst: (args: PrismaDelegateArgs) => Promise<unknown>;
+          };
         };
-        return await typedClient.supplier.update({
-          where: { id } as PrismaDelegateArgs,
+        // Clinic scoped: a supplier id of another clinic matches nothing.
+        const updated = await typedClient.supplier.updateMany({
+          where: { id, clinicId, deletedAt: null } as PrismaDelegateArgs,
           data: dto as unknown as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+        if (updated.count !== 1) {
+          throw new NotFoundException('Supplier not found');
+        }
+        return await typedClient.supplier.findFirst({
+          where: { id, clinicId } as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
       },
       {
@@ -3673,6 +3726,8 @@ export class PharmacyService {
         details: dto as unknown as Record<string, unknown>,
       }
     );
+    await this.invalidateSupplierCache('supplier-updated');
+    return updatedSupplier;
   }
 
   async findLowStock(clinicId?: string) {

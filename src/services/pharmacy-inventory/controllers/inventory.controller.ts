@@ -31,6 +31,7 @@ import {
   CreateReorderRuleDto,
   CreatePurchaseOrderDto,
   PurchaseOrderListQueryDto,
+  ReceivePurchaseOrderDto,
 } from '../dto/pharmacy-inventory.dto';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
@@ -279,5 +280,29 @@ export class InventoryController {
   async sendPurchaseOrder(@Request() req: ClinicAuthenticatedRequest, @Param('id') id: string) {
     const clinicId = req.clinicContext?.clinicId as string;
     return this.purchaseOrderService.sendPurchaseOrder(id, clinicId);
+  }
+
+  /**
+   * Receives goods against a SENT / PARTIALLY_RECEIVED purchase order: batches, stock movements,
+   * medicine stock, line quantities and PO status in one transaction.
+   * POST /pharmacy/inventory/purchase-orders/:id/receive
+   */
+  @Post('purchase-orders/:id/receive')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('pharmacy_purchase_order', 'update')
+  @RateLimitAPI()
+  @ApiOperation({ summary: 'Receive goods against a purchase order' })
+  async receivePurchaseOrder(
+    @Request() req: ClinicAuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: ReceivePurchaseOrderDto
+  ) {
+    const clinicId = req.clinicContext?.clinicId as string;
+    const userId = req.user?.sub ?? req.user?.id;
+    if (!userId) {
+      throw new ForbiddenException('Authenticated user required');
+    }
+    return this.purchaseOrderService.receivePurchaseOrder(id, dto, userId, clinicId);
   }
 }
