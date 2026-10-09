@@ -198,6 +198,24 @@ describe('DoctorsService.updateDoctorProfile earning fees', () => {
     });
   });
 
+  it('clears a fixed fee when an admin sends null (percentage fee applies again)', async () => {
+    const { service, tx } = build();
+    tx.doctorClinic.findFirst.mockResolvedValue({ doctorId: 'd1' });
+    tx.doctorClinic.updateMany.mockResolvedValue({ count: 1 });
+    tx.doctor.findUnique.mockResolvedValue({ id: 'd1' });
+    jest.spyOn(service, 'getDoctorProfile').mockResolvedValue({ id: 'u1' } as never);
+    await service.updateDoctorProfile(
+      'u1',
+      { userId: 'a1', role: 'CLINIC_ADMIN', clinicId: 'c1' },
+      {},
+      { videoDoctorFee: null }
+    );
+    expect(tx.doctorClinic.updateMany).toHaveBeenCalledWith({
+      where: { clinicId: 'c1', doctor: { userId: 'u1' } },
+      data: { videoDoctorFee: null },
+    });
+  });
+
   it('404s when the doctor is not in the clinic', async () => {
     const { service, tx } = build();
     tx.doctorClinic.findFirst.mockResolvedValue({ doctorId: 'd1' });

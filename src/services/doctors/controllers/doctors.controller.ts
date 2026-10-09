@@ -125,8 +125,8 @@ export class DoctorsController {
         ...(dto.workingHours != null && { workingHours: dto.workingHours }),
       }),
       {
-        ...(dto.videoDoctorFee != null && { videoDoctorFee: dto.videoDoctorFee }),
-        ...(dto.inPersonDoctorFee != null && { inPersonDoctorFee: dto.inPersonDoctorFee }),
+        ...(dto.videoDoctorFee !== undefined && { videoDoctorFee: dto.videoDoctorFee }),
+        ...(dto.inPersonDoctorFee !== undefined && { inPersonDoctorFee: dto.inPersonDoctorFee }),
       }
     );
   }

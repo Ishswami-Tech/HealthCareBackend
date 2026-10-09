@@ -1,6 +1,6 @@
 import { nowIso } from '@utils/date-time.util';
 // External imports
-import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, Optional, forwardRef, OnApplicationShutdown } from '@nestjs/common';
 // IMPORTANT: avoid importing from the @config barrel in infra boot code (SWC TDZ/cycles).
 import { ConfigService } from '@config/config.service';
 
@@ -139,7 +139,7 @@ type LogEntryLike = {
  * - Pagination support for scalability
  */
 @Injectable()
-export class LoggingService {
+export class LoggingService implements OnApplicationShutdown {
   private contextStorage = new AsyncLocalStorage<LogContext>();
   private metricsBuffer: unknown[] = [];
   private performanceMetrics = new Map<string, number>();
@@ -2207,6 +2207,11 @@ export class LoggingService {
       requiresImmedateAttention: true,
       timestamp: nowIso(),
     });
+  }
+
+  /** Writes the buffered log lines before the process exits (enableShutdownHooks is on). */
+  async onApplicationShutdown(): Promise<void> {
+    await this.flushLogWriteBuffer();
   }
 
   /**

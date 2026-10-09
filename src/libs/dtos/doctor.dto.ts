@@ -266,7 +266,7 @@ export class UpdateDoctorProfileDto extends DoctorProfileFieldsDto {
 
   @ApiPropertyOptional({
     description:
-      'What the doctor earns per video consultation in this clinic (rest is convenience fee). Admins only.',
+      'What the doctor earns per video consultation in this clinic (rest is convenience fee). Admins only. null clears it (percentage fee applies).',
     minimum: 0,
   })
   @IsOptional()
@@ -274,7 +274,7 @@ export class UpdateDoctorProfileDto extends DoctorProfileFieldsDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(1000000)
-  videoDoctorFee?: number;
+  videoDoctorFee?: number | null;
 
   @ApiPropertyOptional({
     description: 'What the doctor earns per in-person visit in this clinic. Admins only.',
@@ -285,7 +285,7 @@ export class UpdateDoctorProfileDto extends DoctorProfileFieldsDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(1000000)
-  inPersonDoctorFee?: number;
+  inPersonDoctorFee?: number | null;
 
   @ApiPropertyOptional({ description: 'Working hours schedule (JSON object)' })
   @IsOptional()

@@ -14,7 +14,7 @@ import { PatientVisitsService } from '@services/patient-visits/patient-visits.se
 interface ConsultationStartEvent {
   clinicId?: string;
   userId?: string;
-  payload?: { appointmentId?: string; userRole?: string };
+  payload?: { appointmentId?: string; userRole?: string; userId?: string };
   metadata?: { appointmentId?: string };
 }
 
@@ -37,12 +37,15 @@ export class PatientVisitEventsListener {
     if (String(event.payload?.userRole ?? '').toLowerCase() !== 'doctor') {
       return;
     }
-    await this.ensureDraft(event, event.payload?.appointmentId);
+    // The envelope's userId is the patient (the notification target); the doctor who started the
+    // call is in the payload, and is the actor of the draft visit.
+    await this.ensureDraft(event, event.payload?.appointmentId, event.payload?.userId);
   }
 
   private async ensureDraft(
     event: ConsultationStartEvent,
-    appointmentId: string | undefined
+    appointmentId: string | undefined,
+    actorUserId: string | undefined = event.userId
   ): Promise<void> {
     const clinicId = event.clinicId;
     if (!appointmentId || !clinicId) {
@@ -50,7 +53,7 @@ export class PatientVisitEventsListener {
     }
     try {
       await this.visitsService.ensureDraftVisitForAppointment(appointmentId, clinicId, {
-        ...(event.userId ? { userId: event.userId } : {}),
+        ...(actorUserId ? { userId: actorUserId } : {}),
         role: 'system',
       });
     } catch (error) {

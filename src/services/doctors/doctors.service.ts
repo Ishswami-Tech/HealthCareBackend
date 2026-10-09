@@ -37,8 +37,9 @@ export interface DoctorProfileFieldsInput {
 
 /** Fixed fees (rupees) a doctor earns per visit type in a clinic; admin-only, rest is convenience fee. */
 export interface DoctorFeeSplitInput {
-  videoDoctorFee?: number;
-  inPersonDoctorFee?: number;
+  /** null clears the fixed fee, so the percentage platform fee applies again. */
+  videoDoctorFee?: number | null;
+  inPersonDoctorFee?: number | null;
 }
 
 export interface DoctorProfileActor {
@@ -281,7 +282,7 @@ export class DoctorsService {
     actor: DoctorProfileActor,
     fees: DoctorFeeSplitInput
   ): Promise<void> {
-    const data: Record<string, number> = {};
+    const data: Record<string, number | null> = {};
     if (fees.videoDoctorFee !== undefined) data['videoDoctorFee'] = fees.videoDoctorFee;
     if (fees.inPersonDoctorFee !== undefined) data['inPersonDoctorFee'] = fees.inPersonDoctorFee;
     await this.databaseService.executeHealthcareWrite(

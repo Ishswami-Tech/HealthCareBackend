@@ -162,6 +162,20 @@ describe('PatientVisitEventsListener', () => {
     expect(visits.ensureDraftVisitForAppointment).toHaveBeenCalledTimes(1);
   });
 
+  it('records the doctor (not the patient on the envelope) as the actor of a video draft', async () => {
+    const { instance, visits } = listener();
+    await instance.onVideoConsultationStarted({
+      clinicId: 'clinic-1',
+      userId: 'patient-user',
+      payload: { appointmentId: 'apt-1', userRole: 'doctor', userId: 'doctor-user' },
+    });
+    expect(visits.ensureDraftVisitForAppointment).toHaveBeenCalledWith(
+      'apt-1',
+      'clinic-1',
+      expect.objectContaining({ userId: 'doctor-user' })
+    );
+  });
+
   it('never throws when the draft cannot be created', async () => {
     const { instance, visits, logging } = listener();
     visits.ensureDraftVisitForAppointment.mockRejectedValue(new Error('db down'));
