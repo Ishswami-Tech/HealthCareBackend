@@ -26,6 +26,33 @@ export interface DoctorEarningsSummary {
   daily: DoctorEarningsDay[];
 }
 
+/** The doctor's share recorded on a payment's payout, or null when none was prepared. */
+export function readDoctorShare(metadata: unknown): number | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return null;
+  }
+  const payout = (metadata as Record<string, unknown>)['payout'];
+  if (!payout || typeof payout !== 'object' || Array.isArray(payout)) {
+    return null;
+  }
+  const share = (payout as Record<string, unknown>)['doctorShareAmount'];
+  return typeof share === 'number' && Number.isFinite(share) && share >= 0 ? share : null;
+}
+
+/** Doctor share and platform (convenience) fee recorded on a payment's payout. */
+export function readPayoutAmounts(
+  metadata: unknown
+): { doctorShareAmount: number; platformFeeAmount: number } | null {
+  const doctorShareAmount = readDoctorShare(metadata);
+  if (doctorShareAmount === null) {
+    return null;
+  }
+  const payout = (metadata as Record<string, unknown>)['payout'] as Record<string, unknown>;
+  const fee = payout['platformFeeAmount'];
+  const platformFeeAmount = typeof fee === 'number' && Number.isFinite(fee) && fee >= 0 ? fee : 0;
+  return { doctorShareAmount, platformFeeAmount };
+}
+
 const toPaise = (rupees: number): number => Math.round(rupees * 100);
 
 /** What a payment counts for after refunds, in paise (never below zero). */

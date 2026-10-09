@@ -64,6 +64,7 @@ import {
   resolvePlanClinicId,
 } from '@services/billing/billing-subscription.store';
 import { BillingPaymentFinaliser } from '@services/billing/billing-payment-finaliser';
+import { applyRefundToSplit, computePayoutSplit } from '@services/billing/payout-split.util';
 import type {
   FinalisationOutcome,
   InvoiceSettlement,
@@ -5330,6 +5331,33 @@ export class BillingService implements OnModuleInit {
     }
   }
 
+  /** The doctor's configured fixed fee for this visit type in this clinic, or null if none. */
+  private async readFixedDoctorFee(
+    doctorId: string,
+    clinicId: string,
+    appointmentType: string
+  ): Promise<number | null> {
+    const row = await this.databaseService.executeHealthcareRead(async client => {
+      const db = client as unknown as {
+        doctorClinic: {
+          findMany: (
+            args: unknown
+          ) => Promise<Array<{ videoDoctorFee: number | null; inPersonDoctorFee: number | null }>>;
+        };
+      };
+      const rows = await db.doctorClinic.findMany({
+        where: { doctorId, clinicId },
+        select: { videoDoctorFee: true, inPersonDoctorFee: true },
+        take: 1,
+      });
+      return rows[0] ?? null;
+    });
+    if (!row) {
+      return null;
+    }
+    return appointmentType === 'VIDEO_CALL' ? row.videoDoctorFee : row.inPersonDoctorFee;
+  }
+
   async preparePayoutForAppointmentPayment(paymentId: string, clinicId: string): Promise<void> {
     const payment = await this.paymentStore.readPayment(paymentId, clinicId);
     if (!payment || payment.clinicId !== clinicId || !payment.appointmentId) {
@@ -5344,16 +5372,26 @@ export class BillingService implements OnModuleInit {
       return;
     }
 
-    const gross = this.roundToTwo(payment.amount);
-    const feePercent = this.getPlatformFeePercent();
-    const platformFee = this.roundToTwo((gross * feePercent) / 100);
-    const doctorShare = this.roundToTwo(gross - platformFee);
+    const fixedDoctorFee = await this.readFixedDoctorFee(
+      appointment.doctorId,
+      clinicId,
+      String(appointment.type)
+    );
+    const split = computePayoutSplit({
+      grossAmount: payment.amount,
+      fixedDoctorFee,
+      fallbackFeePercent: this.getPlatformFeePercent(),
+    });
+    const gross = split.grossAmount;
+    const platformFee = split.platformFeeAmount;
+    const doctorShare = split.doctorShareAmount;
 
     const payout = {
       mode: 'SOLE_PROPRIETOR',
       state: 'PAYOUT_PENDING',
       grossAmount: gross,
-      platformFeePercent: feePercent,
+      feeSource: split.feeSource,
+      platformFeePercent: split.platformFeePercent,
       platformFeeAmount: platformFee,
       doctorShareAmount: doctorShare,
       doctorId: appointment.doctorId,
@@ -6182,14 +6220,22 @@ export class BillingService implements OnModuleInit {
             : null;
 
         if (payout) {
-          const currentDoctorShare = Number(payout['doctorShareAmount'] || 0);
-          const adjustedDoctorShare = this.roundToTwo(
-            Math.max(0, currentDoctorShare - refundAmountInRupees)
-          );
-          const currentPlatformFee = Number(payout['platformFeeAmount'] || 0);
-          const adjustedPlatformFee = this.roundToTwo(
-            Math.max(0, currentPlatformFee - Math.min(currentPlatformFee, refundAmountInRupees))
-          );
+          // Both sides shrink in proportion to the refunded share of what was paid. The split at
+          // payment time is kept so a second refund never compounds on the first.
+          const original = {
+            grossAmount: Number(payout['grossAmount'] ?? payment.amount),
+            doctorShareAmount: Number(
+              payout['originalDoctorShareAmount'] ?? payout['doctorShareAmount'] ?? 0
+            ),
+            platformFeeAmount: Number(
+              payout['originalPlatformFeeAmount'] ?? payout['platformFeeAmount'] ?? 0
+            ),
+          };
+          payout['originalDoctorShareAmount'] = original.doctorShareAmount;
+          payout['originalPlatformFeeAmount'] = original.platformFeeAmount;
+          const refunded = applyRefundToSplit(original, newRefundAmount);
+          const adjustedDoctorShare = refunded.doctorShareAmount;
+          const adjustedPlatformFee = refunded.platformFeeAmount;
           const ledger = Array.isArray(payout['ledger'])
             ? [...(payout['ledger'] as Array<Record<string, unknown>>)]
             : [];

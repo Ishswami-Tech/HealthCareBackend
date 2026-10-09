@@ -1,6 +1,10 @@
 import {
+  Body,
   Controller,
   Get,
+  Param,
+  ParseUUIDPipe,
+  Put,
   Query,
   Request,
   UseGuards,
@@ -18,6 +22,7 @@ import { Role } from '@core/types/enums.types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { AnalyticsService, type AnalyticsQueryFilters } from './analytics.service';
 import { DoctorEarningsQueryDto } from './dto/doctor-earnings-query.dto';
+import { UpdateDoctorFeeSplitDto } from './dto/doctor-fee-split.dto';
 
 @ApiTags('analytics')
 @Controller('analytics')
@@ -61,6 +66,55 @@ export class AnalyticsController {
     const userId = req.user?.sub ?? req.user?.id;
     if (!userId) throw new ForbiddenException('Authenticated user required');
     return await this.analyticsService.getDoctorOwnEarnings(userId, clinicId, query);
+  }
+
+  /**
+   * How paid video consultations split between each doctor and the platform (convenience fee),
+   * plus payments on visits that did not complete. Admins only - a doctor never sees the gross.
+   */
+  @Get('earnings/split')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('billing', 'read')
+  @ApiOperation({ summary: 'Earnings split report: doctor share vs convenience fee' })
+  async getEarningsSplit(
+    @Request() req: ClinicAuthenticatedRequest,
+    @Query() query: DoctorEarningsQueryDto
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new BadRequestException('Clinic ID is required');
+    return await this.analyticsService.getEarningsSplitReport(clinicId, query);
+  }
+
+  @Get('doctors/fee-split')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('billing', 'read')
+  @ApiOperation({ summary: "List the clinic's doctors with their fixed fees" })
+  async listDoctorFeeSplits(@Request() req: ClinicAuthenticatedRequest) {
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new BadRequestException('Clinic ID is required');
+    return await this.analyticsService.listDoctorFeeSplits(clinicId);
+  }
+
+  /** Sets what a doctor earns per visit type in the caller's clinic; the rest is convenience fee. */
+  @Put('doctors/:doctorId/fee-split')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('billing', 'update')
+  @ApiOperation({ summary: "Set a doctor's fixed fee for video / in-person visits" })
+  async updateDoctorFeeSplit(
+    @Request() req: ClinicAuthenticatedRequest,
+    @Param('doctorId', ParseUUIDPipe) doctorId: string,
+    @Body() body: UpdateDoctorFeeSplitDto
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new BadRequestException('Clinic ID is required');
+    const userId = req.user?.sub ?? req.user?.id;
+    if (!userId) throw new ForbiddenException('Authenticated user required');
+    return await this.analyticsService.updateDoctorFeeSplit(
+      clinicId,
+      doctorId,
+      { userId, role: String(req.user?.role ?? 'ADMIN') },
+      body
+    );
   }
 
   @Get('appointments')

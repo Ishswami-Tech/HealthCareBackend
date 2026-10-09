@@ -4,6 +4,7 @@ import {
   forwardRef,
   BadRequestException,
   ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common';
 import { AppointmentAnalyticsService } from '../appointments/plugins/analytics/appointment-analytics.service';
 import { BillingService } from '../billing/billing.service';
@@ -13,10 +14,17 @@ import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { formatDateKeyInIST } from '@utils/date-time.util';
 import {
+  buildEarningsSplitReport,
+  type EarningsSplitReport,
+  type SplitPaymentRow,
+} from './earnings-split.util';
+import {
   SalesRangeError,
   resolveSalesRange,
 } from '@services/pharmacy/services/pharmacy-sales.util';
 import {
+  readDoctorShare,
+  readPayoutAmounts,
   summarizeDoctorEarnings,
   type DoctorEarningsSummary,
   type PaidConsultationRow,
@@ -35,8 +43,7 @@ interface DoctorEarningsClient {
   payment: {
     findMany: (args: unknown) => Promise<
       Array<{
-        amount: number;
-        refundAmount: number | null;
+        metadata: unknown;
         appointment: { id: string; date: Date } | null;
       }>
     >;
@@ -222,13 +229,15 @@ export class AnalyticsService {
             is: {
               doctorId: doctor.id,
               clinicId,
+              // Earned only once the visit is done; in-person visits are subscription based.
+              status: 'COMPLETED',
+              type: 'VIDEO_CALL',
               date: { gte: range.from, lt: range.to },
             },
           },
         },
         select: {
-          amount: true,
-          refundAmount: true,
+          metadata: true,
           appointment: { select: { id: true, date: true } },
         },
         take: MAX_EARNINGS_ROWS + 1,
@@ -239,18 +248,21 @@ export class AnalyticsService {
       throw new BadRequestException('Too many payments in this range. Narrow the date range.');
     }
 
-    const paid: PaidConsultationRow[] = rows.flatMap(row =>
-      row.appointment
+    // The doctor sees only their own share (already net of refunds); the gross amount and the
+    // convenience fee never leave the server on this endpoint.
+    const paid: PaidConsultationRow[] = rows.flatMap(row => {
+      const share = readDoctorShare(row.metadata);
+      return row.appointment && share !== null
         ? [
             {
               appointmentId: row.appointment.id,
               appointmentDate: row.appointment.date,
-              amount: row.amount,
-              refundAmount: row.refundAmount,
+              amount: share,
+              refundAmount: null,
             },
           ]
-        : []
-    );
+        : [];
+    });
     return summarizeDoctorEarnings(
       {
         from: formatDateKeyInIST(range.from),
@@ -258,6 +270,199 @@ export class AnalyticsService {
       },
       paid
     );
+  }
+
+  /**
+   * Admin report: how paid video consultations split between each doctor and the platform
+   * (convenience fee), plus payments on visits that did not complete. Clinic-scoped.
+   */
+  async getEarningsSplitReport(
+    clinicId: string,
+    query: { from?: string; to?: string }
+  ): Promise<EarningsSplitReport> {
+    let range: { from: Date; to: Date };
+    try {
+      range = resolveSalesRange(query.from, query.to);
+    } catch (error) {
+      if (error instanceof SalesRangeError) {
+        throw new BadRequestException(error.message);
+      }
+      throw error;
+    }
+
+    type SplitRow = {
+      id: string;
+      amount: number;
+      metadata: unknown;
+      appointment: {
+        id: string;
+        date: Date;
+        status: string;
+        doctorId: string;
+        doctor: { user: { name: string } | null } | null;
+      } | null;
+    };
+    const rows = await this.databaseService.executeHealthcareRead(async client => {
+      const db = client as unknown as {
+        payment: { findMany: (args: unknown) => Promise<SplitRow[]> };
+      };
+      return await db.payment.findMany({
+        where: {
+          clinicId,
+          status: 'COMPLETED',
+          appointment: {
+            is: { clinicId, type: 'VIDEO_CALL', date: { gte: range.from, lt: range.to } },
+          },
+        },
+        select: {
+          id: true,
+          amount: true,
+          metadata: true,
+          appointment: {
+            select: {
+              id: true,
+              date: true,
+              status: true,
+              doctorId: true,
+              doctor: { select: { user: { select: { name: true } } } },
+            },
+          },
+        },
+        take: MAX_EARNINGS_ROWS + 1,
+      });
+    });
+    if (rows.length > MAX_EARNINGS_ROWS) {
+      throw new BadRequestException('Too many payments in this range. Narrow the date range.');
+    }
+
+    const splitRows: SplitPaymentRow[] = rows.flatMap(row => {
+      if (!row.appointment) {
+        return [];
+      }
+      const payout = readPayoutAmounts(row.metadata);
+      return [
+        {
+          paymentId: row.id,
+          appointmentId: row.appointment.id,
+          appointmentDate: row.appointment.date,
+          appointmentStatus: String(row.appointment.status),
+          doctorId: row.appointment.doctorId,
+          doctorName: row.appointment.doctor?.user?.name ?? 'Doctor',
+          grossAmount: payout ? payout.doctorShareAmount + payout.platformFeeAmount : row.amount,
+          doctorShareAmount: payout?.doctorShareAmount ?? 0,
+          platformFeeAmount: payout?.platformFeeAmount ?? 0,
+        },
+      ];
+    });
+    return buildEarningsSplitReport(
+      {
+        from: formatDateKeyInIST(range.from),
+        to: formatDateKeyInIST(new Date(range.to.getTime() - 1)),
+      },
+      splitRows
+    );
+  }
+
+  /** The doctors of a clinic with their configured fixed fees (admin view). */
+  async listDoctorFeeSplits(clinicId: string): Promise<
+    Array<{
+      doctorId: string;
+      doctorName: string;
+      videoDoctorFee: number | null;
+      inPersonDoctorFee: number | null;
+      videoPrice: number | null;
+    }>
+  > {
+    const rows = await this.databaseService.executeHealthcareRead(async client => {
+      const db = client as unknown as {
+        doctorClinic: {
+          findMany: (args: unknown) => Promise<
+            Array<{
+              doctorId: string;
+              videoDoctorFee: number | null;
+              inPersonDoctorFee: number | null;
+              doctor: {
+                videoConsultationFee: number | null;
+                user: { name: string } | null;
+              } | null;
+            }>
+          >;
+        };
+      };
+      return await db.doctorClinic.findMany({
+        where: { clinicId },
+        select: {
+          doctorId: true,
+          videoDoctorFee: true,
+          inPersonDoctorFee: true,
+          doctor: { select: { videoConsultationFee: true, user: { select: { name: true } } } },
+        },
+      });
+    });
+    return rows.map(row => ({
+      doctorId: row.doctorId,
+      doctorName: row.doctor?.user?.name ?? 'Doctor',
+      videoDoctorFee: row.videoDoctorFee,
+      inPersonDoctorFee: row.inPersonDoctorFee,
+      videoPrice: row.doctor?.videoConsultationFee ?? null,
+    }));
+  }
+
+  /**
+   * Sets a doctor's fixed fees in this clinic. Only affects payments made afterwards: each
+   * payment keeps the split it was made with.
+   */
+  async updateDoctorFeeSplit(
+    clinicId: string,
+    doctorId: string,
+    actor: { userId: string; role: string },
+    fees: { videoDoctorFee?: number; inPersonDoctorFee?: number }
+  ): Promise<{
+    doctorId: string;
+    videoDoctorFee: number | null;
+    inPersonDoctorFee: number | null;
+  }> {
+    const data: Record<string, number> = {};
+    if (fees.videoDoctorFee !== undefined) data['videoDoctorFee'] = fees.videoDoctorFee;
+    if (fees.inPersonDoctorFee !== undefined) data['inPersonDoctorFee'] = fees.inPersonDoctorFee;
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('Provide videoDoctorFee and/or inPersonDoctorFee');
+    }
+
+    const updated = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const db = client as unknown as {
+          doctorClinic: {
+            updateMany: (args: unknown) => Promise<{ count: number }>;
+            findMany: (
+              args: unknown
+            ) => Promise<
+              Array<{ videoDoctorFee: number | null; inPersonDoctorFee: number | null }>
+            >;
+          };
+        };
+        const result = await db.doctorClinic.updateMany({ where: { doctorId, clinicId }, data });
+        if (result.count === 0) {
+          throw new NotFoundException('Doctor is not part of this clinic');
+        }
+        const rows = await db.doctorClinic.findMany({
+          where: { doctorId, clinicId },
+          select: { videoDoctorFee: true, inPersonDoctorFee: true },
+          take: 1,
+        });
+        return rows[0] ?? { videoDoctorFee: null, inPersonDoctorFee: null };
+      },
+      {
+        userId: actor.userId,
+        userRole: actor.role,
+        clinicId,
+        resourceType: 'DOCTOR_FEE_SPLIT',
+        operation: 'UPDATE',
+        resourceId: doctorId,
+        details: { ...data },
+      }
+    );
+    return { doctorId, ...updated };
   }
 
   private getDateRange(period: string): { from: Date; to: Date } {

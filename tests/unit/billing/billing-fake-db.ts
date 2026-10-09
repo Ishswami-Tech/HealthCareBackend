@@ -13,7 +13,8 @@
  */
 
 export type Row = Record<string, unknown>;
-export type ModelName = 'payment' | 'invoice' | 'subscription' | 'appointment' | 'billingPlan';
+export type ModelName =
+  'payment' | 'invoice' | 'subscription' | 'appointment' | 'billingPlan' | 'doctorClinic';
 
 type Where = Record<string, unknown>;
 
@@ -109,6 +110,7 @@ export class FakeBillingDb {
     subscription: new Map(),
     appointment: new Map(),
     billingPlan: new Map(),
+    doctorClinic: new Map(),
   };
   /** Every delegate / safe-method call, in order ("payment.updateMany", ...). */
   readonly calls: string[] = [];
@@ -239,6 +241,7 @@ export class FakeBillingDb {
       subscription: this.delegate('subscription'),
       appointment: this.delegate('appointment'),
       billingPlan: this.delegate('billingPlan'),
+      doctorClinic: this.delegate('doctorClinic'),
     };
   }
 

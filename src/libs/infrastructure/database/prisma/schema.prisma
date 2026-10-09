@@ -1446,14 +1446,18 @@ model Supplier {
 }
 
 model DoctorClinic {
-  doctorId   String
-  clinicId   String
-  startTime  DateTime?
-  endTime    DateTime?
-  locationId String?
-  clinic     Clinic          @relation(fields: [clinicId], references: [id])
-  doctor     Doctor          @relation(fields: [doctorId], references: [id])
-  location   ClinicLocation? @relation(fields: [locationId], references: [id])
+  doctorId          String
+  clinicId          String
+  startTime         DateTime?
+  endTime           DateTime?
+  locationId        String?
+  // Fixed doctor fee (rupees) per visit type; the rest of what the patient pays is the
+  // convenience fee. NULL = not configured (the percentage platform fee applies).
+  videoDoctorFee    Float?
+  inPersonDoctorFee Float?
+  clinic            Clinic          @relation(fields: [clinicId], references: [id])
+  doctor            Doctor          @relation(fields: [doctorId], references: [id])
+  location          ClinicLocation? @relation(fields: [locationId], references: [id])
 
   @@id([doctorId, clinicId])
   @@index([clinicId])
