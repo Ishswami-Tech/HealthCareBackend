@@ -677,7 +677,7 @@ export interface IAdvancedCacheProvider extends ICacheProvider {
   hincrby(key: string, field: string, increment: number): Promise<number>;
 
   // List operations
-  rPush(key: string, value: string): Promise<number>;
+  rPush(key: string, ...values: string[]): Promise<number>;
   lRange(key: string, start: number, stop: number): Promise<string[]>;
   lLen(key: string): Promise<number>;
   lTrim(key: string, start: number, stop: number): Promise<string>;

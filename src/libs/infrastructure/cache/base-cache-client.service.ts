@@ -523,12 +523,12 @@ export abstract class BaseCacheClientService {
 
   // ===== LIST OPERATIONS =====
 
-  async rPush(key: string, value: string): Promise<number> {
+  async rPush(key: string, ...values: string[]): Promise<number> {
     if (!this.client || this.client.status !== 'ready') {
       return 0;
     }
     try {
-      return await this.client.rpush(key, value);
+      return await this.client.rpush(key, ...values);
     } catch {
       return 0;
     }

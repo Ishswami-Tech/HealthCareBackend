@@ -171,6 +171,51 @@ export class LoggingService {
   private readonly logRetentionCleanupIntervalMs = 5 * 60 * 1000;
   private lastLogRetentionCleanupAt = Date.now();
   private logRetentionCleanupPromise: Promise<void> | null = null;
+  // Log lines are written to the cache ring buffer in batches (one rPush + one lTrim per
+  // flush) instead of 2-3 round-trips per log() call, which Sentry flagged as an N+1.
+  private logWriteBuffer: string[] = [];
+  private logWriteTimer: NodeJS.Timeout | null = null;
+  private readonly logWriteBatchSize = 200;
+  private readonly logWriteFlushDelayMs = 250;
+
+  private enqueueLogWrite(logJson: string): void {
+    this.logWriteBuffer.push(logJson);
+    if (this.logWriteBuffer.length >= this.logWriteBatchSize) {
+      void this.flushLogWriteBuffer();
+      return;
+    }
+    if (!this.logWriteTimer) {
+      this.logWriteTimer = setTimeout(() => {
+        void this.flushLogWriteBuffer();
+      }, this.logWriteFlushDelayMs);
+      this.logWriteTimer.unref?.();
+    }
+  }
+
+  private async flushLogWriteBuffer(): Promise<void> {
+    if (this.logWriteTimer) {
+      clearTimeout(this.logWriteTimer);
+      this.logWriteTimer = null;
+    }
+    const cacheService = this.cacheService;
+    if (!cacheService || this.logWriteBuffer.length === 0) {
+      this.logWriteBuffer = [];
+      return;
+    }
+    const batch = this.logWriteBuffer;
+    this.logWriteBuffer = [];
+    try {
+      await cacheService.rPush('logs', ...batch);
+      await cacheService.lTrim('logs', -10000, -1);
+      await this.cleanupExpiredLogCache();
+    } catch (_cacheError: unknown) {
+      const errorMessage = _cacheError instanceof Error ? _cacheError.message : String(_cacheError);
+      const isInitializationError = this.isBootstrapDependencyError(errorMessage);
+      if (!isInitializationError || !this.isInStartupGracePeriod()) {
+        console.error(`[LoggingService] Failed to store log in cache: ${errorMessage}`);
+      }
+    }
+  }
 
   private isInStartupGracePeriod(): boolean {
     return Date.now() - this.serviceStartTime < this.STARTUP_GRACE_PERIOD;
@@ -693,19 +738,7 @@ export class LoggingService {
     // happens (dashboard visibility is unchanged) - it just no longer holds
     // up whoever called log().
     if (this.cacheService) {
-      const logJson = this.safeStringify(logEntry);
-      void this.cacheService
-        .rPush('logs', logJson)
-        .then(() => this.cacheService?.lTrim('logs', -10000, -1))
-        .then(() => this.cleanupExpiredLogCache())
-        .catch((_cacheError: unknown) => {
-          const errorMessage =
-            _cacheError instanceof Error ? _cacheError.message : String(_cacheError);
-          const isInitializationError = this.isBootstrapDependencyError(errorMessage);
-          if (!isInitializationError || !this.isInStartupGracePeriod()) {
-            console.error(`[LoggingService] Failed to store log in cache: ${errorMessage}`);
-          }
-        });
+      this.enqueueLogWrite(this.safeStringify(logEntry));
     }
 
     // Level-gated operations below: terminal output, metrics, notifications.
@@ -2185,8 +2218,9 @@ export class LoggingService {
         clearInterval(this.metricsFlushInterval);
       }
 
-      // Final flush of any remaining metrics
+      // Final flush of any remaining metrics and buffered log lines
       await this.flushMetricsBuffer();
+      await this.flushLogWriteBuffer();
 
       // Cleanup completed successfully
     } catch (_error) {

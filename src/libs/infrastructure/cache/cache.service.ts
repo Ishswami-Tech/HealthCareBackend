@@ -1244,9 +1244,9 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return this.getProvider().lLen(key);
   }
 
-  async rPush(key: string, value: string): Promise<number> {
+  async rPush(key: string, ...values: string[]): Promise<number> {
     try {
-      return this.getProvider().rPush(key, value);
+      return this.getProvider().rPush(key, ...values);
     } catch (error) {
       // Handle case where provider is not initialized yet (during bootstrap)
       const errorMessage = error instanceof Error ? error.message : String(error);
