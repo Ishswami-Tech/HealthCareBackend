@@ -9,11 +9,18 @@ import {
   IsBoolean,
   IsArray,
   ArrayMaxSize,
+  IsObject,
   MaxLength,
   Min,
   Max,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
+import { BadRequestException } from '@nestjs/common';
+import {
+  LocalizedProfileValidationError,
+  normalizeLocalizedProfile,
+  type LocalizedProfile,
+} from '@services/doctors/localized-profile.util';
 
 /** Allowed slot length range (minutes) for a doctor-specific slot override. */
 export const DOCTOR_SLOT_MINUTES_MIN = 5;
@@ -23,6 +30,17 @@ const trimStrings = ({ value }: { value: unknown }): unknown =>
   Array.isArray(value)
     ? (value as unknown[]).map(v => (typeof v === 'string' ? v.trim() : v)).filter(v => v !== '')
     : value;
+/** Validates/normalises localizedProfile; invalid input becomes a 400 with a clear message. */
+const normalizeLocalizedProfileValue = ({ value }: { value: unknown }): LocalizedProfile | null => {
+  try {
+    return normalizeLocalizedProfile(value);
+  } catch (error) {
+    if (error instanceof LocalizedProfileValidationError) {
+      throw new BadRequestException(error.message);
+    }
+    throw error;
+  }
+};
 const trimString = ({ value }: { value: unknown }): unknown =>
   typeof value === 'string' ? value.trim() : value;
 
@@ -92,6 +110,25 @@ export class DoctorProfileFieldsDto {
   @IsString({ each: true })
   @MaxLength(200, { each: true })
   certifications?: string[];
+
+  @ApiPropertyOptional({
+    type: 'object',
+    additionalProperties: true,
+    nullable: true,
+    description:
+      'Public profile text per language, keyed by locale (en, hi, mr): { name?, headline?, highlights?: [{ icon?, text }] }. Send null or {} to clear.',
+    example: {
+      en: {
+        name: 'Dr. A',
+        headline: 'Ayurvedacharya',
+        highlights: [{ icon: '🏅', text: 'Gold medalist' }],
+      },
+    },
+  })
+  @IsOptional()
+  @Transform(normalizeLocalizedProfileValue)
+  @IsObject()
+  localizedProfile?: LocalizedProfile | null;
 }
 
 /**

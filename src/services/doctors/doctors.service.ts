@@ -14,6 +14,7 @@ import { CacheService } from '@infrastructure/cache/cache.service';
 import { EventService } from '@infrastructure/events/event.service';
 import { PrismaDelegateArgs, PrismaTransactionClientWithDelegates } from '@core/types/prisma.types';
 import { LogType, LogLevel } from '@core/types/logging.types';
+import type { LocalizedProfile } from '@services/doctors/localized-profile.util';
 
 /** Optional professional-profile fields that are copied verbatim when defined. */
 export interface DoctorProfileFieldsInput {
@@ -30,6 +31,8 @@ export interface DoctorProfileFieldsInput {
   languages?: string[];
   education?: string;
   certifications?: string[];
+  /** Already validated by normalizeLocalizedProfile; null clears the column. */
+  localizedProfile?: LocalizedProfile | null;
 }
 
 export interface DoctorProfileActor {
@@ -89,6 +92,10 @@ export function buildDoctorProfileUpdate(data: DoctorProfileFieldsInput): Record
   if (data.workingHours) updateData['workingHours'] = data.workingHours;
   for (const key of PASS_THROUGH_FIELDS) {
     if (data[key] !== undefined) updateData[key] = data[key];
+  }
+  if (data.localizedProfile !== undefined) {
+    updateData['localizedProfile'] =
+      data.localizedProfile === null ? Prisma.DbNull : data.localizedProfile;
   }
   return updateData;
 }
@@ -185,6 +192,7 @@ export class DoctorsService {
       // invalidated by anything (invalidateClinicCache below only fires when
       // clinicId is provided, and only busts clinic-scoped tags).
       await this.cacheService.invalidateCacheByTag(`doctor:${userId}`);
+      if (!data.clinicId) await this.invalidateDoctorClinicLists(userId);
     }
 
     if (data.clinicId) {
@@ -209,6 +217,24 @@ export class DoctorsService {
     }
 
     return { success: true, message: 'Doctor profile updated' };
+  }
+
+  /**
+   * Clinic-scoped doctor lists (GET /doctors, /clinics/:id/doctors) are cached per clinic. Callers
+   * without a clinic context (SUPER_ADMIN) must still bust the lists of every clinic the doctor is in.
+   */
+  private async invalidateDoctorClinicLists(userId: string): Promise<void> {
+    const links = await this.databaseService.executeHealthcareRead(async client => {
+      const tx = client as unknown as Prisma.TransactionClient;
+      return await tx.doctorClinic.findMany({
+        where: { doctor: { userId } },
+        select: { clinicId: true },
+      });
+    });
+    for (const clinicId of new Set(links.map(link => link.clinicId))) {
+      await this.cacheService.invalidateClinicCache(clinicId);
+    }
+    await this.cacheService.invalidateCacheByTag('doctors');
   }
 
   /**

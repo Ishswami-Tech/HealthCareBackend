@@ -48,6 +48,7 @@ function pickExtendedFields(dto: DoctorProfileFieldsDto): DoctorProfileFieldsInp
     'languages',
     'education',
     'certifications',
+    'localizedProfile',
   ] as const) {
     if (dto[key] !== undefined) out[key] = dto[key];
   }

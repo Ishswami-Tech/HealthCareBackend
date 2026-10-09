@@ -62,6 +62,16 @@ describe('buildDoctorProfileUpdate', () => {
     ).toEqual({ consultationFee: 0, videoConsultationEnabled: false, languages: ['English'] });
     expect(buildDoctorProfileUpdate({})).toEqual({});
   });
+
+  it('persists localizedProfile and clears it with DbNull when null', () => {
+    const profile = { en: { name: 'Dr. A' } };
+    expect(buildDoctorProfileUpdate({ localizedProfile: profile })).toEqual({
+      localizedProfile: profile,
+    });
+    const cleared = buildDoctorProfileUpdate({ localizedProfile: null });
+    expect(cleared['localizedProfile']).not.toBeNull();
+    expect(cleared['localizedProfile']).toBeDefined();
+  });
 });
 
 describe('maskReviewerName', () => {
@@ -80,6 +90,17 @@ describe('profile DTO validation', () => {
     expect(
       await run({ videoConsultationFee: 499.5, slotDurationMinutes: 20, languages: ['Hindi'] })
     ).toEqual([]);
+  });
+  it('normalises localizedProfile and rejects bad locales with a 400', async () => {
+    const dto = plainToInstance(UpdateDoctorProfileDto, {
+      localizedProfile: { en: { name: '  Dr. A  ' } },
+    });
+    expect(dto.localizedProfile).toEqual({ en: { name: 'Dr. A' } });
+    expect(await run({ localizedProfile: { en: { name: 'Dr. A' } } })).toEqual([]);
+    expect(await run({ localizedProfile: null })).toEqual([]);
+    expect(() => plainToInstance(UpdateDoctorProfileDto, { localizedProfile: { fr: {} } })).toThrow(
+      BadRequestException
+    );
   });
   it('rejects out-of-range slot length and negative fee', async () => {
     expect(await run({ slotDurationMinutes: 2 })).toContain('slotDurationMinutes');
