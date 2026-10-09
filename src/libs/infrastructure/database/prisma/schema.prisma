@@ -719,6 +719,7 @@ model Doctor {
   languages                    String[]                            @default([])
   education                    String?
   certifications               String[]                            @default([])
+  localizedProfile             Json?
   createdAt                    DateTime                            @default(now())
   appointments                 Appointment[]
   appointmentTemplates         AppointmentTemplate[]
