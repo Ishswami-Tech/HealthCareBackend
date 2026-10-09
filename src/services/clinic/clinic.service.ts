@@ -1713,6 +1713,7 @@ export class ClinicService {
                 userId: true,
                 specialization: true,
                 experience: true,
+                localizedProfile: true,
                 user: {
                   select: {
                     id: true,
@@ -1777,6 +1778,7 @@ export class ClinicService {
                   userId: true,
                   specialization: true,
                   experience: true,
+                  localizedProfile: true,
                   user: {
                     select: {
                       id: true,
