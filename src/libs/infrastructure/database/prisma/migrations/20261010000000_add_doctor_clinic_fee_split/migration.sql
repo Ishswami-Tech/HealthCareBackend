@@ -1,3 +1,3 @@
--- Fixed doctor fee per visit type; NULL keeps the percentage platform fee.
-ALTER TABLE "DoctorClinic" ADD COLUMN "videoDoctorFee" DOUBLE PRECISION;
-ALTER TABLE "DoctorClinic" ADD COLUMN "inPersonDoctorFee" DOUBLE PRECISION;
+-- Fixed doctor fee per visit type; NULL keeps the percentage platform fee. Idempotent so it can be applied before the deploy.
+ALTER TABLE "DoctorClinic" ADD COLUMN IF NOT EXISTS "videoDoctorFee" DOUBLE PRECISION;
+ALTER TABLE "DoctorClinic" ADD COLUMN IF NOT EXISTS "inPersonDoctorFee" DOUBLE PRECISION;
