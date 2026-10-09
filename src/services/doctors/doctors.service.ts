@@ -35,6 +35,12 @@ export interface DoctorProfileFieldsInput {
   localizedProfile?: LocalizedProfile | null;
 }
 
+/** Fixed fees (rupees) a doctor earns per visit type in a clinic; admin-only, rest is convenience fee. */
+export interface DoctorFeeSplitInput {
+  videoDoctorFee?: number;
+  inPersonDoctorFee?: number;
+}
+
 export interface DoctorProfileActor {
   userId: string;
   role: string;
@@ -245,15 +251,61 @@ export class DoctorsService {
   async updateDoctorProfile(
     targetUserId: string,
     actor: DoctorProfileActor,
-    data: DoctorProfileFieldsInput
+    data: DoctorProfileFieldsInput,
+    fees: DoctorFeeSplitInput = {}
   ) {
+    const hasFees = fees.videoDoctorFee !== undefined || fees.inPersonDoctorFee !== undefined;
+    // What a doctor earns is set by an admin, never by the doctor themselves.
+    if (hasFees && actor.role !== 'SUPER_ADMIN' && actor.role !== 'CLINIC_ADMIN') {
+      throw new ForbiddenException('Only an admin can set what a doctor earns');
+    }
     await this.assertCanEditProfile(targetUserId, actor);
+    if (hasFees && !actor.clinicId) {
+      throw new BadRequestException('Clinic context is required to set doctor fees');
+    }
     const result = await this.createOrUpdateDoctor({
       ...data,
       userId: targetUserId,
       ...(actor.clinicId ? { clinicId: actor.clinicId } : {}),
     });
+    if (hasFees && actor.clinicId) {
+      await this.saveDoctorFees(targetUserId, actor.clinicId, actor, fees);
+    }
     return { ...result, profile: await this.getDoctorProfile(targetUserId) };
+  }
+
+  /** Stores the doctor's fixed fees for this clinic. Affects only payments made afterwards. */
+  private async saveDoctorFees(
+    targetUserId: string,
+    clinicId: string,
+    actor: DoctorProfileActor,
+    fees: DoctorFeeSplitInput
+  ): Promise<void> {
+    const data: Record<string, number> = {};
+    if (fees.videoDoctorFee !== undefined) data['videoDoctorFee'] = fees.videoDoctorFee;
+    if (fees.inPersonDoctorFee !== undefined) data['inPersonDoctorFee'] = fees.inPersonDoctorFee;
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const tx = client as unknown as Prisma.TransactionClient;
+        const result = await tx.doctorClinic.updateMany({
+          where: { clinicId, doctor: { userId: targetUserId } },
+          data,
+        });
+        if (result.count === 0) {
+          throw new NotFoundException('Doctor not found in this clinic');
+        }
+      },
+      {
+        userId: actor.userId,
+        userRole: actor.role,
+        clinicId,
+        resourceType: 'DOCTOR_FEE_SPLIT',
+        operation: 'UPDATE',
+        resourceId: targetUserId,
+        details: { ...data },
+      }
+    );
+    await this.cacheService.invalidateCacheByTag(`doctor:${targetUserId}`);
   }
 
   /**

@@ -4,7 +4,6 @@ import {
   forwardRef,
   BadRequestException,
   ForbiddenException,
-  NotFoundException,
 } from '@nestjs/common';
 import { AppointmentAnalyticsService } from '../appointments/plugins/analytics/appointment-analytics.service';
 import { BillingService } from '../billing/billing.service';
@@ -29,6 +28,13 @@ import {
   type DoctorEarningsSummary,
   type PaidConsultationRow,
 } from './doctor-earnings.util';
+
+export interface DoctorFeeSetting {
+  userId: string;
+  doctorName: string;
+  videoDoctorFee: number | null;
+  inPersonDoctorFee: number | null;
+}
 
 /** Most paid consultations one earnings summary reads; a larger window must be narrowed. */
 const MAX_EARNINGS_ROWS = 20_000;
@@ -279,7 +285,7 @@ export class AnalyticsService {
   async getEarningsSplitReport(
     clinicId: string,
     query: { from?: string; to?: string }
-  ): Promise<EarningsSplitReport> {
+  ): Promise<EarningsSplitReport & { feeSettings: DoctorFeeSetting[] }> {
     let range: { from: Date; to: Date };
     try {
       range = resolveSalesRange(query.from, query.to);
@@ -302,11 +308,25 @@ export class AnalyticsService {
         doctor: { user: { name: string } | null } | null;
       } | null;
     };
-    const rows = await this.databaseService.executeHealthcareRead(async client => {
+    type FeeRow = {
+      doctor: { userId: string; user: { name: string } | null } | null;
+      videoDoctorFee: number | null;
+      inPersonDoctorFee: number | null;
+    };
+    const { rows, feeRows } = await this.databaseService.executeHealthcareRead(async client => {
       const db = client as unknown as {
         payment: { findMany: (args: unknown) => Promise<SplitRow[]> };
+        doctorClinic: { findMany: (args: unknown) => Promise<FeeRow[]> };
       };
-      return await db.payment.findMany({
+      const feeRows = await db.doctorClinic.findMany({
+        where: { clinicId },
+        select: {
+          videoDoctorFee: true,
+          inPersonDoctorFee: true,
+          doctor: { select: { userId: true, user: { select: { name: true } } } },
+        },
+      });
+      const rows = await db.payment.findMany({
         where: {
           clinicId,
           status: 'COMPLETED',
@@ -330,6 +350,7 @@ export class AnalyticsService {
         },
         take: MAX_EARNINGS_ROWS + 1,
       });
+      return { rows, feeRows };
     });
     if (rows.length > MAX_EARNINGS_ROWS) {
       throw new BadRequestException('Too many payments in this range. Narrow the date range.');
@@ -354,115 +375,22 @@ export class AnalyticsService {
         },
       ];
     });
-    return buildEarningsSplitReport(
+    const report = buildEarningsSplitReport(
       {
         from: formatDateKeyInIST(range.from),
         to: formatDateKeyInIST(new Date(range.to.getTime() - 1)),
       },
       splitRows
     );
-  }
-
-  /** The doctors of a clinic with their configured fixed fees (admin view). */
-  async listDoctorFeeSplits(clinicId: string): Promise<
-    Array<{
-      doctorId: string;
-      doctorName: string;
-      videoDoctorFee: number | null;
-      inPersonDoctorFee: number | null;
-      videoPrice: number | null;
-    }>
-  > {
-    const rows = await this.databaseService.executeHealthcareRead(async client => {
-      const db = client as unknown as {
-        doctorClinic: {
-          findMany: (args: unknown) => Promise<
-            Array<{
-              doctorId: string;
-              videoDoctorFee: number | null;
-              inPersonDoctorFee: number | null;
-              doctor: {
-                videoConsultationFee: number | null;
-                user: { name: string } | null;
-              } | null;
-            }>
-          >;
-        };
-      };
-      return await db.doctorClinic.findMany({
-        where: { clinicId },
-        select: {
-          doctorId: true,
-          videoDoctorFee: true,
-          inPersonDoctorFee: true,
-          doctor: { select: { videoConsultationFee: true, user: { select: { name: true } } } },
-        },
-      });
-    });
-    return rows.map(row => ({
-      doctorId: row.doctorId,
+    // Every doctor of the clinic with their fixed fees, so the admin screen can show and edit
+    // them (via PATCH /doctors/:id) without a separate list endpoint.
+    const feeSettings = feeRows.map(row => ({
+      userId: row.doctor?.userId ?? '',
       doctorName: row.doctor?.user?.name ?? 'Doctor',
       videoDoctorFee: row.videoDoctorFee,
       inPersonDoctorFee: row.inPersonDoctorFee,
-      videoPrice: row.doctor?.videoConsultationFee ?? null,
     }));
-  }
-
-  /**
-   * Sets a doctor's fixed fees in this clinic. Only affects payments made afterwards: each
-   * payment keeps the split it was made with.
-   */
-  async updateDoctorFeeSplit(
-    clinicId: string,
-    doctorId: string,
-    actor: { userId: string; role: string },
-    fees: { videoDoctorFee?: number; inPersonDoctorFee?: number }
-  ): Promise<{
-    doctorId: string;
-    videoDoctorFee: number | null;
-    inPersonDoctorFee: number | null;
-  }> {
-    const data: Record<string, number> = {};
-    if (fees.videoDoctorFee !== undefined) data['videoDoctorFee'] = fees.videoDoctorFee;
-    if (fees.inPersonDoctorFee !== undefined) data['inPersonDoctorFee'] = fees.inPersonDoctorFee;
-    if (Object.keys(data).length === 0) {
-      throw new BadRequestException('Provide videoDoctorFee and/or inPersonDoctorFee');
-    }
-
-    const updated = await this.databaseService.executeHealthcareWrite(
-      async client => {
-        const db = client as unknown as {
-          doctorClinic: {
-            updateMany: (args: unknown) => Promise<{ count: number }>;
-            findMany: (
-              args: unknown
-            ) => Promise<
-              Array<{ videoDoctorFee: number | null; inPersonDoctorFee: number | null }>
-            >;
-          };
-        };
-        const result = await db.doctorClinic.updateMany({ where: { doctorId, clinicId }, data });
-        if (result.count === 0) {
-          throw new NotFoundException('Doctor is not part of this clinic');
-        }
-        const rows = await db.doctorClinic.findMany({
-          where: { doctorId, clinicId },
-          select: { videoDoctorFee: true, inPersonDoctorFee: true },
-          take: 1,
-        });
-        return rows[0] ?? { videoDoctorFee: null, inPersonDoctorFee: null };
-      },
-      {
-        userId: actor.userId,
-        userRole: actor.role,
-        clinicId,
-        resourceType: 'DOCTOR_FEE_SPLIT',
-        operation: 'UPDATE',
-        resourceId: doctorId,
-        details: { ...data },
-      }
-    );
-    return { doctorId, ...updated };
+    return { ...report, feeSettings };
   }
 
   private getDateRange(period: string): { from: Date; to: Date } {

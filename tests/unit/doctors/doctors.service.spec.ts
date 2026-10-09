@@ -20,7 +20,11 @@ type Fn = jest.Mock;
 function build() {
   const tx = {
     doctor: { findFirst: jest.fn() as Fn, update: jest.fn() as Fn, findUnique: jest.fn() as Fn },
-    doctorClinic: { findFirst: jest.fn() as Fn, createMany: jest.fn() as Fn },
+    doctorClinic: {
+      findFirst: jest.fn() as Fn,
+      createMany: jest.fn() as Fn,
+      updateMany: jest.fn() as Fn,
+    },
     user: { findUnique: jest.fn() as Fn },
     patient: { findUnique: jest.fn() as Fn },
     appointment: { findFirst: jest.fn() as Fn },
@@ -159,6 +163,54 @@ describe('DoctorsService.updateDoctorProfile ownership', () => {
       expect.objectContaining({ data: { slotDurationMinutes: 20, certifications: ['A'] } })
     );
     expect(cache.invalidateCacheByTag).toHaveBeenCalledWith('doctor:u1');
+  });
+});
+
+describe('DoctorsService.updateDoctorProfile earning fees', () => {
+  it('never lets a doctor set what they earn, even on their own profile', async () => {
+    const { service, tx } = build();
+    await expect(
+      service.updateDoctorProfile(
+        'u1',
+        { userId: 'u1', role: 'DOCTOR', clinicId: 'c1' },
+        {},
+        { videoDoctorFee: 5000 }
+      )
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(tx.doctorClinic.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('lets a clinic admin set the fees of a doctor in their clinic only', async () => {
+    const { service, tx } = build();
+    tx.doctorClinic.findFirst.mockResolvedValue({ doctorId: 'd1' });
+    tx.doctorClinic.updateMany.mockResolvedValue({ count: 1 });
+    tx.doctor.findUnique.mockResolvedValue({ id: 'd1' });
+    jest.spyOn(service, 'getDoctorProfile').mockResolvedValue({ id: 'u1' } as never);
+    await service.updateDoctorProfile(
+      'u1',
+      { userId: 'a1', role: 'CLINIC_ADMIN', clinicId: 'c1' },
+      {},
+      { videoDoctorFee: 1000, inPersonDoctorFee: 0 }
+    );
+    expect(tx.doctorClinic.updateMany).toHaveBeenCalledWith({
+      where: { clinicId: 'c1', doctor: { userId: 'u1' } },
+      data: { videoDoctorFee: 1000, inPersonDoctorFee: 0 },
+    });
+  });
+
+  it('404s when the doctor is not in the clinic', async () => {
+    const { service, tx } = build();
+    tx.doctorClinic.findFirst.mockResolvedValue({ doctorId: 'd1' });
+    tx.doctorClinic.updateMany.mockResolvedValue({ count: 0 });
+    tx.doctor.findUnique.mockResolvedValue({ id: 'd1' });
+    await expect(
+      service.updateDoctorProfile(
+        'u1',
+        { userId: 'a1', role: 'CLINIC_ADMIN', clinicId: 'c1' },
+        {},
+        { videoDoctorFee: 1000 }
+      )
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 });
 

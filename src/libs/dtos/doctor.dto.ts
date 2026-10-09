@@ -264,6 +264,29 @@ export class UpdateDoctorProfileDto extends DoctorProfileFieldsDto {
   @Max(1000000)
   consultationFee?: number;
 
+  @ApiPropertyOptional({
+    description:
+      'What the doctor earns per video consultation in this clinic (rest is convenience fee). Admins only.',
+    minimum: 0,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(1000000)
+  videoDoctorFee?: number;
+
+  @ApiPropertyOptional({
+    description: 'What the doctor earns per in-person visit in this clinic. Admins only.',
+    minimum: 0,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(1000000)
+  inPersonDoctorFee?: number;
+
   @ApiPropertyOptional({ description: 'Working hours schedule (JSON object)' })
   @IsOptional()
   workingHours?: unknown;

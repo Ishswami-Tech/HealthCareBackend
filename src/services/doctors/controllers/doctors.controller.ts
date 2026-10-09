@@ -123,7 +123,11 @@ export class DoctorsController {
         ...(dto.qualification != null && { qualification: dto.qualification }),
         ...(dto.consultationFee != null && { consultationFee: dto.consultationFee }),
         ...(dto.workingHours != null && { workingHours: dto.workingHours }),
-      })
+      }),
+      {
+        ...(dto.videoDoctorFee != null && { videoDoctorFee: dto.videoDoctorFee }),
+        ...(dto.inPersonDoctorFee != null && { inPersonDoctorFee: dto.inPersonDoctorFee }),
+      }
     );
   }
 
