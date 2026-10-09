@@ -20,14 +20,38 @@ import {
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
-/** Dosage forms the web UI sends as `type`. Stored in `Medicine.category`. */
+/**
+ * Dosage forms the apps send as `type`. Stored in `Medicine.category` (a plain string, so adding a
+ * form needs no migration). Multi-word forms use an underscore: YAVKUT_KWATH.
+ */
 export enum MedicineType {
   TABLET = 'TABLET',
-  SYRUP = 'SYRUP',
   CAPSULE = 'CAPSULE',
+  SYRUP = 'SYRUP',
   INJECTION = 'INJECTION',
   CREAM = 'CREAM',
   DROPS = 'DROPS',
+  BHASMA = 'BHASMA',
+  CHURNA = 'CHURNA',
+  GEL = 'GEL',
+  GHRITA = 'GHRITA',
+  GRANULE = 'GRANULE',
+  KASHAYAM = 'KASHAYAM',
+  YAVKUT_KWATH = 'YAVKUT_KWATH',
+  LEPA = 'LEPA',
+  VATI = 'VATI',
+  DRINK = 'DRINK',
+  PARPATI = 'PARPATI',
+  PISHTEE = 'PISHTEE',
+  GUTIKA = 'GUTIKA',
+  ASAVA = 'ASAVA',
+  SHAMPOO = 'SHAMPOO',
+  LOTION = 'LOTION',
+  OIL = 'OIL',
+  OINTMENT = 'OINTMENT',
+  TOOTHPASTE = 'TOOTHPASTE',
+  SOAP = 'SOAP',
+  SWARASA = 'SWARASA',
   OTHER = 'OTHER',
 }
 
@@ -36,6 +60,16 @@ export enum MedicineClassification {
   CLASSICAL = 'CLASSICAL',
   PROPRIETARY = 'PROPRIETARY',
   HERBAL = 'HERBAL',
+}
+
+/** "Yavkut Kwath", "yavkut-kwath" and "YAVKUT_KWATH" are the same form. */
+export function normaliseMedicineTypeToken(value: unknown): unknown {
+  return typeof value === 'string'
+    ? value
+        .trim()
+        .toUpperCase()
+        .replace(/[\s-]+/g, '_')
+    : value;
 }
 
 /** Every value accepted for the `type` field of the inventory create/update routes. */
@@ -59,9 +93,11 @@ export function resolveMedicineTypeInput(input: {
 }): { type?: MedicineClassification; category?: string } {
   const classifications: string[] = Object.values(MedicineClassification);
   const forms: string[] = Object.values(MedicineType);
-  const rawType = input.type?.trim().toUpperCase();
-  const rawClassification = input.classification?.trim().toUpperCase();
-  const rawCategory = input.category?.trim().toUpperCase();
+  const normalise = (value: string | undefined): string | undefined =>
+    normaliseMedicineTypeToken(value) as string | undefined;
+  const rawType = normalise(input.type);
+  const rawClassification = normalise(input.classification);
+  const rawCategory = normalise(input.category);
 
   let type: MedicineClassification | undefined;
   let category: string | undefined;
@@ -200,8 +236,9 @@ export class CreateMedicineDto {
     example: MedicineType.TABLET,
     description:
       'Either the classification (CLASSICAL, PROPRIETARY, HERBAL) or a dosage form (TABLET, ' +
-      'SYRUP, CAPSULE, INJECTION, CREAM, DROPS, OTHER); dosage forms are stored as category.',
+      'SYRUP, CAPSULE, INJECTION, CREAM, DROPS, BHASMA, CHURNA, VATI, ... OTHER); dosage forms are stored as category.',
   })
+  @Transform(({ value }) => normaliseMedicineTypeToken(value))
   @IsIn(MEDICINE_TYPE_INPUT_VALUES, {
     message: `type must be one of: ${MEDICINE_TYPE_INPUT_VALUES.join(', ')}`,
   })
@@ -349,6 +386,7 @@ export class UpdateInventoryDto {
 
   @ApiPropertyOptional({ enum: MEDICINE_TYPE_INPUT_VALUES })
   @IsOptional()
+  @Transform(({ value }) => normaliseMedicineTypeToken(value))
   @IsIn(MEDICINE_TYPE_INPUT_VALUES, {
     message: `type must be one of: ${MEDICINE_TYPE_INPUT_VALUES.join(', ')}`,
   })
