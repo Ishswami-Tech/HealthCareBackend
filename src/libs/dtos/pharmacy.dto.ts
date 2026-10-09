@@ -45,6 +45,8 @@ export enum MedicineType {
   PISHTEE = 'PISHTEE',
   GUTIKA = 'GUTIKA',
   ASAVA = 'ASAVA',
+  ARISHTA = 'ARISHTA',
+  AVALEHA = 'AVALEHA',
   SHAMPOO = 'SHAMPOO',
   LOTION = 'LOTION',
   OIL = 'OIL',

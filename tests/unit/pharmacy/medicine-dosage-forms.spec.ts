@@ -19,6 +19,8 @@ const AYURVEDIC_FORMS = [
   'PISHTEE',
   'GUTIKA',
   'ASAVA',
+  'ARISHTA',
+  'AVALEHA',
   'SWARASA',
 ];
 const OTHER_FORMS = ['GEL', 'DRINK', 'SHAMPOO', 'LOTION', 'OIL', 'OINTMENT', 'TOOTHPASTE', 'SOAP'];
