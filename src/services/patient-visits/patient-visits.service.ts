@@ -77,6 +77,7 @@ interface PatientVisitRow {
   patientId: string;
   clinicId: string;
   doctorId: string | null;
+  appointmentId: string | null;
   specialCaseFlags: string[];
   internationalId: string | null;
   presentIllness: string | null;
@@ -188,63 +189,97 @@ export class PatientVisitsService {
     clinicId: string,
     actor: VisitActor
   ): Promise<PatientVisitResponse> {
-    if (!dto.patientId && !dto.patientUserId) {
-      throw new BadRequestException('patientId or patientUserId is required');
+    if (!dto.patientId && !dto.patientUserId && !dto.appointmentId) {
+      throw new BadRequestException('patientId, patientUserId or appointmentId is required');
     }
+
+    // A visit that belongs to an appointment: one per appointment, so asking again returns the
+    // existing one, and the appointment decides the patient and the default doctor.
+    const linked = dto.appointmentId
+      ? await this.resolveAppointmentLink(dto.appointmentId, clinicId, dto)
+      : null;
+    if (linked?.existing) {
+      return this.toResponse(linked.existing);
+    }
+    const effectiveDto: CreatePatientVisitDto = linked
+      ? {
+          ...dto,
+          patientId: linked.patientId,
+          ...(dto.doctorId || !linked.doctorId ? {} : { doctorId: linked.doctorId }),
+        }
+      : dto;
 
     const patient = await this.databaseService.executeHealthcareRead<{ id: string } | null>(
       async client => {
         const tc = client as unknown as PrismaTransactionClientWithDelegates;
-        const row = dto.patientId
+        const row = effectiveDto.patientId
           ? await tc.patient.findUnique({
-              where: { id: dto.patientId } as PrismaDelegateArgs,
+              where: { id: effectiveDto.patientId } as PrismaDelegateArgs,
               select: { id: true } as PrismaDelegateArgs,
             } as PrismaDelegateArgs)
           : await tc.patient.findFirst({
-              where: { userId: dto.patientUserId } as PrismaDelegateArgs,
+              where: { userId: effectiveDto.patientUserId } as PrismaDelegateArgs,
               select: { id: true } as PrismaDelegateArgs,
             } as PrismaDelegateArgs);
         return row ? { id: row.id } : null;
       }
     );
     if (!patient) {
-      throw new NotFoundException(`Patient ${dto.patientId ?? dto.patientUserId} not found`);
+      throw new NotFoundException(
+        `Patient ${effectiveDto.patientId ?? effectiveDto.patientUserId} not found`
+      );
     }
     const patientId = patient.id;
 
-    const doctorId = dto.doctorId ?? (await this.resolveActorDoctorId(actor));
+    const doctorId = effectiveDto.doctorId ?? (await this.resolveActorDoctorId(actor));
     const clinicCode = await this.resolveClinicCode(clinicId);
 
-    const row = await this.databaseService.executeHealthcareWrite<PatientVisitRow>(
-      async client => {
-        const tc = client as unknown as VisitClient;
-        const opdNumber = await this.allocateOpdNumber(tc, clinicId, clinicCode);
-        return tc.patientVisit.create({
-          data: {
-            opdNumber,
-            patientId,
-            clinicId,
-            doctorId: doctorId ?? null,
-            registrationDate: dto.registrationDate ? new Date(dto.registrationDate) : new Date(),
-            specialCaseFlags: dto.specialCaseFlags ?? [],
-            internationalId: this.cleanText(dto.internationalId),
-            presentIllness: this.cleanText(dto.presentIllness),
-            presentComplaints: this.cleanText(dto.presentComplaints),
-            knownCaseOf: this.cleanText(dto.knownCaseOf),
-            createdBy: actor.userId ?? null,
-          } as PrismaDelegateArgs,
-        } as PrismaDelegateArgs);
-      },
-      {
-        userId: actor.userId || 'system',
-        clinicId,
-        resourceType: 'PATIENT_VISIT',
-        operation: 'CREATE',
-        resourceId: patientId,
-        userRole: actor.role || 'system',
-        details: { patientId },
+    let row: PatientVisitRow;
+    try {
+      row = await this.databaseService.executeHealthcareWrite<PatientVisitRow>(
+        async client => {
+          const tc = client as unknown as VisitClient;
+          const opdNumber = await this.allocateOpdNumber(tc, clinicId, clinicCode);
+          return tc.patientVisit.create({
+            data: {
+              opdNumber,
+              patientId,
+              clinicId,
+              doctorId: doctorId ?? null,
+              appointmentId: dto.appointmentId ?? null,
+              registrationDate: effectiveDto.registrationDate
+                ? new Date(effectiveDto.registrationDate)
+                : new Date(),
+              specialCaseFlags: effectiveDto.specialCaseFlags ?? [],
+              internationalId: this.cleanText(effectiveDto.internationalId),
+              presentIllness: this.cleanText(effectiveDto.presentIllness),
+              presentComplaints: this.cleanText(effectiveDto.presentComplaints),
+              knownCaseOf: this.cleanText(effectiveDto.knownCaseOf),
+              createdBy: actor.userId ?? null,
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        },
+        {
+          userId: actor.userId || 'system',
+          clinicId,
+          resourceType: 'PATIENT_VISIT',
+          operation: 'CREATE',
+          resourceId: patientId,
+          userRole: actor.role || 'system',
+          details: { patientId },
+        }
+      );
+    } catch (error) {
+      // Two requests for the same appointment can race on the unique appointment link: the loser
+      // returns the visit the winner created instead of failing.
+      const existing = dto.appointmentId
+        ? await this.findVisitByAppointment(dto.appointmentId, clinicId)
+        : null;
+      if (existing) {
+        return this.toResponse(existing);
       }
-    );
+      throw error;
+    }
 
     await this.eventService.emit('patient-visit.created', {
       visitId: row.id,
@@ -262,6 +297,73 @@ export class PatientVisitsService {
 
     const consultationInvoice = await this.attachConsultationInvoice(row, dto, clinicId, actor);
     return this.toResponse(row, consultationInvoice);
+  }
+
+  /**
+   * Creates the visit of an appointment as a draft when the consultation starts, so notes can be
+   * written during the call. Idempotent (one visit per appointment). No consultation invoice: the
+   * visit is paid for by the booking or the subscription.
+   */
+  async ensureDraftVisitForAppointment(
+    appointmentId: string,
+    clinicId: string,
+    actor: VisitActor = { role: 'system' }
+  ): Promise<PatientVisitResponse> {
+    return this.createVisit({ appointmentId, skipConsultationInvoice: true }, clinicId, actor);
+  }
+
+  private async findVisitByAppointment(
+    appointmentId: string,
+    clinicId: string
+  ): Promise<PatientVisitRow | null> {
+    return await this.databaseService.executeHealthcareRead<PatientVisitRow | null>(
+      async client => {
+        const tc = client as unknown as VisitClient;
+        return await tc.patientVisit.findFirst({
+          where: { appointmentId, clinicId } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      }
+    );
+  }
+
+  /** Loads the appointment a visit is being linked to and checks it belongs to this clinic/patient. */
+  private async resolveAppointmentLink(
+    appointmentId: string,
+    clinicId: string,
+    dto: CreatePatientVisitDto
+  ): Promise<{
+    existing: PatientVisitRow | null;
+    patientId: string;
+    doctorId: string | null;
+  }> {
+    const appointment = await this.databaseService.executeHealthcareRead<{
+      id: string;
+      clinicId: string;
+      patientId: string;
+      doctorId: string | null;
+    } | null>(async client => {
+      const tc = client as unknown as PrismaTransactionClientWithDelegates;
+      return (await tc.appointment.findUnique({
+        where: { id: appointmentId } as PrismaDelegateArgs,
+        select: { id: true, clinicId: true, patientId: true, doctorId: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as {
+        id: string;
+        clinicId: string;
+        patientId: string;
+        doctorId: string | null;
+      } | null;
+    });
+    if (!appointment || appointment.clinicId !== clinicId) {
+      throw new NotFoundException('Appointment not found in this clinic');
+    }
+    if (dto.patientId && dto.patientId !== appointment.patientId) {
+      throw new BadRequestException('The appointment belongs to a different patient');
+    }
+    return {
+      existing: await this.findVisitByAppointment(appointmentId, clinicId),
+      patientId: appointment.patientId,
+      doctorId: appointment.doctorId ?? null,
+    };
   }
 
   /**
@@ -660,6 +762,7 @@ export class PatientVisitsService {
       patientId: row.patientId,
       clinicId: row.clinicId,
       doctorId: row.doctorId ?? null,
+      appointmentId: row.appointmentId ?? null,
       specialCaseFlags: (row.specialCaseFlags ?? []) as SpecialCaseFlag[],
       internationalId: row.internationalId ?? null,
       presentIllness: row.presentIllness ?? null,

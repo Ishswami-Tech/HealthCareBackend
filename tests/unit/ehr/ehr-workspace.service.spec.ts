@@ -71,6 +71,11 @@ function createHarness() {
         },
       }),
     },
+    patientVisit: {
+      findMany: jest
+        .fn()
+        .mockResolvedValue([{ id: 'visit-1', opdNumber: 'OPD-001', appointmentId: 'apt-1' }]),
+    },
     appointment: {
       count: jest.fn().mockResolvedValue(45),
       findFirst: jest.fn().mockResolvedValue({ date: new Date('2026-03-01T00:00:00Z') }),
@@ -247,6 +252,24 @@ describe('EHRWorkspaceService.listPatientAppointments', () => {
       id: 'apt-1',
       doctor: { id: 'doc-1', name: 'Dr Mehta', specialization: 'Ayurveda' },
     });
+  });
+
+  it('attaches the OPD visit of each appointment, or null when there is none', async () => {
+    const h = createHarness();
+
+    const result = await h.service.listPatientAppointments('patient-1', CLINIC, ACTOR, {});
+
+    expect(result.data[0]).toMatchObject({
+      id: 'apt-1',
+      visit: { id: 'visit-1', opdNumber: 'OPD-001' },
+    });
+    expect(h.client.patientVisit.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { clinicId: CLINIC, appointmentId: { in: ['apt-1'] } } })
+    );
+
+    h.client.patientVisit.findMany.mockResolvedValueOnce([]);
+    const without = await h.service.listPatientAppointments('patient-1', CLINIC, ACTOR, {});
+    expect(without.data[0]).toMatchObject({ visit: null });
   });
 
   it('defaults to page 1 / 20 and filters by an upper-cased status', async () => {

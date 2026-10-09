@@ -15,6 +15,7 @@ import { VisitTherapyController } from '@services/patient-visits/controllers/vis
 import { VisitDietChartController } from '@services/patient-visits/controllers/visit-diet-chart.controller';
 import { PatientDocumentsController } from '@services/patient-visits/controllers/patient-documents.controller';
 import { PatientVisitsService } from '@services/patient-visits/patient-visits.service';
+import { PatientVisitEventsListener } from '@services/patient-visits/patient-visit-events.listener';
 import { VisitVitalsExaminationService } from '@services/patient-visits/services/visit-vitals-examination.service';
 import { FamilyMembersService } from '@services/patient-visits/services/family-members.service';
 import { VisitTherapyService } from '@services/patient-visits/services/visit-therapy.service';
@@ -48,6 +49,7 @@ import { PatientDocumentsService } from '@services/patient-visits/services/patie
   ],
   providers: [
     PatientVisitsService,
+    PatientVisitEventsListener,
     VisitVitalsExaminationService,
     FamilyMembersService,
     VisitTherapyService,

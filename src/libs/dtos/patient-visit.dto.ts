@@ -70,6 +70,15 @@ export class CreatePatientVisitDto {
   @IsString()
   doctorId?: string;
 
+  @ApiPropertyOptional({
+    example: 'appointment-uuid',
+    description:
+      'Appointment this OPD visit belongs to. One visit per appointment: calling again returns the existing visit.',
+  })
+  @IsOptional()
+  @IsString()
+  appointmentId?: string;
+
   @ApiPropertyOptional({ example: '2026-09-25T09:30:00.000Z' })
   @IsOptional()
   @IsDateString()
@@ -325,6 +334,8 @@ export interface PatientVisitResponse {
   patientId: string;
   clinicId: string;
   doctorId: string | null;
+  /** The appointment this visit belongs to, NULL for walk-ins. */
+  appointmentId: string | null;
   specialCaseFlags: SpecialCaseFlag[];
   internationalId: string | null;
   presentIllness: string | null;

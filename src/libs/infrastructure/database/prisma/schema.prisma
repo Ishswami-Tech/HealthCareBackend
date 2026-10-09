@@ -784,6 +784,8 @@ model PatientVisit {
   patientId         String
   clinicId          String
   doctorId          String?
+  // The appointment this OPD visit belongs to (one visit per appointment). NULL for walk-ins.
+  appointmentId     String?           @unique
   specialCaseFlags  SpecialCaseFlag[]
   internationalId   String?
   presentIllness    String?

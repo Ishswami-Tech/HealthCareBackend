@@ -124,7 +124,7 @@ export class PatientVisitsController {
   // {visitId} only — never {userId}, which the cache interceptor auto-fills
   // from the caller's own identity when the route has no :userId param.)
   @Get(':visitId/case-sheet')
-  @Roles(...REGISTRATION_ROLES)
+  @Roles(...CLINICAL_ROLES)
   @RequireResourcePermission('patients', 'read')
   @ApiOperation({ summary: 'Aggregate everything the case-sheet screen needs for one visit' })
   async getCaseSheet(
