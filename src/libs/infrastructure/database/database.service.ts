@@ -2248,8 +2248,13 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     );
   }
 
+  /**
+   * Updates a user's notification preferences. Keyed by the user id (unique on the table): the
+   * row id read back through the cached read was undefined in production, so an update by id
+   * failed every time with "needs at least one of id or userId".
+   */
   async updateNotificationPreferenceSafe(
-    id: string,
+    userId: string,
     data: {
       emailEnabled?: boolean;
       smsEnabled?: boolean;
@@ -2272,7 +2277,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
         const notificationPreferenceClient = client as unknown as {
           notificationPreference: {
             update: (args: {
-              where: { id: string };
+              where: { userId: string };
               data: {
                 emailEnabled?: boolean;
                 smsEnabled?: boolean;
@@ -2292,7 +2297,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
           };
         };
         return (await notificationPreferenceClient.notificationPreference.update({
-          where: { id },
+          where: { userId },
           data: {
             ...(data.emailEnabled !== undefined && { emailEnabled: data.emailEnabled }),
             ...(data.smsEnabled !== undefined && { smsEnabled: data.smsEnabled }),
@@ -2340,11 +2345,11 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
         clinicId: '',
         operation: 'updateNotificationPreference',
         resourceType: 'NOTIFICATION_PREFERENCE',
-        resourceId: id,
+        resourceId: userId,
         timestamp: new Date(),
       },
       this.queryOptionsBuilder
-        .where({ id })
+        .where({ userId })
         .useCache(false)
         .priority('normal')
         .hipaaCompliant(false)
