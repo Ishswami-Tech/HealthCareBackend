@@ -32,6 +32,7 @@ import { PatientsModule } from './services/patients/patients.module';
 import { PatientVisitsModule } from './services/patient-visits/patient-visits.module';
 import { ComplianceModule } from './services/compliance/compliance.module';
 import { FhirModule } from './services/fhir/fhir.module';
+import { PatientDirectoryModule } from './services/patient-directory/patient-directory.module';
 import { HealthLibraryModule } from './services/health-library/health-library.module';
 import { DoctorsModule } from './services/doctors/doctors.module';
 import { StaffModule } from './services/staff/staff.module';
@@ -117,6 +118,8 @@ import { SentryModule } from '@sentry/nestjs/setup';
     ComplianceModule,
     // Read-only HL7 FHIR R4 endpoints
     FhirModule,
+    // Searchable, filterable, paged patient list for staff
+    PatientDirectoryModule,
     HealthLibraryModule,
     DoctorsModule,
     StaffModule,
