@@ -46,6 +46,8 @@ export interface PatientDirectoryFilters {
   readonly hasMobile?: boolean;
   readonly hasDiagnosis?: boolean;
   readonly minVisits?: number;
+  /** One patient (the single-row lookup behind an EHR link). */
+  readonly patientId?: string;
 }
 
 export interface PatientDirectoryQuery {

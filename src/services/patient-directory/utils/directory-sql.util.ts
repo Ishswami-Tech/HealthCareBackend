@@ -111,6 +111,10 @@ function searchCondition(
   }
 }
 
+function identityConditions(filters: PatientDirectoryFilters, params: ParamList): string[] {
+  return filters.patientId ? [`p.id = ${params.add(filters.patientId)}`] : [];
+}
+
 function demographicConditions(filters: PatientDirectoryFilters, params: ParamList): string[] {
   const conditions: string[] = [];
   const age = `COALESCE(u.age, CASE WHEN u."dateOfBirth" IS NOT NULL
@@ -187,6 +191,7 @@ export function buildDirectoryPageSql(query: PatientDirectoryQuery): DirectorySq
 
   const where = [
     SCOPE(clinic),
+    ...identityConditions(filters, params),
     ...searchCondition(filters, clinic, params),
     ...demographicConditions(filters, params),
     ...visitConditions(filters, clinic, params),
@@ -247,6 +252,7 @@ export function buildDirectoryCountSql(query: PatientDirectoryQuery): DirectoryS
   const { filters } = query;
   const where = [
     SCOPE(clinic),
+    ...identityConditions(filters, params),
     ...searchCondition(filters, clinic, params),
     ...demographicConditions(filters, params),
     ...visitConditions(filters, clinic, params),

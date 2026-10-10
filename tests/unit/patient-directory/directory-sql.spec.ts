@@ -105,6 +105,14 @@ describe('buildDirectoryPageSql', () => {
   });
 });
 
+describe('single patient lookup', () => {
+  it('filters on the patient id as a bound parameter', () => {
+    const { sql, params } = buildDirectoryPageSql({ ...base, filters: { patientId: 'abc-123' } });
+    expect(sql).toContain('p.id = $2');
+    expect(params).toEqual(['clinic-1', 'abc-123', 50, 0]);
+  });
+});
+
 describe('buildDirectoryCountSql', () => {
   it('uses the same filters without paging parameters', () => {
     const { params } = buildDirectoryCountSql({ ...base, filters: { gender: 'MALE' } });
