@@ -55,6 +55,8 @@ export interface DirectoryActor {
 }
 
 const AUDIT_PURPOSE = 'patient directory search';
+/** Patient ids are UUIDs; anything else cannot match and is rejected before the query. */
+const PATIENT_ID_PATTERN = /^[0-9a-fA-F-]{8,64}$/;
 
 /**
  * The filter values hold counts per city/state/source/year, no personal data, and change slowly:
@@ -106,6 +108,47 @@ export class PatientDirectoryService {
       pageSize: query.pageSize,
       totalPages: Math.max(1, Math.ceil(total / query.pageSize)),
     };
+  }
+
+  /** One patient's directory row (UHID, phone, visits...): the header of their EHR page. */
+  async findOne(
+    clinicId: string,
+    patientId: string,
+    actor: DirectoryActor
+  ): Promise<PatientDirectoryRow> {
+    if (!PATIENT_ID_PATTERN.test(patientId)) {
+      throw complianceErrors.invalid('Invalid patient id');
+    }
+    const query: PatientDirectoryQuery = {
+      clinicId,
+      filters: { patientId },
+      sort: 'registered',
+      order: 'desc',
+      page: 1,
+      pageSize: 10,
+    };
+    const { sql, params } = buildDirectoryPageSql(query);
+    const rows = await this.database.executeHealthcareRead<DirectoryDbRow[]>(async client =>
+      (client as unknown as RawQueryClient).$queryRawUnsafe<DirectoryDbRow[]>(sql, ...params)
+    );
+    const row = rows[0];
+    if (!row) {
+      throw complianceErrors.patientNotFound('Patient not found in this clinic');
+    }
+    await this.phiAudit.record({
+      userId: actor.userId,
+      userRole: actor.role,
+      patientId,
+      clinicId,
+      action: 'VIEW',
+      resourceType: 'PATIENT_DIRECTORY',
+      resourceId: patientId,
+      purpose: 'patient record header',
+      fields: ['demographics', 'identifiers', 'contact', 'visit summary'],
+      ...(actor.ipAddress ? { ipAddress: actor.ipAddress } : {}),
+      ...(actor.userAgent ? { userAgent: actor.userAgent } : {}),
+    });
+    return this.toRow(row);
   }
 
   async facets(clinicId: string): Promise<PatientDirectoryFacets> {

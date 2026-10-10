@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Request, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, Request, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
@@ -13,6 +13,7 @@ import type { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import type {
   PatientDirectoryFacets,
   PatientDirectoryPage,
+  PatientDirectoryRow,
 } from '@core/types/patient-directory.types';
 import { complianceErrors } from '@services/compliance/utils/compliance-errors.util';
 import { PatientDirectoryQueryDto } from './dto/patient-directory-query.dto';
@@ -55,6 +56,17 @@ export class PatientDirectoryController {
   @ApiOperation({ summary: 'Cities, states, reference sources and case years to filter by' })
   async facets(@Request() req: ClinicAuthenticatedRequest): Promise<PatientDirectoryFacets> {
     return this.directory.facets(this.clinicId(req));
+  }
+
+  @Get(':patientId')
+  @Roles(...STAFF_ROLES)
+  @RequireResourcePermission('patients', 'read')
+  @ApiOperation({ summary: 'One patient with UHID, contact and visit summary (EHR header)' })
+  async findOne(
+    @Param('patientId') patientId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<PatientDirectoryRow> {
+    return this.directory.findOne(this.clinicId(req), patientId, this.actor(req));
   }
 
   private clinicId(req: ClinicAuthenticatedRequest): string {
