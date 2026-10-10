@@ -1967,7 +1967,8 @@ export class ClinicService {
                 { user: { userRoles: { some: { clinicId: id } } } },
               ],
             } as PrismaDelegateArgs,
-            include: { user: true } as PrismaDelegateArgs,
+            // `omit`: these lists are sent to staff browsers; the password hash must never be in them.
+            include: { user: { omit: { password: true } } } as PrismaDelegateArgs,
           } as PrismaDelegateArgs);
           return result as unknown as PatientWithUser[];
         }
@@ -2026,7 +2027,8 @@ export class ClinicService {
               { user: { userRoles: { some: { clinicId } } } },
             ],
           } as PrismaDelegateArgs,
-          include: { user: true } as PrismaDelegateArgs,
+          // `omit`: these lists are sent to staff browsers; the password hash must never be in them.
+          include: { user: { omit: { password: true } } } as PrismaDelegateArgs,
           // Stable ordering: without it Postgres returns rows in physical
           // order, which changes after any update and makes pagination
           // skip/duplicate patients.
@@ -2205,7 +2207,8 @@ export class ClinicService {
               clinicId,
               isOwner: 'isOwner' in data ? Boolean(data['isOwner']) : false,
             } as PrismaDelegateArgs,
-            include: { user: true } as PrismaDelegateArgs,
+            // `omit`: these lists are sent to staff browsers; the password hash must never be in them.
+            include: { user: { omit: { password: true } } } as PrismaDelegateArgs,
           } as PrismaDelegateArgs);
           return result as unknown as ClinicAdmin & {
             user: { id: string; name: string; email: string };
@@ -2298,7 +2301,8 @@ export class ClinicService {
             data: {
               userId,
             } as PrismaDelegateArgs,
-            include: { user: true } as PrismaDelegateArgs,
+            // `omit`: these lists are sent to staff browsers; the password hash must never be in them.
+            include: { user: { omit: { password: true } } } as PrismaDelegateArgs,
           } as PrismaDelegateArgs);
           return result as unknown as PatientWithUser;
         },

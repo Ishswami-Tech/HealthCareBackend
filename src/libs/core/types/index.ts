@@ -187,6 +187,7 @@ export * from './ehr.types';
 
 // Compliance (PHI audit, consent, patient identifiers, medical codings)
 export * from './compliance.types';
+export * from './patient-directory.types';
 
 // Auth Types (centralized authentication-related types)
 export * from './auth.types';
