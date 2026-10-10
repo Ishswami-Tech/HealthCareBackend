@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import type {
   PatientDirectoryFacets,
   PatientDirectoryFacetValue,
@@ -55,6 +56,14 @@ export interface DirectoryActor {
 
 const AUDIT_PURPOSE = 'patient directory search';
 
+/**
+ * The filter values hold counts per city/state/source/year, no personal data, and change slowly:
+ * cached for a few minutes. The patient rows themselves are deliberately NOT cached on the server, so
+ * a patient registered a moment ago is found at once and personal data is not copied into the cache.
+ */
+const FACETS_TTL_SECONDS = 300;
+const facetsCacheKey = (clinicId: string): string => `patient-directory:${clinicId}:facets`;
+
 const toIso = (value: Date | string | null): string | null =>
   value === null ? null : new Date(value).toISOString();
 
@@ -68,7 +77,8 @@ const toIso = (value: Date | string | null): string | null =>
 export class PatientDirectoryService {
   constructor(
     private readonly database: DatabaseService,
-    private readonly phiAudit: PhiAuditService
+    private readonly phiAudit: PhiAuditService,
+    private readonly cache: CacheService
   ) {}
 
   async search(
@@ -80,7 +90,10 @@ export class PatientDirectoryService {
     const { sql, params } = buildDirectoryPageSql(query);
 
     const rows = await this.database.executeHealthcareRead<DirectoryDbRow[]>(async client => {
-      return (client as unknown as RawQueryClient).$queryRawUnsafe<DirectoryDbRow[]>(sql, ...params);
+      return (client as unknown as RawQueryClient).$queryRawUnsafe<DirectoryDbRow[]>(
+        sql,
+        ...params
+      );
     });
 
     const total = rows.length > 0 ? Number(rows[0]?.total_count ?? 0) : await this.count(query);
@@ -96,6 +109,14 @@ export class PatientDirectoryService {
   }
 
   async facets(clinicId: string): Promise<PatientDirectoryFacets> {
+    return this.cache.cache(facetsCacheKey(clinicId), () => this.loadFacets(clinicId), {
+      ttl: FACETS_TTL_SECONDS,
+      tags: ['patient-directory', `clinic:${clinicId}`],
+      enableSwr: true,
+    });
+  }
+
+  private async loadFacets(clinicId: string): Promise<PatientDirectoryFacets> {
     const run = (sql: string): Promise<PatientDirectoryFacetValue[]> =>
       this.database.executeHealthcareRead<PatientDirectoryFacetValue[]>(async client => {
         const raw = await (client as unknown as RawQueryClient).$queryRawUnsafe<

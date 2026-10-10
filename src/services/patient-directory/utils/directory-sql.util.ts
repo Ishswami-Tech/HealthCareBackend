@@ -59,7 +59,11 @@ const HAS_PHONE = (clinic: string): string => `(
              WHERE c."patientId" = p.id AND c."clinicId" = ${clinic} AND c.system = 'phone')
 )`;
 
-function searchCondition(filters: PatientDirectoryFilters, clinic: string, params: ParamList): string[] {
+function searchCondition(
+  filters: PatientDirectoryFilters,
+  clinic: string,
+  params: ParamList
+): string[] {
   const term = filters.search;
   if (!term) return [];
 
@@ -119,7 +123,11 @@ function demographicConditions(filters: PatientDirectoryFilters, params: ParamLi
   return conditions;
 }
 
-function visitConditions(filters: PatientDirectoryFilters, clinic: string, params: ParamList): string[] {
+function visitConditions(
+  filters: PatientDirectoryFilters,
+  clinic: string,
+  params: ParamList
+): string[] {
   const conditions: string[] = [];
   if (filters.referenceSource) {
     conditions.push(

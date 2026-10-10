@@ -2028,7 +2028,7 @@ export class ClinicService {
             ],
           } as PrismaDelegateArgs,
           // `omit`: these lists are sent to staff browsers; the password hash must never be in them.
-            include: { user: { omit: { password: true } } } as PrismaDelegateArgs,
+          include: { user: { omit: { password: true } } } as PrismaDelegateArgs,
           // Stable ordering: without it Postgres returns rows in physical
           // order, which changes after any update and makes pagination
           // skip/duplicate patients.
