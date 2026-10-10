@@ -791,6 +791,8 @@ model PatientVisit {
   presentIllness    String?
   presentComplaints String?
   knownCaseOf       String?
+  // How the patient found the clinic (e.g. Friend/Relative, Doctor); carried over from the old register.
+  referenceSource   String?
   pastHistoryNotes  String?
   habits            Json?
   nidra             String?

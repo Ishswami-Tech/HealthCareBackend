@@ -22,6 +22,7 @@ export interface PlannedVisit {
   readonly opdNumber: string;
   readonly legacyOpd: string | null;
   readonly caseDate: string;
+  readonly referenceSource: string | null;
   readonly ayurvedicDiagnosis: string | null;
   readonly modernDiagnosis: string | null;
 }
@@ -134,6 +135,7 @@ export function buildPlan(
         opdNumber: opdByRow.get(row.rowNumber) as string,
         legacyOpd: row.legacyOpd,
         caseDate: row.caseDate,
+        referenceSource: row.referenceSource,
         ayurvedicDiagnosis: row.ayurvedicDiagnosis,
         modernDiagnosis: row.modernDiagnosis,
       }));
