@@ -25,6 +25,10 @@ describe('classifySearchTerm', () => {
     });
   });
 
+  it('treats a country-code mobile without a plus as a phone, not a register number', () => {
+    expect(classifySearchTerm('919876543210')).toEqual({ kind: 'phone', value: '919876543210' });
+  });
+
   it('recognises OPD numbers with or without the VM prefix', () => {
     expect(classifySearchTerm('vm-2017/21')).toEqual({ kind: 'opd', value: 'VM-2017/21' });
     expect(classifySearchTerm('2017/21')).toEqual({ kind: 'opd', value: '2017/21' });

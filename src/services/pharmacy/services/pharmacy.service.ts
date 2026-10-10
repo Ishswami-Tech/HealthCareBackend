@@ -224,6 +224,10 @@ type PrescriptionDeskContext = {
   visitTypeByAppointmentId: Map<string, string>;
   opdNumberByVisitId: Map<string, string>;
   latestOpdByPatientClinic: Map<string, string>;
+  /** `<clinicId>:<patientId>` -> the clinic-issued health ID (UHID). */
+  uhidByPatientClinic: Map<string, string>;
+  /** `<clinicId>:<patientId>` -> a phone kept outside the login (imported patients have no login phone). */
+  contactPhoneByPatientClinic: Map<string, string>;
 };
 
 type InventoryFilterOptions = {
@@ -1063,6 +1067,8 @@ export class PharmacyService {
       visitTypeByAppointmentId: new Map(),
       opdNumberByVisitId: new Map(),
       latestOpdByPatientClinic: new Map(),
+      uhidByPatientClinic: new Map(),
+      contactPhoneByPatientClinic: new Map(),
     };
     const appointmentIds = Array.from(
       new Set(prescriptions.map(rx => rx.appointmentId).filter((id): id is string => Boolean(id)))
@@ -1071,7 +1077,15 @@ export class PharmacyService {
       new Set(prescriptions.map(rx => rx.visitId).filter((id): id is string => Boolean(id)))
     );
     const withoutVisit = prescriptions.filter(rx => !rx.visitId && rx.patientId);
-    if (appointmentIds.length === 0 && visitIds.length === 0 && withoutVisit.length === 0) {
+    const patientIds = Array.from(
+      new Set(prescriptions.map(rx => rx.patientId).filter((id): id is string => Boolean(id)))
+    );
+    if (
+      appointmentIds.length === 0 &&
+      visitIds.length === 0 &&
+      withoutVisit.length === 0 &&
+      patientIds.length === 0
+    ) {
       return context;
     }
 
@@ -1080,7 +1094,34 @@ export class PharmacyService {
         const loose = client as unknown as {
           appointment?: LooseDelegate;
           patientVisit?: LooseDelegate;
+          patientIdentifier?: LooseDelegate;
+          patientContactPoint?: LooseDelegate;
         };
+        if (patientIds.length > 0 && loose.patientIdentifier) {
+          const rows = await loose.patientIdentifier.findMany({
+            where: { patientId: { in: patientIds }, system: 'UHID' } as PrismaDelegateArgs,
+            select: { patientId: true, clinicId: true, value: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+          for (const row of rows) {
+            context.uhidByPatientClinic.set(
+              `${String(row['clinicId'])}:${String(row['patientId'])}`,
+              String(row['value'])
+            );
+          }
+        }
+        if (patientIds.length > 0 && loose.patientContactPoint) {
+          const rows = await loose.patientContactPoint.findMany({
+            where: { patientId: { in: patientIds }, system: 'phone' } as PrismaDelegateArgs,
+            orderBy: { createdAt: 'asc' } as PrismaDelegateArgs,
+            select: { patientId: true, clinicId: true, value: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+          for (const row of rows) {
+            const key = `${String(row['clinicId'])}:${String(row['patientId'])}`;
+            if (!context.contactPhoneByPatientClinic.has(key)) {
+              context.contactPhoneByPatientClinic.set(key, String(row['value']));
+            }
+          }
+        }
         if (appointmentIds.length > 0 && loose.appointment) {
           const rows = await loose.appointment.findMany({
             where: { id: { in: appointmentIds } } as PrismaDelegateArgs,
@@ -1179,6 +1220,7 @@ export class PharmacyService {
         user?: {
           age?: number | null;
           gender?: string | null;
+          phone?: string | null;
           dateOfBirth?: Date | string | null;
         } | null;
       } | null;
@@ -1199,8 +1241,15 @@ export class PharmacyService {
       context.latestOpdByPatientClinic.get(`${prescription.clinicId}:${prescription.patientId}`) ??
       null;
 
+    const patientKey = `${prescription.clinicId}:${prescription.patientId}`;
+    const uhid = context.uhidByPatientClinic.get(patientKey) ?? null;
+    const contactPhone = context.contactPhoneByPatientClinic.get(patientKey) ?? null;
+
     return {
       items,
+      // Imported patients have no login phone: fall back to the number kept with their contact points.
+      patientPhone: prescription.patient?.user?.phone ?? contactPhone,
+      patientUhid: uhid,
       prescriptionNumber: prescription.prescriptionNumber || buildPrescriptionNumber(prescription),
       appointmentId: prescription.appointmentId ?? null,
       pdfUrl: `/pharmacy/prescriptions/${prescription.id}/pdf`,
@@ -1834,11 +1883,13 @@ export class PharmacyService {
     return result;
   }
 
-  async findAllPrescriptions(clinicId?: string) {
+  async findAllPrescriptions(clinicId?: string, scope?: { readonly doctorUserId: string }) {
     const prescriptions = await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
       const where: Record<string, unknown> = {};
       if (clinicId) where['clinicId'] = clinicId;
+      // A doctor sees the prescriptions they wrote, not every prescription of the clinic.
+      if (scope?.doctorUserId) where['doctor'] = { userId: scope.doctorUserId };
 
       return await typedClient.prescription.findMany({
         where: where as PrismaDelegateArgs,
@@ -1870,9 +1921,10 @@ export class PharmacyService {
       } as PrismaDelegateArgs);
     });
 
-    // Every prescription of the clinic (or of all clinics when no clinic is given).
+    // Every prescription of the clinic (or of all clinics when no clinic is given), or only the
+    // doctor's own when scoped; the payment-state enrichment then covers only that subset.
     return await this.enrichPrescriptionsWithPaymentState(prescriptions, clinicId, {
-      completeClinicSet: true,
+      completeClinicSet: !scope,
     });
   }
 

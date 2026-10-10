@@ -25,6 +25,8 @@ const STAFF_ROLES: Role[] = [
   Role.ASSISTANT_DOCTOR,
   Role.RECEPTIONIST,
   Role.NURSE,
+  // Pharmacy staff look patients up by UHID or phone to find their prescriptions.
+  Role.PHARMACIST,
   Role.CLINIC_ADMIN,
   Role.SUPER_ADMIN,
 ];
