@@ -1,14 +1,4 @@
-import {
-  Controller,
-  ForbiddenException,
-  Get,
-  Param,
-  Query,
-  Request,
-  Res,
-  UseFilters,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, Get, Param, Query, Request, Res, UseFilters, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply } from 'fastify';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
@@ -37,6 +27,7 @@ import type {
   FhirObservation,
   FhirPatient,
 } from '@services/fhir/fhir.types';
+import { complianceErrors } from '@services/compliance/utils/compliance-errors.util';
 
 /** Clinical data: clinical staff, plus a PATIENT reading only their own record (service-enforced). */
 const FHIR_READ_ROLES: Role[] = [
@@ -168,7 +159,7 @@ export class FhirController {
     const clinicId = req.clinicContext?.clinicId;
     const userId = req.user?.sub ?? req.user?.id;
     if (!clinicId || !userId) {
-      throw new ForbiddenException('Clinic context required');
+      throw complianceErrors.clinicContextRequired();
     }
     const userAgent = truncateUserAgent(req.headers['user-agent']);
     return {

@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
 import { LogLevel, LogType } from '@core/types';
@@ -15,6 +15,7 @@ import { CompliancePatientAccess } from '@services/compliance/services/complianc
 import { PhiAuditService } from '@services/compliance/services/phi-audit.service';
 import { isUniqueViolation } from '@services/compliance/utils/db-errors.util';
 import { validateAndNormaliseIdentifier } from '@services/compliance/utils/patient-identifier.validator';
+import { complianceErrors } from '@services/compliance/utils/compliance-errors.util';
 
 export interface IdentifierActor {
   readonly userId: string;
@@ -60,7 +61,7 @@ function isSystem(value: string): value is PatientIdentifierSystem {
 
 function toRecord(row: IdentifierRow): PatientIdentifierRecord {
   if (!isSystem(row.system)) {
-    throw new BadRequestException(`Unknown identifier system stored on row ${row.id}`);
+    throw complianceErrors.invalid(`Unknown identifier system stored on row ${row.id}`);
   }
   return {
     id: row.id,
@@ -124,18 +125,18 @@ export class PatientIdentifierService {
 
   async setIdentifier(input: SetIdentifierInput): Promise<PatientIdentifierRecord> {
     if (input.system === 'UHID') {
-      throw new BadRequestException('A UHID is never replaced: it is issued once (createUhid)');
+      throw complianceErrors.invalid('A UHID is never replaced: it is issued once (createUhid)');
     }
     const normalised = validateAndNormaliseIdentifier(input.system, input.value);
     if (!normalised.valid) {
-      throw new BadRequestException(normalised.reason);
+      throw complianceErrors.invalid(normalised.reason);
     }
     const { patientId, clinicId, system } = input;
     const value = normalised.value;
 
     const holderId = await this.findPatientIdByIdentifier(clinicId, system, value);
     if (holderId && holderId !== patientId) {
-      throw new ConflictException(
+      throw complianceErrors.identifierConflict(
         `${system} is already assigned to another patient in this clinic`
       );
     }
@@ -181,7 +182,7 @@ export class PatientIdentifierService {
     } catch (error) {
       // Lost a race against another writer of the same [clinicId, system, value].
       if (isUniqueViolation(error)) {
-        throw new ConflictException(
+        throw complianceErrors.identifierConflict(
           `${system} is already assigned to another patient in this clinic`
         );
       }
@@ -204,7 +205,7 @@ export class PatientIdentifierService {
   }): Promise<PatientIdentifierRecord> {
     const normalised = validateAndNormaliseIdentifier('UHID', input.value);
     if (!normalised.valid) {
-      throw new BadRequestException(normalised.reason);
+      throw complianceErrors.invalid(normalised.reason);
     }
     const { patientId, clinicId } = input;
     try {
@@ -240,7 +241,7 @@ export class PatientIdentifierService {
         record => record.system === 'UHID'
       );
       if (existing) return existing;
-      throw new ConflictException('This UHID is already assigned in this clinic');
+      throw complianceErrors.identifierConflict('This UHID is already assigned in this clinic');
     }
   }
 
@@ -253,7 +254,7 @@ export class PatientIdentifierService {
     actor: IdentifierActor
   ): Promise<PatientIdentifierRecord> {
     if (system === 'UHID') {
-      throw new BadRequestException(
+      throw complianceErrors.invalid(
         'UHIDs are issued by the system and cannot be entered by hand. Use POST /compliance/patient-identifiers/uhid.'
       );
     }

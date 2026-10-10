@@ -27,7 +27,7 @@
  */
 
 import { HttpStatus, Inject, Injectable, forwardRef } from '@nestjs/common';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogLevel, LogType } from '@core/types';
 import { ErrorCode } from '@core/errors/error-codes.enum';

@@ -1,14 +1,4 @@
-import {
-  Body,
-  Controller,
-  ForbiddenException,
-  Get,
-  Param,
-  Post,
-  Query,
-  Request,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Request, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
@@ -30,6 +20,7 @@ import type { PatientIdentifierLookupResponse } from '@services/compliance/dto/p
 import { PatientIdentifierService } from '@services/compliance/services/patient-identifier.service';
 import type { IdentifierActor } from '@services/compliance/services/patient-identifier.service';
 import { UhidAllocatorService } from '@services/compliance/services/uhid-allocator.service';
+import { complianceErrors } from '@services/compliance/utils/compliance-errors.util';
 
 const STAFF_ROLES: Role[] = [
   Role.DOCTOR,
@@ -113,7 +104,7 @@ export class PatientIdentifierController {
   private requireClinic(req: ClinicAuthenticatedRequest): string {
     const clinicId = req.clinicContext?.clinicId;
     if (!clinicId) {
-      throw new ForbiddenException('Clinic context required');
+      throw complianceErrors.clinicContextRequired();
     }
     return clinicId;
   }
@@ -122,7 +113,7 @@ export class PatientIdentifierController {
     const userId = req.user?.sub;
     const role = req.user?.role;
     if (!userId || !role) {
-      throw new ForbiddenException('Authenticated user required');
+      throw complianceErrors.forbidden('Authenticated user required');
     }
     return {
       userId,
