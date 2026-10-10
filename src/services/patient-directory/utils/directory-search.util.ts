@@ -9,6 +9,8 @@ import type { PatientSearchTerm } from '@core/types/patient-directory.types';
 const UHID_PATTERN = /^[A-Za-z0-9]{2,8}-\d{9}$/;
 /** The old register's patient numbers are long digit strings (for example 18 digits). */
 const LEGACY_PATTERN = /^\d{12,}$/;
+/** An Indian mobile typed with its country code but no plus (919876543210) is a phone, not a register number. */
+const COUNTRY_CODE_MOBILE_PATTERN = /^91[6-9]\d{9}$/;
 /** Visit numbers: `VM-2018/609` (imported) or `OPD-CL0002-2026-000123`; a bare `2018/609` too. */
 const OPD_PREFIX_PATTERN = /^(VM|OPD)-/i;
 const OPD_SLASH_PATTERN = /^\d{2,4}\/\d+/;
@@ -28,6 +30,7 @@ export function classifySearchTerm(raw: string | undefined | null): PatientSearc
   if (text.length < 2) return null;
 
   if (UHID_PATTERN.test(text)) return { kind: 'uhid', value: text.toUpperCase() };
+  if (COUNTRY_CODE_MOBILE_PATTERN.test(text)) return { kind: 'phone', value: text };
   if (LEGACY_PATTERN.test(text)) return { kind: 'legacy', value: text };
   if (OPD_PREFIX_PATTERN.test(text)) return { kind: 'opd', value: text.toUpperCase() };
   if (OPD_SLASH_PATTERN.test(text)) return { kind: 'opd', value: text };
