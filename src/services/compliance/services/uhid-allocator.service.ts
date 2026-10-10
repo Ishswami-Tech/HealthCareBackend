@@ -1,4 +1,4 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
 import { LogLevel, LogType } from '@core/types';
@@ -16,6 +16,10 @@ import {
   formatUhid,
   normaliseClinicCode,
 } from '@services/compliance/utils/uhid.util';
+import {
+  complianceErrors,
+  isConflictError,
+} from '@services/compliance/utils/compliance-errors.util';
 
 const MAX_ALLOCATION_ATTEMPTS = 5;
 
@@ -72,7 +76,7 @@ export class UhidAllocatorService {
     const clinicCode = await this.resolveClinicCode(clinicId);
     const sequence = await this.nextSequence(clinicId);
     if (sequence > UHID_MAX_SEQUENCE) {
-      throw new ConflictException('UHID range for this clinic is exhausted');
+      throw complianceErrors.uhidAllocation('UHID range for this clinic is exhausted');
     }
     return formatUhid(clinicCode, sequence);
   }
@@ -105,12 +109,12 @@ export class UhidAllocatorService {
         return created;
       } catch (error) {
         // Lost a race (same patient or same number): look again, then retry with a new number.
-        if (!(error instanceof ConflictException)) throw error;
+        if (!isConflictError(error)) throw error;
       }
     }
     const raced = await this.findUhid(patientId, clinicId);
     if (raced) return raced;
-    throw new ConflictException('Could not issue a UHID, please retry');
+    throw complianceErrors.uhidAllocation('Could not issue a UHID, please retry');
   }
 
   private async findUhid(
@@ -156,7 +160,7 @@ export class UhidAllocatorService {
     );
     const next = Number(rows?.[0]?.lastValue ?? 0);
     if (!Number.isInteger(next) || next < 1) {
-      throw new ConflictException('Could not allocate a UHID');
+      throw complianceErrors.uhidAllocation('Could not allocate a UHID');
     }
     return next;
   }

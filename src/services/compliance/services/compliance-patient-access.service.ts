@@ -1,6 +1,7 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Role } from '@core/types/enums.types';
 import { EHRService } from '@services/ehr/ehr.service';
+import { complianceErrors } from '@services/compliance/utils/compliance-errors.util';
 
 const PATIENT_ROLE: string = Role.PATIENT;
 
@@ -33,10 +34,10 @@ export class CompliancePatientAccess {
       isPatientCaller ? undefined : clinicId
     );
     if (!patient) {
-      throw new NotFoundException(`Patient ${patientId} not found`);
+      throw complianceErrors.patientNotFound(`Patient ${patientId} not found`);
     }
     if (isPatientCaller && patient.userId !== actor.userId) {
-      throw new ForbiddenException('Patients can only access their own record');
+      throw complianceErrors.forbidden('Patients can only access their own record');
     }
     return patient;
   }

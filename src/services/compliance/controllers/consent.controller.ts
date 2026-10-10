@@ -1,13 +1,4 @@
-import {
-  Body,
-  Controller,
-  ForbiddenException,
-  Get,
-  Param,
-  Post,
-  Request,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Request, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
@@ -24,6 +15,7 @@ import { RecordConsentDto } from '@services/compliance/dto/consent.dto';
 import type { PatientConsentStateResponse } from '@services/compliance/dto/consent.dto';
 import { ConsentService } from '@services/compliance/services/consent.service';
 import type { ConsentActor } from '@services/compliance/services/consent.service';
+import { complianceErrors } from '@services/compliance/utils/compliance-errors.util';
 
 const STAFF_ROLES: Role[] = [
   Role.DOCTOR,
@@ -66,7 +58,7 @@ export class ConsentController {
   private requireClinic(req: ClinicAuthenticatedRequest): string {
     const clinicId = req.clinicContext?.clinicId;
     if (!clinicId) {
-      throw new ForbiddenException('Clinic context required');
+      throw complianceErrors.clinicContextRequired();
     }
     return clinicId;
   }
@@ -75,7 +67,7 @@ export class ConsentController {
     const userId = req.user?.sub;
     const role = req.user?.role;
     if (!userId || !role) {
-      throw new ForbiddenException('Authenticated user required');
+      throw complianceErrors.forbidden('Authenticated user required');
     }
     return {
       userId,

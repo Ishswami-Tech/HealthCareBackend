@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
 import { LogLevel, LogType } from '@core/types';
@@ -27,6 +27,7 @@ import {
 } from '@services/compliance/utils/consent-evidence.util';
 import type { ConsentEvidence } from '@services/compliance/utils/consent-evidence.util';
 import { isUniqueViolation } from '@services/compliance/utils/db-errors.util';
+import { complianceErrors } from '@services/compliance/utils/compliance-errors.util';
 
 export interface ConsentActor {
   readonly userId: string;
@@ -67,7 +68,7 @@ function isConsentPurpose(value: string): value is ConsentPurpose {
 
 function toRecord(row: ConsentRow): PatientConsentRecord {
   if (!isConsentPurpose(row.purpose)) {
-    throw new BadRequestException(`Unknown consent purpose stored on row ${row.id}`);
+    throw complianceErrors.invalid(`Unknown consent purpose stored on row ${row.id}`);
   }
   return {
     id: row.id,
@@ -109,10 +110,10 @@ export class ConsentService {
     const capturedVia: ConsentCaptureChannel = isPatientCaller ? 'SELF' : 'STAFF';
     const evidence = validateConsentEvidence(dto.evidence);
     if (!evidence.valid) {
-      throw new BadRequestException(evidence.reason);
+      throw complianceErrors.invalid(evidence.reason);
     }
     if (evidenceIsRequired(dto.purpose, dto.status, capturedVia) && !evidence.value) {
-      throw new BadRequestException(
+      throw complianceErrors.invalid(
         "Recording this consent on the patient's behalf needs evidence, for example a signed form reference"
       );
     }
@@ -213,7 +214,7 @@ export class ConsentService {
       } as PrismaDelegateArgs);
     });
     if (dto.status === 'WITHDRAWN' && latest?.status !== 'GRANTED') {
-      throw new BadRequestException(
+      throw complianceErrors.invalid(
         `Cannot withdraw consent for ${dto.purpose}: no active grant exists`
       );
     }
@@ -250,7 +251,7 @@ export class ConsentService {
       );
     } catch (error) {
       if (isUniqueViolation(error)) {
-        throw new ConflictException(
+        throw complianceErrors.consentConflict(
           'Consent was changed by another request. Reload and try again.'
         );
       }
