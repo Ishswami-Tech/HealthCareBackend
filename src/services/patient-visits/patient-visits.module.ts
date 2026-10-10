@@ -9,6 +9,7 @@ import { ErrorsModule } from '@core/errors/errors.module';
 import { CacheModule } from '@infrastructure/cache/cache.module';
 import { StorageModule } from '@infrastructure/storage/storage.module';
 import { AyurvedaModule } from '@services/ayurveda/ayurveda.module';
+import { ComplianceModule } from '@services/compliance/compliance.module';
 import { PatientVisitsController } from '@services/patient-visits/controllers/patient-visits.controller';
 import { FamilyMembersController } from '@services/patient-visits/controllers/family-members.controller';
 import { VisitTherapyController } from '@services/patient-visits/controllers/visit-therapy.controller';
@@ -39,6 +40,7 @@ import { PatientDocumentsService } from '@services/patient-visits/services/patie
     CacheModule,
     StorageModule,
     AyurvedaModule,
+    ComplianceModule,
   ],
   controllers: [
     PatientVisitsController,

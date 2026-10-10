@@ -47,6 +47,8 @@ function build(options: { appointment?: Record<string, unknown> | null; existing
   const db = {
     executeHealthcareRead: jest.fn((fn: (c: unknown) => unknown) => fn(tx)),
     executeHealthcareWrite: jest.fn((fn: (c: unknown) => unknown) => fn(tx)),
+    encryptPhiField: jest.fn((value: string | null | undefined) => value ?? null),
+    decryptPhiField: jest.fn((value: string | null | undefined) => value ?? null),
   };
   const logging = { log: jest.fn().mockResolvedValue(undefined) };
   const events = { emit: jest.fn().mockResolvedValue(undefined) };
@@ -57,7 +59,9 @@ function build(options: { appointment?: Record<string, unknown> | null; existing
     events as never,
     {} as never,
     {} as never,
-    moduleRef as never
+    moduleRef as never,
+    { record: jest.fn().mockResolvedValue(undefined) } as never,
+    { ensureUhid: jest.fn().mockResolvedValue({}) } as never
   );
   return { service, tx, logging };
 }

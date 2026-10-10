@@ -19,6 +19,8 @@ export interface PrescriptionPdfData {
   readonly patientGender?: string | null;
   readonly patientNumber?: string | null;
   readonly doctorName: string;
+  /** Registration number of the prescribing doctor (Doctor.licenseNumber). Printed when known. */
+  readonly doctorRegistrationNumber?: string | null;
   readonly diagnosis?: string | null;
   readonly notes?: string | null;
   readonly status: string;
@@ -62,6 +64,9 @@ export function buildPrescriptionPdf(data: PrescriptionPdfData): Promise<Buffer>
       doc.text(`Patient No: ${data.patientNumber}`);
     }
     doc.text(`Doctor: ${data.doctorName}`);
+    if (data.doctorRegistrationNumber) {
+      doc.text(`Registration No: ${data.doctorRegistrationNumber}`);
+    }
     if (data.diagnosis) {
       doc.moveDown(0.5).text(`Diagnosis: ${data.diagnosis}`);
     }

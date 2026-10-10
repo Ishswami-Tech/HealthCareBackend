@@ -807,6 +807,89 @@ model PatientVisit {
   @@map("patient_visits")
 }
 
+// Business identifiers of a patient inside one clinic: UHID, ABHA number /
+// address, numbers carried over from a previous system. A table, not columns
+// on `Patient`, because a UHID such as "26/4116" only means something within
+// its clinic and because it maps one-to-one onto FHIR `Patient.identifier`.
+// `system` values are validated by PatientIdentifierSystem in the TS layer.
+// Loosely coupled by plain string FKs, like `patient_visits`.
+model patientIdentifier {
+  id        String   @id @default(uuid())
+  patientId String
+  clinicId  String
+  system    String
+  value     String
+  source    String   @default("MANUAL")
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([clinicId, system, value])
+  @@unique([patientId, clinicId, system])
+  @@index([patientId])
+  @@index([clinicId])
+  @@map("patient_identifiers")
+}
+
+// Per-clinic UHID counter. A UHID is an opaque, system-issued number: sequence plus check digit,
+// no year, no personal data. Allocated with one atomic upsert-increment (UhidAllocatorService),
+// never read-then-write.
+model uhidSequence {
+  clinicId  String   @id
+  lastValue Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@map("uhid_sequences")
+}
+
+// How to reach a patient (FHIR ContactPoint): phone or email on file. Deliberately separate from
+// `User.phone`, which is the login identity: a family often shares one mobile number, and a number
+// from an old register may now belong to someone else. Only a verified number may become a login.
+// `verifiedAt` stays NULL until the patient proves control of it.
+model patientContactPoint {
+  id         String    @id @default(uuid())
+  patientId  String
+  clinicId   String
+  system     String
+  value      String
+  use        String    @default("mobile")
+  source     String    @default("MANUAL")
+  verifiedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([patientId, clinicId, system, value])
+  @@index([clinicId, system, value])
+  @@index([patientId])
+  @@map("patient_contact_points")
+}
+
+// Append-only consent ledger (DPDP Act 2023: notice and consent for processing
+// personal data). A grant and a later withdrawal are two rows; the newest row
+// per (patientId, clinicId, purpose) is the current state. Rows are never
+// updated or deleted, so the history stays provable.
+model patientConsent {
+  id            String   @id @default(uuid())
+  patientId     String
+  clinicId      String
+  purpose       String
+  // 1, 2, 3 ... per (patient, clinic, purpose). The unique index below makes two concurrent
+  // writers collide instead of both succeeding (e.g. two withdrawals of one grant).
+  version       Int
+  noticeVersion String
+  language      String?
+  status        String
+  recordedBy    String
+  capturedVia   String
+  evidence      Json?
+  recordedAt    DateTime @default(now())
+
+  @@unique([patientId, clinicId, purpose, version])
+  @@index([patientId, clinicId, purpose, recordedAt])
+  @@index([clinicId])
+  @@map("patient_consents")
+}
+
 // One row per visit: General Examination + Physical Measurement numeric
 // fields. Kept separate from the generic `Vital` model on purpose — `Vital`
 // is treated as a longitudinal time series elsewhere (health trends), and
@@ -2229,6 +2312,11 @@ model ayurvedicDiagnosis {
   srotasAffected        String?
   notes                 String?
   confidenceLevel       String?
+  // Standard codes for the diagnosis as FHIR-style codings: an array of
+  // { system, code, display }. The code tables (ICD-10, ICD-11 TM2, NAMASTE,
+  // SNOMED CT) are licensed datasets loaded separately; free text above stays
+  // the source of truth until a coding is chosen.
+  codings               Json?
   status                String   @default("ACTIVE")
   createdBy             String?
   diagnosedAt           DateTime @default(now())
