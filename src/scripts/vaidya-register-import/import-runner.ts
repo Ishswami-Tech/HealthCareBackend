@@ -150,6 +150,7 @@ interface Rows {
     patientId: string;
     registeredAt: string;
     knownCaseOf: string | null;
+    referenceSource: string | null;
   }>;
   diagnoses: Array<{ patientId: string; disease: string; diagnosedAt: string }>;
 }
@@ -227,6 +228,7 @@ function collectRows(
         opd: visit.opdNumber,
         patientId,
         registeredAt,
+        referenceSource: visit.referenceSource,
         knownCaseOf:
           !ctx.skipClinicalText && visit.modernDiagnosis
             ? sealText(ctx, visitId, visit.modernDiagnosis)
@@ -352,13 +354,13 @@ async function writeRows(tx: SqlExecutor, rows: Rows, ctx: RunContext): Promise<
   if (rows.visits.length > 0) {
     const result = await tx.query(
       `INSERT INTO "patient_visits"
-         ("id","opdNumber","registrationDate","patientId","clinicId","knownCaseOf","createdBy",
-          "createdAt","updatedAt")
+         ("id","opdNumber","registrationDate","patientId","clinicId","knownCaseOf","referenceSource",
+          "createdBy","createdAt","updatedAt")
        SELECT t.id, t.opd, (t."registeredAt"::timestamptz AT TIME ZONE 'UTC'), t."patientId",
-              $1::text, t."knownCaseOf", $2::text,
+              $1::text, t."knownCaseOf", t."referenceSource", $2::text,
               (t."registeredAt"::timestamptz AT TIME ZONE 'UTC'), NOW()
-         FROM unnest($3::text[], $4::text[], $5::text[], $6::text[], $7::text[])
-              AS t(id, opd, "patientId", "registeredAt", "knownCaseOf")
+         FROM unnest($3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[])
+              AS t(id, opd, "patientId", "registeredAt", "knownCaseOf", "referenceSource")
        ON CONFLICT ("clinicId", "opdNumber") DO NOTHING
        RETURNING "id"`,
       [
@@ -369,6 +371,7 @@ async function writeRows(tx: SqlExecutor, rows: Rows, ctx: RunContext): Promise<
         column(rows.visits, 'patientId'),
         column(rows.visits, 'registeredAt'),
         column(rows.visits, 'knownCaseOf'),
+        column(rows.visits, 'referenceSource'),
       ]
     );
     visits = result.rows.length;
