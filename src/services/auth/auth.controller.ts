@@ -1070,6 +1070,24 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Get('claim-record/available')
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Whether an earlier clinic record is held under the signed-in patient's verified number',
+    description: 'Returns only a count, never names or ids.',
+  })
+  async claimableRecords(
+    @Request() req: FastifyRequestWithUser
+  ): Promise<DataResponseDto<{ available: number }>> {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw this.errors.invalidCredentials('AuthController.claimableRecords');
+    }
+    const available = await this.recordClaimService.countAvailable(userId);
+    return new DataResponseDto({ available }, 'OK');
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Post('claim-record')
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth()

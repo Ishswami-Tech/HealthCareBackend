@@ -123,6 +123,38 @@ export class RecordClaimService {
     private readonly logger: LoggingService
   ) {}
 
+  /**
+   * How many unclaimed imported records hold the caller's verified number. Only a count: no names
+   * or ids, so it cannot be used to learn who is on file.
+   */
+  async countAvailable(userId: string): Promise<number> {
+    return this.database.executeHealthcareRead(async client => {
+      const tx = client as unknown as RawTx;
+      const rows = await tx.$queryRawUnsafe<CallerRow[]>(
+        `SELECT id, role::text AS role, phone, "phoneVerified", email, "googleId", "primaryClinicId"
+           FROM "users" WHERE id = $1::text AND "deletedAt" IS NULL`,
+        userId
+      );
+      const caller = rows[0];
+      if (!caller || caller.role !== 'PATIENT' || !caller.phone || !caller.phoneVerified || !caller.primaryClinicId) {
+        return 0;
+      }
+      const counted = await tx.$queryRawUnsafe<Array<{ available: number }>>(
+        `SELECT count(DISTINCT p.id)::int AS available
+           FROM "patient_contact_points" c
+           JOIN "Patient" p ON p.id = c."patientId"
+           JOIN "users" u ON u.id = p."userId"
+          WHERE c."clinicId" = $1::text AND c.system = 'phone' AND c.value = $2::text
+            AND u.id <> $3::text AND u.phone IS NULL AND u.email IS NULL AND u.password IS NULL
+            AND u."lastLogin" IS NULL AND u."deletedAt" IS NULL`,
+        caller.primaryClinicId,
+        normalizeAuthPhoneNumber(caller.phone),
+        caller.id
+      );
+      return Number(counted[0]?.available ?? 0);
+    });
+  }
+
   async claim(input: RecordClaimInput, actor: RecordClaimActor): Promise<RecordClaimResult> {
     const plan = await this.database.executeHealthcareRead(async client => {
       const tx = client as unknown as RawTx;
