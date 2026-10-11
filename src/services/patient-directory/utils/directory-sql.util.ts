@@ -33,6 +33,25 @@ const SORT_EXPRESSIONS: Readonly<Record<PatientDirectorySortField, string>> = {
   visits: 'm.visits',
 };
 
+/**
+ * Visits per patient: the OPD register entries, plus booked appointments that never got one (a
+ * patient who booked online has no register entry, and would otherwise show 0 visits).
+ * Cancelled and no-show bookings are not visits.
+ */
+const visitStatsCte = (clinic: string): string => `visit_stats AS (
+  SELECT "patientId", count(*)::int AS cnt, min(seen_at) AS first_visit, max(seen_at) AS last_visit
+    FROM (
+      SELECT "patientId", "registrationDate" AS seen_at
+        FROM patient_visits WHERE "clinicId" = ${clinic}
+      UNION ALL
+      SELECT a."patientId", a."date" AS seen_at
+        FROM "Appointment" a
+       WHERE a."clinicId" = ${clinic} AND a.status::text NOT IN ('CANCELLED', 'NO_SHOW')
+         AND NOT EXISTS (SELECT 1 FROM patient_visits pv WHERE pv."appointmentId" = a.id)
+    ) seen
+   GROUP BY "patientId"
+)`;
+
 class ParamList {
   private readonly values: unknown[] = [];
 
@@ -203,11 +222,7 @@ export function buildDirectoryPageSql(query: PatientDirectoryQuery): DirectorySq
   const offset = params.add((query.page - 1) * query.pageSize);
 
   const sql = `
-WITH visit_stats AS (
-  SELECT "patientId", count(*)::int AS cnt,
-         min("registrationDate") AS first_visit, max("registrationDate") AS last_visit
-    FROM patient_visits WHERE "clinicId" = ${clinic} GROUP BY "patientId"
-),
+WITH ${visitStatsCte(clinic)},
 matched AS (
   SELECT p.id AS patient_id, p."userId" AS user_id, p."createdAt" AS registered_at,
          u.name, u."firstName", u."lastName", u.gender::text AS gender, u.age,
@@ -260,10 +275,7 @@ export function buildDirectoryCountSql(query: PatientDirectoryQuery): DirectoryS
     ...recordConditions(filters, clinic),
   ].join('\n    AND ');
   const sql = `
-WITH visit_stats AS (
-  SELECT "patientId", count(*)::int AS cnt FROM patient_visits
-   WHERE "clinicId" = ${clinic} GROUP BY "patientId"
-)
+WITH ${visitStatsCte(clinic)}
 SELECT count(*)::int AS total
   FROM "Patient" p
   JOIN users u ON u.id = p."userId"
