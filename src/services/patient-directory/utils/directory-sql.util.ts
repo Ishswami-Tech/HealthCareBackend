@@ -117,8 +117,9 @@ function identityConditions(filters: PatientDirectoryFilters, params: ParamList)
 
 function demographicConditions(filters: PatientDirectoryFilters, params: ParamList): string[] {
   const conditions: string[] = [];
-  const age = `COALESCE(u.age, CASE WHEN u."dateOfBirth" IS NOT NULL
-                 THEN date_part('year', age(u."dateOfBirth"))::int END)`;
+  // The date of birth wins over the age stored at import time, which goes stale.
+  const age = `COALESCE(CASE WHEN u."dateOfBirth" IS NOT NULL
+                 THEN date_part('year', age(u."dateOfBirth"))::int END, u.age)`;
   if (filters.gender) conditions.push(`u.gender::text = ${params.add(filters.gender)}`);
   if (filters.ageMin !== undefined) conditions.push(`${age} >= ${params.add(filters.ageMin)}`);
   if (filters.ageMax !== undefined) conditions.push(`${age} <= ${params.add(filters.ageMax)}`);

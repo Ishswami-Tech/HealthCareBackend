@@ -1,5 +1,8 @@
 -- Search and sort indexes for the patient directory (tens of thousands of patients per clinic).
 -- Idempotent. pg_trgm makes "contains" searches on names, phones and OPD numbers use an index.
+-- A plain CREATE INDEX blocks writes while it builds; do not queue behind a long transaction.
+SET lock_timeout = '10s';
+
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- Name search: every typed word is matched as a substring against name, first and last name.

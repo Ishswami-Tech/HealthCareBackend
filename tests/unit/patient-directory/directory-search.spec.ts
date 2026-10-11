@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
   classifySearchTerm,
   escapeLike,
+  isRealCalendarDate,
 } from '../../../src/services/patient-directory/utils/directory-search.util';
 
 describe('classifySearchTerm', () => {
@@ -71,5 +72,18 @@ describe('escapeLike', () => {
   it('escapes LIKE wildcards so they match literally', () => {
     const typed = String.raw`50%_off\x`;
     expect(escapeLike(typed)).toBe(String.raw`50\%\_off\\x`);
+  });
+});
+
+describe('isRealCalendarDate', () => {
+  it('accepts real dates, including a leap day', () => {
+    expect(isRealCalendarDate('2026-10-11')).toBe(true);
+    expect(isRealCalendarDate('2028-02-29')).toBe(true);
+  });
+
+  it('rejects dates that match the pattern but do not exist', () => {
+    expect(isRealCalendarDate('2026-02-31')).toBe(false);
+    expect(isRealCalendarDate('2027-02-29')).toBe(false);
+    expect(isRealCalendarDate('2026-13-01')).toBe(false);
   });
 });

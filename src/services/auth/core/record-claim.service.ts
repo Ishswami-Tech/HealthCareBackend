@@ -5,7 +5,7 @@ import { LogLevel, LogType } from '@core/types';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { HealthcareError } from '@core/errors/healthcare-error.class';
 import { normalizeAuthPhoneNumber } from './phone-normalizer.util';
-import { candidatesMatchingName } from './record-claim.util';
+import { candidatesMatchingName, isForeignKeyOrUniqueViolation } from './record-claim.util';
 import type { ClaimCandidate } from './record-claim.util';
 
 const CONTEXT = 'RecordClaim';
@@ -31,7 +31,7 @@ export interface RecordClaimResult {
 
 interface RawTx {
   $queryRawUnsafe: <T>(sql: string, ...values: unknown[]) => Promise<T>;
-  $executeRawUnsafe: (sql: string, ...values: unknown[]) => Promise<number>;
+
 }
 
 interface CallerRow {
@@ -60,28 +60,45 @@ interface ClaimPlan {
 const MERGE_SQL = `
 WITH guard AS (
   SELECT id FROM "users"
-   WHERE id = $3::text AND phone IS NULL AND email IS NULL AND password IS NULL
+   WHERE id = $3::text AND role::text = 'PATIENT' AND "isActive" = true
+     AND phone IS NULL AND email IS NULL AND password IS NULL
      AND "lastLogin" IS NULL AND "deletedAt" IS NULL
      FOR UPDATE
 ),
+caller_guard AS (
+  SELECT id FROM "users"
+   WHERE id = $1::text AND role::text = 'PATIENT' AND "deletedAt" IS NULL AND phone = $5::text
+     FOR UPDATE
+),
+ok AS (
+  SELECT 1 FROM guard, caller_guard
+   WHERE NOT EXISTS (SELECT 1 FROM "patient_visits" WHERE "patientId" = $2::text)
+     AND NOT EXISTS (SELECT 1 FROM "patient_documents" WHERE "patientId" = $2::text)
+     AND NOT EXISTS (SELECT 1 FROM "ayurvedic_diagnoses" WHERE "patientId" = $2::text)
+     AND NOT EXISTS (SELECT 1 FROM "patient_identifiers" WHERE "patientId" = $2::text)
+     AND NOT EXISTS (SELECT 1 FROM "patient_consents" WHERE "patientId" = $2::text)
+     AND NOT EXISTS (SELECT 1 FROM "family_members" WHERE "patientId" = $2::text AND "deletedAt" IS NULL)
+     AND NOT EXISTS (SELECT 1 FROM "Invoice" WHERE "userId" = $1::text)
+),
 del_contacts AS (
   DELETE FROM "patient_contact_points"
-   WHERE "patientId" = $2::text AND EXISTS (SELECT 1 FROM guard) RETURNING 1
+   WHERE "patientId" = $2::text AND EXISTS (SELECT 1 FROM ok) RETURNING 1
 ),
 del_patient AS (
   DELETE FROM "Patient"
-   WHERE id = $2::text AND EXISTS (SELECT 1 FROM guard) RETURNING 1
+   WHERE id = $2::text AND EXISTS (SELECT 1 FROM ok) RETURNING 1
 ),
 free_caller AS (
   UPDATE "users"
      SET phone = NULL, email = NULL, "googleId" = NULL, "isActive" = false,
          "deletedAt" = NOW(), "updatedAt" = NOW()
-   WHERE id = $1::text AND EXISTS (SELECT 1 FROM guard) RETURNING id
+   WHERE id = $1::text AND "deletedAt" IS NULL AND EXISTS (SELECT 1 FROM ok) RETURNING id
 ),
 claim_user AS (
   UPDATE "users"
      SET phone = $5::text, "phoneVerified" = true, "phoneVerifiedAt" = NOW(), "isVerified" = true,
          email = COALESCE(email, $6::text), "googleId" = COALESCE("googleId", $7::text),
+         password = COALESCE(password, (SELECT password FROM "users" WHERE id = $1::text)),
          "updatedAt" = NOW()
    WHERE id = $3::text AND EXISTS (SELECT 1 FROM free_caller) RETURNING id
 ),
@@ -93,14 +110,17 @@ verify_contact AS (
 audit AS (
   INSERT INTO "AuditLog" (id, "userId", action, description, "clinicId", "resourceType",
                           "resourceId", "ipAddress", "userAgent", metadata, "updatedAt")
-  SELECT gen_random_uuid()::text, $3::text, 'PHI_UPDATE', 'UPDATE PATIENT_RECORD_CLAIM (SUCCESS)',
+  SELECT gen_random_uuid()::text, $1::text, 'PHI_UPDATE', 'UPDATE PATIENT_RECORD_CLAIM (SUCCESS)',
          $8::text, 'PATIENT_RECORD_CLAIM', $4::text, $9::text, $10::text,
-         jsonb_build_object('patientId', $4::text, 'mergedUserId', $1::text,
+         jsonb_build_object('patientId', $4::text, 'recordUserId', $3::text,
                             'purpose', 'patient claimed an imported record'), NOW()
    WHERE EXISTS (SELECT 1 FROM claim_user) RETURNING 1
 )
 SELECT (SELECT count(*) FROM claim_user)::int AS claimed
 `;
+
+const CALLER_SQL = `SELECT id, role::text AS role, phone, "phoneVerified", email, "googleId", "primaryClinicId"
+   FROM "users" WHERE id = $1::text AND "deletedAt" IS NULL`;
 
 /**
  * Lets a patient who has just signed in by one-time code take over the record the clinic imported
@@ -108,12 +128,15 @@ SELECT (SELECT count(*) FROM claim_user)::int AS claimed
  *
  * Safety rules:
  *  - only a record whose contact number is the caller's OTP-verified number is considered;
+ *  - the caller must ALSO give the UHID or old patient number of that record (printed on a receipt or
+ *    card): a name alone is known to relatives who share the number, so it is never enough;
  *  - the typed name must match the record's name (see namesMatch), and exactly one record may match;
- *  - the record must be unclaimed (no phone, e-mail, password or sign-in);
- *  - the caller's own, new account must be empty: if the database refuses to delete its patient row
- *    or it already has visits, documents, diagnoses or identifiers, nothing is merged and the clinic
- *    desk resolves it;
- *  - the answers for "no match" and "more than one match" do not reveal who is on file.
+ *  - the record must be an unclaimed, active patient (no phone, e-mail, password or sign-in);
+ *  - the caller's own, new account must be empty (no visits, documents, diagnoses, UHID, consents,
+ *    dependents or invoices; a foreign key from any related row refuses the delete). These checks are
+ *    part of the single merge statement, so nothing can slip in between check and merge;
+ *  - "no match" and "more than one match" give the same answer, every failed attempt is logged as a
+ *    security event, and the routes are rate limited.
  * Afterwards the caller signs in again and lands in the imported record.
  */
 @Injectable()
@@ -130,11 +153,7 @@ export class RecordClaimService {
   async countAvailable(userId: string): Promise<number> {
     return this.database.executeHealthcareRead(async client => {
       const tx = client as unknown as RawTx;
-      const rows = await tx.$queryRawUnsafe<CallerRow[]>(
-        `SELECT id, role::text AS role, phone, "phoneVerified", email, "googleId", "primaryClinicId"
-           FROM "users" WHERE id = $1::text AND "deletedAt" IS NULL`,
-        userId
-      );
+      const rows = await tx.$queryRawUnsafe<CallerRow[]>(CALLER_SQL, userId);
       const caller = rows[0];
       if (
         !caller ||
@@ -151,7 +170,8 @@ export class RecordClaimService {
            JOIN "Patient" p ON p.id = c."patientId"
            JOIN "users" u ON u.id = p."userId"
           WHERE c."clinicId" = $1::text AND c.system = 'phone' AND c.value = $2::text
-            AND u.id <> $3::text AND u.phone IS NULL AND u.email IS NULL AND u.password IS NULL
+            AND u.id <> $3::text AND u.role::text = 'PATIENT' AND u."isActive" = true
+            AND u.phone IS NULL AND u.email IS NULL AND u.password IS NULL
             AND u."lastLogin" IS NULL AND u."deletedAt" IS NULL`,
         caller.primaryClinicId,
         normalizeAuthPhoneNumber(caller.phone),
@@ -162,33 +182,56 @@ export class RecordClaimService {
   }
 
   async claim(input: RecordClaimInput, actor: RecordClaimActor): Promise<RecordClaimResult> {
-    const plan = await this.database.executeHealthcareRead(async client => {
-      const tx = client as unknown as RawTx;
-      const caller = await this.loadCaller(tx, actor.userId);
-      const phone = normalizeAuthPhoneNumber(caller.phone as string);
-      const clinicId = caller.primaryClinicId as string;
-      const candidate = await this.findSingleCandidate(tx, input, phone, clinicId, caller.id);
-      const callerPatientId = await this.loadOwnPatientId(tx, caller.id);
-      await this.requireEmptyAccount(tx, callerPatientId, caller.id);
-      return { caller, phone, clinicId, candidate, callerPatientId };
-    });
+    try {
+      this.requireSecondSecret(input);
+      const plan = await this.database.executeHealthcareRead(async client => {
+        const tx = client as unknown as RawTx;
+        const caller = await this.loadCaller(tx, actor.userId);
+        const phone = normalizeAuthPhoneNumber(caller.phone as string);
+        const clinicId = caller.primaryClinicId as string;
+        const candidate = await this.findSingleCandidate(tx, input, phone, clinicId, caller.id);
+        const callerPatientId = await this.loadOwnPatientId(tx, caller.id);
+        return { caller, phone, clinicId, candidate, callerPatientId };
+      });
 
-    await this.merge(plan, actor);
-    void this.logger.log(LogType.AUDIT, LogLevel.INFO, 'Imported record claimed', CONTEXT, {
-      patientId: plan.candidate.patientId,
-    });
-    return { claimed: true, requiresSignIn: true };
+      await this.merge(plan, actor);
+      await this.dropCaches(plan);
+      void this.logger.log(LogType.AUDIT, LogLevel.INFO, 'Imported record claimed', CONTEXT, {
+        patientId: plan.candidate.patientId,
+      });
+      return { claimed: true, requiresSignIn: true };
+    } catch (error) {
+      // A failed claim is a security-relevant event (name or number guessing): never silent.
+      void this.logger.log(LogType.SECURITY, LogLevel.WARN, 'Record claim refused', CONTEXT, {
+        userId: actor.userId,
+        reason: error instanceof HealthcareError ? error.message : 'unexpected error',
+      });
+      throw error;
+    }
+  }
+
+  /** The UHID or the old patient number: something printed for the patient, not just a name. */
+  private requireSecondSecret(input: RecordClaimInput): void {
+    if (!input.uhid?.trim() && !input.legacyRegistration?.trim()) {
+      throw fail(
+        ErrorCode.VALIDATION_ERROR,
+        'Enter the UHID or the old patient number printed on your clinic receipt or card',
+        HttpStatus.BAD_REQUEST
+      );
+    }
   }
 
   /**
    * The whole merge is ONE statement, so it either happens completely or not at all (a statement
    * with data-modifying CTEs is atomic, unlike a callback of separate queries):
-   *  - `guard` locks the imported user while it is still unclaimed; a second claim of the same
-   *    record waits, then finds it claimed and does nothing;
+   *  - `guard` and `caller_guard` lock both users while the checks hold; a second claim of the
+   *    same record waits, then finds it claimed and does nothing;
+   *  - `ok` is the emptiness check of the caller's new account, made in the same snapshot;
    *  - the caller's empty patient row is deleted (a foreign key from any related row aborts it all);
    *  - the caller's account gives up its unique phone / e-mail / Google id and is soft-deleted;
    *  - only after that does the imported user take them (a data dependency orders the two updates,
    *    so the unique indexes never see the same value twice).
+   * No retry: a repeated attempt after a commit would report "already claimed" for a success.
    */
   private async merge(plan: ClaimPlan, actor: RecordClaimActor): Promise<void> {
     const { caller, phone, clinicId, candidate, callerPatientId } = plan;
@@ -214,37 +257,36 @@ export class RecordClaimService {
           return Number(rows[0]?.claimed ?? 0);
         },
         {
-          userId: candidate.userId,
+          userId: caller.id,
           clinicId,
           resourceType: 'PATIENT_RECORD_CLAIM',
           operation: 'UPDATE',
           resourceId: candidate.patientId,
           userRole: 'PATIENT',
-          skipCacheInvalidation: true,
-        }
+        },
+        { retries: 1 }
       );
     } catch (error) {
-      const text =
-        error instanceof Error ? `${error.message} ${JSON.stringify(error)}` : String(error);
-      // A related row (appointment, prescription...) refuses the delete: not an empty account.
-      if (/foreign key|23503/i.test(text)) throw this.accountInUse();
+      // A related row (appointment, prescription...) refuses the delete, or a parallel claim already
+      // took the number: either way the clinic desk resolves it.
+      if (isForeignKeyOrUniqueViolation(error)) throw this.cannotMerge();
       throw error;
     }
-    if (claimed === 0) {
-      throw fail(
-        ErrorCode.PATIENT_IDENTIFIER_CONFLICT,
-        'That record has just been claimed. Ask the clinic desk.',
-        HttpStatus.CONFLICT
-      );
-    }
+    if (claimed === 0) throw this.cannotMerge();
+  }
+
+  /** User and patient lookups are cached: drop both users so the next sign-in sees the merge. */
+  private async dropCaches(plan: ClaimPlan): Promise<void> {
+    const { caller, clinicId, candidate } = plan;
+    await Promise.allSettled([
+      this.database.invalidateEntityCache('User', caller.id, clinicId),
+      this.database.invalidateEntityCache('User', candidate.userId, clinicId),
+      this.database.invalidateEntityCache('Patient', candidate.patientId, clinicId),
+    ]);
   }
 
   private async loadCaller(tx: RawTx, userId: string): Promise<CallerRow> {
-    const rows = await tx.$queryRawUnsafe<CallerRow[]>(
-      `SELECT id, role::text AS role, phone, "phoneVerified", email, "googleId", "primaryClinicId"
-         FROM "users" WHERE id = $1::text AND "deletedAt" IS NULL`,
-      userId
-    );
+    const rows = await tx.$queryRawUnsafe<CallerRow[]>(CALLER_SQL, userId);
     const caller = rows[0];
     if (!caller || caller.role !== 'PATIENT') {
       throw fail(
@@ -253,10 +295,17 @@ export class RecordClaimService {
         HttpStatus.FORBIDDEN
       );
     }
-    if (!caller.phone || !caller.phoneVerified || !caller.primaryClinicId) {
+    if (!caller.phone || !caller.phoneVerified) {
       throw fail(
         ErrorCode.VALIDATION_ERROR,
         'Verify your mobile number first, then claim your record',
+        HttpStatus.BAD_REQUEST
+      );
+    }
+    if (!caller.primaryClinicId) {
+      throw fail(
+        ErrorCode.VALIDATION_ERROR,
+        'Choose your clinic first, then claim your record',
         HttpStatus.BAD_REQUEST
       );
     }
@@ -270,16 +319,9 @@ export class RecordClaimService {
     clinicId: string,
     callerUserId: string
   ): Promise<ClaimCandidate> {
-    const params: unknown[] = [clinicId, phone, callerUserId];
-    let identifierFilter = '';
-    const system = input.uhid ? 'UHID' : input.legacyRegistration ? 'LEGACY_REGISTRATION' : null;
-    const value = (input.uhid ?? input.legacyRegistration ?? '').trim();
-    if (system && value) {
-      params.push(system, system === 'UHID' ? value.toUpperCase() : value);
-      identifierFilter = `AND EXISTS (SELECT 1 FROM "patient_identifiers" i
-                                     WHERE i."patientId" = p.id AND i."clinicId" = $1::text
-                                       AND i.system = $4::text AND i.value = $5::text)`;
-    }
+    const system = input.uhid?.trim() ? 'UHID' : 'LEGACY_REGISTRATION';
+    const raw = (input.uhid?.trim() || input.legacyRegistration?.trim() || '').trim();
+    const value = system === 'UHID' ? raw.toUpperCase() : raw;
     const rows = await tx.$queryRawUnsafe<
       Array<{
         patient_id: string;
@@ -295,11 +337,18 @@ export class RecordClaimService {
          JOIN "Patient" p ON p.id = c."patientId"
          JOIN "users" u ON u.id = p."userId"
         WHERE c."clinicId" = $1::text AND c.system = 'phone' AND c.value = $2::text
-          AND u.id <> $3::text AND u.phone IS NULL AND u.email IS NULL AND u.password IS NULL
+          AND u.id <> $3::text AND u.role::text = 'PATIENT' AND u."isActive" = true
+          AND u.phone IS NULL AND u.email IS NULL AND u.password IS NULL
           AND u."lastLogin" IS NULL AND u."deletedAt" IS NULL
-          ${identifierFilter}
+          AND EXISTS (SELECT 1 FROM "patient_identifiers" i
+                       WHERE i."patientId" = p.id AND i."clinicId" = $1::text
+                         AND i.system = $4::text AND i.value = $5::text)
         LIMIT 50`,
-      ...params
+      clinicId,
+      phone,
+      callerUserId,
+      system,
+      value
     );
     const matches = candidatesMatchingName(
       input.fullName,
@@ -311,18 +360,12 @@ export class RecordClaimService {
         lastName: row.last_name,
       }))
     );
-    if (matches.length === 0) {
+    // One answer for "nothing matches" and "several match": a caller learns nothing about who is on file.
+    if (matches.length !== 1) {
       throw fail(
         ErrorCode.PATIENT_NOT_FOUND,
-        'No record on file matches that name and your mobile number. Ask the clinic desk.',
+        'No record could be linked with those details. Ask the clinic desk.',
         HttpStatus.NOT_FOUND
-      );
-    }
-    if (matches.length > 1) {
-      throw fail(
-        ErrorCode.PATIENT_IDENTIFIER_CONFLICT,
-        'More than one record matches. Ask the clinic desk to link yours.',
-        HttpStatus.CONFLICT
       );
     }
     return matches[0] as ClaimCandidate;
@@ -336,30 +379,10 @@ export class RecordClaimService {
     return rows[0]?.id ?? null;
   }
 
-  /** The new account must hold nothing yet: no visits, documents, diagnoses, UHID or consents. */
-  private async requireEmptyAccount(
-    tx: RawTx,
-    patientId: string | null,
-    userId: string
-  ): Promise<void> {
-    if (!patientId) return;
-    const rows = await tx.$queryRawUnsafe<Array<{ used: number }>>(
-      `SELECT ((SELECT count(*) FROM "patient_visits" WHERE "patientId" = $1::text)
-             + (SELECT count(*) FROM "patient_documents" WHERE "patientId" = $1::text)
-             + (SELECT count(*) FROM "ayurvedic_diagnoses" WHERE "patientId" = $1::text)
-             + (SELECT count(*) FROM "patient_identifiers" WHERE "patientId" = $1::text)
-             + (SELECT count(*) FROM "patient_consents" WHERE "patientId" = $1::text)
-             + (SELECT count(*) FROM "Invoice" WHERE "userId" = $2::text))::int AS used`,
-      patientId,
-      userId
-    );
-    if ((rows[0]?.used ?? 0) > 0) throw this.accountInUse();
-  }
-
-  private accountInUse(): HealthcareError {
+  private cannotMerge(): HealthcareError {
     return fail(
       ErrorCode.PATIENT_IDENTIFIER_CONFLICT,
-      'Your new account already has activity, so it cannot be merged automatically. Ask the clinic desk.',
+      'Your records could not be merged automatically. Ask the clinic desk to link them.',
       HttpStatus.CONFLICT
     );
   }

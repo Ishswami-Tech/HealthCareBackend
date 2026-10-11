@@ -60,3 +60,9 @@ export function classifySearchTerm(raw: string | undefined | null): PatientSearc
 export function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, match => `\\${match}`);
 }
+
+/** `YYYY-MM-DD` that exists on the calendar (the format check alone lets 2026-02-31 through). */
+export const isRealCalendarDate = (value: string): boolean => {
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+};

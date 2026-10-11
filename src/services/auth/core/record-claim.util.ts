@@ -19,8 +19,11 @@ export function nameTokens(name: string | null | undefined): string[] {
 
 /**
  * True when one name's words are all in the other's (so "Rahul Barote" matches
- * "Rahul Ganesh Barote") and at least two words agree. A single shared word is never enough,
- * unless that is all either name has.
+ * "Rahul Ganesh Barote"), at least two words agree, and the FIRST words are the same.
+ *
+ * The first word must agree because in Maharashtra the middle name is the father's name: a father's
+ * "Ganesh Barote" is a word-subset of his son's "Rahul Ganesh Barote" and must not match it.
+ * A single shared word is never enough, unless that is all either name has.
  */
 export function namesMatch(
   typed: string | null | undefined,
@@ -29,6 +32,10 @@ export function namesMatch(
   const a = new Set(nameTokens(typed));
   const b = new Set(nameTokens(stored));
   if (a.size === 0 || b.size === 0) return false;
+
+  const firstTyped = nameTokens(typed)[0];
+  const firstStored = nameTokens(stored)[0];
+  if (firstTyped !== firstStored) return false;
 
   const aInB = [...a].every(token => b.has(token));
   const bInA = [...b].every(token => a.has(token));
@@ -54,7 +61,25 @@ export function candidatesMatchingName(
 ): ClaimCandidate[] {
   return candidates.filter(candidate => {
     const full =
-      candidate.name ?? [candidate.firstName, candidate.lastName].filter(Boolean).join(' ');
+      candidate.name || [candidate.firstName, candidate.lastName].filter(Boolean).join(' ');
     return namesMatch(typedName, full);
   });
+}
+
+/** Postgres 23503 (foreign key) or 23505 (unique) from a raw statement, however the driver wraps it. */
+export function isForeignKeyOrUniqueViolation(error: unknown): boolean {
+  const record = (error ?? {}) as {
+    code?: unknown;
+    message?: unknown;
+    meta?: { code?: unknown };
+    cause?: { code?: unknown };
+  };
+  const codes = [record.code, record.meta?.code, record.cause?.code].map(value =>
+    String(value ?? '')
+  );
+  const message = typeof record.message === 'string' ? record.message : '';
+  return (
+    codes.some(code => code === '23503' || code === '23505') ||
+    /foreign key constraint|unique constraint/i.test(message)
+  );
 }

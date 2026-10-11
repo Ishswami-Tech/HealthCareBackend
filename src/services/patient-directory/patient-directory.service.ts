@@ -12,8 +12,9 @@ import type {
 import { PATIENT_DIRECTORY_DEFAULT_PAGE_SIZE } from '@core/types/patient-directory.types';
 import { PhiAuditService } from '@services/compliance/services/phi-audit.service';
 import { complianceErrors } from '@services/compliance/utils/compliance-errors.util';
+import { Role } from '@core/types/enums.types';
 import type { PatientDirectoryQueryDto } from './dto/patient-directory-query.dto';
-import { classifySearchTerm } from './utils/directory-search.util';
+import { classifySearchTerm, isRealCalendarDate } from './utils/directory-search.util';
 import {
   FACET_SQL,
   buildDirectoryCountSql,
@@ -88,7 +89,7 @@ export class PatientDirectoryService {
     dto: PatientDirectoryQueryDto,
     actor: DirectoryActor
   ): Promise<PatientDirectoryPage> {
-    const query = this.toQuery(clinicId, dto);
+    const query = this.narrowForRole(this.toQuery(clinicId, dto), actor.role);
     const { sql, params } = buildDirectoryPageSql(query);
 
     const rows = await this.database.executeHealthcareRead<DirectoryDbRow[]>(async client => {
@@ -176,7 +177,33 @@ export class PatientDirectoryService {
     return { cities, states, referenceSources, caseYears };
   }
 
+  /**
+   * Pharmacy staff look one patient up by UHID or phone number to find their prescriptions. They get
+   * no browsing: a UHID/phone search is required, one small page, and none of the demographic,
+   * diagnosis or reference filters.
+   */
+  private narrowForRole(query: PatientDirectoryQuery, role: string): PatientDirectoryQuery {
+    if ((role as Role) !== Role.PHARMACIST) return query;
+    const search = query.filters.search;
+    if (!search || (search.kind !== 'uhid' && search.kind !== 'phone')) {
+      throw complianceErrors.invalid('Search by UHID or phone number');
+    }
+    return {
+      ...query,
+      filters: { search },
+      pageSize: Math.min(query.pageSize, 10) as PatientDirectoryQuery['pageSize'],
+    };
+  }
+
   private toQuery(clinicId: string, dto: PatientDirectoryQueryDto): PatientDirectoryQuery {
+    for (const [field, value] of [
+      ['caseDateFrom', dto.caseDateFrom],
+      ['caseDateTo', dto.caseDateTo],
+    ] as const) {
+      if (value && !isRealCalendarDate(value)) {
+        throw complianceErrors.invalid(`${field} is not a real date`);
+      }
+    }
     if (dto.ageMin !== undefined && dto.ageMax !== undefined && dto.ageMin > dto.ageMax) {
       throw complianceErrors.invalid('ageMin cannot be greater than ageMax');
     }
