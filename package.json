@@ -6,6 +6,7 @@
   "private": true,
   "license": "UNLICENSED",
   "resolutions": {
+    "handlebars": "4.7.10",
     "deepmerge-ts": "^8.0.0",
     "@nestjs/core/path-to-regexp": "8.4.2",
     "@nestjs/platform-fastify/path-to-regexp": "8.4.2",

@@ -246,7 +246,7 @@ export class NotificationPreferenceService {
     }
 
     const preferences = await this.databaseService.updateNotificationPreferenceSafe(
-      existing.id,
+      userId,
       updateData
     );
 

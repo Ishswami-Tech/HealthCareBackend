@@ -399,8 +399,12 @@ export class NotificationEventListener implements OnModuleInit {
           });
         }
         if (payload.clinicId) {
+          // The medicine desk screens listen as PHARMACIST; sockets join
+          // `clinic:<id>:role:<ROLE>` on connect. The payload carries patient and medication
+          // details, so it must NOT go to a clinic-wide DOCTOR room: the prescribing doctor is
+          // already reached through `user:<doctorId>` above.
           recipients.push({
-            socketRoom: `clinic:${payload.clinicId}:doctors`,
+            socketRoom: `clinic:${payload.clinicId}:role:PHARMACIST`,
           });
         }
         return recipients;

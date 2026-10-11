@@ -131,3 +131,51 @@ describe('BillingService.prepareLedgerForSubscriptionPayment', () => {
     expect(world.db.metadata('payment', 'pay-1')['payout']).toBeDefined();
   });
 });
+
+describe('BillingService.preparePayoutForAppointmentPayment fixed doctor fee', () => {
+  function worldWithFee(fees: Record<string, unknown> | null, amount: number): FinalisationWorld {
+    const world = appointmentPaymentWorld();
+    world.db.row('payment', 'pay-1')['amount'] = amount;
+    world.db.row('appointment', 'apt-1')['type'] = 'VIDEO_CALL';
+    if (fees) {
+      world.db.seed('doctorClinic', {
+        id: 'doctor-1:clinic',
+        doctorId: 'doctor-1',
+        clinicId: CLINIC_ID,
+        ...fees,
+      });
+    }
+    return world;
+  }
+
+  it('pays the doctor the fixed video fee and keeps the rest as convenience fee', async () => {
+    const world = worldWithFee({ videoDoctorFee: 1000, inPersonDoctorFee: 0 }, 1251);
+
+    await world.service.preparePayoutForAppointmentPayment('pay-1', CLINIC_ID);
+
+    const payout = world.db.metadata('payment', 'pay-1')['payout'] as Record<string, unknown>;
+    expect(payout['doctorShareAmount']).toBe(1000);
+    expect(payout['platformFeeAmount']).toBe(251);
+    expect(payout['feeSource']).toBe('FIXED');
+  });
+
+  it('keeps the doctor at the fixed fee when the price is higher', async () => {
+    const world = worldWithFee({ videoDoctorFee: 1000 }, 1350);
+
+    await world.service.preparePayoutForAppointmentPayment('pay-1', CLINIC_ID);
+
+    const payout = world.db.metadata('payment', 'pay-1')['payout'] as Record<string, unknown>;
+    expect(payout['doctorShareAmount']).toBe(1000);
+    expect(payout['platformFeeAmount']).toBe(350);
+  });
+
+  it('falls back to the percentage platform fee when no fee is configured', async () => {
+    const world = worldWithFee(null, 1000);
+
+    await world.service.preparePayoutForAppointmentPayment('pay-1', CLINIC_ID);
+
+    const payout = world.db.metadata('payment', 'pay-1')['payout'] as Record<string, unknown>;
+    expect(payout['feeSource']).toBe('PERCENT');
+    expect(Number(payout['doctorShareAmount']) + Number(payout['platformFeeAmount'])).toBe(1000);
+  });
+});

@@ -230,6 +230,11 @@ const DRAFT_ROLES: ReadonlySet<string> = new Set<string>([
   Role.SUPER_ADMIN,
 ]);
 
+// Reschedule contract (PATCH /appointments/:id/reschedule, rules in ./reschedule-policy.ts):
+// video visits move only while CONFIRMED; in-person visits move in any state except COMPLETED,
+// CANCELLED, NO_SHOW, EXPIRED and IN_PROGRESS. Both keep the 5-hour video window and the limit of
+// 2 moves. A moved checked-in visit returns to SCHEDULED and leaves the queue. None of this is
+// reachable through the generic status change, which still follows APPOINTMENT_STATUS_TRANSITIONS.
 const RESCHEDULE_HINT = 'Use the reschedule flow.';
 const CLINICAL_HINT = 'Clinical details are recorded when the consultation is completed.';
 const FIXED_HINT = 'This is fixed once the appointment is booked.';

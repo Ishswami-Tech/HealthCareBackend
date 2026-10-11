@@ -589,9 +589,9 @@ export class DragonflyCacheProvider implements IAdvancedCacheProvider {
   }
 
   // List operations
-  async rPush(key: string, value: string): Promise<number> {
+  async rPush(key: string, ...values: string[]): Promise<number> {
     try {
-      return await this.dragonflyService.rPush(key, value);
+      return await this.dragonflyService.rPush(key, ...values);
     } catch {
       return 0;
     }

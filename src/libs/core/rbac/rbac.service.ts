@@ -585,6 +585,10 @@ export class RbacService {
     return {
       SUPER_ADMIN: ['*'],
       CLINIC_ADMIN: [
+        'consent:read',
+        'consent:create',
+        'patient-identifiers:read',
+        'patient-identifiers:update',
         'users:*',
         'appointments:*',
         'clinics:read',
@@ -617,6 +621,10 @@ export class RbacService {
         'therapy:*',
       ],
       DOCTOR: [
+        'consent:read',
+        'consent:create',
+        'patient-identifiers:read',
+        'patient-identifiers:update',
         'appointments:read',
         'appointments:create',
         'appointments:update',
@@ -653,6 +661,10 @@ export class RbacService {
         'analytics:read',
       ],
       ASSISTANT_DOCTOR: [
+        'consent:read',
+        'consent:create',
+        'patient-identifiers:read',
+        'patient-identifiers:update',
         'appointments:read',
         'appointments:create',
         'appointments:update',
@@ -688,6 +700,10 @@ export class RbacService {
         'analytics:read',
       ],
       NURSE: [
+        'consent:read',
+        'consent:create',
+        'patient-identifiers:read',
+        'patient-identifiers:update',
         'appointments:read',
         // Check-in, force-check-in, status and complete routes already list NURSE in @Roles;
         // without this the RbacGuard refused every one of them (CONTRACT_WEB_B row 41).
@@ -709,6 +725,10 @@ export class RbacService {
         'notifications:read',
       ],
       RECEPTIONIST: [
+        'consent:read',
+        'consent:create',
+        'patient-identifiers:read',
+        'patient-identifiers:update',
         'appointments:*',
         'users:read',
         'users:create',
@@ -744,6 +764,10 @@ export class RbacService {
         'analytics:read',
       ],
       PATIENT: [
+        // Consent ledger and own identifiers: the routes verify the record is the caller's own
+        'consent:read',
+        'consent:create',
+        'patient-identifiers:read',
         'appointments:read',
         'appointments:create',
         // Patients can update/cancel their own appointments (controllers enforce ownership where applicable)

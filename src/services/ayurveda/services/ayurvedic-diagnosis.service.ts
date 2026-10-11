@@ -16,11 +16,15 @@ import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { EventService } from '@infrastructure/events';
 import { HealthcareError, ErrorCode } from '@core/errors';
+import type { MedicalCoding } from '@core/types/compliance.types';
 
 /**
  * Cache key prefix for Ayurvedic diagnoses
  */
 const DIAGNOSIS_CACHE_PREFIX = 'ayurveda:diagnosis';
+
+/** Structural twin of Prisma's JsonValue, so a Json column is accepted without importing the client. */
+type JsonLike = string | number | boolean | null | JsonLike[] | { [key: string]: JsonLike };
 
 type AyurvedicDiagnosisRecord = {
   id: string;
@@ -38,6 +42,7 @@ type AyurvedicDiagnosisRecord = {
   srotasAffected?: string | null;
   notes?: string | null;
   confidenceLevel?: string | null;
+  codings?: JsonLike | undefined;
   status: string;
   createdBy?: string | null;
   diagnosedAt: Date;
@@ -258,6 +263,7 @@ export class AyurvedicDiagnosisService {
    * @returns Formatted response DTO
    */
   private mapToResponseDto(diagnosis: AyurvedicDiagnosisRecord): AyurvedicDiagnosisResponseDto {
+    const codings = this.parseCodings(diagnosis.codings);
     return {
       id: diagnosis.id,
       patientId: diagnosis.patientId,
@@ -274,9 +280,24 @@ export class AyurvedicDiagnosisService {
       srotasAffected: diagnosis.srotasAffected ?? undefined,
       notes: diagnosis.notes ?? undefined,
       confidenceLevel: diagnosis.confidenceLevel ?? undefined,
+      ...(codings.length > 0 ? { codings } : {}),
       status: diagnosis.status,
       createdBy: diagnosis.createdBy ?? undefined,
       diagnosedAt: diagnosis.diagnosedAt.toISOString(),
     };
+  }
+
+  /**
+   * Reads the `codings` Json column ([{ system, code, display? }]). Malformed entries are
+   * dropped rather than thrown on, so one bad row never breaks a diagnosis list.
+   */
+  private parseCodings(raw: JsonLike | undefined): MedicalCoding[] {
+    if (!Array.isArray(raw)) return [];
+    return raw.flatMap((item): MedicalCoding[] => {
+      if (item === null || typeof item !== 'object' || Array.isArray(item)) return [];
+      const { system, code, display } = item;
+      if (typeof system !== 'string' || typeof code !== 'string' || !system || !code) return [];
+      return [{ system, code, ...(typeof display === 'string' ? { display } : {}) }];
+    });
   }
 }

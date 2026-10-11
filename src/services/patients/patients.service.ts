@@ -764,8 +764,9 @@ export class PatientsService {
 
       const patients = await typedClient.patient.findMany({
         where: { id: { in: patientIds } } as PrismaDelegateArgs,
+        // `omit`: this list is sent to staff browsers; the password hash must never be in it.
         include: {
-          user: true,
+          user: { omit: { password: true } },
         } as PrismaDelegateArgs,
       } as PrismaDelegateArgs);
 

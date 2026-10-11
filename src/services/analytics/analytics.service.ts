@@ -1,10 +1,60 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  forwardRef,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { AppointmentAnalyticsService } from '../appointments/plugins/analytics/appointment-analytics.service';
 import { BillingService } from '../billing/billing.service';
 import { DatabaseService } from '@infrastructure/database';
 import type { AnalyticsFilter, AppointmentMetrics } from '@core/types/appointment.types';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
+import { formatDateKeyInIST } from '@utils/date-time.util';
+import {
+  buildEarningsSplitReport,
+  type EarningsSplitReport,
+  type SplitPaymentRow,
+} from './earnings-split.util';
+import {
+  SalesRangeError,
+  resolveSalesRange,
+} from '@services/pharmacy/services/pharmacy-sales.util';
+import {
+  readDoctorShare,
+  readPayoutAmounts,
+  summarizeDoctorEarnings,
+  type DoctorEarningsSummary,
+  type PaidConsultationRow,
+} from './doctor-earnings.util';
+
+export interface DoctorFeeSetting {
+  userId: string;
+  doctorName: string;
+  videoDoctorFee: number | null;
+  inPersonDoctorFee: number | null;
+}
+
+/** Most paid consultations one earnings summary reads; a larger window must be narrowed. */
+const MAX_EARNINGS_ROWS = 20_000;
+
+interface DoctorEarningsClient {
+  doctor: {
+    findFirst: (args: unknown) => Promise<{ id: string } | null>;
+  };
+  doctorClinic: {
+    findFirst: (args: unknown) => Promise<{ doctorId: string } | null>;
+  };
+  payment: {
+    findMany: (args: unknown) => Promise<
+      Array<{
+        metadata: unknown;
+        appointment: { id: string; date: Date } | null;
+      }>
+    >;
+  };
+}
 
 export type AnalyticsQueryFilters = Partial<AnalyticsFilter> & {
   period?: string;
@@ -142,6 +192,205 @@ export class AnalyticsService {
   async getQueueAnalytics(clinicId: string, filters: AnalyticsQueryFilters = {}) {
     const range = this.getDateRange(filters.period ?? 'month');
     return await this.appointmentAnalytics.getWaitTimeAnalytics(clinicId, range);
+  }
+
+  /**
+   * The signed-in doctor's own earnings: completed payments of consultations booked with them
+   * in this clinic, grouped by appointment day (IST), net of refunds. A caller who is not a
+   * doctor of this clinic gets 403; nobody can ask for another doctor's figures.
+   */
+  async getDoctorOwnEarnings(
+    userId: string,
+    clinicId: string,
+    query: { from?: string; to?: string }
+  ): Promise<DoctorEarningsSummary> {
+    let range: { from: Date; to: Date };
+    try {
+      range = resolveSalesRange(query.from, query.to);
+    } catch (error) {
+      if (error instanceof SalesRangeError) {
+        throw new BadRequestException(error.message);
+      }
+      throw error;
+    }
+
+    const rows = await this.databaseService.executeHealthcareRead(async client => {
+      const db = client as unknown as DoctorEarningsClient;
+      const doctor = await db.doctor.findFirst({ where: { userId }, select: { id: true } });
+      if (!doctor) {
+        throw new ForbiddenException('Only a doctor can read their own earnings');
+      }
+      const member = await db.doctorClinic.findFirst({
+        where: { doctorId: doctor.id, clinicId },
+        select: { doctorId: true },
+      });
+      if (!member) {
+        throw new ForbiddenException('You are not a doctor of this clinic');
+      }
+      return await db.payment.findMany({
+        where: {
+          clinicId,
+          status: 'COMPLETED',
+          appointment: {
+            is: {
+              doctorId: doctor.id,
+              clinicId,
+              // Earned only once the visit is done; in-person visits are subscription based.
+              status: 'COMPLETED',
+              type: 'VIDEO_CALL',
+              date: { gte: range.from, lt: range.to },
+            },
+          },
+        },
+        select: {
+          metadata: true,
+          appointment: { select: { id: true, date: true } },
+        },
+        take: MAX_EARNINGS_ROWS + 1,
+      });
+    });
+
+    if (rows.length > MAX_EARNINGS_ROWS) {
+      throw new BadRequestException('Too many payments in this range. Narrow the date range.');
+    }
+
+    // The doctor sees only their own share (already net of refunds); the gross amount and the
+    // convenience fee never leave the server on this endpoint.
+    const paid: PaidConsultationRow[] = rows.flatMap(row => {
+      const share = readDoctorShare(row.metadata);
+      return row.appointment && share !== null
+        ? [
+            {
+              appointmentId: row.appointment.id,
+              appointmentDate: row.appointment.date,
+              amount: share,
+              refundAmount: null,
+            },
+          ]
+        : [];
+    });
+    return summarizeDoctorEarnings(
+      {
+        from: formatDateKeyInIST(range.from),
+        to: formatDateKeyInIST(new Date(range.to.getTime() - 1)),
+      },
+      paid
+    );
+  }
+
+  /**
+   * Admin report: how paid video consultations split between each doctor and the platform
+   * (convenience fee), plus payments on visits that did not complete. Clinic-scoped.
+   */
+  async getEarningsSplitReport(
+    clinicId: string,
+    query: { from?: string; to?: string }
+  ): Promise<EarningsSplitReport & { feeSettings: DoctorFeeSetting[] }> {
+    let range: { from: Date; to: Date };
+    try {
+      range = resolveSalesRange(query.from, query.to);
+    } catch (error) {
+      if (error instanceof SalesRangeError) {
+        throw new BadRequestException(error.message);
+      }
+      throw error;
+    }
+
+    type SplitRow = {
+      id: string;
+      amount: number;
+      metadata: unknown;
+      appointment: {
+        id: string;
+        date: Date;
+        status: string;
+        doctorId: string;
+        doctor: { user: { name: string } | null } | null;
+      } | null;
+    };
+    type FeeRow = {
+      doctor: { userId: string; user: { name: string } | null } | null;
+      videoDoctorFee: number | null;
+      inPersonDoctorFee: number | null;
+    };
+    const { rows, feeRows } = await this.databaseService.executeHealthcareRead(async client => {
+      const db = client as unknown as {
+        payment: { findMany: (args: unknown) => Promise<SplitRow[]> };
+        doctorClinic: { findMany: (args: unknown) => Promise<FeeRow[]> };
+      };
+      const feeRows = await db.doctorClinic.findMany({
+        where: { clinicId },
+        select: {
+          videoDoctorFee: true,
+          inPersonDoctorFee: true,
+          doctor: { select: { userId: true, user: { select: { name: true } } } },
+        },
+      });
+      const rows = await db.payment.findMany({
+        where: {
+          clinicId,
+          status: 'COMPLETED',
+          appointment: {
+            is: { clinicId, type: 'VIDEO_CALL', date: { gte: range.from, lt: range.to } },
+          },
+        },
+        select: {
+          id: true,
+          amount: true,
+          metadata: true,
+          appointment: {
+            select: {
+              id: true,
+              date: true,
+              status: true,
+              doctorId: true,
+              doctor: { select: { user: { select: { name: true } } } },
+            },
+          },
+        },
+        take: MAX_EARNINGS_ROWS + 1,
+      });
+      return { rows, feeRows };
+    });
+    if (rows.length > MAX_EARNINGS_ROWS) {
+      throw new BadRequestException('Too many payments in this range. Narrow the date range.');
+    }
+
+    const splitRows: SplitPaymentRow[] = rows.flatMap(row => {
+      if (!row.appointment) {
+        return [];
+      }
+      const payout = readPayoutAmounts(row.metadata);
+      return [
+        {
+          paymentId: row.id,
+          appointmentId: row.appointment.id,
+          appointmentDate: row.appointment.date,
+          appointmentStatus: String(row.appointment.status),
+          doctorId: row.appointment.doctorId,
+          doctorName: row.appointment.doctor?.user?.name ?? 'Doctor',
+          grossAmount: payout ? payout.doctorShareAmount + payout.platformFeeAmount : row.amount,
+          doctorShareAmount: payout?.doctorShareAmount ?? 0,
+          platformFeeAmount: payout?.platformFeeAmount ?? 0,
+        },
+      ];
+    });
+    const report = buildEarningsSplitReport(
+      {
+        from: formatDateKeyInIST(range.from),
+        to: formatDateKeyInIST(new Date(range.to.getTime() - 1)),
+      },
+      splitRows
+    );
+    // Every doctor of the clinic with their fixed fees, so the admin screen can show and edit
+    // them (via PATCH /doctors/:id) without a separate list endpoint.
+    const feeSettings = feeRows.map(row => ({
+      userId: row.doctor?.userId ?? '',
+      doctorName: row.doctor?.user?.name ?? 'Doctor',
+      videoDoctorFee: row.videoDoctorFee,
+      inPersonDoctorFee: row.inPersonDoctorFee,
+    }));
+    return { ...report, feeSettings };
   }
 
   private getDateRange(period: string): { from: Date; to: Date } {

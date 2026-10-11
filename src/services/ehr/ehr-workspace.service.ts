@@ -312,7 +312,32 @@ export class EHRWorkspaceService {
         } as PrismaDelegateArgs),
         tc.appointment.count({ where: where as PrismaDelegateArgs } as PrismaDelegateArgs),
       ]);
-      return { rows: items, total: count };
+      // The OPD visit of each appointment (one per appointment), so the history tab needs no
+      // second call to know which visits have a case sheet.
+      const ids = items.map(item => String(item['id']));
+      const visits =
+        ids.length === 0
+          ? []
+          : await (
+              tc as unknown as {
+                patientVisit: {
+                  findMany: (
+                    args: PrismaDelegateArgs
+                  ) => Promise<Array<{ id: string; opdNumber: string; appointmentId: string }>>;
+                };
+              }
+            ).patientVisit.findMany({
+              where: { clinicId, appointmentId: { in: ids } } as PrismaDelegateArgs,
+              select: { id: true, opdNumber: true, appointmentId: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+      const visitByAppointment = new Map(visits.map(visit => [visit.appointmentId, visit]));
+      return {
+        rows: items.map(item => {
+          const visit = visitByAppointment.get(String(item['id']));
+          return { ...item, visit: visit ? { id: visit.id, opdNumber: visit.opdNumber } : null };
+        }),
+        total: count,
+      };
     });
 
     return {

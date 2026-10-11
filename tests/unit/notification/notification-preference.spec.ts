@@ -48,8 +48,8 @@ function harness(existing: Record<string, unknown> | null) {
     createNotificationPreferenceSafe: jest.fn(async (data: Record<string, unknown>) =>
       storedRow(data)
     ),
-    updateNotificationPreferenceSafe: jest.fn(async (_id: string, data: Record<string, unknown>) =>
-      storedRow(data)
+    updateNotificationPreferenceSafe: jest.fn(
+      async (_userId: string, data: Record<string, unknown>) => storedRow(data)
     ),
   };
   const service = new NotificationPreferenceService(
@@ -79,7 +79,7 @@ describe('NotificationPreferenceService.updatePreferences', () => {
 
     await service.updatePreferences('user-1', { smsEnabled: false });
 
-    expect(databaseService.updateNotificationPreferenceSafe).toHaveBeenCalledWith('pref-1', {
+    expect(databaseService.updateNotificationPreferenceSafe).toHaveBeenCalledWith('user-1', {
       smsEnabled: false,
     });
     expect(databaseService.createNotificationPreferenceSafe).not.toHaveBeenCalled();

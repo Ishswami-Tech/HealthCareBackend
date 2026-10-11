@@ -43,6 +43,7 @@ import { DatabaseMetricsService } from './internal/database-metrics.service';
 import { RetryService, type RetryOptions } from './internal/retry.service';
 import { SQLInjectionPreventionService } from './internal/sql-injection-prevention.service';
 import { DataMaskingService } from './internal/data-masking.service';
+import { FieldEncryptionService } from './config/field-encryption.service';
 import { QueryCacheService } from './internal/query-cache.service';
 import { RowLevelSecurityService } from './internal/row-level-security.service';
 import { ReadReplicaRouterService } from './internal/read-replica-router.service';
@@ -187,6 +188,8 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     protected readonly queryOptionsBuilder: QueryOptionsBuilder,
     @Inject(forwardRef(() => QueryKeyFactory))
     protected readonly queryKeyFactory: QueryKeyFactory,
+    @Inject(forwardRef(() => FieldEncryptionService))
+    protected readonly fieldEncryption: FieldEncryptionService,
     @Optional()
     @Inject('CACHE_SERVICE')
     protected readonly cacheService?: CacheService,
@@ -1416,11 +1419,16 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
    */
   async executeHealthcareWrite<T>(
     operation: (client: PrismaTransactionClient) => Promise<T>,
-    auditInfo: AuditInfo
+    auditInfo: AuditInfo,
+    options?: QueryOptions
   ): Promise<T> {
-    return this.executeWrite(async prisma => {
-      return operation(this.toTransactionClient(prisma));
-    }, auditInfo);
+    return this.executeWrite(
+      async prisma => {
+        return operation(this.toTransactionClient(prisma));
+      },
+      auditInfo,
+      options
+    );
   }
 
   /**
@@ -1447,6 +1455,23 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     return this.executeWithClinicContextInternal(clinicId, async prisma => {
       return operation(this.toTransactionClient(prisma));
     });
+  }
+
+  /**
+   * Encrypt a PHI value for storage in a column (AES-256-GCM, see FieldEncryptionService).
+   * `aad` binds the value to its row and column, e.g. `patient_visits.presentComplaints:<id>`.
+   * Returns the plaintext unchanged while no FIELD_ENCRYPTION_KEY is configured.
+   */
+  encryptPhiField(plaintext: string | null | undefined, aad: string): string | null {
+    return this.fieldEncryption.encrypt(plaintext, aad);
+  }
+
+  /**
+   * Read a PHI value stored by `encryptPhiField`. Plaintext rows read as they are; an encrypted
+   * value that cannot be decrypted throws instead of leaking ciphertext.
+   */
+  decryptPhiField(stored: string | null | undefined, aad: string): string | null {
+    return this.fieldEncryption.decrypt(stored, aad);
   }
 
   /**
@@ -2248,8 +2273,13 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     );
   }
 
+  /**
+   * Updates a user's notification preferences. Keyed by the user id (unique on the table): the
+   * row id read back through the cached read was undefined in production, so an update by id
+   * failed every time with "needs at least one of id or userId".
+   */
   async updateNotificationPreferenceSafe(
-    id: string,
+    userId: string,
     data: {
       emailEnabled?: boolean;
       smsEnabled?: boolean;
@@ -2272,7 +2302,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
         const notificationPreferenceClient = client as unknown as {
           notificationPreference: {
             update: (args: {
-              where: { id: string };
+              where: { userId: string };
               data: {
                 emailEnabled?: boolean;
                 smsEnabled?: boolean;
@@ -2292,7 +2322,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
           };
         };
         return (await notificationPreferenceClient.notificationPreference.update({
-          where: { id },
+          where: { userId },
           data: {
             ...(data.emailEnabled !== undefined && { emailEnabled: data.emailEnabled }),
             ...(data.smsEnabled !== undefined && { smsEnabled: data.smsEnabled }),
@@ -2340,11 +2370,11 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
         clinicId: '',
         operation: 'updateNotificationPreference',
         resourceType: 'NOTIFICATION_PREFERENCE',
-        resourceId: id,
+        resourceId: userId,
         timestamp: new Date(),
       },
       this.queryOptionsBuilder
-        .where({ id })
+        .where({ userId })
         .useCache(false)
         .priority('normal')
         .hipaaCompliant(false)

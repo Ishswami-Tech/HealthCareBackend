@@ -397,6 +397,66 @@ export class CreatePurchaseOrderDto {
 }
 
 /**
+ * One batch received against a purchase order line. Name the line by itemId (PO line id) or by
+ * medicineId when the medicine is on exactly one line.
+ */
+export class ReceivePurchaseOrderItemDto {
+  @ApiPropertyOptional({ description: 'Purchase order line id' })
+  @IsOptional()
+  @IsUUID()
+  itemId?: string;
+
+  @ApiPropertyOptional({ description: 'Medicine id (when the line id is not sent)' })
+  @IsOptional()
+  @IsUUID()
+  medicineId?: string;
+
+  @ApiProperty({ example: 50, description: 'Units received in this batch' })
+  @IsInt()
+  @Min(1)
+  @Max(1000000)
+  quantityReceived!: number;
+
+  @ApiProperty({ example: 'LOT-2026-01', description: 'Batch / lot number on the delivery' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  batchNumber!: string;
+
+  @ApiProperty({ example: '2028-06-30', description: 'Batch expiry date (must be in the future)' })
+  @IsDateString()
+  expiryDate!: string;
+
+  @ApiPropertyOptional({ example: '2026-01-15', description: 'Manufacture date (default today)' })
+  @IsOptional()
+  @IsDateString()
+  manufactureDate?: string;
+
+  @ApiPropertyOptional({
+    example: 25.5,
+    description: 'Unit cost in rupees for this batch (default: the PO line unit price)',
+  })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(10000000)
+  unitCost?: number;
+}
+
+/**
+ * Request DTO for receiving goods against a purchase order
+ */
+export class ReceivePurchaseOrderDto {
+  @ApiProperty({ type: [ReceivePurchaseOrderItemDto], description: 'Batches received' })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(200)
+  @ValidateNested({ each: true })
+  @Type(() => ReceivePurchaseOrderItemDto)
+  items!: ReceivePurchaseOrderItemDto[];
+}
+
+/**
  * Query parameters for listing purchase orders
  */
 export class PurchaseOrderListQueryDto {

@@ -2438,9 +2438,9 @@ export class AppointmentsController {
     tags: ['appointments', 'appointment_data'],
   })
   @ApiOperation({
-    summary: 'Reschedule a video appointment',
+    summary: 'Reschedule an appointment',
     description:
-      'Reschedule an appointment to a new date/time. Only confirmed appointments can be rescheduled. For video appointments, must be done before the 5-hour appointment window expires. Maximum 2 reschedules per appointment.',
+      'Reschedule an appointment to a new date/time. Video appointments can only be rescheduled while CONFIRMED, and before the 5-hour appointment window expires. In-person appointments can be rescheduled in any state except completed, cancelled, no-show, expired or in progress; a checked-in visit is taken out of the queue and goes back to scheduled. Maximum 2 reschedules per appointment.',
   })
   @ApiParam({ name: 'id', description: 'Appointment ID (UUID)', type: 'string', format: 'uuid' })
   @ApiBody({

@@ -14,6 +14,7 @@ import { CacheService } from '@infrastructure/cache/cache.service';
 import { EventService } from '@infrastructure/events/event.service';
 import { PrismaDelegateArgs, PrismaTransactionClientWithDelegates } from '@core/types/prisma.types';
 import { LogType, LogLevel } from '@core/types/logging.types';
+import type { LocalizedProfile } from '@services/doctors/localized-profile.util';
 
 /** Optional professional-profile fields that are copied verbatim when defined. */
 export interface DoctorProfileFieldsInput {
@@ -30,6 +31,23 @@ export interface DoctorProfileFieldsInput {
   languages?: string[];
   education?: string;
   certifications?: string[];
+  /** Already validated by normalizeLocalizedProfile; null clears the column. */
+  localizedProfile?: LocalizedProfile | null;
+}
+
+/** Fixed fees (rupees) a doctor earns per visit type in a clinic; admin-only, rest is convenience fee. */
+export interface DoctorFeeSplitInput {
+  /** null clears the fixed fee, so the percentage platform fee applies again. */
+  videoDoctorFee?: number | null;
+  inPersonDoctorFee?: number | null;
+}
+
+/** Identity fields of a doctor needed to describe them as an external practitioner (FHIR). */
+export interface DoctorPractitionerSummary {
+  id: string;
+  name: string | null;
+  licenseNumber: string | null;
+  qualification: string | null;
 }
 
 export interface DoctorProfileActor {
@@ -89,6 +107,10 @@ export function buildDoctorProfileUpdate(data: DoctorProfileFieldsInput): Record
   if (data.workingHours) updateData['workingHours'] = data.workingHours;
   for (const key of PASS_THROUGH_FIELDS) {
     if (data[key] !== undefined) updateData[key] = data[key];
+  }
+  if (data.localizedProfile !== undefined) {
+    updateData['localizedProfile'] =
+      data.localizedProfile === null ? Prisma.DbNull : data.localizedProfile;
   }
   return updateData;
 }
@@ -185,6 +207,7 @@ export class DoctorsService {
       // invalidated by anything (invalidateClinicCache below only fires when
       // clinicId is provided, and only busts clinic-scoped tags).
       await this.cacheService.invalidateCacheByTag(`doctor:${userId}`);
+      if (!data.clinicId) await this.invalidateDoctorClinicLists(userId);
     }
 
     if (data.clinicId) {
@@ -212,6 +235,24 @@ export class DoctorsService {
   }
 
   /**
+   * Clinic-scoped doctor lists (GET /doctors, /clinics/:id/doctors) are cached per clinic. Callers
+   * without a clinic context (SUPER_ADMIN) must still bust the lists of every clinic the doctor is in.
+   */
+  private async invalidateDoctorClinicLists(userId: string): Promise<void> {
+    const links = await this.databaseService.executeHealthcareRead(async client => {
+      const tx = client as unknown as Prisma.TransactionClient;
+      return await tx.doctorClinic.findMany({
+        where: { doctor: { userId } },
+        select: { clinicId: true },
+      });
+    });
+    for (const clinicId of new Set(links.map(link => link.clinicId))) {
+      await this.cacheService.invalidateClinicCache(clinicId);
+    }
+    await this.cacheService.invalidateCacheByTag('doctors');
+  }
+
+  /**
    * Partial profile update. A DOCTOR may edit only their own profile; a CLINIC_ADMIN only
    * doctors assigned to their clinic; SUPER_ADMIN any doctor. `targetUserId` is the doctor's
    * User id (same identifier as GET /doctors/:id).
@@ -219,15 +260,61 @@ export class DoctorsService {
   async updateDoctorProfile(
     targetUserId: string,
     actor: DoctorProfileActor,
-    data: DoctorProfileFieldsInput
+    data: DoctorProfileFieldsInput,
+    fees: DoctorFeeSplitInput = {}
   ) {
+    const hasFees = fees.videoDoctorFee !== undefined || fees.inPersonDoctorFee !== undefined;
+    // What a doctor earns is set by an admin, never by the doctor themselves.
+    if (hasFees && actor.role !== 'SUPER_ADMIN' && actor.role !== 'CLINIC_ADMIN') {
+      throw new ForbiddenException('Only an admin can set what a doctor earns');
+    }
     await this.assertCanEditProfile(targetUserId, actor);
+    if (hasFees && !actor.clinicId) {
+      throw new BadRequestException('Clinic context is required to set doctor fees');
+    }
     const result = await this.createOrUpdateDoctor({
       ...data,
       userId: targetUserId,
       ...(actor.clinicId ? { clinicId: actor.clinicId } : {}),
     });
+    if (hasFees && actor.clinicId) {
+      await this.saveDoctorFees(targetUserId, actor.clinicId, actor, fees);
+    }
     return { ...result, profile: await this.getDoctorProfile(targetUserId) };
+  }
+
+  /** Stores the doctor's fixed fees for this clinic. Affects only payments made afterwards. */
+  private async saveDoctorFees(
+    targetUserId: string,
+    clinicId: string,
+    actor: DoctorProfileActor,
+    fees: DoctorFeeSplitInput
+  ): Promise<void> {
+    const data: Record<string, number | null> = {};
+    if (fees.videoDoctorFee !== undefined) data['videoDoctorFee'] = fees.videoDoctorFee;
+    if (fees.inPersonDoctorFee !== undefined) data['inPersonDoctorFee'] = fees.inPersonDoctorFee;
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const tx = client as unknown as Prisma.TransactionClient;
+        const result = await tx.doctorClinic.updateMany({
+          where: { clinicId, doctor: { userId: targetUserId } },
+          data,
+        });
+        if (result.count === 0) {
+          throw new NotFoundException('Doctor not found in this clinic');
+        }
+      },
+      {
+        userId: actor.userId,
+        userRole: actor.role,
+        clinicId,
+        resourceType: 'DOCTOR_FEE_SPLIT',
+        operation: 'UPDATE',
+        resourceId: targetUserId,
+        details: { ...data },
+      }
+    );
+    await this.cacheService.invalidateCacheByTag(`doctor:${targetUserId}`);
   }
 
   /**
@@ -480,6 +567,32 @@ export class DoctorsService {
     );
 
     return result;
+  }
+
+  /** Doctors (by Doctor.id) who practise in `clinicId`; ids outside the clinic are omitted. */
+  async getPractitionerSummaries(
+    doctorIds: readonly string[],
+    clinicId: string
+  ): Promise<DoctorPractitionerSummary[]> {
+    if (doctorIds.length === 0) return [];
+    const rows = await this.databaseService.executeHealthcareRead(async client => {
+      const tx = client as unknown as Prisma.TransactionClient;
+      return await tx.doctor.findMany({
+        where: { id: { in: [...doctorIds] }, clinics: { some: { clinicId } } },
+        select: {
+          id: true,
+          licenseNumber: true,
+          qualification: true,
+          user: { select: { name: true } },
+        },
+      });
+    });
+    return rows.map(row => ({
+      id: row.id,
+      name: row.user?.name ?? null,
+      licenseNumber: row.licenseNumber ?? null,
+      qualification: row.qualification ?? null,
+    }));
   }
 
   // ---------------------------------------------------------------------------

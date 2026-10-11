@@ -263,8 +263,8 @@ export class RedisCacheProvider implements IAdvancedCacheProvider {
   }
 
   // List operations
-  async rPush(key: string, value: string): Promise<number> {
-    return this.redisService.rPush(key, value);
+  async rPush(key: string, ...values: string[]): Promise<number> {
+    return this.redisService.rPush(key, ...values);
   }
 
   async lRange(key: string, start: number, stop: number): Promise<string[]> {

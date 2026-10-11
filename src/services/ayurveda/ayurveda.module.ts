@@ -53,6 +53,6 @@ import { ClassicalExamService } from '@services/ayurveda/services/classical-exam
     AyurvedicTimelineService,
     ClassicalExamService,
   ],
-  exports: [AyurvedaService, ClassicalExamService],
+  exports: [AyurvedaService, ClassicalExamService, AyurvedicDiagnosisService],
 })
 export class AyurvedaModule {}

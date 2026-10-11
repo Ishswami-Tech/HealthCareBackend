@@ -9,12 +9,14 @@ import { ErrorsModule } from '@core/errors/errors.module';
 import { CacheModule } from '@infrastructure/cache/cache.module';
 import { StorageModule } from '@infrastructure/storage/storage.module';
 import { AyurvedaModule } from '@services/ayurveda/ayurveda.module';
+import { ComplianceModule } from '@services/compliance/compliance.module';
 import { PatientVisitsController } from '@services/patient-visits/controllers/patient-visits.controller';
 import { FamilyMembersController } from '@services/patient-visits/controllers/family-members.controller';
 import { VisitTherapyController } from '@services/patient-visits/controllers/visit-therapy.controller';
 import { VisitDietChartController } from '@services/patient-visits/controllers/visit-diet-chart.controller';
 import { PatientDocumentsController } from '@services/patient-visits/controllers/patient-documents.controller';
 import { PatientVisitsService } from '@services/patient-visits/patient-visits.service';
+import { PatientVisitEventsListener } from '@services/patient-visits/patient-visit-events.listener';
 import { VisitVitalsExaminationService } from '@services/patient-visits/services/visit-vitals-examination.service';
 import { FamilyMembersService } from '@services/patient-visits/services/family-members.service';
 import { VisitTherapyService } from '@services/patient-visits/services/visit-therapy.service';
@@ -38,6 +40,7 @@ import { PatientDocumentsService } from '@services/patient-visits/services/patie
     CacheModule,
     StorageModule,
     AyurvedaModule,
+    ComplianceModule,
   ],
   controllers: [
     PatientVisitsController,
@@ -48,6 +51,7 @@ import { PatientDocumentsService } from '@services/patient-visits/services/patie
   ],
   providers: [
     PatientVisitsService,
+    PatientVisitEventsListener,
     VisitVitalsExaminationService,
     FamilyMembersService,
     VisitTherapyService,

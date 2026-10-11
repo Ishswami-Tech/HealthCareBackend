@@ -12,6 +12,10 @@ import { EventService } from '@infrastructure/events';
 import { HealthcareError, ErrorCode } from '@core/errors';
 import { HealthcareErrorsService } from '@core/errors/healthcare-errors.service';
 import type { PrismaTransactionClientWithDelegates } from '@core/types/prisma.types';
+import {
+  PHARMACY_STOCK_CACHE_TAGS,
+  invalidatePharmacyCacheTags,
+} from './pharmacy-cache-invalidation.util';
 import type { CreateStockBatchDto, BatchFilterDto } from '../dto/pharmacy-inventory.dto';
 
 /**
@@ -167,6 +171,12 @@ export class BatchService {
       expiryDate: batch.expiryDate.toISOString(),
     });
     await this.cache.del(`pharmacy:inventory:onhand:${clinicId}:${batch.productId}`);
+    await invalidatePharmacyCacheTags(
+      this.cache,
+      this.logger,
+      PHARMACY_STOCK_CACHE_TAGS,
+      'batch-created'
+    );
 
     return batch;
   }

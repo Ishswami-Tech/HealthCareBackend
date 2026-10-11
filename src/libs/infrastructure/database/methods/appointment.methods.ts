@@ -50,6 +50,7 @@ const appointmentListIncludeValidator = {
       consultationFee: true,
       videoConsultationFee: true,
       rating: true,
+      localizedProfile: true,
       user: {
         select: {
           id: true,

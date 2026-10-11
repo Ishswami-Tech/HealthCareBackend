@@ -48,6 +48,7 @@ function pickExtendedFields(dto: DoctorProfileFieldsDto): DoctorProfileFieldsInp
     'languages',
     'education',
     'certifications',
+    'localizedProfile',
   ] as const) {
     if (dto[key] !== undefined) out[key] = dto[key];
   }
@@ -122,7 +123,11 @@ export class DoctorsController {
         ...(dto.qualification != null && { qualification: dto.qualification }),
         ...(dto.consultationFee != null && { consultationFee: dto.consultationFee }),
         ...(dto.workingHours != null && { workingHours: dto.workingHours }),
-      })
+      }),
+      {
+        ...(dto.videoDoctorFee !== undefined && { videoDoctorFee: dto.videoDoctorFee }),
+        ...(dto.inPersonDoctorFee !== undefined && { inPersonDoctorFee: dto.inPersonDoctorFee }),
+      }
     );
   }
 

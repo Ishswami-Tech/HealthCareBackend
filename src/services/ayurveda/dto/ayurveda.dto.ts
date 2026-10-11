@@ -5,6 +5,7 @@
  */
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
+import type { MedicalCoding } from '@core/types/compliance.types';
 import {
   IsArray,
   IsBoolean,
@@ -284,6 +285,9 @@ export class AyurvedicDiagnosisResponseDto {
 
   /** Confidence level */
   confidenceLevel?: string | undefined;
+
+  /** Standard codes (ICD-10 / ICD-11 / SNOMED / NAMASTE) attached to the diagnosis, when chosen */
+  codings?: MedicalCoding[] | undefined;
 
   /** Diagnosis status */
   status!: string;

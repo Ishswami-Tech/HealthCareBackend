@@ -1150,8 +1150,8 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
 
   // ===== OVERRIDE LIST OPERATIONS TO USE RETRY OPERATION =====
 
-  async rPush(key: string, value: string): Promise<number> {
-    return this.retryOperation(() => this.client.rpush(key, value));
+  async rPush(key: string, ...values: string[]): Promise<number> {
+    return this.retryOperation(() => this.client.rpush(key, ...values));
   }
 
   // Override lTrim to use retryOperation

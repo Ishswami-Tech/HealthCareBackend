@@ -1,6 +1,7 @@
 import {
   Injectable,
   BadRequestException,
+  ConflictException,
   NotFoundException,
   ForbiddenException,
   forwardRef,
@@ -312,13 +313,21 @@ export class CheckInService {
         );
       }
 
-      await this.databaseService.executeHealthcareWrite(
+      // Conditional on the state that was just checked: a reschedule (or cancellation) that commits
+      // between the check and this write moves the visit out of CONFIRMED/checked-in, and must
+      // not be turned into an IN_PROGRESS consultation.
+      const started = await this.databaseService.executeHealthcareWrite(
         async client => {
           const appointmentDelegate = client['appointment'] as unknown as {
-            update: (args: { where: { id: string }; data: unknown }) => Promise<unknown>;
+            updateMany: (args: { where: unknown; data: unknown }) => Promise<{ count: number }>;
           };
-          return await appointmentDelegate.update({
-            where: { id: appointmentId },
+          return await appointmentDelegate.updateMany({
+            where: {
+              id: appointmentId,
+              clinicId,
+              status: AppointmentStatus.CONFIRMED,
+              checkedInAt: { not: null },
+            },
             data: {
               status: 'IN_PROGRESS',
               startedAt: now,
@@ -336,6 +345,11 @@ export class CheckInService {
           details: { status: 'IN_PROGRESS' },
         }
       );
+      if (!started || started.count === 0) {
+        throw new ConflictException(
+          'The appointment changed while the consultation was starting. Reload and try again.'
+        );
+      }
 
       await this.appointmentQueueService.startConsultation(
         appointmentId,

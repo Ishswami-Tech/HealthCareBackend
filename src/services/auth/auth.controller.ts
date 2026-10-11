@@ -33,6 +33,8 @@ import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { Public } from '@core/decorators/public.decorator';
 import { SessionManagementService } from '@core/session/session-management.service';
 import { JwtAuthService } from './core/jwt.service';
+import { RecordClaimService } from './core/record-claim.service';
+import { ClaimRecordDto } from './core/record-claim.dto';
 import {
   listUserSessionViews,
   revokeOwnSession,
@@ -87,7 +89,8 @@ export class AuthController {
     private readonly errors: HealthcareErrorsService,
     private readonly sessionService: SessionManagementService,
     private readonly jwtAuthService: JwtAuthService,
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    private readonly recordClaimService: RecordClaimService
   ) {}
 
   /**
@@ -1064,6 +1067,72 @@ export class AuthController {
       }
       throw _error;
     }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('claim-record/available')
+  @RateLimitAPI({ points: 30, duration: 900 })
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Whether an earlier clinic record is held under the signed-in patient verified number',
+    description: 'Returns only a count, never names or ids.',
+  })
+  async claimableRecords(
+    @Request() req: FastifyRequestWithUser
+  ): Promise<DataResponseDto<{ available: number }>> {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw this.errors.invalidCredentials('AuthController.claimableRecords');
+    }
+    const available = await this.recordClaimService.countAvailable(userId);
+    return new DataResponseDto({ available }, 'OK');
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('claim-record')
+  @RateLimitAPI({ points: 5, duration: 900 }) // 5 attempts per 15 minutes: stops name/number guessing
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Claim the record the clinic imported from its old register',
+    description:
+      'For a patient who has signed in with a verified phone number: links the imported record held under that number (matched by name) to this sign-in, so there is one record, not two. The patient signs in again afterwards.',
+  })
+  async claimRecord(
+    @Body() dto: ClaimRecordDto,
+    @Request() req: FastifyRequestWithUser
+  ): Promise<DataResponseDto<{ claimed: boolean; requiresSignIn: boolean }>> {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw this.errors.invalidCredentials('AuthController.claimRecord');
+    }
+    const userAgent = req.headers?.['user-agent'];
+    const result = await this.recordClaimService.claim(
+      {
+        fullName: dto.fullName,
+        uhid: dto.uhid,
+        legacyRegistration: dto.legacyRegistration,
+      },
+      {
+        userId,
+        ipAddress: req.ip,
+        userAgent: typeof userAgent === 'string' ? userAgent : undefined,
+      }
+    );
+    // This sign-in belonged to the account that was merged away: end its sessions. The merge has
+    // already committed, so a failure here must not turn it into an error response.
+    try {
+      await this.authService.revokeAllSessionsForUser(userId);
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        'Could not end sessions after a record claim',
+        'AuthController.claimRecord',
+        { userId, error: error instanceof Error ? error.message : String(error) }
+      );
+    }
+    return new DataResponseDto(result, 'Record linked. Please sign in again.');
   }
 
   @UseGuards(JwtAuthGuard)

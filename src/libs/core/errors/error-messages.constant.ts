@@ -109,6 +109,10 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.PATIENT_ALREADY_EXISTS]: 'A patient with this information already exists.',
   [ErrorCode.PATIENT_RECORD_LOCKED]: 'Patient record is currently locked by another user.',
   [ErrorCode.PATIENT_CONSENT_REQUIRED]: 'Patient consent is required to access this information.',
+  [ErrorCode.PATIENT_CONSENT_CONFLICT]: 'The consent record was changed by another request.',
+  [ErrorCode.PATIENT_IDENTIFIER_CONFLICT]:
+    'This identifier is already assigned to another patient.',
+  [ErrorCode.UHID_ALLOCATION_FAILED]: 'A UHID could not be issued.',
 
   // Validation Errors
   [ErrorCode.VALIDATION_ERROR]: 'The request contains invalid data. Please review the input.',

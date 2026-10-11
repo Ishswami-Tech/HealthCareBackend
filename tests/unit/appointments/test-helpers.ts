@@ -64,6 +64,9 @@ function matchesCondition(actual: unknown, condition: unknown): boolean {
     }
     return false;
   }
+  if (condition instanceof Date && actual instanceof Date) {
+    return condition.getTime() === actual.getTime();
+  }
   return actual === condition;
 }
 
