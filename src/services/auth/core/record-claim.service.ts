@@ -136,7 +136,13 @@ export class RecordClaimService {
         userId
       );
       const caller = rows[0];
-      if (!caller || caller.role !== 'PATIENT' || !caller.phone || !caller.phoneVerified || !caller.primaryClinicId) {
+      if (
+        !caller ||
+        caller.role !== 'PATIENT' ||
+        !caller.phone ||
+        !caller.phoneVerified ||
+        !caller.primaryClinicId
+      ) {
         return 0;
       }
       const counted = await tx.$queryRawUnsafe<Array<{ available: number }>>(
@@ -198,14 +204,13 @@ export class RecordClaimService {
       actor.ipAddress ?? null,
       actor.userAgent ? actor.userAgent.slice(0, 256) : null,
     ];
-    let claimed = 0;
+    let claimed: number;
     try {
       claimed = await this.database.executeHealthcareWrite(
         async client => {
-          const rows = await (client as unknown as RawTx).$queryRawUnsafe<Array<{ claimed: number }>>(
-            MERGE_SQL,
-            ...params
-          );
+          const rows = await (client as unknown as RawTx).$queryRawUnsafe<
+            Array<{ claimed: number }>
+          >(MERGE_SQL, ...params);
           return Number(rows[0]?.claimed ?? 0);
         },
         {
@@ -219,7 +224,8 @@ export class RecordClaimService {
         }
       );
     } catch (error) {
-      const text = error instanceof Error ? `${error.message} ${JSON.stringify(error)}` : String(error);
+      const text =
+        error instanceof Error ? `${error.message} ${JSON.stringify(error)}` : String(error);
       // A related row (appointment, prescription...) refuses the delete: not an empty account.
       if (/foreign key|23503/i.test(text)) throw this.accountInUse();
       throw error;
@@ -241,7 +247,11 @@ export class RecordClaimService {
     );
     const caller = rows[0];
     if (!caller || caller.role !== 'PATIENT') {
-      throw fail(ErrorCode.AUTH_INSUFFICIENT_PERMISSIONS, 'Only a patient can claim a record', HttpStatus.FORBIDDEN);
+      throw fail(
+        ErrorCode.AUTH_INSUFFICIENT_PERMISSIONS,
+        'Only a patient can claim a record',
+        HttpStatus.FORBIDDEN
+      );
     }
     if (!caller.phone || !caller.phoneVerified || !caller.primaryClinicId) {
       throw fail(

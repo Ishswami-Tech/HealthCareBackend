@@ -22,7 +22,10 @@ export function nameTokens(name: string | null | undefined): string[] {
  * "Rahul Ganesh Barote") and at least two words agree. A single shared word is never enough,
  * unless that is all either name has.
  */
-export function namesMatch(typed: string | null | undefined, stored: string | null | undefined): boolean {
+export function namesMatch(
+  typed: string | null | undefined,
+  stored: string | null | undefined
+): boolean {
   const a = new Set(nameTokens(typed));
   const b = new Set(nameTokens(stored));
   if (a.size === 0 || b.size === 0) return false;
@@ -50,7 +53,8 @@ export function candidatesMatchingName(
   candidates: readonly ClaimCandidate[]
 ): ClaimCandidate[] {
   return candidates.filter(candidate => {
-    const full = candidate.name ?? [candidate.firstName, candidate.lastName].filter(Boolean).join(' ');
+    const full =
+      candidate.name ?? [candidate.firstName, candidate.lastName].filter(Boolean).join(' ');
     return namesMatch(typedName, full);
   });
 }
