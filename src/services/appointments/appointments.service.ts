@@ -107,6 +107,7 @@ import {
   slotConflictMessage,
 } from './core/appointment-slot-conflict.util';
 import {
+  isActiveDependentOfCaller,
   isAppointmentOwnedByPatientUser,
   isReceptionistAssignedToAppointmentLocation,
 } from './core/appointment-access.util';
@@ -2387,7 +2388,11 @@ export class AppointmentsService {
         { patientId: createDto.patientId, familyMemberId: createDto.familyMemberId ?? null },
         userId
       );
-      if (!mayBook) {
+      // A named dependent must really be one of the caller's own: owning `patientId` is not enough.
+      const dependentOk =
+        !createDto.familyMemberId ||
+        (await isActiveDependentOfCaller(this.databaseService, createDto.familyMemberId, userId));
+      if (!mayBook || !dependentOk) {
         throw this.errors.insufficientPermissions('AppointmentsService.createAppointment');
       }
     }

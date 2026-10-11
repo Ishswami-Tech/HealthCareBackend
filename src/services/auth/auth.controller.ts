@@ -1071,6 +1071,7 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Get('claim-record/available')
+  @RateLimitAPI({ points: 30, duration: 900 })
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'Whether an earlier clinic record is held under the signed-in patient verified number',
@@ -1089,6 +1090,7 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Post('claim-record')
+  @RateLimitAPI({ points: 5, duration: 900 }) // 5 attempts per 15 minutes: stops name/number guessing
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth()
   @ApiOperation({
@@ -1117,8 +1119,19 @@ export class AuthController {
         userAgent: typeof userAgent === 'string' ? userAgent : undefined,
       }
     );
-    // This sign-in belonged to the account that was merged away: end its sessions.
-    await this.authService.revokeAllSessionsForUser(userId);
+    // This sign-in belonged to the account that was merged away: end its sessions. The merge has
+    // already committed, so a failure here must not turn it into an error response.
+    try {
+      await this.authService.revokeAllSessionsForUser(userId);
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        'Could not end sessions after a record claim',
+        'AuthController.claimRecord',
+        { userId, error: error instanceof Error ? error.message : String(error) }
+      );
+    }
     return new DataResponseDto(result, 'Record linked. Please sign in again.');
   }
 

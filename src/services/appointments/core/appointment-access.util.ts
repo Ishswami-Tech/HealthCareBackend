@@ -41,6 +41,28 @@ interface OwnershipClient {
   };
 }
 
+/** True when `familyMemberId` is an active dependent of the patient profile of `callerUserId`. */
+export async function isActiveDependentOfCaller(
+  database: DatabaseService,
+  familyMemberId: string,
+  callerUserId: string
+): Promise<boolean> {
+  if (!familyMemberId || !callerUserId) return false;
+  return database.executeHealthcareRead<boolean>(async client => {
+    const db = client as unknown as OwnershipClient;
+    const callerPatient = await db.patient.findFirst({
+      where: { userId: callerUserId },
+      select: { id: true },
+    });
+    if (!callerPatient) return false;
+    const dependents = await db.familyMember.findMany({
+      where: { patientId: callerPatient.id, isActive: true, deletedAt: null },
+      select: { id: true, userId: true },
+    });
+    return dependents.some(dependent => dependent.id === familyMemberId);
+  });
+}
+
 /**
  * True when the PATIENT-role caller (identified by their JWT user id) may act on the appointment:
  * it is their own, or it belongs to an active dependent of theirs.
