@@ -23,6 +23,7 @@ import { JwtAuthService } from './core/jwt.service';
 import { OtpService } from './core/otp.service';
 import { PasswordService } from './core/password.service';
 import { SocialAuthService } from './core/social-auth.service';
+import { RecordClaimService } from './core/record-claim.service';
 import { SignOptions } from 'jsonwebtoken';
 
 // Guards - using shared guards from libs
@@ -69,6 +70,7 @@ import { SignOptions } from 'jsonwebtoken';
     OtpService,
     PasswordService,
     SocialAuthService,
+    RecordClaimService,
     // Note: HealthcareCacheInterceptor is provided globally by CacheModule
     // No need to register it here to avoid duplicate instances
   ],

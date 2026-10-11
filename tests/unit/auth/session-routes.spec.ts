@@ -114,6 +114,7 @@ describe('AuthController sessions routes', () => {
       {} as never,
       store as never,
       {} as never,
+      {} as never,
       {} as never
     );
   }
