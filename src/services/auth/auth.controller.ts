@@ -1073,7 +1073,7 @@ export class AuthController {
   @Get('claim-record/available')
   @ApiBearerAuth()
   @ApiOperation({
-    summary: 'Whether an earlier clinic record is held under the signed-in patient's verified number',
+    summary: 'Whether an earlier clinic record is held under the signed-in patient verified number',
     description: 'Returns only a count, never names or ids.',
   })
   async claimableRecords(
