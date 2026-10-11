@@ -8,6 +8,9 @@ import { DeviceTokenService } from '@communication/channels/push/device-token.se
 import type { PushNotificationData, PushNotificationResult } from '@core/types/notification.types';
 import { FirebaseGoogleClient } from '@communication/channels/firebase/firebase-google-client';
 
+/** Upper bound for a single Expo Push API call so a slow provider cannot stall callers. */
+const EXPO_REQUEST_TIMEOUT_MS = 10_000;
+
 @Injectable()
 export class PushNotificationService implements OnModuleInit {
   private firebaseClient: FirebaseGoogleClient | null = null;
@@ -175,6 +178,7 @@ export class PushNotificationService implements OnModuleInit {
           priority: 'high',
           channelId: 'default',
         }),
+        signal: AbortSignal.timeout(EXPO_REQUEST_TIMEOUT_MS),
       });
 
       const result = (await response.json()) as {

@@ -80,7 +80,7 @@ export class DeviceTokenService implements OnModuleInit {
 
       for (const persistedToken of persistedTokens) {
         if (!this.isPersistedDeviceToken(persistedToken)) continue;
-        this.tokenStore.set(persistedToken.token, persistedToken);
+        this.tokenStore.set(persistedToken.token, this.normalizePersistedToken(persistedToken));
       }
 
       void this.loggingService.log(
@@ -641,6 +641,26 @@ export class DeviceTokenService implements OnModuleInit {
   private maskToken(token: string): string {
     if (!token || token.length < 10) return 'INVALID_TOKEN';
     return `${token.substring(0, 8)}...${token.substring(token.length - 4)}`;
+  }
+
+  /** Prisma returns null for empty optional columns; DeviceTokenData expects undefined. */
+  private normalizePersistedToken(row: DeviceTokenData): DeviceTokenData {
+    const raw = row as unknown as Record<string, unknown>;
+    const str = (key: string): string | undefined =>
+      typeof raw[key] === 'string' ? (raw[key] as string) : undefined;
+    const appVersion = str('appVersion');
+    const deviceModel = str('deviceModel');
+    const osVersion = str('osVersion');
+    return {
+      userId: row.userId,
+      token: row.token,
+      platform: row.platform,
+      isActive: row.isActive,
+      ...(appVersion ? { appVersion } : {}),
+      ...(deviceModel ? { deviceModel } : {}),
+      ...(osVersion ? { osVersion } : {}),
+      ...(row.lastUsed instanceof Date ? { lastUsed: row.lastUsed } : {}),
+    };
   }
 
   private isPersistedDeviceToken(value: unknown): value is DeviceTokenData {

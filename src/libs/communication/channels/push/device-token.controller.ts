@@ -42,16 +42,19 @@ export class RegisterMobileDeviceTokenDto {
   @ApiPropertyOptional({ description: 'App version', example: '1.0.0' })
   @IsOptional()
   @IsString()
+  @MaxLength(64)
   appVersion?: string;
 
   @ApiPropertyOptional({ description: 'Device model', example: 'iPhone 15 Pro' })
   @IsOptional()
   @IsString()
+  @MaxLength(128)
   deviceModel?: string;
 
   @ApiPropertyOptional({ description: 'OS version', example: 'iOS 18.0' })
   @IsOptional()
   @IsString()
+  @MaxLength(64)
   osVersion?: string;
 }
 
