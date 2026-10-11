@@ -2381,7 +2381,7 @@ export class AppointmentsService {
     // SECURITY: a patient may book only for themselves or an active dependent. RbacGuard lets any
     // PATIENT through on appointments:create, and `patientId` comes from the request body, so
     // without this a patient who knows another patient's id could book into that chart.
-    if (role.trim().toUpperCase() === Role.PATIENT && createDto.patientId) {
+    if ((role.trim().toUpperCase() as Role) === Role.PATIENT && createDto.patientId) {
       const mayBook = await isAppointmentOwnedByPatientUser(
         this.databaseService,
         { patientId: createDto.patientId, familyMemberId: createDto.familyMemberId ?? null },
