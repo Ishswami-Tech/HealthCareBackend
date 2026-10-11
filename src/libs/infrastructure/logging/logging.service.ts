@@ -1,3 +1,8 @@
+import {
+  AuditLogBatcher,
+  DEFAULT_AUDIT_BATCH_OPTIONS,
+  type AuditLogRow,
+} from './audit-log-batcher';
 import { nowIso } from '@utils/date-time.util';
 // External imports
 import { Injectable, Inject, Optional, forwardRef, OnApplicationShutdown } from '@nestjs/common';
@@ -157,6 +162,10 @@ export class LoggingService implements OnApplicationShutdown {
   private readonly systemUserNegativeCacheTTL = 300000; // 5 minutes when missing
   // Flag to disable database logging when connection pool is exhausted
   private isDatabaseLoggingDisabled = false;
+  private readonly auditLogBatcher = new AuditLogBatcher(rows => this.writeAuditLogRows(rows), {
+    ...DEFAULT_AUDIT_BATCH_OPTIONS,
+    onError: error => this.pauseDatabaseLoggingAfter(error),
+  });
   // Mutex to prevent concurrent system user queries (race condition protection)
   private systemUserQueryPromise: Promise<{ id: string } | null> | null = null;
   private static globalSystemUserLookupDisabled = false;
@@ -826,52 +835,15 @@ export class LoggingService implements OnApplicationShutdown {
               const systemUser = await this.getCachedSystemUser();
 
               if (systemUser) {
-                // Use a timeout to prevent database logging from blocking
-                await Promise.race([
-                  this.databaseService.executeHealthcareWrite(
-                    async client => {
-                      // Access auditLog delegate using dot notation for consistency
-                      const auditLog = (
-                        client as unknown as {
-                          auditLog: {
-                            create: (args: { data: unknown }) => Promise<{ id: string }>;
-                          };
-                        }
-                      ).auditLog;
-                      return (await auditLog.create({
-                        data: {
-                          userId: systemUser.id,
-                          action: type as string,
-                          description: context,
-                          ipAddress: (metadata['ipAddress'] as string | null) || null,
-                          device: (metadata['userAgent'] as string | null) || null,
-                          clinicId: (metadata['clinicId'] as string | null) || null,
-                        },
-                      })) as unknown as { id: string };
-                    },
-                    {
-                      userId: systemUser.id,
-                      userRole: 'system',
-                      clinicId: (metadata['clinicId'] as string) || '',
-                      operation: `LOG_${type}`,
-                      resourceType: 'AUDIT_LOG',
-                      resourceId: 'pending',
-                      timestamp: new Date(),
-                      // Audit log rows are write-only compliance records,
-                      // never read back through the cache layer, so nothing
-                      // is ever cached under the audit_log/audit_logs tags
-                      // this write would otherwise invalidate on every call.
-                      skipCacheInvalidation: true,
-                    }
-                  ),
-                  new Promise<void>((_, reject) => {
-                    setTimeout(() => {
-                      reject(new Error('Database logging timeout'));
-                    }, 5000); // 5 second timeout for audit log writes
-                  }),
-                ]).catch(() => {
-                  // Silent fail for audit log creation - resilient logging for high scale
-                  // Audit log failures are non-critical and shouldn't break logging
+                // Rows are written together a moment later (one INSERT for many lines) instead of
+                // one INSERT per line, which Sentry flagged as an N+1 on busy requests.
+                this.auditLogBatcher.add({
+                  userId: systemUser.id,
+                  action: type as string,
+                  description: context,
+                  ipAddress: (metadata['ipAddress'] as string | null) || null,
+                  device: (metadata['userAgent'] as string | null) || null,
+                  clinicId: (metadata['clinicId'] as string | null) || null,
                 });
               }
             } catch (_auditError) {
@@ -2211,7 +2183,56 @@ export class LoggingService implements OnApplicationShutdown {
 
   /** Writes the buffered log lines before the process exits (enableShutdownHooks is on). */
   async onApplicationShutdown(): Promise<void> {
+    await this.auditLogBatcher.flush();
     await this.flushLogWriteBuffer();
+  }
+
+  /** Writes a batch of log rows with one INSERT. */
+  private async writeAuditLogRows(rows: readonly AuditLogRow[]): Promise<void> {
+    if (!this.databaseService || rows.length === 0) return;
+    await Promise.race([
+      this.databaseService.executeHealthcareWrite(
+        async client => {
+          const auditLog = (
+            client as unknown as {
+              auditLog: { createMany: (args: { data: unknown }) => Promise<{ count: number }> };
+            }
+          ).auditLog;
+          return await auditLog.createMany({ data: rows.map(row => ({ ...row })) });
+        },
+        {
+          userId: rows[0]?.userId ?? 'system',
+          userRole: 'system',
+          clinicId: '',
+          operation: 'LOG_BATCH',
+          resourceType: 'AUDIT_LOG',
+          resourceId: 'pending',
+          timestamp: new Date(),
+          // Write-only rows, never read back through the cache layer.
+          skipCacheInvalidation: true,
+        }
+      ),
+      new Promise<void>((_, reject) => {
+        setTimeout(() => reject(new Error('Database logging timeout')), 5000);
+      }),
+    ]);
+  }
+
+  /** Stops database logging for a while when the pool is struggling, so logging cannot worsen it. */
+  private pauseDatabaseLoggingAfter(error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    const poolTrouble = [
+      'too many clients',
+      'connection',
+      'timeout',
+      'TIMEOUT',
+      'Query timeout',
+    ].some(text => message.includes(text));
+    if (!poolTrouble) return;
+    this.isDatabaseLoggingDisabled = true;
+    setTimeout(() => {
+      this.isDatabaseLoggingDisabled = false;
+    }, 300000);
   }
 
   /**
@@ -2225,6 +2246,7 @@ export class LoggingService implements OnApplicationShutdown {
 
       // Final flush of any remaining metrics and buffered log lines
       await this.flushMetricsBuffer();
+      await this.auditLogBatcher.flush();
       await this.flushLogWriteBuffer();
 
       // Cleanup completed successfully
