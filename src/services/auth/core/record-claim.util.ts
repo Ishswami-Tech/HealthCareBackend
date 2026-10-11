@@ -75,7 +75,7 @@ export function isForeignKeyOrUniqueViolation(error: unknown): boolean {
     cause?: { code?: unknown };
   };
   const codes = [record.code, record.meta?.code, record.cause?.code].map(value =>
-    String(value ?? '')
+    typeof value === 'string' || typeof value === 'number' ? String(value) : ''
   );
   const message = typeof record.message === 'string' ? record.message : '';
   return (

@@ -31,7 +31,6 @@ export interface RecordClaimResult {
 
 interface RawTx {
   $queryRawUnsafe: <T>(sql: string, ...values: unknown[]) => Promise<T>;
-
 }
 
 interface CallerRow {
