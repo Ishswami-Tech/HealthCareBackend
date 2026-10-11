@@ -390,7 +390,7 @@ export class SNSBackupService implements OnModuleInit {
           },
           android: {
             notification: {
-              channel_id: 'healthcare_notifications',
+              channel_id: 'default',
               priority: 'high',
             },
           },

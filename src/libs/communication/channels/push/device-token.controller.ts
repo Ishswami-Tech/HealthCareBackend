@@ -55,6 +55,17 @@ export class RegisterMobileDeviceTokenDto {
   osVersion?: string;
 }
 
+export class UnregisterDeviceTokenDto {
+  @ApiProperty({
+    description: 'Expo or FCM/APNs push token to unregister',
+    example: 'ExponentPushToken[abc123def456]',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(512)
+  token!: string;
+}
+
 /** Every authenticated role may own a phone / browser that receives push notifications. */
 export const DEVICE_OWNER_ROLES: readonly Role[] = [
   Role.SUPER_ADMIN,
@@ -123,14 +134,14 @@ export class DeviceTokenController {
   })
   @ApiResponse({ status: HttpStatus.OK, description: 'Token unregistered' })
   async unregisterMyToken(
-    @Body() body: { token: string },
+    @Body() body: UnregisterDeviceTokenDto,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<{ success: boolean; message: string }> {
     const userId = req.user?.sub ?? req.user?.id;
     if (!userId) {
       return { success: false, message: 'User not authenticated' };
     }
-    const ok = await this.deviceTokenService.deactivateDeviceToken(body.token);
+    const ok = await this.deviceTokenService.deactivateDeviceToken(body.token, userId);
     return ok
       ? { success: true, message: 'Push token unregistered' }
       : { success: false, message: 'Failed to unregister push token' };

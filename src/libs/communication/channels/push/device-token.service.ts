@@ -1,4 +1,4 @@
-import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
@@ -53,7 +53,7 @@ export interface TokenValidationResult {
  * @class DeviceTokenService
  */
 @Injectable()
-export class DeviceTokenService {
+export class DeviceTokenService implements OnModuleInit {
   private readonly tokenStore = new Map<string, DeviceTokenData>();
 
   constructor(
@@ -61,6 +61,46 @@ export class DeviceTokenService {
     private readonly loggingService: LoggingService,
     @Optional() private readonly databaseService?: DatabaseService
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    if (!this.databaseService) return;
+
+    try {
+      const persistedTokens = await this.databaseService.executeHealthcareRead(async client => {
+        const delegate = (
+          client as unknown as {
+            deviceToken?: { findMany: (args: unknown) => Promise<unknown> };
+          }
+        ).deviceToken;
+
+        return delegate ? delegate.findMany({ where: { isActive: true } }) : [];
+      });
+
+      if (!Array.isArray(persistedTokens)) return;
+
+      for (const persistedToken of persistedTokens) {
+        if (!this.isPersistedDeviceToken(persistedToken)) continue;
+        this.tokenStore.set(persistedToken.token, persistedToken);
+      }
+
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Loaded active device tokens from database',
+        'DeviceTokenService',
+        { tokenCount: this.tokenStore.size }
+      );
+    } catch (error) {
+      // Keep the service available for registrations while the database is unavailable.
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'Failed to load device tokens from database; starting with an empty cache',
+        'DeviceTokenService',
+        { error: error instanceof Error ? error.message : 'Unknown error' }
+      );
+    }
+  }
 
   /**
    * Registers a new device token
@@ -141,7 +181,7 @@ export class DeviceTokenService {
               clinicId: '',
               operation: 'REGISTER_DEVICE_TOKEN',
               resourceType: 'DEVICE_TOKEN',
-              resourceId: tokenData.token,
+              resourceId: this.maskToken(tokenData.token),
               details: {
                 platform: tokenData.platform,
                 isActive: tokenData.isActive,
@@ -259,7 +299,7 @@ export class DeviceTokenService {
               clinicId: '',
               operation: 'UPDATE_DEVICE_TOKEN',
               resourceType: 'DEVICE_TOKEN',
-              resourceId: newToken,
+              resourceId: this.maskToken(newToken),
               details: {
                 oldToken: this.maskToken(oldToken),
                 newToken: this.maskToken(newToken),
@@ -376,7 +416,7 @@ export class DeviceTokenService {
    * @param token - Device token to deactivate
    * @returns True if deactivation was successful
    */
-  async deactivateDeviceToken(token: string): Promise<boolean> {
+  async deactivateDeviceToken(token: string, requestingUserId?: string): Promise<boolean> {
     try {
       const tokenData = this.tokenStore.get(token);
 
@@ -389,6 +429,17 @@ export class DeviceTokenService {
           {
             token: this.maskToken(token),
           }
+        );
+        return Promise.resolve(false);
+      }
+
+      if (requestingUserId && tokenData.userId !== requestingUserId) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Rejected device token deactivation for another user',
+          'DeviceTokenService',
+          { requestingUserId, token: this.maskToken(token) }
         );
         return Promise.resolve(false);
       }
@@ -422,7 +473,7 @@ export class DeviceTokenService {
               clinicId: '',
               operation: 'DEACTIVATE_DEVICE_TOKEN',
               resourceType: 'DEVICE_TOKEN',
-              resourceId: token,
+              resourceId: this.maskToken(token),
               details: {
                 platform: tokenData.platform,
               },
@@ -590,5 +641,20 @@ export class DeviceTokenService {
   private maskToken(token: string): string {
     if (!token || token.length < 10) return 'INVALID_TOKEN';
     return `${token.substring(0, 8)}...${token.substring(token.length - 4)}`;
+  }
+
+  private isPersistedDeviceToken(value: unknown): value is DeviceTokenData {
+    if (!value || typeof value !== 'object') return false;
+    const candidate = value as Record<string, unknown>;
+    return (
+      typeof candidate['userId'] === 'string' &&
+      typeof candidate['token'] === 'string' &&
+      typeof candidate['platform'] === 'string' &&
+      ['ios', 'android', 'web'].includes(candidate['platform']) &&
+      typeof candidate['isActive'] === 'boolean' &&
+      (candidate['lastUsed'] === undefined ||
+        candidate['lastUsed'] === null ||
+        candidate['lastUsed'] instanceof Date)
+    );
   }
 }

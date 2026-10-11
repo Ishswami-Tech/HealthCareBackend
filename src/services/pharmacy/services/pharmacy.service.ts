@@ -47,6 +47,14 @@ export interface PharmacyActor {
   readonly role?: string | undefined;
 }
 
+/** Used when a prescription item arrives without a frequency or duration. */
+const DEFAULT_PRESCRIPTION_FREQUENCY = 'Twice a day, after food';
+const DEFAULT_PRESCRIPTION_DURATION = '10 days';
+const withDefaultFrequency = (value?: string | null): string =>
+  value?.trim() ? value : DEFAULT_PRESCRIPTION_FREQUENCY;
+const withDefaultDuration = (value?: string | null): string =>
+  value?.trim() ? value : DEFAULT_PRESCRIPTION_DURATION;
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
@@ -2050,8 +2058,8 @@ export class PharmacyService {
                 medicineId: item.medicineId,
                 quantity: item.quantity,
                 dosage: item.dosage,
-                frequency: item.frequency,
-                duration: item.duration,
+                frequency: withDefaultFrequency(item.frequency),
+                duration: withDefaultDuration(item.duration),
                 ...(item.instructions !== undefined && { instructions: item.instructions }),
                 clinicId: clinicId,
               })),
@@ -2217,8 +2225,8 @@ export class PharmacyService {
                   medicineId: item.medicineId,
                   quantity: item.quantity,
                   dosage: item.dosage,
-                  frequency: item.frequency,
-                  duration: item.duration,
+                  frequency: withDefaultFrequency(item.frequency),
+                  duration: withDefaultDuration(item.duration),
                   ...(item.instructions !== undefined && { instructions: item.instructions }),
                   clinicId,
                 })),
