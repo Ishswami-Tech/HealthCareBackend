@@ -972,13 +972,12 @@ export class UsersService {
         const existingUserRecord = existingUser as unknown as Record<string, unknown>;
         const existingPhoneUser = await this.databaseService.findUserByPhoneSafe(normalizedPhone);
         const isPhoneOwnedByAnotherUser = existingPhoneUser && existingPhoneUser.id !== id;
-        const existingPhoneUserProfileComplete =
-          isPhoneOwnedByAnotherUser &&
-          ((existingPhoneUser as unknown as Record<string, unknown>)['isProfileComplete'] ===
-            true ||
-            (existingPhoneUser as unknown as Record<string, unknown>)['profileComplete'] === true);
 
-        if (isPhoneOwnedByAnotherUser && existingPhoneUserProfileComplete) {
+        // SECURITY: a number held by any other account is never taken over here. This path has no
+        // OTP, so moving the number (and marking it verified) would let one patient capture another
+        // person's number. Moving a number is only allowed through verifyPhone, after an OTP sent to
+        // that number.
+        if (isPhoneOwnedByAnotherUser) {
           throw this.errors.phoneAlreadyExists(
             normalizedPhone,
             'UsersService.updateUserProfileWithValidation'
@@ -987,69 +986,13 @@ export class UsersService {
 
         cleanedData.phone = normalizedPhone as never;
 
-        // If the phone belongs to another incomplete account, transfer it.
-        if (isPhoneOwnedByAnotherUser && !existingPhoneUserProfileComplete) {
-          const currentPhoneRaw = existingUserRecord['phone'] as string | null;
-          const currentPhone = currentPhoneRaw ? normalizeAuthPhoneNumber(currentPhoneRaw) : null;
-          const currentClinicId =
-            typeof existingUserRecord['primaryClinicId'] === 'string'
-              ? (existingUserRecord['primaryClinicId'] as string)
-              : '';
-          const currentRole = existingUserRecord['role'] as Role;
-          await this.databaseService.executeHealthcareWrite(
-            async client => {
-              const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-                user: {
-                  update: (args: PrismaDelegateArgs) => Promise<unknown>;
-                };
-              };
-
-              await typedClient.user.update({
-                where: { id: existingPhoneUser.id },
-                data: {
-                  phone: null,
-                  phoneVerified: false,
-                  phoneVerifiedAt: null,
-                } as never,
-              } as PrismaDelegateArgs);
-
-              await typedClient.user.update({
-                where: { id },
-                data: {
-                  phone: normalizedPhone,
-                  ...(currentPhone !== normalizedPhone
-                    ? {
-                        phoneVerified: true,
-                        phoneVerifiedAt: new Date(),
-                      }
-                    : {}),
-                } as never,
-              } as PrismaDelegateArgs);
-            },
-            {
-              userId: id,
-              clinicId: currentClinicId,
-              resourceType: 'USER',
-              operation: 'UPDATE',
-              resourceId: id,
-              userRole: currentRole,
-              details: {
-                source: 'UsersService.update',
-                action: 'transfer_phone_from_incomplete_profile',
-                claimedPhone: normalizedPhone,
-                existingPhoneUserId: existingPhoneUser.id,
-              },
-            }
-          );
-        } else {
-          // Only reset phone verification if the phone number actually changed
-          // (compare normalized forms so "+91 7888..." vs "+917888..." don't wipe OTP verification)
-          const currentPhoneRaw = existingUserRecord['phone'] as string | null;
-          const currentPhone = currentPhoneRaw ? normalizeAuthPhoneNumber(currentPhoneRaw) : null;
-          if (currentPhone !== normalizedPhone) {
-            (cleanedData as Record<string, unknown>)['phoneVerified'] = false;
-            (cleanedData as Record<string, unknown>)['phoneVerifiedAt'] = null;
-          }
+        // Only reset phone verification if the phone number actually changed
+        // (compare normalized forms so "+91 7888..." vs "+917888..." don't wipe OTP verification)
+        const currentPhoneRaw = existingUserRecord['phone'] as string | null;
+        const currentPhone = currentPhoneRaw ? normalizeAuthPhoneNumber(currentPhoneRaw) : null;
+        if (currentPhone !== normalizedPhone) {
+          (cleanedData as Record<string, unknown>)['phoneVerified'] = false;
+          (cleanedData as Record<string, unknown>)['phoneVerifiedAt'] = null;
         }
       }
 

@@ -187,7 +187,12 @@ export class PharmacyController {
   async getPrescriptions(@Request() req: ClinicAuthenticatedRequest) {
     // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
     const clinicId = req.clinicContext?.clinicId;
-    return this.pharmacyService.findAllPrescriptions(clinicId);
+    // DOCTOR: only their own prescriptions. PHARMACIST / CLINIC_ADMIN keep the whole clinic.
+    const doctorUserId = req.user?.role === Role.DOCTOR ? req.user.sub : undefined;
+    return this.pharmacyService.findAllPrescriptions(
+      clinicId,
+      doctorUserId ? { doctorUserId } : undefined
+    );
   }
 
   @Get('prescriptions/queue')
