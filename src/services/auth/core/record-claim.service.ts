@@ -183,15 +183,26 @@ export class RecordClaimService {
   async claim(input: RecordClaimInput, actor: RecordClaimActor): Promise<RecordClaimResult> {
     try {
       this.requireSecondSecret(input);
-      const plan = await this.database.executeHealthcareRead(async client => {
-        const tx = client as unknown as RawTx;
-        const caller = await this.loadCaller(tx, actor.userId);
-        const phone = normalizeAuthPhoneNumber(caller.phone as string);
-        const clinicId = caller.primaryClinicId as string;
-        const candidate = await this.findSingleCandidate(tx, input, phone, clinicId, caller.id);
-        const callerPatientId = await this.loadOwnPatientId(tx, caller.id);
-        return { caller, phone, clinicId, candidate, callerPatientId };
-      });
+      // A refusal is an expected answer, not a database failure: it is carried out of the read as a
+      // value so the database layer does not log it as an error (and Sentry does not open an issue).
+      const outcome = await this.database.executeHealthcareRead(
+        async (client): Promise<{ plan: ClaimPlan } | { refusal: HealthcareError }> => {
+          try {
+            const tx = client as unknown as RawTx;
+            const caller = await this.loadCaller(tx, actor.userId);
+            const phone = normalizeAuthPhoneNumber(caller.phone as string);
+            const clinicId = caller.primaryClinicId as string;
+            const candidate = await this.findSingleCandidate(tx, input, phone, clinicId, caller.id);
+            const callerPatientId = await this.loadOwnPatientId(tx, caller.id);
+            return { plan: { caller, phone, clinicId, candidate, callerPatientId } };
+          } catch (error) {
+            if (error instanceof HealthcareError) return { refusal: error };
+            throw error;
+          }
+        }
+      );
+      if ('refusal' in outcome) throw outcome.refusal;
+      const { plan } = outcome;
 
       await this.merge(plan, actor);
       await this.dropCaches(plan);
