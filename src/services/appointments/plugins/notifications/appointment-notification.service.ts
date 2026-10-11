@@ -1156,10 +1156,10 @@ export class AppointmentNotificationService {
    * Get push notification body
    */
   private getPushBody(type: string, templateData: unknown): string {
-    const data = templateData as Record<string, unknown>;
+    void templateData;
     const bodies = {
-      reminder: `Your appointment with ${data['doctorName'] as string} is scheduled for ${data['appointmentDate'] as string} at ${data['appointmentTime'] as string}`,
-      confirmation: `Your appointment with ${data['doctorName'] as string} has been confirmed`,
+      reminder: 'You have an upcoming appointment. Open the app for details.',
+      confirmation: 'Your appointment has been confirmed. Open the app for details.',
       cancellation: `Your appointment has been cancelled`,
       expired: `Your appointment has expired`,
       reschedule: `Your appointment has been rescheduled`,

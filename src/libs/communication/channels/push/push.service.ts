@@ -8,6 +8,9 @@ import { DeviceTokenService } from '@communication/channels/push/device-token.se
 import type { PushNotificationData, PushNotificationResult } from '@core/types/notification.types';
 import { FirebaseGoogleClient } from '@communication/channels/firebase/firebase-google-client';
 
+/** Upper bound for a single Expo Push API call so a slow provider cannot stall callers. */
+const EXPO_REQUEST_TIMEOUT_MS = 10_000;
+
 @Injectable()
 export class PushNotificationService implements OnModuleInit {
   private firebaseClient: FirebaseGoogleClient | null = null;
@@ -79,6 +82,10 @@ export class PushNotificationService implements OnModuleInit {
     notification: PushNotificationData,
     userId?: string
   ): Promise<PushNotificationResult> {
+    if (this.isExpoPushToken(deviceToken)) {
+      return this.sendViaExpo(deviceToken, notification, userId);
+    }
+
     const fcmResult = await this.sendViaFCM(deviceToken, notification, userId);
 
     if (fcmResult.success) {
@@ -146,6 +153,85 @@ export class PushNotificationService implements OnModuleInit {
     };
   }
 
+  private isExpoPushToken(deviceToken: string): boolean {
+    return deviceToken.startsWith('ExponentPushToken[') || deviceToken.startsWith('ExpoPushToken[');
+  }
+
+  private async sendViaExpo(
+    deviceToken: string,
+    notification: PushNotificationData,
+    userId?: string
+  ): Promise<PushNotificationResult> {
+    try {
+      const response = await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          to: deviceToken,
+          title: notification.title,
+          body: notification.body,
+          ...(notification.data ? { data: this.normalizeData(notification.data) } : {}),
+          sound: 'default',
+          priority: 'high',
+          channelId: 'default',
+        }),
+        signal: AbortSignal.timeout(EXPO_REQUEST_TIMEOUT_MS),
+      });
+
+      const result = (await response.json()) as {
+        data?: {
+          status?: 'ok' | 'error';
+          id?: string;
+          message?: string;
+          details?: { error?: string };
+        };
+        errors?: Array<{ message?: string }>;
+      };
+      const ticket = result.data;
+      const ticketError = ticket?.details?.error || ticket?.message || result.errors?.[0]?.message;
+
+      if (!response.ok || !ticket || ticket.status === 'error') {
+        if (ticket?.details?.error === 'DeviceNotRegistered') {
+          await this.deviceTokenService?.deactivateDeviceToken(deviceToken, userId);
+        }
+        return {
+          success: false,
+          error: ticketError || `Expo push service returned HTTP ${response.status}`,
+        };
+      }
+
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.INFO,
+        'Push notification accepted by Expo Push Service',
+        'PushNotificationService',
+        {
+          ticketId: ticket.id,
+          deviceToken: this.maskToken(deviceToken),
+          title: notification.title,
+          userId,
+        }
+      );
+
+      return {
+        success: true,
+        ...(ticket.id ? { messageId: ticket.id } : {}),
+        provider: 'expo',
+        usedFallback: false,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Expo push service request failed',
+        provider: 'expo',
+        usedFallback: false,
+      };
+    }
+  }
+
   private async sendViaFCM(
     deviceToken: string,
     notification: PushNotificationData,
@@ -156,16 +242,17 @@ export class PushNotificationService implements OnModuleInit {
     }
 
     try {
+      const data = this.normalizeData(notification.data);
       const message = {
         token: deviceToken,
         notification: {
           title: notification.title,
           body: notification.body,
         },
-        data: notification.data || {},
+        data,
         android: {
           notification: {
-            channelId: 'healthcare_notifications',
+            channelId: 'default',
             priority: 'high' as const,
           },
         },
@@ -185,10 +272,7 @@ export class PushNotificationService implements OnModuleInit {
             badge: '/badge-72x72.png',
           },
           fcmOptions: {
-            link:
-              notification.data && 'link' in notification.data
-                ? String(notification.data['link'])
-                : '/', // Deep link from data payload
+            link: data['link'] ? data['link'] : '/', // Deep link from data payload
           },
         },
       };
@@ -212,13 +296,18 @@ export class PushNotificationService implements OnModuleInit {
 
       return { success: true, messageId: response };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      if (this.isUnregisteredTokenError(errorMessage)) {
+        await this.deviceTokenService?.deactivateDeviceToken(deviceToken, userId);
+      }
+
       void this.loggingService.log(
         LogType.NOTIFICATION,
         LogLevel.ERROR,
         'Failed to send push notification via FCM',
         'PushNotificationService',
         {
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: errorMessage,
           stack: error instanceof Error ? error.stack : undefined,
           deviceToken: this.maskToken(deviceToken),
           title: notification.title,
@@ -230,7 +319,7 @@ export class PushNotificationService implements OnModuleInit {
 
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: errorMessage,
       };
     }
   }
@@ -247,14 +336,18 @@ export class PushNotificationService implements OnModuleInit {
       };
     }
 
-    let platform: 'ios' | 'android' = 'android';
+    let platform: 'ios' | 'android' | 'web' = 'android';
 
     if (this.deviceTokenService && userId) {
       const userTokens = this.deviceTokenService.getUserTokens(userId);
       const tokenData = userTokens.find(token => token.token === deviceToken);
       if (tokenData) {
-        platform = tokenData.platform === 'ios' ? 'ios' : 'android';
+        platform = tokenData.platform;
       }
+    }
+
+    if (platform === 'web') {
+      return { success: false, error: 'SNS backup does not support web push tokens' };
     }
 
     if (platform === 'android' && deviceToken.length > 100) {
@@ -281,19 +374,9 @@ export class PushNotificationService implements OnModuleInit {
     deviceTokens: string[],
     notification: PushNotificationData
   ): Promise<PushNotificationResult> {
-    if (!this.isInitialized || !this.firebaseClient) {
-      void this.loggingService.log(
-        LogType.NOTIFICATION,
-        LogLevel.WARN,
-        'Push notification service is not initialized, skipping notification',
-        'PushNotificationService'
-      );
-      return { success: false, error: 'Service not initialized' };
-    }
-
     try {
       const responses = await Promise.all(
-        deviceTokens.map(token => this.sendViaFCM(token, notification))
+        deviceTokens.map(token => this.sendToDevice(token, notification))
       );
       let successCount = 0;
       let failureCount = 0;
@@ -340,46 +423,15 @@ export class PushNotificationService implements OnModuleInit {
         });
       }
 
-      if (failureCount > 0 && this.snsBackupService?.isHealthy()) {
-        const failedTokens: string[] = [];
-        responses.forEach((resp, idx) => {
-          if (!resp.success && deviceTokens[idx]) {
-            failedTokens.push(deviceTokens[idx] || '');
-          }
-        });
-
-        // Retry failed tokens with SNS
-        for (const failedToken of failedTokens) {
-          try {
-            const snsResult = await this.sendViaSNS(failedToken, notification);
-            if (snsResult.success) {
-              successCount++;
-              failureCount--;
-            }
-          } catch (error) {
-            // Log but don't fail - individual token failures are expected
-            void this.loggingService.log(
-              LogType.NOTIFICATION,
-              LogLevel.DEBUG,
-              'SNS fallback failed for individual token',
-              'PushNotificationService',
-              {
-                deviceToken: this.maskToken(failedToken),
-                error: error instanceof Error ? error.message : 'Unknown error',
-                initiatorId: notification.initiatorId,
-                initiatorRole: notification.initiatorRole,
-              }
-            );
-          }
-        }
-      }
-
       return {
         success: successCount > 0,
         successCount,
         failureCount,
-        provider: 'fcm',
-        usedFallback: successCount > responses.filter(resp => resp.success).length,
+        provider:
+          Array.from(new Set(responses.map(response => response.provider).filter(Boolean))).join(
+            ','
+          ) || 'none',
+        usedFallback: responses.some(response => response.usedFallback === true),
         results: responses.map(resp => ({
           success: resp.success,
           ...(resp.messageId ? { messageId: resp.messageId } : {}),
@@ -424,16 +476,17 @@ export class PushNotificationService implements OnModuleInit {
     }
 
     try {
+      const data = this.normalizeData(notification.data);
       const message = {
         topic: topic,
         notification: {
           title: notification.title,
           body: notification.body,
         },
-        data: notification.data || {},
+        data,
         android: {
           notification: {
-            channelId: 'healthcare_notifications',
+            channelId: 'default',
             priority: 'high' as const,
           },
         },
@@ -488,6 +541,10 @@ export class PushNotificationService implements OnModuleInit {
   }
 
   async subscribeToTopic(deviceToken: string, topic: string): Promise<boolean> {
+    if (this.isExpoPushToken(deviceToken)) {
+      return false;
+    }
+
     if (!this.isInitialized || !this.firebaseClient) {
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -530,6 +587,10 @@ export class PushNotificationService implements OnModuleInit {
   }
 
   async unsubscribeFromTopic(deviceToken: string, topic: string): Promise<boolean> {
+    if (this.isExpoPushToken(deviceToken)) {
+      return false;
+    }
+
     if (!this.isInitialized || !this.firebaseClient) {
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -574,6 +635,22 @@ export class PushNotificationService implements OnModuleInit {
   private maskToken(token: string): string {
     if (!token || token.length < 10) return 'INVALID_TOKEN';
     return `${token.substring(0, 6)}...${token.substring(token.length - 4)}`;
+  }
+
+  private normalizeData(data?: Record<string, string>): Record<string, string> {
+    if (!data) return {};
+
+    return Object.fromEntries(
+      Object.entries(data)
+        .filter(([, value]) => value !== undefined && value !== null)
+        .map(([key, value]) => [key, String(value)])
+    );
+  }
+
+  private isUnregisteredTokenError(error?: string): boolean {
+    return Boolean(
+      error && /UNREGISTERED|NOT_FOUND|registration-token-not-registered/i.test(error)
+    );
   }
 
   isHealthy(): boolean {
