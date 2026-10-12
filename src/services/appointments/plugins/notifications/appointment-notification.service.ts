@@ -899,9 +899,9 @@ export class AppointmentNotificationService {
 
     if (deviceTokens.length === 0) {
       await this.loggingService.log(
-        LogType.ERROR,
-        // Expected for patients who only use the web app; nothing to act on.
-        LogLevel.INFO,
+        LogType.NOTIFICATION,
+        // Expected for patients who only use the web app; nothing to act on, so it is not an error.
+        LogLevel.DEBUG,
         `Skipping push notification - no device tokens found`,
         'AppointmentNotificationService.sendPushNotification',
         {
