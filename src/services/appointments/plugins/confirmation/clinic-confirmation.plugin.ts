@@ -32,6 +32,9 @@ export class ClinicConfirmationPlugin extends BaseAppointmentPlugin {
   readonly features = ['qr-generation', 'check-in', 'confirmation', 'completion'];
 
   constructor(
+    // Named explicitly: left to the compiler's type metadata, this parameter resolved to the
+    // LoggingService in production, so completion silently fell back to a placeholder result.
+    @Inject(forwardRef(() => AppointmentConfirmationService))
     private readonly confirmationService: AppointmentConfirmationService,
     @Optional()
     @Inject(forwardRef(() => LoggingService))
