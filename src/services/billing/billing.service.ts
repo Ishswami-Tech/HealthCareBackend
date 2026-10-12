@@ -64,6 +64,13 @@ import {
   resolvePlanClinicId,
 } from '@services/billing/billing-subscription.store';
 import { BillingPaymentFinaliser } from '@services/billing/billing-payment-finaliser';
+import {
+  STALE_PENDING_BATCH_SIZE,
+  STALE_PENDING_LOCK_KEY,
+  STALE_PENDING_LOCK_TTL_SECONDS,
+  isAwaitingPayment,
+  staleWindow,
+} from '@services/billing/stale-payment-reconcile.util';
 import { applyRefundToSplit, computePayoutSplit } from '@services/billing/payout-split.util';
 import type {
   FinalisationOutcome,
@@ -5329,6 +5336,79 @@ export class BillingService implements OnModuleInit {
       );
       return 0;
     }
+  }
+
+  /**
+   * Cron: confirms bookings whose payment succeeded at the gateway but never reached us (a lost
+   * webhook, a patient who did not come back from the UPI app). Each pending payment is checked
+   * with the gateway itself (never trusted from us), and only a booking still waiting for its
+   * payment is confirmed; expired or cancelled ones are left to an admin.
+   */
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async reconcileStalePendingPayments(): Promise<number> {
+    const acquired = await this.cacheService.acquireLock(
+      STALE_PENDING_LOCK_KEY,
+      STALE_PENDING_LOCK_TTL_SECONDS
+    );
+    if (!acquired) {
+      return 0;
+    }
+    let confirmed = 0;
+    try {
+      const rows = await this.paymentStore.listStalePending({
+        ...staleWindow(new Date()),
+        limit: STALE_PENDING_BATCH_SIZE,
+      });
+      for (const row of rows) {
+        if (!row.appointmentId) {
+          continue;
+        }
+        try {
+          const appointment = await this.databaseService.findAppointmentByIdSafe(row.appointmentId);
+          if (!appointment || !isAwaitingPayment(String(appointment.status))) {
+            continue;
+          }
+          const provider = this.normalizePaymentProvider(this.asRecord(row.metadata)?.['provider']);
+          await this.manualReconcileAppointmentPayment(
+            row.clinicId,
+            row.appointmentId,
+            'system',
+            provider ? { provider } : {}
+          );
+          confirmed += 1;
+          await this.loggingService.log(
+            LogType.PAYMENT,
+            LogLevel.INFO,
+            'Paid booking confirmed by the pending-payment sweep',
+            'BillingService.reconcileStalePendingPayments',
+            { paymentId: row.id, appointmentId: row.appointmentId, clinicId: row.clinicId }
+          );
+        } catch (error) {
+          // "Not paid yet" is the normal answer for most rows; anything else is worth a warning.
+          if (!(error instanceof BadRequestException)) {
+            await this.loggingService.log(
+              LogType.PAYMENT,
+              LogLevel.WARN,
+              `Pending-payment sweep failed for one payment: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+              'BillingService.reconcileStalePendingPayments',
+              { paymentId: row.id, clinicId: row.clinicId }
+            );
+          }
+        }
+      }
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.ERROR,
+        `Pending-payment sweep failed: ${error instanceof Error ? error.message : String(error)}`,
+        'BillingService'
+      );
+    }
+    // The lock is not released: it expires just before the next tick, so a replica whose cron
+    // fires a moment later still sees it and skips.
+    return confirmed;
   }
 
   /** The doctor's configured fixed fee for this visit type in this clinic, or null if none. */
