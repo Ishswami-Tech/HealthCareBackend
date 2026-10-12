@@ -52,7 +52,7 @@ interface PaymentDelegate {
   findMany: (args: {
     where: WhereInput;
     take?: number;
-    orderBy?: { updatedAt: 'asc' | 'desc' };
+    orderBy?: { updatedAt?: 'asc' | 'desc'; createdAt?: 'asc' | 'desc' };
   }) => Promise<PaymentRow[]>;
   updateMany: (args: { where: WhereInput; data: WhereInput }) => Promise<UpdateManyResult>;
 }
@@ -135,6 +135,27 @@ export class BillingPaymentStore {
   }
 
   /** COMPLETED payments last touched inside [since, until] - candidates for a stalled finalisation. */
+  /** Booking payments still PENDING after `olderThan` but started after `newerThan`, oldest first. */
+  async listStalePending(args: {
+    olderThan: Date;
+    newerThan: Date;
+    limit: number;
+  }): Promise<PaymentRow[]> {
+    return this.database.executeHealthcareWrite(
+      async client =>
+        (client as unknown as StoreClient).payment.findMany({
+          where: {
+            status: 'PENDING',
+            appointmentId: { not: null },
+            createdAt: { gte: args.newerThan, lte: args.olderThan },
+          },
+          take: args.limit,
+          orderBy: { createdAt: 'asc' },
+        }),
+      this.audit('SYSTEM', 'PAYMENT', 'sweep', 'READ_STALE_PENDING', {}, true)
+    );
+  }
+
   async listRecentCompleted(args: {
     since: Date;
     until: Date;
