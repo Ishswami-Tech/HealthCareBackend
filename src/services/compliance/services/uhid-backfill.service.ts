@@ -1,5 +1,4 @@
-import { Injectable } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Injectable, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
@@ -8,6 +7,9 @@ import { UhidAllocatorService } from '@services/compliance/services/uhid-allocat
 
 /** Patients given a UHID per run, so one run stays short. */
 export const UHID_BACKFILL_BATCH_SIZE = 100;
+/** How often the sweep runs, and how long after start the first run is. */
+const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+const FIRST_RUN_DELAY_MS = 60 * 1000;
 const LOCK_KEY = 'lock:cron:compliance:uhid-backfill';
 /** Held just under the 5 minute schedule so two replicas do not both run a tick. */
 const LOCK_TTL_SECONDS = 240;
@@ -28,8 +30,10 @@ type RawClient = {
  * through the same allocator the register uses (one UHID per patient, never reused).
  */
 @Injectable()
-export class UhidBackfillService {
+export class UhidBackfillService implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly serviceName = 'UhidBackfillService';
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private firstRun: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly database: DatabaseService,
@@ -38,7 +42,22 @@ export class UhidBackfillService {
     private readonly logger: LoggingService
   ) {}
 
-  @Cron(CronExpression.EVERY_5_MINUTES)
+  /**
+   * A timer, not @Cron: crons fire only in the worker process, which does not load this module.
+   * The cache lock keeps several API instances from running the same tick.
+   */
+  onApplicationBootstrap(): void {
+    this.firstRun = setTimeout(() => void this.issueMissingUhids(), FIRST_RUN_DELAY_MS);
+    this.timer = setInterval(() => void this.issueMissingUhids(), SWEEP_INTERVAL_MS);
+    this.firstRun.unref();
+    this.timer.unref();
+  }
+
+  onApplicationShutdown(): void {
+    if (this.firstRun) clearTimeout(this.firstRun);
+    if (this.timer) clearInterval(this.timer);
+  }
+
   async issueMissingUhids(): Promise<number> {
     const acquired = await this.cache.acquireLock(LOCK_KEY, LOCK_TTL_SECONDS);
     if (!acquired) {
