@@ -6005,6 +6005,21 @@ export class BillingService implements OnModuleInit {
       );
 
       if (confirmationResult.count) {
+        // The normal settlement path prepares the doctor's payout (which the earnings report
+        // reads); without it a reconciled booking never showed in the doctor's earnings.
+        try {
+          await this.preparePayoutForAppointmentPayment(payment.id, clinicId);
+        } catch (error) {
+          await this.loggingService.log(
+            LogType.PAYMENT,
+            LogLevel.WARN,
+            `Failed to prepare payout after manual reconciliation: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            'BillingService.manualReconcileAppointmentPayment',
+            { clinicId, paymentId: payment.id, appointmentId }
+          );
+        }
         updatedAppointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
         void this.syncAppointmentAfterPayment({
           appointmentId,
