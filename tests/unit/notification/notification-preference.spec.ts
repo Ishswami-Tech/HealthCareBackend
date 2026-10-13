@@ -74,6 +74,15 @@ describe('NotificationPreferenceService.updatePreferences', () => {
     expect(result).toMatchObject({ userId: 'user-1', pushEnabled: false });
   });
 
+  it('creates the row when the cached read returns a value without an id', async () => {
+    const { service, databaseService } = harness({} as Record<string, unknown>);
+
+    await service.updatePreferences('user-1', { pushEnabled: false });
+
+    expect(databaseService.createNotificationPreferenceSafe).toHaveBeenCalled();
+    expect(databaseService.updateNotificationPreferenceSafe).not.toHaveBeenCalled();
+  });
+
   it('updates in place when the row exists', async () => {
     const { service, databaseService } = harness(storedRow());
 

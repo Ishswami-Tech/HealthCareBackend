@@ -118,7 +118,7 @@ export class NotificationPreferenceService {
   ): Promise<NotificationPreferenceResponseDto> {
     // Check if preferences already exist
     const existing = await this.databaseService.findNotificationPreferenceByUserIdSafe(data.userId);
-    if (existing) {
+    if (existing?.id) {
       throw new BadRequestException('Notification preferences already exist for this user');
     }
 
@@ -199,7 +199,9 @@ export class NotificationPreferenceService {
     data: UpdateNotificationPreferenceDto
   ): Promise<NotificationPreferenceResponseDto> {
     const existing = await this.databaseService.findNotificationPreferenceByUserIdSafe(userId);
-    if (!existing) {
+    // The cached read can hand back a truthy value that is not a stored row (no id); updating
+    // on that fails with Prisma P2025 (HEALTHCARE-BACKEND-1G), so only trust a row with an id.
+    if (!existing?.id) {
       // First save for a user who still has the implicit defaults (GET returns them with id '')
       // used to 404; an update on a missing row is an upsert.
       return this.createPreferences({ ...data, userId });
