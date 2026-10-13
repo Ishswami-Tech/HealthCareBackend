@@ -242,6 +242,8 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
       status?: unknown;
       statusCode?: unknown;
       code?: unknown;
+      /** HttpService wraps gateway failures in a HealthcareError and keeps the gateway status here. */
+      metadata?: { status?: unknown };
       cause?: {
         status?: unknown;
         statusCode?: unknown;
@@ -250,6 +252,7 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
     };
 
     const rawStatus =
+      candidate.metadata?.status ??
       candidate.response?.status ??
       candidate.response?.statusCode ??
       candidate.response?.data?.statusCode ??
