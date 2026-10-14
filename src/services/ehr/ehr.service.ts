@@ -537,6 +537,14 @@ export class EHRService {
     let createdPrescription: { id: string } | undefined;
     const medicationCount = data.medications?.length || 0;
 
+    // `data.userId` is the patient's USER id (that is what the appointment carries), but the
+    // Prescription and HealthRecord rows point at Patient.id. Writing the user id there broke the
+    // foreign key on every call, so no prescription or EHR note was ever saved this way.
+    const patient = await this.resolvePatient(data.userId, data.clinicId || undefined);
+    if (!patient) {
+      throw new BadRequestException('Patient not found for this prescription');
+    }
+
     // Audit execution as a single unit or transaction
     await this.databaseService.executeHealthcareWrite(
       async client => {
@@ -549,21 +557,22 @@ export class EHRService {
           prescriptionItem: { createMany: (args: { data: unknown[] }) => Promise<unknown> };
         };
 
-        // 1. Create a formal Prescription entry (Doctor -> Pharmacy Flow)
-        const prescription = await typedClient.prescription.create({
-          data: {
-            patientId: data.userId,
-            doctorId: data.doctorId || 'system',
-            clinicId: data.clinicId || '',
-            date: new Date(),
-            status: 'PENDING',
-            notes: data.notes || '',
-          } as PrismaDelegateArgs,
-        });
-        createdPrescription = prescription;
-
-        // 2. Create individual prescription items
+        // 1. Create a formal Prescription entry (Doctor -> Pharmacy Flow) only when there is
+        // something to dispense: an empty one would sit in the pharmacy queue for nothing.
         if (data.medications && data.medications.length > 0) {
+          const prescription = await typedClient.prescription.create({
+            data: {
+              patientId: patient.id,
+              doctorId: data.doctorId || 'system',
+              clinicId: data.clinicId || '',
+              date: new Date(),
+              status: 'PENDING',
+              notes: data.notes || '',
+            } as PrismaDelegateArgs,
+          });
+          createdPrescription = prescription;
+
+          // 2. Create individual prescription items
           const itemsData = data.medications.map(med => ({
             prescriptionId: prescription.id,
             clinicId: data.clinicId || '',
@@ -584,7 +593,7 @@ export class EHRService {
         // 3. Create a generic health record entry for the clinical findings (EHR)
         await typedClient.healthRecord.create({
           data: {
-            patientId: data.userId,
+            patientId: patient.id,
             doctorId: data.doctorId || 'system',
             clinicId: data.clinicId || '',
             recordType: 'PRESCRIPTION',
@@ -612,7 +621,7 @@ export class EHRService {
     await this.invalidateUserEHRCache(data.userId);
     await this.eventService.emit('ehr.prescription.created', {
       userId: data.userId,
-      patientId: data.userId,
+      patientId: patient.id,
       doctorId: data.doctorId || undefined,
       clinicId: data.clinicId || undefined,
       prescriptionId: createdPrescription?.id,
