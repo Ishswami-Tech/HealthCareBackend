@@ -15,6 +15,12 @@ import { ConfigService } from '@config/config.service';
 import { JwtService } from '@nestjs/jwt';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { IS_PUBLIC_KEY } from '@core/decorators/public.decorator';
+import {
+  buildAuthRateLimitKey,
+  resolveVerifiedUserId,
+  shouldCheckLockout,
+  shouldCountFailedAuthAttempt,
+} from '@core/guards/jwt-auth-guard.util';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogLevel, LogType } from '@core/types';
@@ -312,29 +318,49 @@ export class JwtAuthGuard implements CanActivate {
       // Get client info
       const clientIp = request.ip || (request.headers['x-forwarded-for'] as string) || 'unknown';
 
-      // Rate limiting and lockout status are both keyed off clientIp (not
-      // each other's result), so they can run concurrently instead of as 2
-      // sequential cache round-trips. Order of the *checks* below (rate
-      // limit error takes precedence over lockout error) is unchanged from
-      // before - only the fetching is now concurrent - and both still run
-      // regardless of whether a token is present, so a request with no
-      // token can't skip these protections for free.
+      // The token is verified before the throttle checks so the request rate limit can be
+      // keyed by the authenticated user: every web request reaches the API from the Next.js
+      // server's IP, so an IP key throttled (and locked out) all web users together. A missing
+      // or unverifiable token still shares the per-IP bucket and the per-IP lockout; its own
+      // error is raised only after those checks, so the precedence (rate limit, then lockout,
+      // then request validation, then the authentication error) is unchanged.
+      const token = this.extractTokenFromHeader(request);
+      let verifiedPayload: JwtPayload | null = null;
+      let tokenError: Error | null = null;
+      if (token) {
+        try {
+          verifiedPayload = await this.verifyToken(token);
+        } catch (error) {
+          tokenError =
+            error instanceof Error ? error : new UnauthorizedException('Token validation failed');
+        }
+      }
+      const verifiedUserId = resolveVerifiedUserId(verifiedPayload);
+
+      // Rate limiting and lockout status do not depend on each other's result, so they run
+      // concurrently instead of as 2 sequential cache round-trips.
       const isProduction =
         !this.configService.isDevelopment() && !this.configService.getEnvBoolean('DEV_MODE', false);
       const shouldCheckRateLimit = !!this.rateLimitService && !this.configService.isDevelopment();
-      const shouldCheckLockout =
-        isProduction &&
-        !!this.rateLimitService &&
-        !this.lockoutBypassPrefixPaths.some(prefix => path.startsWith(prefix));
+      const shouldCheckIpLockout = shouldCheckLockout({
+        isProduction,
+        hasRateLimitService: !!this.rateLimitService,
+        hasVerifiedToken: verifiedPayload !== null,
+        path,
+        bypassPrefixes: this.lockoutBypassPrefixPaths,
+      });
 
       const [rateLimitResult, lockoutStatus] = await Promise.all([
         shouldCheckRateLimit
-          ? this.rateLimitService.checkRateLimit(`${clientIp}:${path}`, {
-              windowMs: 60000, // 1 minute window
-              max: 60, // 60 requests per minute for auth endpoints
-            })
+          ? this.rateLimitService.checkRateLimit(
+              buildAuthRateLimitKey({ userId: verifiedUserId, clientIp, path }),
+              {
+                windowMs: 60000, // 1 minute window
+                max: 60, // 60 requests per minute for auth endpoints
+              }
+            )
           : Promise.resolve(null),
-        shouldCheckLockout ? this.checkLockoutStatus(clientIp) : Promise.resolve(null),
+        shouldCheckIpLockout ? this.checkLockoutStatus(clientIp) : Promise.resolve(null),
       ]);
 
       if (rateLimitResult && !rateLimitResult.allowed) {
@@ -377,14 +403,19 @@ export class JwtAuthGuard implements CanActivate {
       // Validate security headers and request integrity
       this.validateRequest(request);
 
-      const token = this.extractTokenFromHeader(request);
       if (!token) {
-        // await this.recordFailedAttempt(clientIp); // Removed (handled in catch block)
+        // Not counted as a failed attempt (handled in the catch block)
         throw new UnauthorizedException('No token provided');
       }
 
-      // Verify and decode JWT token
-      const payload: JwtPayload = await this.verifyToken(token);
+      // Raise the verification failure recorded above (verified before the throttle checks)
+      if (tokenError) {
+        throw tokenError;
+      }
+      if (!verifiedPayload) {
+        throw new UnauthorizedException('Invalid token');
+      }
+      const payload: JwtPayload = verifiedPayload;
       const userId = payload.sub || payload['id'];
 
       // findUserByIdSafe (deactivation/profile-completion source of truth)
@@ -1034,18 +1065,14 @@ export class JwtAuthGuard implements CanActivate {
       method: request.method ?? '',
     });
 
-    // Don't count token expiration or session availability issues as a failed attempt
-    // This prevents locking out users when multiple requests fail due to expiration/sync issues
-    if (
-      error.message.includes('Token has expired') ||
-      error.message.includes('Invalid session') ||
-      error.message.includes('Session ID is missing') ||
-      error.message.includes('No token provided')
-    ) {
+    // Only a genuine credential failure (forged, malformed or unverifiable token) counts
+    // towards the per-IP lockout. Expired/revoked/missing tokens, session problems of a
+    // verified user, ForbiddenException ('Profile Incomplete', RBAC, clinic) and request
+    // validation errors never do: the IP is shared by every web user behind the Next.js server.
+    if (!shouldCountFailedAuthAttempt(error)) {
       return;
     }
 
-    // Record failed attempt for other errors
     await this.recordFailedAttempt(clientIp);
 
     // Enhance error message if needed
