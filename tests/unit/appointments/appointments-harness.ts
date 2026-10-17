@@ -5,12 +5,36 @@
 import { jest, expect } from '@jest/globals';
 import { HttpException } from '@nestjs/common';
 import { AppointmentsService } from '@services/appointments/appointments.service';
+import { formatDateKeyInIST } from '@utils/date-time.util';
 import { FakeDb, createCacheStub, createErrors, createLoggingStub, type Row } from './test-helpers';
 
 export type { Row };
 
 export const CLINIC = 'clinic-1';
 export const OTHER_CLINIC = 'clinic-2';
+
+/**
+ * The fixture visit is always a week ahead of the clock (real or faked), so the time-window
+ * rules (video join window, 5-hour reschedule window) see a visit that has not started yet
+ * whatever day the suite runs on; specs that need a past or far-future visit override `date`.
+ */
+export const FIXTURE_DAYS_AHEAD = 7;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** 'YYYY-MM-DD' (IST calendar day) of the fixture visit, `daysAhead` days from now. */
+export function fixtureDateKey(daysAhead: number = FIXTURE_DAYS_AHEAD): string {
+  return formatDateKeyInIST(new Date(Date.now() + daysAhead * MS_PER_DAY));
+}
+
+/** IST midnight of the fixture day, the way the booking flow stores `date`. */
+export function fixtureDate(daysAhead: number = FIXTURE_DAYS_AHEAD): Date {
+  return new Date(`${fixtureDateKey(daysAhead)}T00:00:00.000+05:30`);
+}
+
+/** The instant of an IST wall-clock time ('HH:mm') on the fixture day. */
+export function fixtureInstant(time: string, daysAhead: number = FIXTURE_DAYS_AHEAD): Date {
+  return new Date(`${fixtureDateKey(daysAhead)}T${time}:00.000+05:30`);
+}
 
 export function appointmentRow(overrides: Row = {}): Row {
   return {
@@ -22,12 +46,13 @@ export function appointmentRow(overrides: Row = {}): Row {
     type: 'IN_PERSON',
     status: 'IN_PROGRESS',
     locationId: 'loc-1',
-    date: new Date('2026-10-05T00:00:00.000+05:30'),
+    date: fixtureDate(),
     time: '10:00',
     duration: 30,
     metadata: {},
     completedAt: null,
-    checkedInAt: new Date('2026-10-05T04:00:00.000Z'),
+    // Checked in half an hour before the 10:00 slot.
+    checkedInAt: fixtureInstant('09:30'),
     doctor: { id: 'doctor-1', userId: 'user-doctor' },
     payment: null,
     ...overrides,

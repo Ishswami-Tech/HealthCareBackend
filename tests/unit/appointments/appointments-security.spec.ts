@@ -18,6 +18,7 @@ import {
   OTHER_CLINIC,
   appointmentRow,
   buildHarness,
+  fixtureInstant,
   paidVideoRow,
   rejection,
 } from './appointments-harness';
@@ -75,7 +76,7 @@ describe('AppointmentsService.completeAppointment', () => {
   it('an already COMPLETED appointment is an idempotent success without re-emitting anything', async () => {
     harness.db.insert(
       'appointment',
-      appointmentRow({ status: 'COMPLETED', completedAt: new Date('2026-10-05T05:00:00.000Z') })
+      appointmentRow({ status: 'COMPLETED', completedAt: fixtureInstant('10:30') })
     );
 
     const result = (await complete(Role.DOCTOR)) as { success: boolean; data: Row };
