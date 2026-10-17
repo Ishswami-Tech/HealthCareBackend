@@ -2877,18 +2877,24 @@ export class AppointmentsController {
     const clinicId = req.clinicContext?.clinicId || '';
 
     try {
-      const doctorId =
-        bulkDto.doctorId ||
-        (req.user?.role === 'DOCTOR' || req.user?.role === 'ASSISTANT_DOCTOR'
-          ? ((await this.appointmentService.resolveDoctorEntityId(userId, clinicId)) ?? undefined)
-          : undefined);
+      // A doctor always acts as themselves: the body's doctorId is ignored and the Doctor
+      // entity is resolved from the authenticated user. Admin roles may name a doctor.
+      const isDoctorRole = req.user?.role === 'DOCTOR' || req.user?.role === 'ASSISTANT_DOCTOR';
+      const doctorId = isDoctorRole
+        ? ((await this.appointmentService.resolveDoctorEntityId(userId, clinicId)) ?? undefined)
+        : bulkDto.doctorId;
+      const { doctorId: _ignoredDoctorId, ...bulkDtoWithoutDoctor } = bulkDto;
+      const effectiveBulkDto: BulkCompleteAppointmentDto = {
+        ...bulkDtoWithoutDoctor,
+        ...(doctorId && { doctorId }),
+      };
 
       const result = (await this.appointmentService.bulkCompleteSelectedAppointments(
         {
           clinicId,
           ...(doctorId && { doctorId }),
         },
-        bulkDto,
+        effectiveBulkDto,
         userId,
         clinicId,
         req.user?.role || 'USER'
@@ -2901,7 +2907,7 @@ export class AppointmentsController {
         context,
         {
           clinicId,
-          doctorId: bulkDto.doctorId || userId,
+          doctorId: doctorId ?? userId,
           completed: result.data?.completed,
           failed: result.data?.failed,
           responseTime: Date.now() - startTime,
