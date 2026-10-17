@@ -270,17 +270,17 @@ export class DoctorsService {
     if (hasFees && !isAdmin) {
       throw new ForbiddenException('Only an admin can set what a doctor earns');
     }
-    // The patient-facing prices are clinic pricing too, so a doctor cannot set their own.
+    // The patient-facing prices are clinic pricing too, so a doctor cannot change their own.
+    // Older clients resend the whole profile, so an unchanged price is ignored, not refused.
     const hasPrices = data.consultationFee !== undefined || data.videoConsultationFee !== undefined;
-    if (hasPrices && !isAdmin) {
-      throw new ForbiddenException('Only an admin can set consultation prices');
-    }
+    const profileData =
+      hasPrices && !isAdmin ? await this.withoutUnchangedPrices(targetUserId, data) : data;
     await this.assertCanEditProfile(targetUserId, actor);
     if (hasFees && !actor.clinicId) {
       throw new BadRequestException('Clinic context is required to set doctor fees');
     }
     const result = await this.createOrUpdateDoctor({
-      ...data,
+      ...profileData,
       userId: targetUserId,
       ...(actor.clinicId ? { clinicId: actor.clinicId } : {}),
     });
@@ -288,6 +288,36 @@ export class DoctorsService {
       await this.saveDoctorFees(targetUserId, actor.clinicId, actor, fees);
     }
     return { ...result, profile: await this.getDoctorProfile(targetUserId) };
+  }
+
+  /**
+   * A non-admin may not change consultation prices: a sent price that differs from the stored
+   * one is refused (403); a price equal to the stored one is dropped from the update.
+   */
+  private async withoutUnchangedPrices(
+    targetUserId: string,
+    data: DoctorProfileFieldsInput
+  ): Promise<DoctorProfileFieldsInput> {
+    const stored = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return (await typedClient.doctor.findUnique({
+        where: { userId: targetUserId } as PrismaDelegateArgs,
+        select: { consultationFee: true, videoConsultationFee: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as unknown as {
+        consultationFee?: number | null;
+        videoConsultationFee?: number | null;
+      } | null;
+    });
+    const unchanged = (sent: number | undefined, current: number | null | undefined): boolean =>
+      sent === undefined || (current != null && Number(current) === Number(sent));
+    if (
+      !unchanged(data.consultationFee, stored?.consultationFee) ||
+      !unchanged(data.videoConsultationFee, stored?.videoConsultationFee)
+    ) {
+      throw new ForbiddenException('Only an admin can set consultation prices');
+    }
+    const { consultationFee: _consultationFee, videoConsultationFee: _videoFee, ...rest } = data;
+    return rest;
   }
 
   /** Stores the doctor's fixed fees for this clinic. Affects only payments made afterwards. */

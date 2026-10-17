@@ -259,6 +259,46 @@ describe('DoctorsService.updateDoctorProfile consultation prices', () => {
     }
   });
 
+  it('ignores prices a doctor resends unchanged (older clients send the whole profile)', async () => {
+    const { service, tx } = build();
+    tx.doctor.findUnique.mockResolvedValue({
+      id: 'd1',
+      consultationFee: 700,
+      videoConsultationFee: 499,
+    });
+    jest.spyOn(service, 'getDoctorProfile').mockResolvedValue({ id: 'u1' } as never);
+    await service.updateDoctorProfile(
+      'u1',
+      { userId: 'u1', role: 'DOCTOR', clinicId: 'c1' },
+      { consultationFee: 700, videoConsultationFee: 499, languages: ['Hindi'] }
+    );
+    expect(tx.doctor.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { languages: ['Hindi'] } })
+    );
+  });
+
+  it('still refuses a doctor whose resent price differs from the stored one', async () => {
+    const { service, tx } = build();
+    tx.doctor.findUnique.mockResolvedValue({ id: 'd1', consultationFee: 700 });
+    await expect(
+      service.updateDoctorProfile(
+        'u1',
+        { userId: 'u1', role: 'DOCTOR', clinicId: 'c1' },
+        { consultationFee: 750 }
+      )
+    ).rejects.toThrow('Only an admin can set consultation prices');
+    // No stored price yet: sending one is setting it.
+    tx.doctor.findUnique.mockResolvedValue({ id: 'd1', consultationFee: null });
+    await expect(
+      service.updateDoctorProfile(
+        'u1',
+        { userId: 'u1', role: 'DOCTOR', clinicId: 'c1' },
+        { consultationFee: 0 }
+      )
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(tx.doctor.update).not.toHaveBeenCalled();
+  });
+
   it('still lets a doctor edit non-price fields of their own profile', async () => {
     const { service, tx } = build();
     tx.doctor.findUnique.mockResolvedValue({ id: 'd1' });
