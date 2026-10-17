@@ -255,7 +255,8 @@ export class DoctorsService {
   /**
    * Partial profile update. A DOCTOR may edit only their own profile; a CLINIC_ADMIN only
    * doctors assigned to their clinic; SUPER_ADMIN any doctor. `targetUserId` is the doctor's
-   * User id (same identifier as GET /doctors/:id).
+   * User id (same identifier as GET /doctors/:id). Money fields (what the patient pays and
+   * what the doctor earns) are admin-only.
    */
   async updateDoctorProfile(
     targetUserId: string,
@@ -263,10 +264,16 @@ export class DoctorsService {
     data: DoctorProfileFieldsInput,
     fees: DoctorFeeSplitInput = {}
   ) {
+    const isAdmin = actor.role === 'SUPER_ADMIN' || actor.role === 'CLINIC_ADMIN';
     const hasFees = fees.videoDoctorFee !== undefined || fees.inPersonDoctorFee !== undefined;
     // What a doctor earns is set by an admin, never by the doctor themselves.
-    if (hasFees && actor.role !== 'SUPER_ADMIN' && actor.role !== 'CLINIC_ADMIN') {
+    if (hasFees && !isAdmin) {
       throw new ForbiddenException('Only an admin can set what a doctor earns');
+    }
+    // The patient-facing prices are clinic pricing too, so a doctor cannot set their own.
+    const hasPrices = data.consultationFee !== undefined || data.videoConsultationFee !== undefined;
+    if (hasPrices && !isAdmin) {
+      throw new ForbiddenException('Only an admin can set consultation prices');
     }
     await this.assertCanEditProfile(targetUserId, actor);
     if (hasFees && !actor.clinicId) {

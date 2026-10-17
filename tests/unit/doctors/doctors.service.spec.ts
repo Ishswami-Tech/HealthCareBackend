@@ -232,6 +232,63 @@ describe('DoctorsService.updateDoctorProfile earning fees', () => {
   });
 });
 
+describe('DoctorsService.updateDoctorProfile consultation prices', () => {
+  it('forbids a doctor setting the in-person price on their own profile', async () => {
+    const { service, tx } = build();
+    await expect(
+      service.updateDoctorProfile(
+        'u1',
+        { userId: 'u1', role: 'DOCTOR', clinicId: 'c1' },
+        { consultationFee: 700 }
+      )
+    ).rejects.toThrow('Only an admin can set consultation prices');
+    expect(tx.doctor.update).not.toHaveBeenCalled();
+  });
+
+  it('forbids a doctor or assistant doctor setting the video price', async () => {
+    for (const role of ['DOCTOR', 'ASSISTANT_DOCTOR']) {
+      const { service, tx } = build();
+      await expect(
+        service.updateDoctorProfile(
+          'u1',
+          { userId: 'u1', role, clinicId: 'c1' },
+          { videoConsultationFee: 499 }
+        )
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(tx.doctor.update).not.toHaveBeenCalled();
+    }
+  });
+
+  it('still lets a doctor edit non-price fields of their own profile', async () => {
+    const { service, tx } = build();
+    tx.doctor.findUnique.mockResolvedValue({ id: 'd1' });
+    jest.spyOn(service, 'getDoctorProfile').mockResolvedValue({ id: 'u1' } as never);
+    await service.updateDoctorProfile(
+      'u1',
+      { userId: 'u1', role: 'DOCTOR', clinicId: 'c1' },
+      { languages: ['Marathi'] }
+    );
+    expect(tx.doctor.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { languages: ['Marathi'] } })
+    );
+  });
+
+  it('lets a clinic admin set both prices for a doctor of their clinic', async () => {
+    const { service, tx } = build();
+    tx.doctorClinic.findFirst.mockResolvedValue({ doctorId: 'd1' });
+    tx.doctor.findUnique.mockResolvedValue({ id: 'd1' });
+    jest.spyOn(service, 'getDoctorProfile').mockResolvedValue({ id: 'u1' } as never);
+    await service.updateDoctorProfile(
+      'u1',
+      { userId: 'a1', role: 'CLINIC_ADMIN', clinicId: 'c1' },
+      { consultationFee: 700, videoConsultationFee: 499 }
+    );
+    expect(tx.doctor.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { consultationFee: 700, videoConsultationFee: 499 } })
+    );
+  });
+});
+
 describe('DoctorsService reviews', () => {
   const input = { appointmentId: 'a1', rating: 5, comment: ' great ' };
 
