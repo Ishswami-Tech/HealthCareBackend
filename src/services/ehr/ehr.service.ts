@@ -536,6 +536,11 @@ export class EHRService {
   async createPrescription(data: CreatePrescriptionDto): Promise<void> {
     let createdPrescription: { id: string } | undefined;
     const medicationCount = data.medications?.length || 0;
+    const hasMedications = medicationCount > 0;
+    const hasClinicalNote = Boolean(data.diagnosis?.trim() || data.notes?.trim());
+    if (!hasMedications && !hasClinicalNote) {
+      throw new BadRequestException('A prescription needs medications or a diagnosis / notes');
+    }
 
     // `data.userId` is the patient's USER id (that is what the appointment carries), but the
     // Prescription and HealthRecord rows point at Patient.id. Writing the user id there broke the
@@ -557,21 +562,25 @@ export class EHRService {
           prescriptionItem: { createMany: (args: { data: unknown[] }) => Promise<unknown> };
         };
 
-        // 1. Create a formal Prescription entry (Doctor -> Pharmacy Flow) only when there is
-        // something to dispense: an empty one would sit in the pharmacy queue for nothing.
-        if (data.medications && data.medications.length > 0) {
-          const prescription = await typedClient.prescription.create({
-            data: {
-              patientId: patient.id,
-              doctorId: data.doctorId || 'system',
-              clinicId: data.clinicId || '',
-              date: new Date(),
-              status: 'PENDING',
-              notes: data.notes || '',
-            } as PrismaDelegateArgs,
-          });
-          createdPrescription = prescription;
+        // 1. Create the formal Prescription entry. It is what the patient's prescription
+        // history (GET /ehr/comprehensive `prescriptions`, patient-readable) lists, so a
+        // note-only prescription (diagnosis / advice, no medications) gets one too. With
+        // nothing to dispense it is FILLED from the start (the same status the dispense flow
+        // derives for an item-less prescription), so it never waits in the pharmacy queue.
+        const prescription = await typedClient.prescription.create({
+          data: {
+            patientId: patient.id,
+            doctorId: data.doctorId || 'system',
+            clinicId: data.clinicId || '',
+            date: new Date(),
+            status: hasMedications ? 'PENDING' : 'FILLED',
+            ...(data.diagnosis?.trim() ? { diagnosis: data.diagnosis.trim() } : {}),
+            notes: data.notes || '',
+          } as PrismaDelegateArgs,
+        });
+        createdPrescription = prescription;
 
+        if (data.medications && data.medications.length > 0) {
           // 2. Create individual prescription items
           const itemsData = data.medications.map(med => ({
             prescriptionId: prescription.id,
