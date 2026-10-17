@@ -81,18 +81,55 @@ export const MEDICINE_TYPE_INPUT_VALUES: string[] = [
 ];
 
 /**
+ * Dosage forms of the classical Ayurvedic pharmacopoeia. A medicine created with only one of
+ * these forms is a CLASSICAL preparation by default; every other form defaults to PROPRIETARY.
+ */
+export const CLASSICAL_DOSAGE_FORMS: ReadonlySet<string> = new Set<string>([
+  MedicineType.CHURNA,
+  MedicineType.KASHAYAM,
+  MedicineType.ARISHTA,
+  MedicineType.ASAVA,
+  MedicineType.AVALEHA,
+  MedicineType.GHRITA,
+  MedicineType.LEPA,
+  MedicineType.VATI,
+  MedicineType.BHASMA,
+  MedicineType.GUTIKA,
+  MedicineType.PARPATI,
+  MedicineType.PISHTEE,
+  MedicineType.SWARASA,
+  MedicineType.YAVKUT_KWATH,
+]);
+
+/** Classification a newly created medicine gets when the caller only named its dosage form. */
+export function defaultClassificationForForm(form: string): MedicineClassification {
+  return CLASSICAL_DOSAGE_FORMS.has(form)
+    ? MedicineClassification.CLASSICAL
+    : MedicineClassification.PROPRIETARY;
+}
+
+/** Whether the `type` field is being resolved for a new medicine or an edit of an existing one. */
+export type MedicineTypeIntent = 'create' | 'update';
+
+/**
  * `type` mapping (documented contract):
- * - CLASSICAL | PROPRIETARY | HERBAL  -> stored as `Medicine.type` as-is.
- * - TABLET | SYRUP | CAPSULE | INJECTION | CREAM | DROPS | OTHER (dosage forms the web
- *   sends) -> stored in `Medicine.category`; `Medicine.type` becomes PROPRIETARY (a
- *   packaged dosage form) unless an explicit classification is also given.
+ * - CLASSICAL | PROPRIETARY | HERBAL -> stored as `Medicine.type` as-is.
+ * - A dosage form (TABLET, SYRUP, CHURNA, VATI, ... OTHER) -> stored in `Medicine.category`.
+ *   - On CREATE `Medicine.type` defaults to CLASSICAL for the classical Ayurvedic forms
+ *     (see CLASSICAL_DOSAGE_FORMS) and to PROPRIETARY otherwise, unless an explicit
+ *     `classification` is also given.
+ *   - On UPDATE a dosage form changes only `category`; `Medicine.type` changes only through
+ *     `classification` (or a classification value sent as `type`).
  * Anything else is rejected by the DTO validation with a 400.
  */
-export function resolveMedicineTypeInput(input: {
-  type?: string | undefined;
-  classification?: string | undefined;
-  category?: string | undefined;
-}): { type?: MedicineClassification; category?: string } {
+export function resolveMedicineTypeInput(
+  input: {
+    type?: string | undefined;
+    classification?: string | undefined;
+    category?: string | undefined;
+  },
+  intent: MedicineTypeIntent = 'create'
+): { type?: MedicineClassification; category?: string } {
   const classifications: string[] = Object.values(MedicineClassification);
   const forms: string[] = Object.values(MedicineType);
   const normalise = (value: string | undefined): string | undefined =>
@@ -111,10 +148,12 @@ export function resolveMedicineTypeInput(input: {
     type = rawType as MedicineClassification;
   } else if (rawType && forms.includes(rawType)) {
     category = rawType;
-    type = type ?? MedicineClassification.PROPRIETARY;
   }
   if (rawCategory && forms.includes(rawCategory)) {
     category = rawCategory;
+  }
+  if (intent === 'create' && !type && category) {
+    type = defaultClassificationForForm(category);
   }
   return {
     ...(type ? { type } : {}),

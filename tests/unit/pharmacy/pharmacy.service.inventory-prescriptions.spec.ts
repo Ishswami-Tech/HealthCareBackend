@@ -185,7 +185,7 @@ describe('medicine type mapping + DTO validation', () => {
 });
 
 describe('PharmacyService inventory edit / soft delete', () => {
-  it('edits the widened fields, maps type and writes an audit with the caller id', async () => {
+  it('edits the widened fields, maps a dosage form to category only and writes an audit with the caller id', async () => {
     const h = createHarness();
     h.client['medicine']!['findUnique']!.mockResolvedValue(medicineRow());
 
@@ -211,9 +211,10 @@ describe('PharmacyService inventory edit / soft delete', () => {
     );
 
     const call = h.client['medicine']!['update']!.mock.calls[0]![0] as { data: Row };
+    // A dosage form never rewrites the classification of an existing medicine.
+    expect(call.data['type']).toBeUndefined();
     expect(call.data).toMatchObject({
       name: 'Para 650',
-      type: 'PROPRIETARY',
       category: 'SYRUP',
       manufacturer: 'Acme',
       unit: 'bottle',

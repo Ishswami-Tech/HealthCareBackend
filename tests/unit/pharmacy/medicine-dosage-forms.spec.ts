@@ -1,10 +1,30 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  CLASSICAL_DOSAGE_FORMS,
   MEDICINE_TYPE_INPUT_VALUES,
   MedicineType,
+  defaultClassificationForForm,
   normaliseMedicineTypeToken,
   resolveMedicineTypeInput,
 } from '../../../src/libs/dtos/pharmacy.dto';
+
+/** Forms that default to CLASSICAL on create (the documented contract). */
+const CLASSICAL_FORMS = [
+  'CHURNA',
+  'KASHAYAM',
+  'ARISHTA',
+  'ASAVA',
+  'AVALEHA',
+  'GHRITA',
+  'LEPA',
+  'VATI',
+  'BHASMA',
+  'GUTIKA',
+  'PARPATI',
+  'PISHTEE',
+  'SWARASA',
+  'YAVKUT_KWATH',
+];
 
 const AYURVEDIC_FORMS = [
   'BHASMA',
@@ -56,15 +76,33 @@ describe('medicine dosage forms', () => {
     expect(normaliseMedicineTypeToken(undefined)).toBeUndefined();
   });
 
-  it('stores a dosage form as the category and a packaged medicine as PROPRIETARY', () => {
+  it('on create, stores a dosage form as the category and defaults the classification by form', () => {
     expect(resolveMedicineTypeInput({ type: 'Churna' })).toEqual({
-      type: 'PROPRIETARY',
+      type: 'CLASSICAL',
       category: 'CHURNA',
     });
-    expect(resolveMedicineTypeInput({ type: 'Yavkut Kwath' })).toEqual({
-      type: 'PROPRIETARY',
+    expect(resolveMedicineTypeInput({ type: 'Yavkut Kwath' }, 'create')).toEqual({
+      type: 'CLASSICAL',
       category: 'YAVKUT_KWATH',
     });
+    expect(resolveMedicineTypeInput({ type: 'TABLET' }, 'create')).toEqual({
+      type: 'PROPRIETARY',
+      category: 'TABLET',
+    });
+  });
+
+  it('defaults exactly the classical Ayurvedic forms to CLASSICAL and every other form to PROPRIETARY', () => {
+    expect([...CLASSICAL_DOSAGE_FORMS].sort()).toEqual([...CLASSICAL_FORMS].sort());
+    for (const form of Object.values(MedicineType)) {
+      const expected = CLASSICAL_FORMS.includes(form) ? 'CLASSICAL' : 'PROPRIETARY';
+      expect(defaultClassificationForForm(form)).toBe(expected);
+      expect(resolveMedicineTypeInput({ type: form }, 'create')).toEqual({
+        type: expected,
+        category: form,
+      });
+    }
+    // GRANULE, GEL, OIL, ... are packaged forms, not classical preparations.
+    expect(defaultClassificationForForm('GRANULE')).toBe('PROPRIETARY');
   });
 
   it('keeps an explicit classification next to a dosage form', () => {
@@ -72,10 +110,33 @@ describe('medicine dosage forms', () => {
       type: 'CLASSICAL',
       category: 'VATI',
     });
+    expect(resolveMedicineTypeInput({ type: 'CHURNA', classification: 'HERBAL' })).toEqual({
+      type: 'HERBAL',
+      category: 'CHURNA',
+    });
+  });
+
+  it('on update, a dosage form changes only the category and never the classification', () => {
+    expect(resolveMedicineTypeInput({ type: 'CHURNA' }, 'update')).toEqual({ category: 'CHURNA' });
+    expect(resolveMedicineTypeInput({ type: 'Syrup' }, 'update')).toEqual({ category: 'SYRUP' });
+    expect(resolveMedicineTypeInput({ category: 'VATI' }, 'update')).toEqual({ category: 'VATI' });
+  });
+
+  it('on update, the classification changes only through classification or a classification type', () => {
+    expect(resolveMedicineTypeInput({ type: 'SYRUP', classification: 'HERBAL' }, 'update')).toEqual(
+      { type: 'HERBAL', category: 'SYRUP' }
+    );
+    expect(resolveMedicineTypeInput({ classification: 'classical' }, 'update')).toEqual({
+      type: 'CLASSICAL',
+    });
+    expect(resolveMedicineTypeInput({ type: 'PROPRIETARY' }, 'update')).toEqual({
+      type: 'PROPRIETARY',
+    });
   });
 
   it('passes a classification through unchanged and ignores unknown values', () => {
     expect(resolveMedicineTypeInput({ type: 'HERBAL' })).toEqual({ type: 'HERBAL' });
     expect(resolveMedicineTypeInput({ type: 'not-a-form' })).toEqual({});
+    expect(resolveMedicineTypeInput({ type: 'not-a-form' }, 'update')).toEqual({});
   });
 });

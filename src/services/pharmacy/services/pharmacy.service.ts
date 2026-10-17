@@ -1661,16 +1661,21 @@ export class PharmacyService {
 
   /**
    * Adds a medicine. `type` accepts the DB classification (CLASSICAL, PROPRIETARY, HERBAL)
-   * or a dosage form (TABLET, SYRUP, ...), see `resolveMedicineTypeInput`.
+   * or a dosage form (TABLET, SYRUP, CHURNA, ...). A dosage form alone defaults the
+   * classification to CLASSICAL for the classical Ayurvedic forms and PROPRIETARY otherwise,
+   * see `resolveMedicineTypeInput`.
    */
   async addMedicine(dto: CreateMedicineDto, clinicId?: string, actor?: PharmacyActor) {
     if (!clinicId) throw new BadRequestException('Clinic ID is required to add medicine');
 
-    const resolved = resolveMedicineTypeInput({
-      type: dto.type,
-      classification: dto.classification,
-      category: dto.category,
-    });
+    const resolved = resolveMedicineTypeInput(
+      {
+        type: dto.type,
+        classification: dto.classification,
+        category: dto.category,
+      },
+      'create'
+    );
     if (!resolved.type) {
       throw new BadRequestException(`Invalid medicine type "${dto.type}"`);
     }
@@ -1723,8 +1728,9 @@ export class PharmacyService {
   /**
    * Edits a medicine of the caller's clinic: any of name, type/category, manufacturer, unit,
    * price, batch, expiry, reorder level (minStockThreshold), supplier, description, usage
-   * instructions, notes, active flag and a relative stock change. A medicine of another
-   * clinic is reported as not found.
+   * instructions, notes, active flag and a relative stock change. A dosage form sent as `type`
+   * changes only `category`; the classification (`Medicine.type`) changes only through
+   * `classification`. A medicine of another clinic is reported as not found.
    */
   async updateInventory(
     id: string,
@@ -1734,12 +1740,15 @@ export class PharmacyService {
   ) {
     if (!clinicId) throw new BadRequestException('Clinic ID is required to update inventory');
 
-    const resolved = resolveMedicineTypeInput({
-      type: dto.type,
-      classification: dto.classification,
-      category: dto.category,
-    });
-    if (dto.type !== undefined && !resolved.type) {
+    const resolved = resolveMedicineTypeInput(
+      {
+        type: dto.type,
+        classification: dto.classification,
+        category: dto.category,
+      },
+      'update'
+    );
+    if (dto.type !== undefined && !resolved.type && !resolved.category) {
       throw new BadRequestException(`Invalid medicine type "${dto.type}"`);
     }
     const expiry = dto.expiryDate !== undefined ? new Date(dto.expiryDate) : undefined;
