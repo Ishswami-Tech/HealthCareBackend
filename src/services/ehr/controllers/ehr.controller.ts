@@ -152,10 +152,14 @@ export class EHRController {
     // 🔒 TENANT ISOLATION: Inject clinicId into DTO
     const clinicId = req.clinicContext?.clinicId;
     if (!clinicId) throw new ForbiddenException('Clinic context required for EHR writes');
-    return this.ehrService.createPrescription({
-      ...createDto,
-      clinicId,
-    } as CreatePrescriptionDto & { clinicId: string });
+    return this.ehrService.createPrescription(
+      {
+        ...createDto,
+        clinicId,
+      } as CreatePrescriptionDto & { clinicId: string },
+      // A doctor prescribes as themselves; the body doctorId is honoured for admins only.
+      { userId: req.user?.id || req.user?.sub || '', role: req.user?.role }
+    );
   }
 
   // ============ Medical History ============

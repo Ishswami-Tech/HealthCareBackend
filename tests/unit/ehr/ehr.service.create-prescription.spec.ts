@@ -8,7 +8,7 @@
  */
 
 import { BadRequestException } from '@nestjs/common';
-import { EHRService } from '@services/ehr/ehr.service';
+import { EHRService, hasTreatmentPlanContent } from '@services/ehr/ehr.service';
 
 jest.mock('@infrastructure/database', () => ({ DatabaseService: class DatabaseService {} }));
 jest.mock('@infrastructure/database/database.service', () => ({
@@ -46,6 +46,7 @@ function createHarness(patient: typeof PATIENT | null = PATIENT) {
       create: jest.fn(async ({ data }: { data: Row }) => ({ id: 'record-new', ...data })),
     },
     userRole: { findMany: jest.fn().mockResolvedValue([{ clinicId: CLINIC }]) },
+    doctor: { findUnique: jest.fn().mockResolvedValue({ id: 'doctor-of-caller' }) },
   };
   const databaseService = {
     executeHealthcareRead: jest.fn(async (operation: (c: unknown) => Promise<unknown>) =>
@@ -155,5 +156,82 @@ describe('EHRService.createPrescription', () => {
       BadRequestException
     );
     expect(h.client.prescription.create).not.toHaveBeenCalled();
+  });
+
+  it('a treatment plan alone still writes the EHR record (no Prescription row, no 400)', async () => {
+    const h = createHarness();
+
+    await h.service.createPrescription({
+      userId: 'user-1',
+      clinicId: CLINIC,
+      doctorId: 'doctor-1',
+      notes: '',
+      treatmentPlan: { requirements: [{ label: 'Abhyanga', sessions: 7 }] } as never,
+    });
+
+    expect(h.client.prescription.create).not.toHaveBeenCalled();
+    const record = (h.client.healthRecord.create.mock.calls[0]?.[0] as { data: Row }).data;
+    expect(record).toMatchObject({ patientId: 'patient-1', doctorId: 'doctor-1' });
+    expect(JSON.parse(String(record['report']))).toMatchObject({
+      treatmentPlan: { requirements: [{ label: 'Abhyanga', sessions: 7 }] },
+    });
+    expect(hasTreatmentPlanContent({ diagnosis: '  ', recommendations: [] } as never)).toBe(false);
+    expect(hasTreatmentPlanContent(undefined)).toBe(false);
+  });
+
+  it('a DOCTOR prescribes as themselves: the body doctorId is ignored', async () => {
+    const h = createHarness();
+
+    await h.service.createPrescription(
+      { ...NOTE_ONLY, doctorId: 'doctor-someone-else' },
+      { userId: 'doc-user', role: 'DOCTOR' }
+    );
+
+    expect(h.client.doctor.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 'doc-user' } })
+    );
+    expect(h.prescriptionData()).toMatchObject({ doctorId: 'doctor-of-caller' });
+    const record = (h.client.healthRecord.create.mock.calls[0]?.[0] as { data: Row }).data;
+    expect(record['doctorId']).toBe('doctor-of-caller');
+  });
+
+  it('a DOCTOR or ASSISTANT_DOCTOR without a doctor profile gets 400, nothing is written', async () => {
+    for (const role of ['DOCTOR', 'ASSISTANT_DOCTOR']) {
+      const h = createHarness();
+      h.client.doctor.findUnique.mockResolvedValue(null);
+
+      await expect(
+        h.service.createPrescription(NOTE_ONLY, { userId: 'doc-user', role })
+      ).rejects.toThrow('has no doctor profile');
+      expect(h.client.prescription.create).not.toHaveBeenCalled();
+      expect(h.client.healthRecord.create).not.toHaveBeenCalled();
+    }
+  });
+
+  it('an admin must name the doctor explicitly and never falls back to a "system" doctor', async () => {
+    const h = createHarness();
+
+    await expect(
+      h.service.createPrescription(
+        { ...NOTE_ONLY, doctorId: undefined },
+        { userId: 'admin-user', role: 'CLINIC_ADMIN' }
+      )
+    ).rejects.toThrow('doctorId is required');
+    expect(h.client.prescription.create).not.toHaveBeenCalled();
+
+    await h.service.createPrescription(NOTE_ONLY, { userId: 'admin-user', role: 'CLINIC_ADMIN' });
+    expect(h.client.doctor.findUnique).not.toHaveBeenCalled();
+    expect(h.prescriptionData()).toMatchObject({ doctorId: 'doctor-1' });
+  });
+
+  it('drops the caches of the resolved patient user even when a Patient.id was posted', async () => {
+    const h = createHarness();
+
+    await h.service.createPrescription({ ...NOTE_ONLY, userId: 'patient-1' });
+
+    expect(h.cacheService.invalidateCacheByTag).toHaveBeenCalledWith('ehr:user-1');
+    expect(h.cacheService.invalidateCacheByTag).toHaveBeenCalledWith('user:user-1');
+    expect(h.cacheService.invalidateCacheByTag).not.toHaveBeenCalledWith('ehr:patient-1');
+    expect(h.cacheService.invalidateCacheByTag).toHaveBeenCalledWith(`clinic:${CLINIC}`);
   });
 });

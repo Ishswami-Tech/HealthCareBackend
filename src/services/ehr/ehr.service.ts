@@ -41,6 +41,7 @@ import {
   type PatientAccessActor,
 } from '@core/guards/patient-self-access.guard';
 import { JobType } from '@core/types/queue.types';
+import { Role } from '@core/types/enums.types';
 import {
   buildDocumentStorageName,
   extractStoredFileRef,
@@ -159,6 +160,25 @@ function shiftDayKey(dayKey: string, days: number): string {
   const date = new Date(`${dayKey}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+/** Roles that always prescribe as themselves (their own Doctor profile), never as a named doctor. */
+const SELF_PRESCRIBING_ROLES: ReadonlySet<string> = new Set<string>([
+  Role.DOCTOR,
+  Role.ASSISTANT_DOCTOR,
+]);
+
+/** Whether a treatment plan carries anything worth persisting (at least one non-empty field). */
+export function hasTreatmentPlanContent(plan: CreatePrescriptionDto['treatmentPlan']): boolean {
+  if (!plan || typeof plan !== 'object') {
+    return false;
+  }
+  return Object.values(plan as unknown as Record<string, unknown>).some(value => {
+    if (value === undefined || value === null) return false;
+    if (typeof value === 'string') return value.trim().length > 0;
+    if (Array.isArray(value)) return value.length > 0;
+    return true;
+  });
 }
 
 @Injectable()
@@ -533,13 +553,16 @@ export class EHRService {
    * Creates a formal prescription, creating multiple medication records and an audit link
    * @param data Prescription data
    */
-  async createPrescription(data: CreatePrescriptionDto): Promise<void> {
+  async createPrescription(data: CreatePrescriptionDto, actor?: PatientAccessActor): Promise<void> {
     let createdPrescription: { id: string } | undefined;
     const medicationCount = data.medications?.length || 0;
     const hasMedications = medicationCount > 0;
     const hasClinicalNote = Boolean(data.diagnosis?.trim() || data.notes?.trim());
-    if (!hasMedications && !hasClinicalNote) {
-      throw new BadRequestException('A prescription needs medications or a diagnosis / notes');
+    const hasTreatmentPlan = hasTreatmentPlanContent(data.treatmentPlan);
+    if (!hasMedications && !hasClinicalNote && !hasTreatmentPlan) {
+      throw new BadRequestException(
+        'A prescription needs medications, a diagnosis / notes or a treatment plan'
+      );
     }
 
     // `data.userId` is the patient's USER id (that is what the appointment carries), but the
@@ -549,6 +572,7 @@ export class EHRService {
     if (!patient) {
       throw new BadRequestException('Patient not found for this prescription');
     }
+    const doctorId = await this.resolvePrescriptionDoctorId(data, actor);
 
     // Audit execution as a single unit or transaction
     await this.databaseService.executeHealthcareWrite(
@@ -567,43 +591,47 @@ export class EHRService {
         // note-only prescription (diagnosis / advice, no medications) gets one too. With
         // nothing to dispense it is FILLED from the start (the same status the dispense flow
         // derives for an item-less prescription), so it never waits in the pharmacy queue.
-        const prescription = await typedClient.prescription.create({
-          data: {
-            patientId: patient.id,
-            doctorId: data.doctorId || 'system',
-            clinicId: data.clinicId || '',
-            date: new Date(),
-            status: hasMedications ? 'PENDING' : 'FILLED',
-            ...(data.diagnosis?.trim() ? { diagnosis: data.diagnosis.trim() } : {}),
-            notes: data.notes || '',
-          } as PrismaDelegateArgs,
-        });
-        createdPrescription = prescription;
-
-        if (data.medications && data.medications.length > 0) {
-          // 2. Create individual prescription items
-          const itemsData = data.medications.map(med => ({
-            prescriptionId: prescription.id,
-            clinicId: data.clinicId || '',
-            dosage: med.dosage,
-            frequency: med.frequency,
-            duration: med.endDate || med.instructions || '', // Map duration or instructions
-            medicineId: null, // Should be looked up by name if master list exists
-            // Since we're using free-text medicine names for now (as per DTO),
-            // the pharmacy will map these to specific inventory items.
-          }));
-
-          // Bulk create optimized for 10M+ users scale
-          await typedClient.prescriptionItem.createMany({
-            data: itemsData,
+        // A treatment plan alone is clinical documentation: it is written to the EHR record
+        // below only, as before.
+        if (hasMedications || hasClinicalNote) {
+          const prescription = await typedClient.prescription.create({
+            data: {
+              patientId: patient.id,
+              doctorId,
+              clinicId: data.clinicId || '',
+              date: new Date(),
+              status: hasMedications ? 'PENDING' : 'FILLED',
+              ...(data.diagnosis?.trim() ? { diagnosis: data.diagnosis.trim() } : {}),
+              notes: data.notes || '',
+            } as PrismaDelegateArgs,
           });
+          createdPrescription = prescription;
+
+          if (data.medications && data.medications.length > 0) {
+            // 2. Create individual prescription items
+            const itemsData = data.medications.map(med => ({
+              prescriptionId: prescription.id,
+              clinicId: data.clinicId || '',
+              dosage: med.dosage,
+              frequency: med.frequency,
+              duration: med.endDate || med.instructions || '', // Map duration or instructions
+              medicineId: null, // Should be looked up by name if master list exists
+              // Since we're using free-text medicine names for now (as per DTO),
+              // the pharmacy will map these to specific inventory items.
+            }));
+
+            // Bulk create optimized for 10M+ users scale
+            await typedClient.prescriptionItem.createMany({
+              data: itemsData,
+            });
+          }
         }
 
         // 3. Create a generic health record entry for the clinical findings (EHR)
         await typedClient.healthRecord.create({
           data: {
             patientId: patient.id,
-            doctorId: data.doctorId || 'system',
+            doctorId,
             clinicId: data.clinicId || '',
             recordType: 'PRESCRIPTION',
             report: JSON.stringify({
@@ -627,7 +655,8 @@ export class EHRService {
       }
     );
 
-    await this.invalidateUserEHRCache(data.userId);
+    // The caches are keyed by the patient's User id; `data.userId` may have been a Patient.id.
+    await this.invalidateUserEHRCache(patient.userId, data.clinicId || undefined);
     await this.eventService.emit('ehr.prescription.created', {
       userId: data.userId,
       patientId: patient.id,
@@ -968,19 +997,50 @@ export class EHRService {
     if (data.doctorId) {
       return data.doctorId;
     }
+    const doctorId = await this.findDoctorIdByUserId(data.uploadedBy);
+    if (!doctorId) {
+      throw new BadRequestException('doctorId is required: the uploader has no doctor profile');
+    }
+    return doctorId;
+  }
+
+  /** Doctor.id of the user's own doctor profile, or null when they have none. */
+  private async findDoctorIdByUserId(userId: string): Promise<string | null> {
     const doctor = await this.databaseService.executeHealthcareRead<{ id: string } | null>(
       async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
         return (await typedClient.doctor.findUnique({
-          where: { userId: data.uploadedBy } as PrismaDelegateArgs,
+          where: { userId } as PrismaDelegateArgs,
           select: { id: true } as PrismaDelegateArgs,
         } as PrismaDelegateArgs)) as { id: string } | null;
       }
     );
-    if (!doctor) {
-      throw new BadRequestException('doctorId is required: the uploader has no doctor profile');
+    return doctor?.id ?? null;
+  }
+
+  /**
+   * `Prescription.doctorId` and `HealthRecord.doctorId` are FKs to Doctor.id; there is no
+   * "system" doctor. A DOCTOR or ASSISTANT_DOCTOR always prescribes as themselves and the body
+   * value is ignored, so nobody can attribute a prescription to another doctor. Admin and
+   * system callers (the completion plugin) must name the doctor explicitly.
+   */
+  private async resolvePrescriptionDoctorId(
+    data: CreatePrescriptionDto,
+    actor?: PatientAccessActor
+  ): Promise<string> {
+    const role = String(actor?.role ?? '').toUpperCase();
+    if (actor?.userId && SELF_PRESCRIBING_ROLES.has(role)) {
+      const ownDoctorId = await this.findDoctorIdByUserId(actor.userId);
+      if (!ownDoctorId) {
+        throw new BadRequestException('The prescribing doctor has no doctor profile');
+      }
+      return ownDoctorId;
     }
-    return doctor.id;
+    const explicit = data.doctorId?.trim();
+    if (explicit) {
+      return explicit;
+    }
+    throw new BadRequestException('doctorId is required: name the prescribing doctor');
   }
 
   /**

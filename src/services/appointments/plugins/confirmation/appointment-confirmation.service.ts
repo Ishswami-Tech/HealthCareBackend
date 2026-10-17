@@ -636,23 +636,26 @@ export class AppointmentConfirmationService {
     // 1. If we have clinical data, persist it to EHR
     if (clinicalData && clinicalData.userId) {
       void this.ehrService
-        .createPrescription({
-          userId: clinicalData.userId,
-          clinicId: appointment.clinicId,
-          doctorId: doctorId,
-          diagnosis: clinicalData.diagnosis,
-          treatmentPlan: clinicalData.treatmentPlan,
-          medications: normalizedMedications?.map(medication => ({
-            name: medication.name,
-            dosage: medication.dosage,
-            frequency: medication.frequency,
-            startDate: nowIso(),
-            ...(medication.instructions !== undefined
-              ? { instructions: medication.instructions }
-              : {}),
-          })),
-          notes: this.summarizeTreatmentPlan(clinicalData.treatmentPlan),
-        })
+        .createPrescription(
+          {
+            userId: clinicalData.userId,
+            clinicId: appointment.clinicId,
+            doctorId: doctorId,
+            diagnosis: clinicalData.diagnosis,
+            treatmentPlan: clinicalData.treatmentPlan,
+            medications: normalizedMedications?.map(medication => ({
+              name: medication.name,
+              dosage: medication.dosage,
+              frequency: medication.frequency,
+              startDate: nowIso(),
+              ...(medication.instructions !== undefined
+                ? { instructions: medication.instructions }
+                : {}),
+            })),
+            notes: this.summarizeTreatmentPlan(clinicalData.treatmentPlan),
+          },
+          clinicalData.caller
+        )
         .catch(err => {
           this.logger.error(`Failed to persist EHR data for appointment ${appointmentId}:`, err);
         });
