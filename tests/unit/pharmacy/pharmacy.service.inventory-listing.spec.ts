@@ -6,7 +6,6 @@
 
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { HealthcareError } from '@core/errors';
 import { PharmacyService } from '@services/pharmacy/services/pharmacy.service';
 import {
   INVENTORY_DEFAULT_PAGE_SIZE,
@@ -49,7 +48,8 @@ function createHarness(withFieldRefs = true) {
     count: jest.fn().mockResolvedValue(42),
     ...(withFieldRefs ? { fields: { minStockThreshold: MIN_STOCK_REF } } : {}),
   };
-  const client = { medicine };
+  const queryRaw = jest.fn().mockResolvedValue([{ id: 'med-1' }, { id: 'med-2' }]);
+  const client = { medicine, $queryRaw: queryRaw };
   const databaseService = {
     executeHealthcareRead: jest.fn(async (op: (c: unknown) => Promise<unknown>) => op(client)),
     executeHealthcareWrite: jest.fn(async (op: (c: unknown) => Promise<unknown>) => op(client)),
@@ -67,7 +67,7 @@ function createHarness(withFieldRefs = true) {
   );
   const findManyArgs = (): Args => medicine.findMany.mock.calls[0]![0] as Args;
   const countArgs = (): Args => medicine.count.mock.calls[0]![0] as Args;
-  return { service, medicine, rows, findManyArgs, countArgs };
+  return { service, medicine, queryRaw, rows, findManyArgs, countArgs };
 }
 
 describe('InventoryQueryDto', () => {
@@ -106,9 +106,23 @@ describe('InventoryQueryDto', () => {
     expect(toInventoryFilters(parse({ limit: '100', offset: '50' }))).toEqual({});
   });
 
+  it('accepts and ignores the cache-buster keys the cache interceptor understands', async () => {
+    const dto = parse({ bust: '1', cacheBust: 'true', _t: '1760700000000', ts: '1', limit: '20' });
+    expect(await validate(dto)).toEqual([]);
+    expect(toInventoryFilters(dto)).toEqual({});
+  });
+
+  it('clamps a page size above the maximum instead of rejecting it (older clients send ?limit=1000)', async () => {
+    const clamped = parse({ limit: '1000' });
+    expect(await validate(clamped)).toEqual([]);
+    expect(clamped.limit).toBe(INVENTORY_MAX_PAGE_SIZE);
+    const exact = parse({ limit: String(INVENTORY_MAX_PAGE_SIZE) });
+    expect(exact.limit).toBe(INVENTORY_MAX_PAGE_SIZE);
+  });
+
   it('rejects out-of-range pagination, unknown tokens and non-boolean flags', async () => {
     expect(await errorsOf({ page: '0' })).toEqual(['page']);
-    expect(await errorsOf({ limit: String(INVENTORY_MAX_PAGE_SIZE + 1) })).toEqual(['limit']);
+    expect(await errorsOf({ limit: 'many' })).toEqual(['limit']);
     expect(await errorsOf({ limit: '0' })).toEqual(['limit']);
     expect(await errorsOf({ inStock: 'yes' })).toEqual(['inStock']);
     expect(await errorsOf({ type: 'TABLET' })).toEqual(['type']);
@@ -117,12 +131,15 @@ describe('InventoryQueryDto', () => {
     expect(await errorsOf({ search: 'x'.repeat(121) })).toEqual(['search']);
   });
 
-  it('low-stock limit is bounded', async () => {
+  it('low-stock limit is bounded: values above the maximum are clamped, non-numbers rejected', async () => {
     const ok = plainToInstance(LowStockQueryDto, { limit: '250' });
     expect(await validate(ok)).toEqual([]);
     expect(ok.limit).toBe(250);
     const tooBig = plainToInstance(LowStockQueryDto, { limit: String(LOW_STOCK_MAX_LIMIT + 1) });
-    expect((await validate(tooBig)).map(e => e.property)).toEqual(['limit']);
+    expect(await validate(tooBig)).toEqual([]);
+    expect(tooBig.limit).toBe(LOW_STOCK_MAX_LIMIT);
+    const bad = plainToInstance(LowStockQueryDto, { limit: 'all', _t: '1' });
+    expect((await validate(bad)).map(e => e.property)).toEqual(['limit']);
   });
 });
 
@@ -204,12 +221,35 @@ describe('PharmacyService.findAllMedicines (legacy bare array)', () => {
     );
   });
 
-  it('fails loudly instead of silently returning everything when field references are missing', async () => {
+  it('without field references, lowStock falls back to a parameterised raw id query (never a 500)', async () => {
     const h = createHarness(false);
-    await expect(h.service.findAllMedicines(CLINIC, { lowStock: true })).rejects.toBeInstanceOf(
-      HealthcareError
-    );
-    expect(h.medicine.findMany).not.toHaveBeenCalled();
+
+    const result = await h.service.findAllMedicines(CLINIC, { lowStock: true, inStock: true });
+
+    expect(result).toBe(h.rows);
+    expect(h.queryRaw).toHaveBeenCalledTimes(1);
+    const [strings, ...values] = h.queryRaw.mock.calls[0] as [TemplateStringsArray, ...unknown[]];
+    expect(strings.join('?')).toContain('"stock" <= "minStockThreshold"');
+    expect(strings.join('?')).toContain('"clinicId" = ?');
+    expect(values).toEqual([CLINIC]);
+    expect(h.findManyArgs().where).toEqual({
+      isActive: true,
+      clinicId: CLINIC,
+      id: { in: ['med-1', 'med-2'] },
+      stock: { gt: 0 },
+    });
+  });
+
+  it('the raw fallback is not clinic-scoped when no clinic is given, and skips the raw query when lowStock is off', async () => {
+    const h = createHarness(false);
+    await h.service.findAllMedicines(undefined, { lowStock: true });
+    const [strings, ...values] = h.queryRaw.mock.calls[0] as [TemplateStringsArray, ...unknown[]];
+    expect(strings.join('?')).not.toContain('"clinicId"');
+    expect(values).toEqual([]);
+
+    const noLowStock = createHarness(false);
+    await noLowStock.service.findAllMedicines(CLINIC, { search: 'x' });
+    expect(noLowStock.queryRaw).not.toHaveBeenCalled();
   });
 });
 
@@ -253,5 +293,16 @@ describe('PharmacyService.findLowStock', () => {
     const capped = createHarness();
     await capped.service.findLowStock(CLINIC, LOW_STOCK_MAX_LIMIT + 1);
     expect(capped.findManyArgs().take).toBe(LOW_STOCK_MAX_LIMIT);
+  });
+
+  it('falls back to the raw id query when the client has no field references', async () => {
+    const h = createHarness(false);
+    await h.service.findLowStock(CLINIC);
+    expect(h.queryRaw).toHaveBeenCalledTimes(1);
+    expect(h.findManyArgs()).toEqual({
+      where: { isActive: true, clinicId: CLINIC, id: { in: ['med-1', 'med-2'] } },
+      orderBy: [{ stock: 'asc' }, { name: 'asc' }],
+      take: LOW_STOCK_DEFAULT_LIMIT,
+    });
   });
 });

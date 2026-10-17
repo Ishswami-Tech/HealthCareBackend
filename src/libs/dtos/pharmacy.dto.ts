@@ -267,15 +267,52 @@ export const LOW_STOCK_DEFAULT_LIMIT = 100;
 export const LOW_STOCK_MAX_LIMIT = 500;
 
 const BOOLEAN_QUERY_VALUES: readonly string[] = ['true', 'false'];
+const CACHE_BUSTER_MAX_LENGTH = 64;
 const trimQueryString = ({ value }: { value: unknown }): unknown =>
   typeof value === 'string' ? value.trim() : value;
+/** Clamps an already converted integer query value to `max`; anything else is left to the validators. */
+const clampQueryInt =
+  (max: number) =>
+  ({ value }: { value: unknown }): unknown =>
+    typeof value === 'number' && value > max ? max : value;
+
+/**
+ * Cache-buster query keys the cache interceptor understands (`?bust=1`, `?_t=<now>`, ...).
+ * The global ValidationPipe forbids unknown keys, so a whitelisted query DTO has to declare
+ * them; they are validated loosely and never read.
+ */
+export class CacheBusterQueryDto {
+  @ApiPropertyOptional({ description: 'Cache buster, ignored' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(CACHE_BUSTER_MAX_LENGTH)
+  bust?: string;
+
+  @ApiPropertyOptional({ description: 'Cache buster, ignored' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(CACHE_BUSTER_MAX_LENGTH)
+  cacheBust?: string;
+
+  @ApiPropertyOptional({ description: 'Cache buster (timestamp), ignored' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(CACHE_BUSTER_MAX_LENGTH)
+  _t?: string;
+
+  @ApiPropertyOptional({ description: 'Cache buster (timestamp), ignored' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(CACHE_BUSTER_MAX_LENGTH)
+  ts?: string;
+}
 
 /**
  * `GET /pharmacy/inventory` filters and optional pagination. Without `page` every matching row
  * is returned as the legacy bare array (`limit` is ignored); with `page` the response is
  * `{ data, total, page, limit }`. Filtering happens in the database.
  */
-export class InventoryQueryDto {
+export class InventoryQueryDto extends CacheBusterQueryDto {
   @ApiPropertyOptional({
     maxLength: INVENTORY_SEARCH_MAX_LENGTH,
     description: 'Case-insensitive "contains" match on name, manufacturer or category',
@@ -350,13 +387,13 @@ export class InventoryQueryDto {
   @ApiPropertyOptional({
     minimum: 1,
     maximum: INVENTORY_MAX_PAGE_SIZE,
-    description: `Page size (default ${INVENTORY_DEFAULT_PAGE_SIZE}); ignored without page`,
+    description: `Page size (default ${INVENTORY_DEFAULT_PAGE_SIZE}, values above ${INVENTORY_MAX_PAGE_SIZE} are clamped); ignored without page`,
   })
   @IsOptional()
   @Type(() => Number)
+  @Transform(clampQueryInt(INVENTORY_MAX_PAGE_SIZE))
   @IsInt()
   @Min(1)
-  @Max(INVENTORY_MAX_PAGE_SIZE)
   limit?: number;
 
   @ApiPropertyOptional({
@@ -396,17 +433,17 @@ export function toInventoryFilters(query: InventoryQueryDto): InventoryFilters {
 }
 
 /** `GET /pharmacy/inventory/low-stock` options. */
-export class LowStockQueryDto {
+export class LowStockQueryDto extends CacheBusterQueryDto {
   @ApiPropertyOptional({
     minimum: 1,
     maximum: LOW_STOCK_MAX_LIMIT,
-    description: `Rows to return, lowest stock first (default ${LOW_STOCK_DEFAULT_LIMIT})`,
+    description: `Rows to return, lowest stock first (default ${LOW_STOCK_DEFAULT_LIMIT}, values above ${LOW_STOCK_MAX_LIMIT} are clamped)`,
   })
   @IsOptional()
   @Type(() => Number)
+  @Transform(clampQueryInt(LOW_STOCK_MAX_LIMIT))
   @IsInt()
   @Min(1)
-  @Max(LOW_STOCK_MAX_LIMIT)
   limit?: number;
 }
 

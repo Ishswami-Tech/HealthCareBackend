@@ -29,7 +29,6 @@ import {
   resolveMedicineTypeInput,
   type InventoryFilters,
 } from '@dtos/pharmacy.dto';
-import { HealthcareError, ErrorCode } from '@core/errors';
 import type { Medicine } from '@core/types/database.types';
 import { formatDateKeyInIST } from '@utils/date-time.util';
 import { loadDashboardMetrics, loadSalesReport } from './pharmacy-sales.queries';
@@ -249,17 +248,16 @@ export interface InventoryPage {
  * A Prisma field reference (`delegate.fields.<column>`, Prisma >= 5) so a row can be compared
  * with one of its own columns in SQL (`stock <= minStockThreshold`). The loosely typed delegates
  * of this module do not declare `fields`; the raw client handed out by DatabaseService has it.
+ * Returns null when the client does not expose field references (the caller falls back to a
+ * parameterised raw query).
  */
-function medicineFieldRef(delegate: unknown, column: 'minStockThreshold'): PrismaDelegateArgs {
+function medicineFieldRef(
+  delegate: unknown,
+  column: 'minStockThreshold'
+): PrismaDelegateArgs | null {
   const fields = (delegate as { fields?: Record<string, unknown> }).fields;
   const ref = fields?.[column];
-  if (!ref) {
-    throw new HealthcareError(
-      ErrorCode.CONFIGURATION_ERROR,
-      `Prisma field references are unavailable; cannot compare Medicine.${column} in the database`
-    );
-  }
-  return ref as PrismaDelegateArgs;
+  return ref ? (ref as PrismaDelegateArgs) : null;
 }
 
 /**
@@ -1592,7 +1590,7 @@ export class PharmacyService {
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
       return await typedClient.medicine.findMany({
-        where: this.buildInventoryWhere(typedClient, clinicId, filters),
+        where: await this.buildInventoryWhere(typedClient, clinicId, filters),
         orderBy: { name: 'asc' },
       } as PrismaDelegateArgs);
     });
@@ -1609,7 +1607,7 @@ export class PharmacyService {
     const safeLimit = Math.min(Math.max(1, Math.trunc(limit)), INVENTORY_MAX_PAGE_SIZE);
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-      const where = this.buildInventoryWhere(typedClient, clinicId, filters);
+      const where = await this.buildInventoryWhere(typedClient, clinicId, filters);
       const [data, total] = await Promise.all([
         typedClient.medicine.findMany({
           where,
@@ -1625,13 +1623,14 @@ export class PharmacyService {
 
   /**
    * Prisma `where` of the inventory list. `lowStock` compares `stock` with the row's own
-   * `minStockThreshold` through a field reference, so every filter runs in SQL.
+   * `minStockThreshold` through a field reference, so every filter runs in SQL; when the client
+   * exposes no field references the matching ids come from a parameterised raw query instead.
    */
-  private buildInventoryWhere(
+  private async buildInventoryWhere(
     typedClient: PrismaTransactionClientWithDelegates,
     clinicId: string | undefined,
     filters: InventoryFilters | undefined
-  ): PrismaDelegateArgs {
+  ): Promise<PrismaDelegateArgs> {
     const where: Record<string, unknown> = { isActive: true };
     if (clinicId) where['clinicId'] = clinicId;
     if (filters?.search) {
@@ -1640,18 +1639,39 @@ export class PharmacyService {
     }
     if (filters?.category) where['category'] = filters.category;
     if (filters?.type) where['type'] = filters.type;
-    const stock: Record<string, unknown> = {
-      ...(filters?.inStock ? { gt: 0 } : {}),
-      ...(filters?.lowStock
-        ? { lte: medicineFieldRef(typedClient.medicine, 'minStockThreshold') }
-        : {}),
-    };
+    const stock: Record<string, unknown> = filters?.inStock ? { gt: 0 } : {};
+    if (filters?.lowStock) {
+      const thresholdRef = medicineFieldRef(typedClient.medicine, 'minStockThreshold');
+      if (thresholdRef) {
+        stock['lte'] = thresholdRef;
+      } else {
+        where['id'] = { in: await this.findLowStockMedicineIds(typedClient, clinicId) };
+      }
+    }
     if (Object.keys(stock).length > 0) where['stock'] = stock;
     if (filters?.expiringSoon) {
       const days = Math.max(1, Math.trunc(filters.expiringDays ?? INVENTORY_DEFAULT_EXPIRING_DAYS));
       where['expiryDate'] = { not: null, lte: new Date(Date.now() + days * DAY_MS) };
     }
     return where as PrismaDelegateArgs;
+  }
+
+  /**
+   * Fallback for clients without Prisma field references: the ids of the active medicines at or
+   * below their reorder level, through a parameterised raw query (clinic-scoped when given).
+   */
+  private async findLowStockMedicineIds(
+    typedClient: PrismaTransactionClientWithDelegates,
+    clinicId: string | undefined
+  ): Promise<string[]> {
+    const rows = clinicId
+      ? await typedClient.$queryRaw<
+          Array<{ id: string }>
+        >`SELECT "id" FROM "Medicine" WHERE "clinicId" = ${clinicId} AND "isActive" = true AND "stock" <= "minStockThreshold"`
+      : await typedClient.$queryRaw<
+          Array<{ id: string }>
+        >`SELECT "id" FROM "Medicine" WHERE "isActive" = true AND "stock" <= "minStockThreshold"`;
+    return rows.map(row => row.id);
   }
 
   async findMedicineById(id: string) {
@@ -3683,8 +3703,9 @@ export class PharmacyService {
         where: where as PrismaDelegateArgs,
       } as PrismaDelegateArgs);
 
+      // Note-only prescriptions (diagnosis / advice, no items) are not desk work: leave them out.
       const totalPrescriptions = await typedClient.prescription.count({
-        where: where as PrismaDelegateArgs,
+        where: { ...where, items: { some: {} } } as PrismaDelegateArgs,
       } as PrismaDelegateArgs);
 
       const prescriptions = await typedClient.prescription.findMany({
@@ -3869,7 +3890,7 @@ export class PharmacyService {
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
       return await typedClient.medicine.findMany({
-        where: this.buildInventoryWhere(typedClient, clinicId, { lowStock: true }),
+        where: await this.buildInventoryWhere(typedClient, clinicId, { lowStock: true }),
         orderBy: [{ stock: 'asc' }, { name: 'asc' }],
         take,
       } as PrismaDelegateArgs);
