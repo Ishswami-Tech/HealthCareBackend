@@ -267,7 +267,7 @@ describe('AppointmentsService.completeAppointment', () => {
         Role.DOCTOR
       );
 
-      expect(result.data).toEqual({ completed: 1, failed: 2 });
+      expect(result.data).toEqual({ completed: 1, failed: 2, refused: [] });
       expect(harness.db.rows('appointment').map(row => row['status'])).toEqual([
         'COMPLETED',
         'CANCELLED',

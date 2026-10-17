@@ -2870,7 +2870,7 @@ export class AppointmentsController {
   async bulkCompleteSelectedAppointments(
     @Body(ValidationPipe) bulkDto: BulkCompleteAppointmentDto,
     @Request() req: ClinicAuthenticatedRequest
-  ): Promise<ServiceResponse<{ completed: number; failed: number }>> {
+  ): Promise<ServiceResponse<{ completed: number; failed: number; refused: string[] }>> {
     const startTime = Date.now();
     const context = 'AppointmentsController.bulkCompleteSelectedAppointments';
     const userId = req.user?.id || '';
@@ -2898,7 +2898,10 @@ export class AppointmentsController {
         userId,
         clinicId,
         req.user?.role || 'USER'
-      )) as { success: boolean; data?: { completed: number; failed: number } };
+      )) as {
+        success: boolean;
+        data?: { completed: number; failed: number; refused: string[] };
+      };
 
       await this.loggingService.log(
         LogType.BUSINESS,
@@ -2916,7 +2919,7 @@ export class AppointmentsController {
 
       return {
         success: true,
-        data: result.data ?? { completed: 0, failed: 0 },
+        data: result.data ?? { completed: 0, failed: 0, refused: [] },
         message: `Bulk completion finished: completed=${result.data?.completed}, failed=${result.data?.failed}`,
       };
     } catch (error) {

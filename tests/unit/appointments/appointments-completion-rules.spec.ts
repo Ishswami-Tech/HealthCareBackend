@@ -179,14 +179,14 @@ describe('video visit completion: the doctor and the clinic admin only', () => {
     it('the clinic admin completes both', async () => {
       const result = await bulk(Role.CLINIC_ADMIN, 'user-admin');
 
-      expect(result.data).toEqual({ completed: 2, failed: 0 });
+      expect(result.data).toEqual({ completed: 2, failed: 0, refused: [] });
       expect(auditEntries()).toHaveLength(2);
     });
 
     it('a receptionist completes none: both count as failed', async () => {
       const result = await bulk(Role.RECEPTIONIST, 'user-reception');
 
-      expect(result.data).toEqual({ completed: 0, failed: 2 });
+      expect(result.data).toEqual({ completed: 0, failed: 2, refused: ['appt-1', 'appt-2'] });
       expect(harness.db.rows('appointment').every(row => row['status'] === 'IN_PROGRESS')).toBe(
         true
       );
@@ -260,5 +260,124 @@ describe('completion requires the visit to be paid or comped (the shared definit
     harness.db.insert('appointment', appointmentRow({ payment: null }));
 
     expect(((await complete()) as { success: boolean }).success).toBe(true);
+  });
+});
+
+describe('in-person visit completion: the treating doctor, an admin, or a covering assistant', () => {
+  let harness: ReturnType<typeof buildHarness>;
+
+  beforeEach(() => {
+    harness = buildHarness();
+  });
+
+  const complete = (role: string, userId: string) =>
+    harness.service.completeAppointment('appt-1', completeDto(), userId, CLINIC, role);
+
+  const coverage = (primaryDoctorIds: string[], isActive = true) =>
+    jest
+      .spyOn(harness.service, 'getClinicAssistantDoctorCoverage')
+      .mockResolvedValue([{ assistantDoctorId: 'doctor-assistant', primaryDoctorIds, isActive }]);
+
+  it('the treating doctor completes', async () => {
+    harness.db.insert('appointment', appointmentRow());
+
+    expect(((await complete(Role.DOCTOR, 'user-doctor')) as { success: boolean }).success).toBe(
+      true
+    );
+  });
+
+  it.each([
+    [Role.CLINIC_ADMIN, 'user-admin'],
+    [Role.SUPER_ADMIN, 'user-super'],
+  ])('%s completes any visit of the clinic', async (role, userId) => {
+    harness.db.insert('appointment', appointmentRow());
+
+    expect(((await complete(role, userId)) as { success: boolean }).success).toBe(true);
+    expect(harness.db.rows('appointment')[0]?.['status']).toBe('COMPLETED');
+  });
+
+  it.each([
+    [Role.DOCTOR, 'user-other-doctor'],
+    [Role.RECEPTIONIST, 'user-reception'],
+    [Role.NURSE, 'user-nurse'],
+    [Role.THERAPIST, 'user-therapist'],
+  ])(
+    "%s who is not the treating doctor gets 403 for another doctor's visit",
+    async (role, userId) => {
+      harness.db.insert('appointment', appointmentRow());
+
+      const error = await rejection(complete(role, userId));
+
+      expect(error.getStatus()).toBe(403);
+      expect(harness.db.writes).toHaveLength(0);
+      expect(harness.db.rows('appointment')[0]?.['status']).toBe('IN_PROGRESS');
+    }
+  );
+
+  it('an assistant doctor completes when the clinic coverage assigns them to the treating doctor', async () => {
+    harness.db.insert('appointment', appointmentRow());
+    jest.spyOn(harness.service, 'resolveDoctorEntityId').mockResolvedValue('doctor-assistant');
+    coverage(['doctor-1']);
+
+    const result = (await complete(Role.ASSISTANT_DOCTOR, 'user-assistant')) as {
+      success: boolean;
+    };
+
+    expect(result.success).toBe(true);
+    expect(harness.db.rows('appointment')[0]?.['status']).toBe('COMPLETED');
+  });
+
+  it.each([
+    ['covers a different doctor', ['doctor-9'], true],
+    ['the coverage is inactive', ['doctor-1'], false],
+    ['no coverage is configured', [], true],
+  ])('an assistant doctor gets 403 when %s', async (_label, primaryDoctorIds, isActive) => {
+    harness.db.insert('appointment', appointmentRow());
+    jest.spyOn(harness.service, 'resolveDoctorEntityId').mockResolvedValue('doctor-assistant');
+    coverage(primaryDoctorIds, isActive);
+
+    const error = await rejection(complete(Role.ASSISTANT_DOCTOR, 'user-assistant'));
+
+    expect(error.getStatus()).toBe(403);
+    expect(harness.db.writes).toHaveLength(0);
+  });
+
+  it('an assistant doctor without a doctor profile gets 403 without a coverage lookup', async () => {
+    harness.db.insert('appointment', appointmentRow());
+    jest.spyOn(harness.service, 'resolveDoctorEntityId').mockResolvedValue(null);
+    const coverageSpy = coverage(['doctor-1']);
+
+    const error = await rejection(complete(Role.ASSISTANT_DOCTOR, 'user-assistant'));
+
+    expect(error.getStatus()).toBe(403);
+    expect(coverageSpy).not.toHaveBeenCalled();
+  });
+
+  it('bulk completion skips the visits of other doctors and reports their ids as refused', async () => {
+    harness.db.insert('appointment', appointmentRow({ id: 'appt-1' }));
+    harness.db.insert(
+      'appointment',
+      appointmentRow({
+        id: 'appt-2',
+        doctorId: 'doctor-2',
+        doctor: { id: 'doctor-2', userId: 'user-other-doctor' },
+      })
+    );
+    harness.db.insert('appointment', appointmentRow({ id: 'appt-3', status: 'CANCELLED' }));
+
+    const result = await harness.service.bulkCompleteSelectedAppointments(
+      { clinicId: CLINIC },
+      { appointmentIds: ['appt-1', 'appt-2', 'appt-3'] } as never,
+      'user-doctor',
+      CLINIC,
+      Role.DOCTOR
+    );
+
+    expect(result.data).toEqual({ completed: 1, failed: 2, refused: ['appt-2'] });
+    expect(harness.db.rows('appointment').map(row => row['status'])).toEqual([
+      'COMPLETED',
+      'IN_PROGRESS',
+      'CANCELLED',
+    ]);
   });
 });

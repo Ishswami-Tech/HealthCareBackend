@@ -3,6 +3,7 @@ import {
   Inject,
   forwardRef,
   HttpException,
+  HttpStatus,
   ForbiddenException,
   BadRequestException,
   ConflictException,
@@ -5174,31 +5175,72 @@ export class AppointmentsService {
    * Who may complete this appointment. Fails closed: an unknown role, a PATIENT, or (for a video
    * visit) anybody who is neither the treating doctor nor a clinic admin is refused.
    */
-  private assertCompletionAllowed(
+  /**
+   * Who may complete an appointment. A VIDEO visit: its treating clinician or the clinic admin
+   * (see VIDEO_COMPLETION_*). Every other visit: its treating doctor, a clinic or super admin,
+   * or an assistant doctor whom the clinic's assistant-coverage configuration assigns to the
+   * treating doctor. Everyone else (another doctor of the clinic, the front desk, ...) gets 403.
+   */
+  private async assertCompletionAllowed(
     appointment: CompletionAppointmentRow,
     userId: string,
     role: string
-  ): void {
+  ): Promise<void> {
     const context = 'AppointmentsService.completeAppointment';
     const normalizedRole = String(role || '').toUpperCase();
 
     if (!AppointmentsService.COMPLETION_ROLES.has(normalizedRole)) {
       throw this.errors.insufficientPermissions(context);
     }
-    if (!isVideoCallAppointmentType(appointment.type)) {
-      return;
-    }
-    if (AppointmentsService.VIDEO_COMPLETION_ADMIN_ROLES.has(normalizedRole)) {
-      return;
-    }
-
-    const isTreatingDoctor =
-      AppointmentsService.VIDEO_COMPLETION_CLINICIAN_ROLES.has(normalizedRole) &&
-      Boolean(userId) &&
-      appointment.doctor?.userId === userId;
-    if (!isTreatingDoctor) {
+    const isTreatingDoctor = Boolean(userId) && appointment.doctor?.userId === userId;
+    if (isVideoCallAppointmentType(appointment.type)) {
+      if (AppointmentsService.VIDEO_COMPLETION_ADMIN_ROLES.has(normalizedRole)) {
+        return;
+      }
+      if (
+        AppointmentsService.VIDEO_COMPLETION_CLINICIAN_ROLES.has(normalizedRole) &&
+        isTreatingDoctor
+      ) {
+        return;
+      }
       throw this.errors.insufficientPermissions(context);
     }
+    if (isTreatingDoctor || AppointmentsService.ADMIN_COMPLETION_ROLES.has(normalizedRole)) {
+      return;
+    }
+    if (
+      normalizedRole === AppointmentsService.ASSISTANT_DOCTOR_ROLE &&
+      (await this.isAssistantCoveringAppointmentDoctor(userId, appointment))
+    ) {
+      return;
+    }
+    throw this.errors.insufficientPermissions(context);
+  }
+
+  /** The assistant-doctor role as a plain string, for comparisons with the normalised role. */
+  private static readonly ASSISTANT_DOCTOR_ROLE: string = Role.ASSISTANT_DOCTOR;
+
+  /** HTTP status of a refused (not permitted) completion, as a plain number. */
+  private static readonly FORBIDDEN_STATUS: number = HttpStatus.FORBIDDEN;
+
+  /** Whether the assistant doctor (by user id) covers the appointment's treating doctor. */
+  private async isAssistantCoveringAppointmentDoctor(
+    userId: string,
+    appointment: CompletionAppointmentRow
+  ): Promise<boolean> {
+    if (!userId) {
+      return false;
+    }
+    const assistantDoctorId = await this.resolveDoctorEntityId(userId, appointment.clinicId);
+    if (!assistantDoctorId) {
+      return false;
+    }
+    const coverage = await this.getClinicAssistantDoctorCoverage(appointment.clinicId);
+    return this.isAssistantDoctorCoveredForPrimaryDoctor(
+      coverage,
+      assistantDoctorId,
+      appointment.doctorId
+    );
   }
 
   private buildAlreadyCompletedResult(appointment: CompletionAppointmentRow): {
@@ -5234,7 +5276,7 @@ export class AppointmentsService {
       // stops the completion: there is no fail-open path.
       const appointmentRecord = await this.loadAppointmentForCompletion(appointmentId, clinicId);
 
-      this.assertCompletionAllowed(appointmentRecord, userId, role);
+      await this.assertCompletionAllowed(appointmentRecord, userId, role);
 
       const currentStatus = String(appointmentRecord.status || '').toUpperCase();
 
@@ -5740,18 +5782,24 @@ export class AppointmentsService {
     userId: string,
     clinicId: string,
     role: string = 'USER'
-  ): Promise<{ success: boolean; data?: { completed: number; failed: number } }> {
+  ): Promise<{
+    success: boolean;
+    data?: { completed: number; failed: number; refused: string[] };
+  }> {
     try {
       const appointmentIds = Array.isArray(bulkDto.appointmentIds)
         ? bulkDto.appointmentIds.filter((id): id is string => typeof id === 'string' && Boolean(id))
         : [];
 
       if (appointmentIds.length === 0) {
-        return { success: true, data: { completed: 0, failed: 0 } };
+        return { success: true, data: { completed: 0, failed: 0, refused: [] } };
       }
 
       let completed = 0;
       let failed = 0;
+      // Appointments the caller is not allowed to complete (403): skipped, and reported so the
+      // client can tell "not yours" from "could not be completed".
+      const refused: string[] = [];
 
       const completionPayload: CompleteAppointmentDto = {
         ...(bulkDto.doctorId && { doctorId: bulkDto.doctorId }),
@@ -5765,6 +5813,12 @@ export class AppointmentsService {
           completed += 1;
         } catch (error) {
           failed += 1;
+          if (
+            error instanceof HttpException &&
+            error.getStatus() === AppointmentsService.FORBIDDEN_STATUS
+          ) {
+            refused.push(appointmentId);
+          }
           void this.loggingService.log(
             LogType.SYSTEM,
             LogLevel.WARN,
@@ -5780,7 +5834,7 @@ export class AppointmentsService {
         }
       }
 
-      return { success: true, data: { completed, failed } };
+      return { success: true, data: { completed, failed, refused } };
     } catch (error) {
       void this.loggingService.log(
         LogType.SYSTEM,
