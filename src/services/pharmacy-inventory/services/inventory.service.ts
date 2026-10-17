@@ -12,6 +12,10 @@ import { EventService } from '@infrastructure/events';
 import { HealthcareError, ErrorCode } from '@core/errors';
 import { MovementType } from '@core/types/enums.types';
 import type { PrismaTransactionClientWithDelegates } from '@core/types/prisma.types';
+import {
+  PHARMACY_STOCK_CACHE_TAGS,
+  invalidatePharmacyCacheTags,
+} from './pharmacy-cache-invalidation.util';
 import type {
   RecordStockMovementDto,
   StockAdjustmentDto,
@@ -219,6 +223,14 @@ export class InventoryService {
     });
 
     await this.cache.del(`${INVENTORY_CACHE_PREFIX}:onhand:${clinicId}:${dto.productId}`);
+    // Medicine.stock changed: the cached GET /pharmacy/inventory, stats and low-stock
+    // responses are stale now (same tags createBatch / receivePurchaseOrder drop).
+    await invalidatePharmacyCacheTags(
+      this.cache,
+      this.logger,
+      PHARMACY_STOCK_CACHE_TAGS,
+      'movement-recorded'
+    );
 
     await this.events.emit('pharmacy.movement.recorded', {
       movementId: movement.id,
