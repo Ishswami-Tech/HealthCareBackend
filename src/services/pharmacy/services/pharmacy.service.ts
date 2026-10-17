@@ -22,8 +22,15 @@ import {
   PrescriptionStatus,
   CreateSupplierDto,
   UpdateSupplierDto,
+  INVENTORY_DEFAULT_EXPIRING_DAYS,
+  INVENTORY_MAX_PAGE_SIZE,
+  LOW_STOCK_DEFAULT_LIMIT,
+  LOW_STOCK_MAX_LIMIT,
   resolveMedicineTypeInput,
+  type InventoryFilters,
 } from '@dtos/pharmacy.dto';
+import { HealthcareError, ErrorCode } from '@core/errors';
+import type { Medicine } from '@core/types/database.types';
 import { formatDateKeyInIST } from '@utils/date-time.util';
 import { loadDashboardMetrics, loadSalesReport } from './pharmacy-sales.queries';
 import {
@@ -230,11 +237,30 @@ type PrescriptionDeskContext = {
   contactPhoneByPatientClinic: Map<string, string>;
 };
 
-type InventoryFilterOptions = {
-  lowStock?: boolean;
-  expiringSoon?: boolean;
-  expiringDays?: number;
-};
+/** One page of the inventory list (`page` is 1-based) plus the total of matching rows. */
+export interface InventoryPage {
+  data: Medicine[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+/**
+ * A Prisma field reference (`delegate.fields.<column>`, Prisma >= 5) so a row can be compared
+ * with one of its own columns in SQL (`stock <= minStockThreshold`). The loosely typed delegates
+ * of this module do not declare `fields`; the raw client handed out by DatabaseService has it.
+ */
+function medicineFieldRef(delegate: unknown, column: 'minStockThreshold'): PrismaDelegateArgs {
+  const fields = (delegate as { fields?: Record<string, unknown> }).fields;
+  const ref = fields?.[column];
+  if (!ref) {
+    throw new HealthcareError(
+      ErrorCode.CONFIGURATION_ERROR,
+      `Prisma field references are unavailable; cannot compare Medicine.${column} in the database`
+    );
+  }
+  return ref as PrismaDelegateArgs;
+}
 
 /**
  * Minimal shape of BillingService this module depends on. Resolved lazily
@@ -1556,41 +1582,76 @@ export class PharmacyService {
     throw new NotFoundException('Prescription not found');
   }
 
-  async findAllMedicines(clinicId?: string, filters?: InventoryFilterOptions) {
+  /**
+   * Every active medicine of the clinic matching the filters, ordered by name: the legacy
+   * bare-array response of GET /pharmacy/inventory. Filtering happens in the database (search,
+   * dosage form, classification, in stock, low stock through a field reference on the row's
+   * own reorder level, expiring window).
+   */
+  async findAllMedicines(clinicId?: string, filters?: InventoryFilters): Promise<Medicine[]> {
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-      const where: Record<string, unknown> = { isActive: true };
-      if (clinicId) where['clinicId'] = clinicId;
-
-      const medicines = await typedClient.medicine.findMany({
-        where: where as PrismaDelegateArgs,
+      return await typedClient.medicine.findMany({
+        where: this.buildInventoryWhere(typedClient, clinicId, filters),
+        orderBy: { name: 'asc' },
       } as PrismaDelegateArgs);
-
-      const normalizedExpiringDays = Math.max(1, Number(filters?.expiringDays || 90));
-      const expiryThreshold = Date.now() + normalizedExpiringDays * 24 * 60 * 60 * 1000;
-
-      return medicines.filter(medicine => {
-        const stock = Number(medicine.stock || 0);
-        const minStockThreshold = Number(medicine.minStockThreshold || 0);
-        const expiryDate = medicine.expiryDate ? new Date(medicine.expiryDate).getTime() : null;
-
-        if (filters?.lowStock && stock > minStockThreshold) {
-          return false;
-        }
-
-        if (filters?.expiringSoon) {
-          if (expiryDate === null) {
-            return false;
-          }
-
-          if (expiryDate > expiryThreshold) {
-            return false;
-          }
-        }
-
-        return true;
-      });
     });
+  }
+
+  /** One page of {@link findAllMedicines} plus the total count of the same where clause. */
+  async findInventoryPage(
+    clinicId: string | undefined,
+    filters: InventoryFilters | undefined,
+    page: number,
+    limit: number
+  ): Promise<InventoryPage> {
+    const safePage = Math.max(1, Math.trunc(page));
+    const safeLimit = Math.min(Math.max(1, Math.trunc(limit)), INVENTORY_MAX_PAGE_SIZE);
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      const where = this.buildInventoryWhere(typedClient, clinicId, filters);
+      const [data, total] = await Promise.all([
+        typedClient.medicine.findMany({
+          where,
+          orderBy: { name: 'asc' },
+          skip: (safePage - 1) * safeLimit,
+          take: safeLimit,
+        } as PrismaDelegateArgs),
+        typedClient.medicine.count({ where } as PrismaDelegateArgs),
+      ]);
+      return { data, total, page: safePage, limit: safeLimit };
+    });
+  }
+
+  /**
+   * Prisma `where` of the inventory list. `lowStock` compares `stock` with the row's own
+   * `minStockThreshold` through a field reference, so every filter runs in SQL.
+   */
+  private buildInventoryWhere(
+    typedClient: PrismaTransactionClientWithDelegates,
+    clinicId: string | undefined,
+    filters: InventoryFilters | undefined
+  ): PrismaDelegateArgs {
+    const where: Record<string, unknown> = { isActive: true };
+    if (clinicId) where['clinicId'] = clinicId;
+    if (filters?.search) {
+      const contains = { contains: filters.search, mode: 'insensitive' };
+      where['OR'] = [{ name: contains }, { manufacturer: contains }, { category: contains }];
+    }
+    if (filters?.category) where['category'] = filters.category;
+    if (filters?.type) where['type'] = filters.type;
+    const stock: Record<string, unknown> = {
+      ...(filters?.inStock ? { gt: 0 } : {}),
+      ...(filters?.lowStock
+        ? { lte: medicineFieldRef(typedClient.medicine, 'minStockThreshold') }
+        : {}),
+    };
+    if (Object.keys(stock).length > 0) where['stock'] = stock;
+    if (filters?.expiringSoon) {
+      const days = Math.max(1, Math.trunc(filters.expiringDays ?? INVENTORY_DEFAULT_EXPIRING_DAYS));
+      where['expiryDate'] = { not: null, lte: new Date(Date.now() + days * DAY_MS) };
+    }
+    return where as PrismaDelegateArgs;
   }
 
   async findMedicineById(id: string) {
@@ -3649,9 +3710,9 @@ export class PharmacyService {
         { completeClinicSet: true }
       );
 
-      // NOTE: getStats reads Medicine.stock directly for aggregate performance.
-      // Per-item stock queries (findLowStock, findExpiringSoon) delegate to
-      // pharmacy-inventory for the canonical stockBatch-level truth.
+      // NOTE: getStats and findLowStock read Medicine.stock (the total on-hand kept in sync
+      // by the inventory layer) directly; findExpiringSoon delegates to pharmacy-inventory
+      // for the stockBatch-level expiry scan.
       const medicines = await typedClient.medicine.findMany({
         where: where as PrismaDelegateArgs,
         select: { stock: true, minStockThreshold: true } as PrismaDelegateArgs,
@@ -3795,27 +3856,24 @@ export class PharmacyService {
     return updatedSupplier;
   }
 
-  async findLowStock(clinicId?: string) {
-    if (!clinicId) {
-      return await this.findAllMedicines(clinicId, { lowStock: true });
-    }
-
-    // Delegate stock-level truth to pharmacy-inventory (canonical stock layer).
-    const medicines = await this.databaseService.executeHealthcareRead(async client => {
+  /**
+   * Active medicines at or below their reorder level, lowest stock first then by name. One
+   * query (`stock <= minStockThreshold` through a Prisma field reference; Medicine.stock is the
+   * total on-hand kept in sync by the inventory layer), capped at `limit`.
+   */
+  async findLowStock(
+    clinicId?: string,
+    limit: number = LOW_STOCK_DEFAULT_LIMIT
+  ): Promise<Medicine[]> {
+    const take = Math.min(Math.max(1, Math.trunc(limit)), LOW_STOCK_MAX_LIMIT);
+    return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-      return typedClient.medicine.findMany({
-        where: { clinicId } as PrismaDelegateArgs,
+      return await typedClient.medicine.findMany({
+        where: this.buildInventoryWhere(typedClient, clinicId, { lowStock: true }),
+        orderBy: [{ stock: 'asc' }, { name: 'asc' }],
+        take,
       } as PrismaDelegateArgs);
     });
-
-    const enriched = await Promise.all(
-      (medicines as Array<{ id: string; minStockThreshold?: number | null }>).map(async m => {
-        const stock = await this.inventoryService.getOnHandStock(m.id, clinicId);
-        return { ...m, stock: stock.totalOnHand };
-      })
-    );
-
-    return enriched.filter(m => (m.stock ?? 0) <= (m.minStockThreshold ?? 0));
   }
 
   async findExpiringSoon(clinicId?: string, expiringDays: number = 90) {

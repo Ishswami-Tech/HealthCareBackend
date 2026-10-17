@@ -64,6 +64,9 @@ export enum MedicineClassification {
   HERBAL = 'HERBAL',
 }
 
+/** A classification as the plain string literal the Prisma where clause takes. */
+export type MedicineClassificationValue = `${MedicineClassification}`;
+
 /** "Yavkut Kwath", "yavkut-kwath" and "YAVKUT_KWATH" are the same form. */
 export function normaliseMedicineTypeToken(value: unknown): unknown {
   return typeof value === 'string'
@@ -253,6 +256,158 @@ export class ListPrescriptionsQueryDto {
   @IsInt()
   @Min(0)
   offset?: number;
+}
+
+export const INVENTORY_DEFAULT_PAGE_SIZE = 50;
+export const INVENTORY_MAX_PAGE_SIZE = 500;
+export const INVENTORY_DEFAULT_EXPIRING_DAYS = 90;
+export const INVENTORY_MAX_EXPIRING_DAYS = 3650;
+export const INVENTORY_SEARCH_MAX_LENGTH = 120;
+export const LOW_STOCK_DEFAULT_LIMIT = 100;
+export const LOW_STOCK_MAX_LIMIT = 500;
+
+const BOOLEAN_QUERY_VALUES: readonly string[] = ['true', 'false'];
+const trimQueryString = ({ value }: { value: unknown }): unknown =>
+  typeof value === 'string' ? value.trim() : value;
+
+/**
+ * `GET /pharmacy/inventory` filters and optional pagination. Without `page` every matching row
+ * is returned as the legacy bare array (`limit` is ignored); with `page` the response is
+ * `{ data, total, page, limit }`. Filtering happens in the database.
+ */
+export class InventoryQueryDto {
+  @ApiPropertyOptional({
+    maxLength: INVENTORY_SEARCH_MAX_LENGTH,
+    description: 'Case-insensitive "contains" match on name, manufacturer or category',
+  })
+  @IsOptional()
+  @Transform(trimQueryString)
+  @IsString()
+  @MaxLength(INVENTORY_SEARCH_MAX_LENGTH)
+  search?: string;
+
+  @ApiPropertyOptional({ enum: MedicineType, description: 'Dosage form (Medicine.category)' })
+  @IsOptional()
+  @Transform(({ value }) => normaliseMedicineTypeToken(value))
+  @IsEnum(MedicineType)
+  category?: MedicineType;
+
+  @ApiPropertyOptional({
+    enum: MedicineClassification,
+    description: 'Classification (Medicine.type): CLASSICAL, PROPRIETARY or HERBAL',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normaliseMedicineTypeToken(value))
+  @IsIn(Object.values(MedicineClassification))
+  type?: MedicineClassificationValue;
+
+  @ApiPropertyOptional({
+    enum: BOOLEAN_QUERY_VALUES,
+    description: "'true' keeps only medicines with stock above zero",
+  })
+  @IsOptional()
+  @IsIn(BOOLEAN_QUERY_VALUES)
+  inStock?: string;
+
+  @ApiPropertyOptional({
+    enum: BOOLEAN_QUERY_VALUES,
+    description: "'true' keeps only medicines at or below their reorder level",
+  })
+  @IsOptional()
+  @IsIn(BOOLEAN_QUERY_VALUES)
+  lowStock?: string;
+
+  @ApiPropertyOptional({
+    enum: BOOLEAN_QUERY_VALUES,
+    description: "'true' keeps only medicines expiring within expiringDays",
+  })
+  @IsOptional()
+  @IsIn(BOOLEAN_QUERY_VALUES)
+  expiringSoon?: string;
+
+  @ApiPropertyOptional({
+    minimum: 1,
+    maximum: INVENTORY_MAX_EXPIRING_DAYS,
+    description: `Window of expiringSoon in days (default ${INVENTORY_DEFAULT_EXPIRING_DAYS})`,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(INVENTORY_MAX_EXPIRING_DAYS)
+  expiringDays?: number;
+
+  @ApiPropertyOptional({
+    minimum: 1,
+    description: '1-based page; omit it for the legacy bare array of every matching row',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @ApiPropertyOptional({
+    minimum: 1,
+    maximum: INVENTORY_MAX_PAGE_SIZE,
+    description: `Page size (default ${INVENTORY_DEFAULT_PAGE_SIZE}); ignored without page`,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(INVENTORY_MAX_PAGE_SIZE)
+  limit?: number;
+
+  @ApiPropertyOptional({
+    deprecated: true,
+    minimum: 0,
+    description: 'Legacy parameter of older web builds; accepted and ignored (use page)',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  offset?: number;
+}
+
+/** Filters of GET /pharmacy/inventory once the query is parsed; applied in the database. */
+export interface InventoryFilters {
+  readonly search?: string;
+  readonly category?: string;
+  readonly type?: MedicineClassificationValue;
+  readonly inStock?: boolean;
+  readonly lowStock?: boolean;
+  readonly expiringSoon?: boolean;
+  readonly expiringDays?: number;
+}
+
+/** The validated query as service filters: string flags become booleans, absent ones vanish. */
+export function toInventoryFilters(query: InventoryQueryDto): InventoryFilters {
+  return {
+    ...(query.search ? { search: query.search } : {}),
+    ...(query.category ? { category: query.category } : {}),
+    ...(query.type ? { type: query.type } : {}),
+    ...(query.inStock === 'true' ? { inStock: true } : {}),
+    ...(query.lowStock === 'true' ? { lowStock: true } : {}),
+    ...(query.expiringSoon === 'true' ? { expiringSoon: true } : {}),
+    ...(query.expiringDays !== undefined ? { expiringDays: query.expiringDays } : {}),
+  };
+}
+
+/** `GET /pharmacy/inventory/low-stock` options. */
+export class LowStockQueryDto {
+  @ApiPropertyOptional({
+    minimum: 1,
+    maximum: LOW_STOCK_MAX_LIMIT,
+    description: `Rows to return, lowest stock first (default ${LOW_STOCK_DEFAULT_LIMIT})`,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(LOW_STOCK_MAX_LIMIT)
+  limit?: number;
 }
 
 export class CreateMedicineDto {

@@ -14,9 +14,18 @@ import {
 } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
-import { PharmacyService, type PharmacyActor } from '../services/pharmacy.service';
+import {
+  PharmacyService,
+  type InventoryPage,
+  type PharmacyActor,
+} from '../services/pharmacy.service';
 import {
   CreateMedicineDto,
+  INVENTORY_DEFAULT_PAGE_SIZE,
+  InventoryQueryDto,
+  LOW_STOCK_DEFAULT_LIMIT,
+  LowStockQueryDto,
+  toInventoryFilters,
   UpdateInventoryDto,
   CreatePharmacyPrescriptionDto,
   UpdatePharmacyPrescriptionDto,
@@ -42,6 +51,7 @@ import { Cache } from '@core/decorators';
 import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 import { Role } from '@core/types/enums.types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
+import type { Medicine } from '@core/types/database.types';
 
 @ApiTags('pharmacy')
 @Controller('pharmacy')
@@ -60,30 +70,44 @@ export class PharmacyController {
 
   /**
    * @endpoint GET /pharmacy/inventory
-   * @access PHARMACIST, CLINIC_ADMIN, SUPER_ADMIN
+   * @access PHARMACIST, CLINIC_ADMIN, SUPER_ADMIN, DOCTOR, ASSISTANT_DOCTOR
    * @frontend pharmacy.server.ts
    * @status ACTIVE
-   * @description Get all medicines in pharmacy inventory
+   * @description Medicines of the clinic inventory, filtered in the database (`search`,
+   * `category`, `type`, `inStock`, `lowStock`, `expiringSoon`/`expiringDays`) and ordered by
+   * name. Without `page` the legacy bare array of every matching row is returned (`limit` is
+   * ignored, so older clients sending `limit` alone still get everything); with `page` the
+   * response is `{ data, total, page, limit }`. `X-Total-Count` carries the matching total on
+   * every response built by this handler; the cache (default key, which includes the full query)
+   * replays the body only.
    */
   @Get('inventory')
   @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.DOCTOR, Role.ASSISTANT_DOCTOR)
   @RequireResourcePermission('inventory', 'read')
   @Cache({ ttl: 300, tags: ['pharmacy', 'inventory'], priority: 'normal' })
   @RateLimitAPI()
-  @ApiOperation({ summary: 'Get all medicines in inventory' })
+  @ApiOperation({ summary: 'List (filter, optionally paginate) the medicines in inventory' })
   async getInventory(
     @Request() req: ClinicAuthenticatedRequest,
-    @Query('lowStock') lowStock?: string,
-    @Query('expiringSoon') expiringSoon?: string,
-    @Query('expiringDays') expiringDays?: string
-  ) {
+    @Query() query: InventoryQueryDto,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ): Promise<Medicine[] | InventoryPage> {
     // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
     const clinicId = req.clinicContext?.clinicId;
-    return this.pharmacyService.findAllMedicines(clinicId, {
-      ...(lowStock === 'true' ? { lowStock: true } : {}),
-      ...(expiringSoon === 'true' ? { expiringSoon: true } : {}),
-      ...(expiringDays ? { expiringDays: Number(expiringDays) || 90 } : {}),
-    });
+    const filters = toInventoryFilters(query);
+    if (query.page === undefined) {
+      const medicines = await this.pharmacyService.findAllMedicines(clinicId, filters);
+      reply.header('X-Total-Count', String(medicines.length));
+      return medicines;
+    }
+    const result = await this.pharmacyService.findInventoryPage(
+      clinicId,
+      filters,
+      query.page,
+      query.limit ?? INVENTORY_DEFAULT_PAGE_SIZE
+    );
+    reply.header('X-Total-Count', String(result.total));
+    return result;
   }
 
   /**
@@ -143,6 +167,8 @@ export class PharmacyController {
   /**
    * @endpoint GET /pharmacy/inventory/low-stock
    * @access PHARMACIST, CLINIC_ADMIN
+   * @description Active medicines at or below their reorder level, lowest stock first, capped
+   * at `limit` (default 100, max 500). One database query (stock <= minStockThreshold).
    */
   @Get('inventory/low-stock')
   @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN)
@@ -150,10 +176,13 @@ export class PharmacyController {
   @RateLimitAPI()
   @RequireResourcePermission('inventory', 'read')
   @ApiOperation({ summary: 'Get medicines with low stock levels' })
-  async getLowStock(@Request() req: ClinicAuthenticatedRequest) {
+  async getLowStock(
+    @Request() req: ClinicAuthenticatedRequest,
+    @Query() query: LowStockQueryDto
+  ): Promise<Medicine[]> {
     // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
     const clinicId = req.clinicContext?.clinicId;
-    return this.pharmacyService.findLowStock(clinicId);
+    return this.pharmacyService.findLowStock(clinicId, query.limit ?? LOW_STOCK_DEFAULT_LIMIT);
   }
 
   /**
