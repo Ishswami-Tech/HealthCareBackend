@@ -17,6 +17,7 @@ import { CacheService } from '@infrastructure/cache/cache.service';
 import { IS_PUBLIC_KEY } from '@core/decorators/public.decorator';
 import {
   buildAuthRateLimitKey,
+  resolveVerifiedSessionId,
   resolveVerifiedUserId,
   shouldCheckLockout,
   shouldCountFailedAuthAttempt,
@@ -336,6 +337,10 @@ export class JwtAuthGuard implements CanActivate {
         }
       }
       const verifiedUserId = resolveVerifiedUserId(verifiedPayload);
+      const verifiedSessionId = resolveVerifiedSessionId(
+        verifiedPayload,
+        request.headers['x-session-id']
+      );
 
       // Rate limiting and lockout status do not depend on each other's result, so they run
       // concurrently instead of as 2 sequential cache round-trips.
@@ -353,7 +358,12 @@ export class JwtAuthGuard implements CanActivate {
       const [rateLimitResult, lockoutStatus] = await Promise.all([
         shouldCheckRateLimit
           ? this.rateLimitService.checkRateLimit(
-              buildAuthRateLimitKey({ userId: verifiedUserId, clientIp, path }),
+              buildAuthRateLimitKey({
+                userId: verifiedUserId,
+                sessionId: verifiedSessionId,
+                clientIp,
+                path,
+              }),
               {
                 windowMs: 60000, // 1 minute window
                 max: 60, // 60 requests per minute for auth endpoints

@@ -14,9 +14,13 @@ export interface VerifiedTokenPayload {
 export interface AuthRateLimitKeyInput {
   /** User id (`sub`) of a token whose signature verified; undefined when there is none. */
   readonly userId?: string | undefined;
+  /** Session (device) id of that token, see resolveVerifiedSessionId; undefined when unknown. */
+  readonly sessionId?: string | undefined;
   readonly clientIp: string;
   readonly path: string;
 }
+
+const SESSION_ID_MAX_LENGTH = 128;
 
 export interface LockoutCheckInput {
   readonly isProduction: boolean;
@@ -45,12 +49,37 @@ export function resolveVerifiedUserId(payload: VerifiedTokenPayload | null): str
 }
 
 /**
+ * The session (device) id of a verified request: the signed `sessionId` claim first, else the
+ * `X-Session-ID` header the session layer also accepts. Only meaningful once the token verified.
+ */
+export function resolveVerifiedSessionId(
+  payload: VerifiedTokenPayload | null,
+  headerSessionId: unknown
+): string | undefined {
+  if (!payload) return undefined;
+  const candidates = [payload['sessionId'], headerSessionId];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      if (trimmed.length > 0 && trimmed.length <= SESSION_ID_MAX_LENGTH) return trimmed;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Per-path request throttle key. Every web request reaches the API from the Next.js server's
  * IP, so an IP key would throttle all web users together: once a token verified the limit is
- * per user, and only tokenless or unverifiable requests share the IP bucket.
+ * per user and, when known, per session so one login on several devices does not share a
+ * bucket; only tokenless or unverifiable requests share the IP bucket.
  */
 export function buildAuthRateLimitKey(input: AuthRateLimitKeyInput): string {
-  return input.userId ? `user:${input.userId}:${input.path}` : `ip:${input.clientIp}:${input.path}`;
+  if (!input.userId) {
+    return `ip:${input.clientIp}:${input.path}`;
+  }
+  return input.sessionId
+    ? `user:${input.userId}:${input.sessionId}:${input.path}`
+    : `user:${input.userId}:${input.path}`;
 }
 
 /**

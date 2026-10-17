@@ -8,6 +8,7 @@ import {
 import {
   COUNTED_AUTH_FAILURE_MESSAGES,
   buildAuthRateLimitKey,
+  resolveVerifiedSessionId,
   resolveVerifiedUserId,
   shouldCheckLockout,
   shouldCountFailedAuthAttempt,
@@ -26,6 +27,18 @@ describe('resolveVerifiedUserId', () => {
   });
 });
 
+describe('resolveVerifiedSessionId', () => {
+  it('prefers the signed sessionId claim, then the X-Session-ID header, and needs a verified token', () => {
+    expect(resolveVerifiedSessionId({ sub: 'u1', sessionId: 'sess-1' }, 'hdr-1')).toBe('sess-1');
+    expect(resolveVerifiedSessionId({ sub: 'u1' }, ' hdr-1 ')).toBe('hdr-1');
+    expect(resolveVerifiedSessionId({ sub: 'u1' }, undefined)).toBeUndefined();
+    expect(resolveVerifiedSessionId({ sub: 'u1' }, '')).toBeUndefined();
+    expect(resolveVerifiedSessionId({ sub: 'u1' }, 'x'.repeat(129))).toBeUndefined();
+    expect(resolveVerifiedSessionId({ sub: 'u1', sessionId: 42 }, ['a'])).toBeUndefined();
+    expect(resolveVerifiedSessionId(null, 'hdr-1')).toBeUndefined();
+  });
+});
+
 describe('buildAuthRateLimitKey', () => {
   it('keys a verified request by user so web users behind one proxy IP never share a bucket', () => {
     const a = buildAuthRateLimitKey({ userId: 'u1', clientIp: '10.0.0.5', path: '/api/v1/x' });
@@ -33,6 +46,27 @@ describe('buildAuthRateLimitKey', () => {
     expect(a).toBe('user:u1:/api/v1/x');
     expect(b).toBe('user:u2:/api/v1/x');
     expect(a).not.toBe(b);
+  });
+
+  it('separates the devices of one login by session when the session id is known', () => {
+    const phone = buildAuthRateLimitKey({
+      userId: 'u1',
+      sessionId: 'sess-phone',
+      clientIp: '10.0.0.5',
+      path: '/api/v1/x',
+    });
+    const laptop = buildAuthRateLimitKey({
+      userId: 'u1',
+      sessionId: 'sess-laptop',
+      clientIp: '10.0.0.5',
+      path: '/api/v1/x',
+    });
+    expect(phone).toBe('user:u1:sess-phone:/api/v1/x');
+    expect(laptop).toBe('user:u1:sess-laptop:/api/v1/x');
+    expect(phone).not.toBe(laptop);
+    expect(
+      buildAuthRateLimitKey({ sessionId: 'sess-1', clientIp: '10.0.0.5', path: '/api/v1/x' })
+    ).toBe('ip:10.0.0.5:/api/v1/x');
   });
 
   it('keys an unauthenticated request by IP and keeps the limit per path', () => {
