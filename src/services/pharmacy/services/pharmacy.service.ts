@@ -1649,6 +1649,11 @@ export class PharmacyService {
       }
     }
     if (Object.keys(stock).length > 0) where['stock'] = stock;
+    // No stock left is always at or below the reorder level, so it narrows any stock filter.
+    if (filters?.outOfStock) {
+      where['stock'] = { lte: 0 };
+      delete where['id'];
+    }
     if (filters?.expiringSoon) {
       const days = Math.max(1, Math.trunc(filters.expiringDays ?? INVENTORY_DEFAULT_EXPIRING_DAYS));
       where['expiryDate'] = { not: null, lte: new Date(Date.now() + days * DAY_MS) };
@@ -2157,6 +2162,12 @@ export class PharmacyService {
     actor?: PharmacyActor
   ) {
     if (!clinicId) throw new BadRequestException('Clinic ID is required');
+    // A note-only prescription (diagnosis / advice, no medicines) needs that note, and with
+    // nothing to dispense it is FILLED at once so it never waits in the pharmacy queue.
+    const noteOnly = dto.items.length === 0;
+    if (noteOnly && !dto.diagnosis?.trim() && !dto.notes?.trim()) {
+      throw new BadRequestException('Add a medicine, or a diagnosis or advice for the patient');
+    }
 
     const prescription = await this.databaseService.executeHealthcareWrite(
       async client => {
@@ -2198,6 +2209,7 @@ export class PharmacyService {
             diagnosis: dto.diagnosis,
             ...(dto.visitId && { visitId: dto.visitId }),
             ...(dto.validUntil && { validUntil: resolveValidUntil(dto.validUntil) }),
+            ...(noteOnly && { status: 'FILLED' }),
             items: {
               create: dto.items.map(item => ({
                 medicineId: item.medicineId,

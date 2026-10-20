@@ -74,7 +74,7 @@ export class PharmacyController {
    * @frontend pharmacy.server.ts
    * @status ACTIVE
    * @description Medicines of the clinic inventory, filtered in the database (`search`,
-   * `category`, `type`, `inStock`, `lowStock`, `expiringSoon`/`expiringDays`) and ordered by
+   * `category`, `type`, `inStock`, `lowStock`, `outOfStock`, `expiringSoon`/`expiringDays`) and ordered by
    * name. Without `page` the legacy bare array of every matching row is returned (`limit` is
    * ignored, so older clients sending `limit` alone still get everything); with `page` the
    * response is `{ data, total, page, limit }`. `X-Total-Count` carries the matching total on

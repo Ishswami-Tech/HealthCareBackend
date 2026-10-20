@@ -356,6 +356,14 @@ export class InventoryQueryDto extends CacheBusterQueryDto {
 
   @ApiPropertyOptional({
     enum: BOOLEAN_QUERY_VALUES,
+    description: "'true' keeps only medicines with no stock left (stock <= 0)",
+  })
+  @IsOptional()
+  @IsIn(BOOLEAN_QUERY_VALUES)
+  outOfStock?: string;
+
+  @ApiPropertyOptional({
+    enum: BOOLEAN_QUERY_VALUES,
     description: "'true' keeps only medicines expiring within expiringDays",
   })
   @IsOptional()
@@ -415,6 +423,7 @@ export interface InventoryFilters {
   readonly type?: MedicineClassificationValue;
   readonly inStock?: boolean;
   readonly lowStock?: boolean;
+  readonly outOfStock?: boolean;
   readonly expiringSoon?: boolean;
   readonly expiringDays?: number;
 }
@@ -427,6 +436,7 @@ export function toInventoryFilters(query: InventoryQueryDto): InventoryFilters {
     ...(query.type ? { type: query.type } : {}),
     ...(query.inStock === 'true' ? { inStock: true } : {}),
     ...(query.lowStock === 'true' ? { lowStock: true } : {}),
+    ...(query.outOfStock === 'true' ? { outOfStock: true } : {}),
     ...(query.expiringSoon === 'true' ? { expiringSoon: true } : {}),
     ...(query.expiringDays !== undefined ? { expiringDays: query.expiringDays } : {}),
   };
