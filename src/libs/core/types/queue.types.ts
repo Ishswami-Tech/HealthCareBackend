@@ -308,9 +308,15 @@ export interface ExtendedQueueMetrics {
   delayedJobs: number;
   pausedJobs: number;
   processedJobs: number;
-  throughput: number; // jobs per minute
-  averageProcessingTime: number; // milliseconds
-  errorRate: number; // percentage
+  throughput: number; // jobs per minute, over the trailing metrics window
+  averageProcessingTime: number; // milliseconds, sampled from recent completed jobs
+  errorRate: number; // percentage, over the trailing metrics window (NOT lifetime)
+  /**
+   * Jobs that finished (completed or failed) inside the trailing metrics window.
+   * Health and alerting use this as the sample size: 0 means the queue is idle,
+   * which is healthy, not broken.
+   */
+  recentFinishedJobs: number;
   lastActivity: Date;
   health: 'healthy' | 'degraded' | 'unhealthy';
 }

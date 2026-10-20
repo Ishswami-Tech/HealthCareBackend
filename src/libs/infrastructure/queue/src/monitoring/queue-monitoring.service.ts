@@ -596,8 +596,13 @@ export class QueueMonitoringService {
   private checkAlerts(metrics: ExtendedQueueMetrics): void {
     const alerts: QueueAlert[] = [];
 
+    // An idle queue produces no error-rate or throughput signal. Alerting on it
+    // yields permanent false positives; a genuinely stalled queue is caught by
+    // the backlog (queue_size) check below, which still runs.
+    const hasRecentActivity = metrics.recentFinishedJobs > 0;
+
     // Error rate alert
-    if (metrics.errorRate > this.ALERT_THRESHOLDS.errorRate) {
+    if (hasRecentActivity && metrics.errorRate > this.ALERT_THRESHOLDS.errorRate) {
       alerts.push(
         this.createAlert(
           metrics.queueName,
@@ -610,8 +615,13 @@ export class QueueMonitoringService {
       );
     }
 
-    // Throughput alert
-    if (metrics.throughput < this.ALERT_THRESHOLDS.throughput) {
+    // Throughput alert. Low throughput is only a problem when work is queued and
+    // failing to drain - that is the "workers are stuck" signal. A bare jobs/min
+    // floor is meaningless on a low-volume queue: healthcare-queue averages well
+    // under one job per minute, so it would sit permanently below any sane
+    // threshold while behaving perfectly.
+    const hasBacklog = metrics.waitingJobs + metrics.activeJobs > 0;
+    if (hasBacklog && metrics.throughput < this.ALERT_THRESHOLDS.throughput) {
       alerts.push(
         this.createAlert(
           metrics.queueName,
@@ -721,6 +731,7 @@ export class QueueMonitoringService {
       throughput: 0,
       averageProcessingTime: 0,
       errorRate: 0,
+      recentFinishedJobs: 0,
       lastActivity: new Date(),
       health: 'healthy',
     };
@@ -732,15 +743,21 @@ export class QueueMonitoringService {
   private calculateHealth(
     metrics: Partial<ExtendedQueueMetrics>
   ): 'healthy' | 'degraded' | 'unhealthy' {
-    if (!metrics.errorRate && !metrics.throughput) {
+    // An idle queue is healthy. Nothing finished in the window, so there is no
+    // error rate to judge - and zero throughput here means "no work arrived",
+    // not "workers are stuck". A stuck worker shows up as a growing backlog,
+    // which the queue_size alert covers.
+    if ((metrics.recentFinishedJobs ?? 0) === 0) {
       return 'healthy';
     }
 
-    if ((metrics.errorRate || 0) > 10 || (metrics.throughput || 0) === 0) {
+    const errorRate = metrics.errorRate ?? 0;
+
+    if (errorRate > 10) {
       return 'unhealthy';
     }
 
-    if ((metrics.errorRate || 0) > 5 || (metrics.throughput || 0) < 5) {
+    if (errorRate > 5) {
       return 'degraded';
     }
 

@@ -39,7 +39,7 @@ import {
   buildAppointmentTreatmentCategoryGroups,
   buildAppointmentTreatmentFilterGroup,
 } from '@core/types/treatment-catalog.types';
-import { HEALTHCARE_QUEUE } from './queue.constants';
+import { HEALTHCARE_QUEUE, QUEUE_METRICS_CONFIG } from './queue.constants';
 
 // Internal imports - Types
 import {
@@ -344,6 +344,14 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
   // Instance properties
   // Initialize Maps with defensive checks to prevent undefined errors
   private readonly queues: Map<string, Queue> = new Map<string, Queue>();
+
+  /**
+   * Last time monitoring metrics were refreshed, per queue. `updateMonitoringMetrics`
+   * is called on every `addJob`, so refreshes are throttled to
+   * `QUEUE_METRICS_CONFIG.refreshIntervalMs` to keep enqueue bursts from turning
+   * into Redis round-trip bursts on the shared connection.
+   */
+  private readonly lastMetricsRefresh: Map<string, number> = new Map<string, number>();
   private readonly workers: Map<string, Worker[]> = new Map<string, Worker[]>();
   private readonly connectedClients: Map<string, ClientSession> = new Map<string, ClientSession>();
   private readonly queueMetrics: Map<string, DetailedQueueMetrics> = new Map<
@@ -2371,6 +2379,13 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
       // app is, since more jobs enqueued means more of these fetches.
       // getJobCounts() returns the same counts via cheap ZCARD/LLEN-style
       // commands with no per-job fetch at all.
+      const now = Date.now();
+      const lastRefresh = this.lastMetricsRefresh.get(queueName) ?? 0;
+      if (now - lastRefresh < QUEUE_METRICS_CONFIG.refreshIntervalMs) {
+        return;
+      }
+      this.lastMetricsRefresh.set(queueName, now);
+
       const counts = await queue.getJobCounts(
         'waiting',
         'active',
@@ -2386,9 +2401,16 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
       // Note: getPaused() method may not be available in all BullMQ versions
       const pausedCount = 0; // Placeholder for paused jobs
 
+      // Error rate and throughput come from a trailing window, NOT from the
+      // lifetime counts above. BullMQ keeps the newest `removeOnFail` failures
+      // forever, so a lifetime ratio never recovers after a bad deploy - it
+      // reported 53% "unhealthy" for two months after the cause was fixed.
+      const windowed = await this.getWindowedOutcomes(queue, now);
+
       const metrics = {
-        totalJobs:
-          waitingCount + activeCount + completedCount + failedCount + delayedCount + pausedCount,
+        // Backlog only. Lifetime totals must not drive the queue_size alert,
+        // or the threshold trips purely from accumulated history.
+        totalJobs: waitingCount + activeCount + delayedCount + pausedCount,
         waitingJobs: waitingCount,
         activeJobs: activeCount,
         completedJobs: completedCount,
@@ -2396,9 +2418,10 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
         delayedJobs: delayedCount,
         pausedJobs: pausedCount,
         processedJobs: completedCount + failedCount,
-        throughput: 25, // Placeholder - jobs per minute
-        averageProcessingTime: 120000, // Placeholder - 2 minutes in milliseconds
-        errorRate: failedCount > 0 ? (failedCount / (completedCount + failedCount)) * 100 : 0,
+        throughput: windowed.throughputPerMinute,
+        averageProcessingTime: windowed.averageProcessingTimeMs,
+        errorRate: windowed.errorRate,
+        recentFinishedJobs: windowed.finishedInWindow,
       };
 
       this.monitoringService.updateMetrics(queueName, this.getCurrentDomain(), metrics);
@@ -2411,6 +2434,135 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
         { queueName, error: _error instanceof Error ? _error.message : String(_error) }
       );
     }
+  }
+
+  /**
+   * Derive error rate, throughput and average processing time from the trailing
+   * `QUEUE_METRICS_CONFIG.windowMs`, rather than from lifetime job counts.
+   *
+   * BullMQ stores finished jobs in the `completed`/`failed` sorted sets scored by
+   * their `finishedOn` timestamp, so a window is a single ZCOUNT per set -
+   * O(log N) with no per-job fetch. That matters: an unbounded per-job fetch on
+   * this path previously caused cascading Redis command timeouts.
+   *
+   * An idle queue reports `errorRate: 0`. Below `minSampleSize` finished jobs the
+   * rate is also reported as 0, because one failure out of one job is 100% and
+   * would alert on noise.
+   */
+  private async getWindowedOutcomes(
+    queue: Queue,
+    now: number
+  ): Promise<{
+    errorRate: number;
+    throughputPerMinute: number;
+    averageProcessingTimeMs: number;
+    finishedInWindow: number;
+  }> {
+    const idle = {
+      errorRate: 0,
+      throughputPerMinute: 0,
+      averageProcessingTimeMs: 0,
+      finishedInWindow: 0,
+    };
+
+    const client = await queue.getBackend().client;
+    const cutoff = now - QUEUE_METRICS_CONFIG.windowMs;
+
+    const [completedInWindow, failedInWindow] = await Promise.all([
+      this.countFinishedSince(client, queue.toKey('completed'), cutoff),
+      this.countFinishedSince(client, queue.toKey('failed'), cutoff),
+    ]);
+
+    const finishedInWindow = completedInWindow + failedInWindow;
+    if (finishedInWindow === 0) {
+      return idle;
+    }
+
+    const windowMinutes = QUEUE_METRICS_CONFIG.windowMs / 60000;
+
+    return {
+      // Below the sample floor the ratio is too noisy to alert on, but the
+      // throughput and timing figures are still real and worth reporting.
+      errorRate:
+        finishedInWindow >= QUEUE_METRICS_CONFIG.minSampleSize
+          ? (failedInWindow / finishedInWindow) * 100
+          : 0,
+      throughputPerMinute: finishedInWindow / windowMinutes,
+      averageProcessingTimeMs: await this.sampleAverageProcessingTime(queue, client),
+      finishedInWindow,
+    };
+  }
+
+  /**
+   * Count members of a BullMQ finished-job sorted set whose score (the job's
+   * `finishedOn` timestamp) is at or after `cutoff`.
+   *
+   * `IRedisClient` is datastore-agnostic and exposes no ZCOUNT, so this reads a
+   * bounded newest-first page of scores and stops at the first entry older than
+   * the cutoff - the set is score-ordered, so everything beyond it is older too.
+   */
+  private async countFinishedSince(
+    client: Awaited<ReturnType<Queue['getBackend']>['client']>,
+    key: string,
+    cutoff: number
+  ): Promise<number> {
+    const page = await client.zrevrange(key, 0, QUEUE_METRICS_CONFIG.maxWindowSamples - 1, {
+      WITHSCORES: true,
+    });
+
+    // Flat [member, score, member, score, ...] - scores sit at the odd indices.
+    let count = 0;
+    for (let index = 1; index < page.length; index += 2) {
+      const score = Number(page[index]);
+      if (!Number.isFinite(score) || score < cutoff) {
+        break;
+      }
+      count += 1;
+    }
+
+    return count;
+  }
+
+  /**
+   * Average processing time over the most recent completed jobs.
+   *
+   * Deliberately capped at `QUEUE_METRICS_CONFIG.processingTimeSampleSize` jobs:
+   * this is the only part of the metrics path that reads individual job hashes,
+   * and an unbounded version of it was the confirmed cause of Redis command
+   * timeouts on unrelated session/RBAC reads sharing the connection.
+   */
+  private async sampleAverageProcessingTime(
+    queue: Queue,
+    client: Awaited<ReturnType<Queue['getBackend']>['client']>
+  ): Promise<number> {
+    const sampleSize = QUEUE_METRICS_CONFIG.processingTimeSampleSize;
+    const jobIds = await client.zrange(queue.toKey('completed'), -sampleSize, -1);
+    if (jobIds.length === 0) {
+      return 0;
+    }
+
+    const durations = await Promise.all(
+      jobIds.map(async (jobId): Promise<number | null> => {
+        const [processedOn, finishedOn] = await client.hmget(
+          queue.toKey(jobId),
+          'processedOn',
+          'finishedOn'
+        );
+        const started = Number(processedOn);
+        const ended = Number(finishedOn);
+        if (!Number.isFinite(started) || !Number.isFinite(ended) || ended < started) {
+          return null;
+        }
+        return ended - started;
+      })
+    );
+
+    const valid = durations.filter((duration): duration is number => duration !== null);
+    if (valid.length === 0) {
+      return 0;
+    }
+
+    return valid.reduce((sum, duration) => sum + duration, 0) / valid.length;
   }
 
   /**
