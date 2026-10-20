@@ -49,22 +49,16 @@ export function resolveVerifiedUserId(payload: VerifiedTokenPayload | null): str
 }
 
 /**
- * The session (device) id of a verified request: the signed `sessionId` claim first, else the
- * `X-Session-ID` header the session layer also accepts. Only meaningful once the token verified.
+ * The session (device) id of a verified request: the signed `sessionId` claim only. The
+ * `X-Session-ID` header is client-controlled and the session it names is checked only later,
+ * so keying the throttle on it would let a caller mint a fresh bucket per request.
  */
-export function resolveVerifiedSessionId(
-  payload: VerifiedTokenPayload | null,
-  headerSessionId: unknown
-): string | undefined {
+export function resolveVerifiedSessionId(payload: VerifiedTokenPayload | null): string | undefined {
   if (!payload) return undefined;
-  const candidates = [payload['sessionId'], headerSessionId];
-  for (const candidate of candidates) {
-    if (typeof candidate === 'string') {
-      const trimmed = candidate.trim();
-      if (trimmed.length > 0 && trimmed.length <= SESSION_ID_MAX_LENGTH) return trimmed;
-    }
-  }
-  return undefined;
+  const candidate = payload['sessionId'];
+  if (typeof candidate !== 'string') return undefined;
+  const trimmed = candidate.trim();
+  return trimmed.length > 0 && trimmed.length <= SESSION_ID_MAX_LENGTH ? trimmed : undefined;
 }
 
 /**

@@ -28,14 +28,13 @@ describe('resolveVerifiedUserId', () => {
 });
 
 describe('resolveVerifiedSessionId', () => {
-  it('prefers the signed sessionId claim, then the X-Session-ID header, and needs a verified token', () => {
-    expect(resolveVerifiedSessionId({ sub: 'u1', sessionId: 'sess-1' }, 'hdr-1')).toBe('sess-1');
-    expect(resolveVerifiedSessionId({ sub: 'u1' }, ' hdr-1 ')).toBe('hdr-1');
-    expect(resolveVerifiedSessionId({ sub: 'u1' }, undefined)).toBeUndefined();
-    expect(resolveVerifiedSessionId({ sub: 'u1' }, '')).toBeUndefined();
-    expect(resolveVerifiedSessionId({ sub: 'u1' }, 'x'.repeat(129))).toBeUndefined();
-    expect(resolveVerifiedSessionId({ sub: 'u1', sessionId: 42 }, ['a'])).toBeUndefined();
-    expect(resolveVerifiedSessionId(null, 'hdr-1')).toBeUndefined();
+  it('uses only the signed sessionId claim, never a client header, and needs a verified token', () => {
+    expect(resolveVerifiedSessionId({ sub: 'u1', sessionId: ' sess-1 ' })).toBe('sess-1');
+    expect(resolveVerifiedSessionId({ sub: 'u1' })).toBeUndefined();
+    expect(resolveVerifiedSessionId({ sub: 'u1', sessionId: '' })).toBeUndefined();
+    expect(resolveVerifiedSessionId({ sub: 'u1', sessionId: 'x'.repeat(129) })).toBeUndefined();
+    expect(resolveVerifiedSessionId({ sub: 'u1', sessionId: 42 })).toBeUndefined();
+    expect(resolveVerifiedSessionId(null)).toBeUndefined();
   });
 });
 

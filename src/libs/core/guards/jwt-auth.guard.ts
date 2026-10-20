@@ -337,10 +337,7 @@ export class JwtAuthGuard implements CanActivate {
         }
       }
       const verifiedUserId = resolveVerifiedUserId(verifiedPayload);
-      const verifiedSessionId = resolveVerifiedSessionId(
-        verifiedPayload,
-        request.headers['x-session-id']
-      );
+      const verifiedSessionId = resolveVerifiedSessionId(verifiedPayload);
 
       // Rate limiting and lockout status do not depend on each other's result, so they run
       // concurrently instead of as 2 sequential cache round-trips.
