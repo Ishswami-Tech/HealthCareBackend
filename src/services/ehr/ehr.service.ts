@@ -162,7 +162,7 @@ function shiftDayKey(dayKey: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-/** Roles that always prescribe as themselves (their own Doctor profile), never as a named doctor. */
+/** Roles that prescribe under their own Doctor profile (an assistant may name a covered doctor). */
 const SELF_PRESCRIBING_ROLES: ReadonlySet<string> = new Set<string>([
   Role.DOCTOR,
   Role.ASSISTANT_DOCTOR,
@@ -1029,18 +1029,48 @@ export class EHRService {
     actor?: PatientAccessActor
   ): Promise<string> {
     const role = String(actor?.role ?? '').toUpperCase();
+    const explicit = data.doctorId?.trim();
     if (actor?.userId && SELF_PRESCRIBING_ROLES.has(role)) {
+      // A covering assistant completes the treating doctor's visit: the prescription stays
+      // under that doctor when they practise in this clinic.
+      if (
+        role === String(Role.ASSISTANT_DOCTOR) &&
+        explicit &&
+        (await this.doctorPractisesInClinic(explicit, data.clinicId))
+      ) {
+        return explicit;
+      }
       const ownDoctorId = await this.findDoctorIdByUserId(actor.userId);
       if (!ownDoctorId) {
         throw new BadRequestException('The prescribing doctor has no doctor profile');
       }
       return ownDoctorId;
     }
-    const explicit = data.doctorId?.trim();
-    if (explicit) {
-      return explicit;
+    if (!explicit) {
+      throw new BadRequestException('doctorId is required: name the prescribing doctor');
     }
-    throw new BadRequestException('doctorId is required: name the prescribing doctor');
+    if (!(await this.doctorPractisesInClinic(explicit, data.clinicId))) {
+      throw new BadRequestException('The named doctor does not practise in this clinic');
+    }
+    return explicit;
+  }
+
+  /** Whether Doctor `doctorId` is linked to `clinicId` (any clinic when none is given). */
+  private async doctorPractisesInClinic(doctorId: string, clinicId?: string): Promise<boolean> {
+    return await this.databaseService.executeHealthcareRead<boolean>(async client => {
+      const typedClient = client as unknown as {
+        doctor: { count: (args: PrismaDelegateArgs) => Promise<number> };
+        doctorClinic: { count: (args: PrismaDelegateArgs) => Promise<number> };
+      };
+      const count = clinicId
+        ? await typedClient.doctorClinic.count({
+            where: { doctorId, clinicId } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs)
+        : await typedClient.doctor.count({
+            where: { id: doctorId } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+      return count > 0;
+    });
   }
 
   /**

@@ -46,7 +46,11 @@ function createHarness(patient: typeof PATIENT | null = PATIENT) {
       create: jest.fn(async ({ data }: { data: Row }) => ({ id: 'record-new', ...data })),
     },
     userRole: { findMany: jest.fn().mockResolvedValue([{ clinicId: CLINIC }]) },
-    doctor: { findUnique: jest.fn().mockResolvedValue({ id: 'doctor-of-caller' }) },
+    doctor: {
+      findUnique: jest.fn().mockResolvedValue({ id: 'doctor-of-caller' }),
+      count: jest.fn().mockResolvedValue(1),
+    },
+    doctorClinic: { count: jest.fn().mockResolvedValue(1) },
   };
   const databaseService = {
     executeHealthcareRead: jest.fn(async (operation: (c: unknown) => Promise<unknown>) =>
@@ -199,6 +203,7 @@ describe('EHRService.createPrescription', () => {
     for (const role of ['DOCTOR', 'ASSISTANT_DOCTOR']) {
       const h = createHarness();
       h.client.doctor.findUnique.mockResolvedValue(null);
+      h.client.doctorClinic.count.mockResolvedValue(0);
 
       await expect(
         h.service.createPrescription(NOTE_ONLY, { userId: 'doc-user', role })
@@ -222,6 +227,31 @@ describe('EHRService.createPrescription', () => {
     await h.service.createPrescription(NOTE_ONLY, { userId: 'admin-user', role: 'CLINIC_ADMIN' });
     expect(h.client.doctor.findUnique).not.toHaveBeenCalled();
     expect(h.prescriptionData()).toMatchObject({ doctorId: 'doctor-1' });
+  });
+
+  it('a covering ASSISTANT_DOCTOR keeps the treating doctor when they practise in the clinic', async () => {
+    const h = createHarness();
+    h.client.doctor.findUnique.mockResolvedValue(null);
+
+    await h.service.createPrescription(NOTE_ONLY, {
+      userId: 'assistant-user',
+      role: 'ASSISTANT_DOCTOR',
+    });
+
+    expect(h.client.doctorClinic.count).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { doctorId: 'doctor-1', clinicId: CLINIC } })
+    );
+    expect(h.prescriptionData()).toMatchObject({ doctorId: 'doctor-1' });
+  });
+
+  it('an admin cannot attach a doctor from another clinic', async () => {
+    const h = createHarness();
+    h.client.doctorClinic.count.mockResolvedValue(0);
+
+    await expect(
+      h.service.createPrescription(NOTE_ONLY, { userId: 'admin-user', role: 'CLINIC_ADMIN' })
+    ).rejects.toThrow('does not practise in this clinic');
+    expect(h.client.prescription.create).not.toHaveBeenCalled();
   });
 
   it('drops the caches of the resolved patient user even when a Patient.id was posted', async () => {
