@@ -13,6 +13,8 @@ export interface RateLimitOptions {
   keyGenerator?: (req: unknown) => string;
   skipIf?: (req: unknown) => boolean;
   message?: string;
+  /** Enforce even in development (cache providers skip rate limiting in dev by default). */
+  bypassDev?: boolean;
 }
 
 export interface RateLimitResult {
@@ -116,7 +118,8 @@ export class RateLimitService {
       const isLimited = await this.cacheService.isRateLimited(
         `rate_limit:${key}`,
         options.max,
-        windowSeconds
+        windowSeconds,
+        options.bypassDev ? { bypassDev: true } : {}
       );
 
       if (isLimited) {

@@ -1,3 +1,4 @@
+import { hasUsablePassword } from '@services/auth/core/has-password.util';
 import { Injectable, BadRequestException, Inject, forwardRef } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache/cache.service';
@@ -24,6 +25,7 @@ import type { UserUpdateInput, UserWhereInput } from '@core/types/input.types';
 import type { Doctor, Patient, Receptionist, ClinicAdmin, SuperAdmin, AuditLog } from '@core/types';
 import { AuditInfo } from '@core/types/database.types';
 import { formatISODateInIST, nowIso } from '@utils/date-time.util';
+import { readStaffLocation } from '@utils/staff-location.util';
 import { normalizeAuthPhoneNumber } from '../auth/core/phone-normalizer.util';
 
 export interface ProfileCompletionValidationResult {
@@ -240,7 +242,7 @@ export class UsersService {
   }
 
   async findOne(id: string, clinicId?: string): Promise<UserResponseDto> {
-    const cacheKey = `users:one:v5:${id}:${clinicId || 'global'}`;
+    const cacheKey = `users:one:v7:${id}:${clinicId || 'global'}`;
 
     return this.cacheService.cache(
       cacheKey,
@@ -300,6 +302,12 @@ export class UsersService {
           phone: result.phone ?? '',
           isProfileComplete: result.isProfileComplete ?? false,
           profileComplete: result.isProfileComplete ?? false,
+          hasPassword: hasUsablePassword({
+            password: _password,
+            passwordChangedAt: (result as { passwordChangedAt?: Date | string | null })
+              .passwordChangedAt,
+            role: String(result.role),
+          }),
           ...(typeof result.phoneVerified === 'boolean'
             ? { phoneVerified: result.phoneVerified }
             : {}),
@@ -361,6 +369,17 @@ export class UsersService {
         if (result.dateOfBirth) {
           userResponse.dateOfBirth = this.formatDateToString(result.dateOfBirth);
         }
+
+        // Staff: the allotted clinic location comes from the staff profile (server side), so the
+        // reception desk / queue screens never have to guess or ask the user for it.
+        const staffLocation = await readStaffLocation(
+          this.databaseService,
+          result.id,
+          String(result.role),
+          clinicId ?? (result as { primaryClinicId?: string | null }).primaryClinicId ?? undefined
+        );
+        if (staffLocation.locationId) userResponse.locationId = staffLocation.locationId;
+        userResponse.locationName = staffLocation.locationName;
 
         if (userRecord.doctor) {
           if (userRecord.doctor.specialization) {
@@ -1761,6 +1780,11 @@ export class UsersService {
     limit = 20,
     offset = 0
   ): Promise<{ data: UserResponseDto[]; total: number }> {
+    // Query-string values arrive as text; Prisma needs integers for take/skip.
+    const parsedLimit = Math.trunc(Number(limit));
+    const parsedOffset = Math.trunc(Number(offset));
+    const take = Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 100) : 20;
+    const skip = Number.isFinite(parsedOffset) && parsedOffset > 0 ? parsedOffset : 0;
     // RBAC check usually happens at controller, but good to have clinic scope here
     const where: Record<string, unknown> = {};
 
@@ -1849,7 +1873,7 @@ export class UsersService {
     }
 
     // Execute with caching
-    const cacheKey = `users:search:${clinicId || 'all'}:${query}:${roles?.join(',') || 'all'}:${limit}:${offset}`;
+    const cacheKey = `users:search:${clinicId || 'all'}:${query}:${roles?.join(',') || 'all'}:${take}:${skip}`;
 
     return this.cacheService.cache(
       cacheKey,
@@ -1859,8 +1883,8 @@ export class UsersService {
             const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
             return await typedClient.user.findMany({
               where: where as UserWhereInput,
-              take: limit,
-              skip: offset,
+              take,
+              skip,
               orderBy: { createdAt: 'desc' },
             } as PrismaDelegateArgs);
           }),
@@ -2015,6 +2039,7 @@ export class UsersService {
   private async invalidateUserProfileCaches(userId: string, clinicId?: string): Promise<void> {
     await Promise.all([
       this.cacheService.invalidateCache(`users:one:v5:${userId}:global`),
+      this.cacheService.invalidateCache(`users:one:v7:${userId}:global`),
       this.cacheService.invalidateCache(`users:one:${userId}`),
       this.cacheService.invalidateUserDataCache(userId, clinicId),
       this.cacheService.invalidateDoctorCache(userId, clinicId),

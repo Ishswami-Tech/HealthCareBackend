@@ -1,6 +1,6 @@
 /**
  * Clock + slot helpers for the check-in specs. Check-in is gated on the appointment's IST slot
- * (30 min before .. 3 h after, same IST day), so the specs pin "now" and place appointments
+ * (20 min before .. 45 min after, same IST day), so the specs pin "now" and place appointments
  * relative to it instead of depending on the wall clock of the machine running them.
  */
 import { jest } from '@jest/globals';

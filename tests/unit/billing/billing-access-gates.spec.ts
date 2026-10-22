@@ -26,6 +26,7 @@ jest.mock('@services/billing/invoice-pdf.service', () => ({ InvoicePDFService: c
 
 import { NotFoundException } from '@nestjs/common';
 import { createBillingService } from './billing-test-harness';
+import { clinicInvoiceDelegate } from './clinic-invoice-client.fake';
 import type { MockMap } from './billing-test-harness';
 import { FakeBillingDb } from './billing-fake-db';
 import { CLINIC_ID } from './billing-finalisation-world';
@@ -111,32 +112,46 @@ describe('GET appointments/:id/payout-status', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('the route no longer lists PATIENT or RECEPTIONIST', () => {
+  it('the route no longer lists PATIENT, RECEPTIONIST or the clinical roles', () => {
     const roles = rolesOf('getAppointmentPayoutStatus');
     expect(roles).not.toContain(Role.PATIENT);
     expect(roles).not.toContain(Role.RECEPTIONIST);
+    // Billing blindness: payouts are money, the doctor and the assistant never see them.
+    expect(roles).not.toContain(Role.DOCTOR);
+    expect(roles).not.toContain(Role.ASSISTANT_DOCTOR);
     expect(roles).toEqual(
-      expect.arrayContaining([
-        Role.SUPER_ADMIN,
-        Role.CLINIC_ADMIN,
-        Role.FINANCE_BILLING,
-        Role.DOCTOR,
-      ])
+      expect.arrayContaining([Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING])
     );
   });
 });
 
 describe('GET invoices/download/:fileName', () => {
-  function setup() {
+  function setup(status = 'PAID') {
     const db = new FakeBillingDb();
     db.seed('invoice', {
       id: 'inv-1',
       invoiceNumber: 'INV-2026-000001',
       userId: 'patient-a',
       clinicId: CLINIC_ID,
+      status,
     });
     return createBillingService({ databaseService: db.service as unknown as MockMap });
   }
+
+  it.each(['PENDING', 'VOID'])(
+    'answers 409 "Receipt is available after payment" for a %s invoice (B16)',
+    async status => {
+      const { service } = setup(status);
+
+      await expect(
+        service.assertInvoiceFileAccess('invoice_INV-2026-000001_1759500000000.pdf', {
+          userId: 'patient-a',
+          role: 'PATIENT',
+          clinicId: CLINIC_ID,
+        })
+      ).rejects.toThrow('Receipt is available after payment');
+    }
+  );
 
   const OWNER = { userId: 'patient-a', role: 'PATIENT', clinicId: CLINIC_ID };
 
@@ -334,8 +349,18 @@ describe('Pharmacist clinic invoices / payments scope', () => {
       { id: 'p-sub', clinicId: CLINIC_ID, subscriptionId: 'sub-1', invoice: pharmacyInvoice },
       { id: 'p-orphan', clinicId: CLINIC_ID, metadata: {} },
     ]);
+    const invoiceClient = {
+      invoice: clinicInvoiceDelegate([pharmacyInvoice, rxInvoice, apptInvoice, subInvoice]),
+    };
+    const executeHealthcareRead = jest.fn(async (op: (c: unknown) => Promise<unknown>) =>
+      op(invoiceClient)
+    );
     const { service } = createBillingService({
-      databaseService: { findInvoicesSafe, findPaymentsSafe } as unknown as MockMap,
+      databaseService: {
+        findInvoicesSafe,
+        findPaymentsSafe,
+        executeHealthcareRead,
+      } as unknown as MockMap,
     });
     return { service, findInvoicesSafe, findPaymentsSafe };
   }
@@ -347,7 +372,7 @@ describe('Pharmacist clinic invoices / payments scope', () => {
 
   it('PHARMACIST only sees pharmacy / prescription invoices', async () => {
     const { service } = setup();
-    const result = await service.getClinicInvoices(CLINIC_ID, 'PHARMACIST');
+    const result = (await service.getClinicInvoices(CLINIC_ID, 'PHARMACIST')).data;
     expect((result as Array<{ id: string }>).map(i => i.id)).toEqual(['inv-ph', 'inv-rx']);
   });
 
@@ -359,14 +384,18 @@ describe('Pharmacist clinic invoices / payments scope', () => {
 
   it('other roles are unfiltered', async () => {
     const { service } = setup();
-    expect(await service.getClinicInvoices(CLINIC_ID, 'CLINIC_ADMIN')).toHaveLength(4);
+    expect((await service.getClinicInvoices(CLINIC_ID, 'CLINIC_ADMIN')).data).toHaveLength(4);
     expect(await service.getClinicPayments(CLINIC_ID, undefined, 'CLINIC_ADMIN')).toHaveLength(4);
   });
 
   it('keeps the pharmacist invoice cache entry apart from the full clinic one', async () => {
     const keys: string[] = [];
     const { service } = createBillingService({
-      databaseService: { findInvoicesSafe: jest.fn().mockResolvedValue([]) } as unknown as MockMap,
+      databaseService: {
+        executeHealthcareRead: jest.fn(async (op: (c: unknown) => Promise<unknown>) =>
+          op({ invoice: clinicInvoiceDelegate([]) })
+        ),
+      } as unknown as MockMap,
       cacheService: {
         cache: jest.fn(async (key: string, loader: () => Promise<unknown>) => {
           keys.push(key);

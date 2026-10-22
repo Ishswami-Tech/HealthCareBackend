@@ -34,11 +34,21 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { createFrameworkAdapter } from '@infrastructure/framework/adapters/fastify.adapter';
 import { ApplicationLifecycleManager } from '@infrastructure/framework/wrappers/application-lifecycle.manager';
 import { BullBoardModule } from '@infrastructure/queue/src/bull-board/bull-board.module';
-import {
-  GracefulShutdownService,
-  ProcessErrorHandlersService,
-} from '@core/resilience/graceful-shutdown.service';
+import { ProcessErrorHandlersService } from '@core/resilience/graceful-shutdown.service';
 import type { ApplicationConfig } from '@core/types/framework.types';
+import { DatabaseService } from '@infrastructure/database/database.service';
+import { WORKER_LIFECYCLE } from '@infrastructure/queue/src/queue.constants';
+import { closeWorkersGracefully } from '@infrastructure/queue/src/worker-lifecycle/close-workers.util';
+import {
+  heartbeatFilePath,
+  runHeartbeatCheck,
+} from '@infrastructure/queue/src/worker-lifecycle/worker-heartbeat';
+import {
+  startWorkerHeartbeat,
+  type HeartbeatWorker,
+  type WorkerHeartbeatHandle,
+} from '@infrastructure/queue/src/worker-lifecycle/worker-heartbeat.runner';
+import type { Worker } from 'bullmq';
 
 /**
  * Service modules that own @Cron jobs.
@@ -96,11 +106,13 @@ class WorkerModule {}
 
 async function bootstrap() {
   if (process.argv.includes('--healthcheck')) {
-    console.error('Worker health check passed');
-    process.exit(0);
+    // Judges the heartbeat the RUNNING worker writes (process alive, Redis/Dragonfly + DB pings
+    // OK, at least one BullMQ worker running). Prefer `node dist/worker-healthcheck.js`, which
+    // does the same without loading this module graph.
+    process.exit(runHeartbeatCheck(WORKER_LIFECYCLE.heartbeatMaxAgeMs));
   }
 
-  let app: INestApplication | null = null;
+  let app: INestApplication | null;
 
   try {
     // Use framework adapter to create application (framework-agnostic approach)
@@ -193,12 +205,10 @@ async function bootstrap() {
         }
       );
 
-      // Setup resilience services for production stability
+      // Process error handlers only. GracefulShutdownService.setupShutdownHandlers is NOT used
+      // on the worker: it raced the handler below (10s forced exit, DB disconnected before the
+      // BullMQ workers had drained). The single SIGTERM/SIGINT handler is installWorkerShutdown.
       try {
-        const gracefulShutdownService =
-          await serviceContainer.getService<GracefulShutdownService>(GracefulShutdownService);
-        gracefulShutdownService.setupShutdownHandlers(app!, null, null, null);
-
         const processErrorHandlersService =
           await serviceContainer.getService<ProcessErrorHandlersService>(
             ProcessErrorHandlersService
@@ -221,28 +231,12 @@ async function bootstrap() {
       );
     }
 
-    // Setup graceful shutdown handlers
-    const shutdownHandler = async (signal: string): Promise<void> => {
-      console.error(`Received ${signal}, shutting down worker gracefully...`);
-      try {
-        if (app) {
-          await app.close();
-        }
-        process.exit(0);
-      } catch {
-        console.error(`Error during ${signal} shutdown`);
-        process.exit(1);
-      }
-    };
-
-    process.on('SIGTERM', () => {
-      void shutdownHandler('SIGTERM');
-    });
-
-    process.on('SIGINT', () => {
-      void shutdownHandler('SIGINT');
-    });
-    console.error('Worker is running and processing queues...');
+    const workers = resolveBullWorkers(app);
+    const heartbeat = startHeartbeat(app, workers);
+    installWorkerShutdown(app, workers, heartbeat);
+    console.error(
+      `Worker is running and processing queues... (${workers.length} BullMQ worker(s), heartbeat ${heartbeatFilePath()})`
+    );
   } catch (error) {
     console.error(
       'Worker failed to start:',
@@ -250,6 +244,100 @@ async function bootstrap() {
     );
     process.exit(1);
   }
+}
+
+/** Key read (never written) by the heartbeat's Redis round-trip probe. */
+const WORKER_REDIS_PING_KEY = 'healthcare:worker:heartbeat-probe';
+
+/** The BullMQ workers QueueModule created (empty when cache/queues are disabled). */
+function resolveBullWorkers(app: INestApplication): Worker[] {
+  try {
+    const workers = app.get<Worker[]>('BULLMQ_WORKERS', { strict: false });
+    return Array.isArray(workers) ? workers : [];
+  } catch {
+    return [];
+  }
+}
+
+function startHeartbeat(app: INestApplication, workers: readonly Worker[]): WorkerHeartbeatHandle {
+  let databaseService: DatabaseService | null = null;
+  try {
+    databaseService = app.get(DatabaseService, { strict: false });
+  } catch {
+    databaseService = null;
+  }
+  return startWorkerHeartbeat({
+    workers,
+    pingWorkerRedis: async (worker: HeartbeatWorker): Promise<void> => {
+      // A GET on the worker's own BullMQ connection (the queue DB) is the round-trip probe.
+      const client = await (worker as Worker).getBackend().client;
+      await client.get(WORKER_REDIS_PING_KEY);
+    },
+    pingDatabase: async (): Promise<boolean> => {
+      if (!databaseService) throw new Error('DatabaseService not available');
+      const status = await databaseService.getHealthStatus();
+      return status.isHealthy;
+    },
+    filePath: heartbeatFilePath(),
+    intervalMs: WORKER_LIFECYCLE.heartbeatIntervalMs,
+    pingTimeoutMs: WORKER_LIFECYCLE.pingTimeoutMs,
+    onWriteError: message => console.error(`[WorkerHeartbeat] ${message}`),
+  });
+}
+
+/**
+ * The ONE SIGTERM/SIGINT handler of the worker process:
+ *   1. mark the heartbeat as shutting down (healthcheck goes red, no new traffic expected);
+ *   2. close the BullMQ workers: stop fetching jobs, let in-flight jobs finish (bounded by
+ *      WORKER_LIFECYCLE.closeTimeoutMs, then force-closed);
+ *   3. app.close() runs every onModuleDestroy (queues, DLQ, DB, cache);
+ *   4. exit. A hard deadline (WORKER_LIFECYCLE.shutdownTimeoutMs) guarantees the process exits
+ *      before the container's stop_grace_period SIGKILLs it.
+ * A second signal while shutting down is ignored.
+ */
+function installWorkerShutdown(
+  app: INestApplication,
+  workers: readonly Worker[],
+  heartbeat: WorkerHeartbeatHandle
+): void {
+  let shuttingDown = false;
+  const shutdown = async (signal: string): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.error(`Received ${signal}, draining BullMQ workers before exit...`);
+    const deadline = setTimeout(() => {
+      console.error(
+        `Worker shutdown exceeded ${WORKER_LIFECYCLE.shutdownTimeoutMs}ms, forcing exit`
+      );
+      process.exit(1);
+    }, WORKER_LIFECYCLE.shutdownTimeoutMs);
+    deadline.unref();
+
+    let exitCode = 0;
+    try {
+      await heartbeat.stop();
+      const results = await closeWorkersGracefully(workers, WORKER_LIFECYCLE.closeTimeoutMs);
+      for (const result of results) {
+        console.error(`BullMQ worker ${result.name}: ${result.outcome} in ${result.durationMs}ms`);
+        if (result.outcome === 'failed') exitCode = 1;
+      }
+      await app.close();
+    } catch (error) {
+      console.error(
+        `Error during ${signal} shutdown: ${error instanceof Error ? error.message : String(error)}`
+      );
+      exitCode = 1;
+    }
+    clearTimeout(deadline);
+    process.exit(exitCode);
+  };
+
+  process.on('SIGTERM', () => {
+    void shutdown('SIGTERM');
+  });
+  process.on('SIGINT', () => {
+    void shutdown('SIGINT');
+  });
 }
 
 // Process error handlers are set up by ProcessErrorHandlersService in bootstrap()

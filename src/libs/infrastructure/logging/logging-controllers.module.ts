@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { LoggingController } from './logging.controller';
 import { LoggingModule } from './logging.module';
+import { LoggerUiEnabledGuard } from '@infrastructure/logging/logger-ui-access.guard';
 
 /**
  * LoggingControllersModule
@@ -10,12 +11,14 @@ import { LoggingModule } from './logging.module';
  * controllers to be registered multiple times if they were in the global module.
  *
  * This module should ONLY be imported in AppModule (root module).
- * LoggingController is publicly accessible (no authentication required).
+ * Only /logger/health is public. The log/event viewer and its JSON APIs are SUPER_ADMIN-only
+ * and are disabled in production unless LOGGER_UI_ENABLED=true (see LoggerUiEnabledGuard).
  */
 @Module({
   imports: [
     forwardRef(() => LoggingModule), // Import services from LoggingModule
   ],
   controllers: [LoggingController],
+  providers: [LoggerUiEnabledGuard],
 })
 export class LoggingControllersModule {}

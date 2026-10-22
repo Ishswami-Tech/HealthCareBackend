@@ -31,10 +31,20 @@ import {
 } from './appointment-state-contract';
 import {
   appointmentSlotKind,
+  doctorDayLockKey,
   findConflictingSlotKind,
+  isSlotTaken,
   loadDoctorDayAppointments,
+  readDoctorDayAppointments,
+  SLOT_FREEING_STATUSES,
   slotConflictMessage,
 } from './appointment-slot-conflict.util';
+import {
+  resolveClinicVisitDurations,
+  resolveVisitDurationMinutes,
+  visitMinutesForType,
+} from '@utils/visit-duration.util';
+import { type DayBookability, resolveDayBookability } from '@utils/clinic-working-days.util';
 
 // DTOs and Types
 import {
@@ -64,6 +74,12 @@ import {
   nowIso,
 } from '../../../libs/utils/date-time.util';
 import { startOfIstDay, endOfIstDay } from '@utils/clock.util';
+import { readClosureForDay, type ClosureDecision } from './clinic-closure.util';
+import { queuePriorityWeight } from '@infrastructure/queue/src/services/live-queue-rebuild.util';
+import {
+  SAFE_APPOINTMENT_PEOPLE_INCLUDE,
+  toSafeAppointmentUsers,
+} from './appointment-response-redaction.util';
 
 // CoreAppointmentMetrics is an alias for AppointmentMetricsData
 export type CoreAppointmentMetrics = AppointmentMetricsData;
@@ -83,6 +99,14 @@ import type {
 
 export type AppointmentData = Appointment;
 
+/** Rows the paged appointment list counts at most (100 pages of 100); see `totalCapped`. */
+export const APPOINTMENT_LIST_COUNT_CAP = 10_000;
+
+/** Tag set of one clinic's cached appointment metrics (an entity tag: not clinic-expanded). */
+function appointmentMetricsTag(clinicId: string): string {
+  return `appointment_metrics:${clinicId}`;
+}
+
 /** The appointment columns the generic update decides on. */
 interface AppointmentUpdateRow {
   id: string;
@@ -92,6 +116,8 @@ interface AppointmentUpdateRow {
   type: string;
   status: string;
   metadata?: unknown;
+  date?: Date | string | null;
+  time?: string | null;
 }
 export type PatientData = Patient;
 export type DoctorData = Doctor;
@@ -195,7 +221,7 @@ export class CoreAppointmentService {
         // But should have address information
       }
 
-      // 1a. Validate appointment date is not in the past and not a weekend
+      // 1a. Validate appointment date is not in the past and is a clinic working day
       const appointmentDateIso = (createDto as unknown as Record<string, unknown>)[
         'appointmentDate'
       ] as string | undefined;
@@ -267,17 +293,20 @@ export class CoreAppointmentService {
             };
           }
 
-          // Weekend check — get the IST day name and reject Sat/Sun
-          const istDayName = new Intl.DateTimeFormat('en-US', {
-            timeZone: IST_TIMEZONE,
-            weekday: 'long',
-          }).format(utcDate);
-          if (istDayName === 'Saturday' || istDayName === 'Sunday') {
+          // Working days come from the clinic settings (default Mon-Fri) and the location's
+          // per-day hours: the same rule as the availability grid (clinic-working-days.util).
+          const dayCheck = await this.resolveBookableDay(
+            context.clinicId,
+            istFormatted,
+            isVideoCallAppointmentType(createDto.type)
+              ? null
+              : ((createDto as { locationId?: string }).locationId ?? null)
+          );
+          if (!dayCheck.open) {
             return {
               success: false,
               error: 'VALIDATION_ERROR',
-              message:
-                'Appointments cannot be booked on weekends (Saturday and Sunday). Please select a weekday.',
+              message: dayCheck.message,
               metadata: { processingTime: Date.now() - startTime },
             };
           }
@@ -441,6 +470,26 @@ export class CoreAppointmentService {
         };
       }
 
+      // 3a. Holidays / closures / approved doctor leave (clinic_holidays): the same days the
+      // availability grid shows as closed can never be booked.
+      const bookingDayKey = formatDateKeyInIST(this.resolveAppointmentDateTime(createDto));
+      if (bookingDayKey) {
+        const closure = await this.readCalendarClosure(
+          context.clinicId,
+          resolvedIds.doctorId,
+          bookingDayKey,
+          isVideoCallAppointmentType(createDto.type) ? null : resolvedIds.locationId
+        );
+        if (closure.closed) {
+          return {
+            success: false,
+            error: 'VALIDATION_ERROR',
+            message: closure.reason ?? 'Clinic is closed on this day',
+            metadata: { processingTime: Date.now() - startTime },
+          };
+        }
+      }
+
       // 4. Check for scheduling conflicts. The conflict check (read) and the
       // eventual insert further below are not atomic on their own — two
       // concurrent booking requests for the same doctor/slot (different
@@ -529,41 +578,50 @@ export class CoreAppointmentService {
           };
         }
 
-        // 4b. Doctor slot rule, read fresh inside the booking lock: one doctor may hold a video
+        // 4b. Visit length: the clinic's setting for this appointment type (in-person / video),
+        // resolved here on the server. A duration sent by the client is never used.
+        const clinicSettings = await this.databaseService.executeHealthcareRead(async client => {
+          const typedClient = client as unknown as {
+            clinic: {
+              findUnique: (args: unknown) => Promise<{ settings?: unknown } | null>;
+            };
+          };
+
+          return typedClient.clinic.findUnique({
+            where: { id: context.clinicId },
+            select: { settings: true },
+          });
+        });
+        const durationMinutes = resolveVisitDurationMinutes(
+          clinicSettings?.settings,
+          createDto.type
+        );
+
+        // 4c. Doctor slot rule, read fresh inside the booking lock: one doctor may hold a video
         // visit and an in-clinic visit in the same slot, never two of the same kind. It runs after
         // the idempotency lookup above so a patient's own payment retry still finds its row.
-        const dayAppointments = await loadDoctorDayAppointments(this.databaseService, {
+        const slotQuery = {
           doctorId: resolvedIds.doctorId,
           clinicId: context.clinicId,
           dayKey: dateStr,
-        });
-        const conflictingKind = findConflictingSlotKind(dayAppointments, {
+        };
+        const slotRequest = {
           type: createDto.type,
           time: timeStr,
-        });
+          durationMinutes,
+        };
+        const dayAppointments = await loadDoctorDayAppointments(this.databaseService, slotQuery);
+        const conflictingKind = findConflictingSlotKind(dayAppointments, slotRequest);
         if (conflictingKind) {
           throw new ConflictException(slotConflictMessage(conflictingKind));
         }
 
         if (isVideoCallAppointmentType(createDto.type)) {
-          const clinicSettings = await this.databaseService.executeHealthcareRead(async client => {
-            const typedClient = client as unknown as {
-              clinic: {
-                findUnique: (args: unknown) => Promise<{ settings?: unknown } | null>;
-              };
-            };
-
-            return typedClient.clinic.findUnique({
-              where: { id: context.clinicId },
-              select: { settings: true },
-            });
-          });
-
           const appointmentSettings = this.extractAppointmentSettings(clinicSettings?.settings);
           const videoCallWindow = this.extractVideoCallWindow(appointmentSettings);
           if (
             videoCallWindow &&
-            !this.isSlotWithinWindow(timeStr, Number(createDto.duration), videoCallWindow)
+            !this.isSlotWithinWindow(timeStr, durationMinutes, videoCallWindow)
           ) {
             return {
               success: false,
@@ -586,6 +644,7 @@ export class CoreAppointmentService {
           priority: createDto.priority || AppointmentPriority.NORMAL,
           date: new Date(`${dateStr}T00:00:00.000+05:30`),
           time: timeStr,
+          duration: durationMinutes,
         };
 
         // VIDEO_CALL appointments require upfront per-appointment payment.
@@ -596,8 +655,6 @@ export class CoreAppointmentService {
         // to SCHEDULED (and then CONFIRMED by the receptionist).
         const appointmentType = String(createDto.type || '').toUpperCase();
         if (appointmentType === 'VIDEO_CALL') {
-          // Keep video appointment duration aligned with the web booking slot.
-          appointmentData['duration'] = 15;
           const windowMinutes = getVideoPaymentWindowMinutes();
           const expiresAt = new Date(Date.now() + windowMinutes * 60_000);
           appointmentData['status'] = AppointmentStatus.PENDING;
@@ -612,6 +669,20 @@ export class CoreAppointmentService {
         } else {
           appointmentData['status'] = AppointmentStatus.SCHEDULED;
         }
+        // Keep the patient's booking remark (reason / complaint) apart from `notes`: clinicians
+        // write their own notes onto that column later, which would otherwise erase it.
+        const bookingRemark = typeof createDto.notes === 'string' ? createDto.notes.trim() : '';
+        if (bookingRemark) {
+          const currentMetadata = appointmentData['metadata'];
+          appointmentData['metadata'] = {
+            ...(currentMetadata &&
+            typeof currentMetadata === 'object' &&
+            !Array.isArray(currentMetadata)
+              ? (currentMetadata as Record<string, unknown>)
+              : {}),
+            patientRemarks: bookingRemark,
+          };
+        }
         // Remove appointmentDate as it's not part of AppointmentCreateInput
         delete appointmentData['appointmentDate'];
         // createAppointmentSafe builds a relation-style create input, so the
@@ -622,14 +693,28 @@ export class CoreAppointmentService {
         }
 
         // Cast to AppointmentCreateInput - appointmentData has all required fields from createDto
+        // DB-level guard: the insert runs in one transaction that holds an advisory lock on the
+        // doctor's day and re-checks the slot there (the cache lock above is per exact start time
+        // and best effort; this one also serializes overlapping slots).
         const appointment = (await this.databaseService.createAppointmentSafe(
           appointmentData as unknown as Parameters<
             typeof this.databaseService.createAppointmentSafe
-          >[0]
+          >[0],
+          {
+            lockKey: doctorDayLockKey(resolvedIds.doctorId, dateStr),
+            assertFree: async tx => {
+              const rows = await readDoctorDayAppointments(tx, slotQuery);
+              const kind = findConflictingSlotKind(rows, slotRequest);
+              if (kind) throw new ConflictException(slotConflictMessage(kind));
+            },
+          }
         )) as AppointmentData;
 
-        // Cast for AppointmentResult compatibility
-        const appointmentResult = appointment as unknown as Record<string, unknown>;
+        // Cast for AppointmentResult compatibility. createAppointmentSafe reads full user rows:
+        // the answer (and the created event) carry only the safe user columns.
+        const appointmentResult = toSafeAppointmentUsers(
+          appointment as unknown as Record<string, unknown>
+        );
 
         // 5. Auto-create video room for VIDEO_CALL appointments
         // Note: Video room creation is handled by AppointmentsService after appointment creation
@@ -658,7 +743,7 @@ export class CoreAppointmentService {
           patientId: appointment.patientId,
           scheduledDate: appointment.date,
           scheduledTime: appointment.time,
-          appointment,
+          appointment: appointmentResult,
           context,
         });
 
@@ -671,15 +756,17 @@ export class CoreAppointmentService {
 
         // 8. Invalidate cache
         void Promise.all([
-          this.invalidateAppointmentCache(context.clinicId),
+          this.invalidateAppointmentCache(context.clinicId, appointment.id),
           resolvedIds.patientUserId
             ? this.cacheService.invalidateMyAppointmentsCache(resolvedIds.patientUserId)
             : Promise.resolve(0),
           resolvedIds.patientUserId
             ? this.cacheService.invalidateUpcomingAppointmentsCache(resolvedIds.patientUserId)
             : Promise.resolve(0),
+          // Tag, not the `doctor:<id>:clinic:<id>:*` glob (a keyspace SCAN per booking): the
+          // doctor's availability grids are registered under `doctor_availability` above.
           resolvedIds.doctorUserId
-            ? this.cacheService.invalidateDoctorCache(resolvedIds.doctorUserId, context.clinicId)
+            ? this.cacheService.invalidateCacheByTag(`doctor:${resolvedIds.doctorUserId}`)
             : Promise.resolve(0),
         ]).catch((error: unknown) => {
           void this.loggingService.log(
@@ -775,7 +862,11 @@ export class CoreAppointmentService {
       const offset = (page - 1) * limit;
 
       // Parallel queries for data and count (optimized for 10M+ users)
-      // Both queries use indexed fields: clinicId, doctorId, patientId, status, date
+      // Both queries use the same filters on indexed fields (clinicId, doctorId, patientId,
+      // status, date). The count is capped (audit P1): an unfiltered staff list used to count
+      // every appointment of the clinic on every page; past the cap `totalCapped` is true and
+      // paging keeps working (hasNext stays true while a full page came back).
+      const countCap = Math.max(APPOINTMENT_LIST_COUNT_CAP, offset + limit + 1);
       const [appointments, total] = await Promise.all([
         this.databaseService.findAppointmentsSafe(where, {
           skip: offset,
@@ -784,8 +875,9 @@ export class CoreAppointmentService {
           // across all roles while remaining stable for pagination.
           orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
         }),
-        this.databaseService.countAppointmentsSafe(where),
+        this.databaseService.countAppointmentsSafe(where, { cap: countCap }),
       ]);
+      const totalCapped = total >= countCap;
 
       // Apply priority-based sorting for doctor/staff if requested or by default for specific statuses
       let sortedAppointments = appointments;
@@ -801,19 +893,10 @@ export class CoreAppointmentService {
           normalizedStatus === 'WAITING' ||
           filters.priority)
       ) {
-        const PRIORITY_WEIGHTS: Record<string, number> = {
-          EMERGENCY: 100,
-          URGENT: 80,
-          HIGH: 50,
-          MEDIUM: 30,
-          NORMAL: 20,
-          LOW: 10,
-          ROUTINE: 0,
-        };
-
+        // The queue's priority scale: only a raised priority sorts ahead (M3 / B6).
         sortedAppointments = [...appointments].sort((a, b) => {
-          const pA = a.priority ? (PRIORITY_WEIGHTS[a.priority.toUpperCase()] ?? 20) : 20;
-          const pB = b.priority ? (PRIORITY_WEIGHTS[b.priority.toUpperCase()] ?? 20) : 20;
+          const pA = queuePriorityWeight(a.priority);
+          const pB = queuePriorityWeight(b.priority);
           if (pA !== pB) return pB - pA;
           return new Date(a.date).getTime() - new Date(b.date).getTime();
         });
@@ -878,6 +961,7 @@ export class CoreAppointmentService {
           totalPages: Math.ceil(dedupedTotal / limit),
           hasNext: page * limit < dedupedTotal,
           hasPrev: page > 1,
+          ...(totalCapped ? { totalCapped: true } : {}),
         },
       };
 
@@ -945,6 +1029,8 @@ export class CoreAppointmentService {
           type: true,
           status: true,
           metadata: true,
+          date: true,
+          time: true,
         },
       } as PrismaDelegateArgs);
     });
@@ -962,8 +1048,7 @@ export class CoreAppointmentService {
       return await delegate.findFirst({
         where: { id: appointmentId, clinicId },
         include: {
-          patient: { include: { user: true } },
-          doctor: { include: { user: true } },
+          ...SAFE_APPOINTMENT_PEOPLE_INCLUDE,
           clinic: true,
         },
       } as PrismaDelegateArgs);
@@ -1069,6 +1154,10 @@ export class CoreAppointmentService {
           targetStatus: statusChange,
           appointmentType: existingAppointment.type,
           role: context.role,
+          slotStartsAt: parseIstDateTime(
+            existingAppointment.date ?? undefined,
+            existingAppointment.time ?? null
+          ),
         });
         if (refusal) {
           throw refusal.httpStatus === 403
@@ -1138,17 +1227,9 @@ export class CoreAppointmentService {
       // 5. Queue background operations
       await this.queueBackgroundOperations(updatedAppointment, context, 'UPDATE');
 
-      // 6. Emit events
-      await this.eventService.emit('appointment.updated', {
-        appointmentId: updatedAppointment.id,
-        clinicId: updatedAppointment.clinicId,
-        doctorId: updatedAppointment.doctorId,
-        patientId: updatedAppointment.patientId,
-        status: updatedAppointment.status,
-        appointment: updatedAppointment,
-        changes: updateDto,
-        context,
-      });
+      // 6. 'appointment.updated' is emitted once by AppointmentsService.updateAppointment (the only
+      // caller), after its queue cleanup and cache invalidation, so listeners and socket clients
+      // that refetch never read stale cache. Emitting here too delivered every PATCH twice.
 
       // 7. HIPAA audit log
       await this.hipaaAuditLog('UPDATE_APPOINTMENT', context, {
@@ -1159,7 +1240,7 @@ export class CoreAppointmentService {
       });
 
       // 8. Invalidate cache
-      await this.invalidateAppointmentCache(context.clinicId);
+      await this.invalidateAppointmentCache(context.clinicId, updatedAppointment.id);
 
       const processingTime = Date.now() - startTime;
       return {
@@ -1309,7 +1390,7 @@ export class CoreAppointmentService {
       });
 
       // 9. Invalidate cache
-      await this.invalidateAppointmentCache(context.clinicId);
+      await this.invalidateAppointmentCache(context.clinicId, cancelledAppointment.id);
 
       const processingTime = Date.now() - startTime;
       return {
@@ -1377,7 +1458,10 @@ export class CoreAppointmentService {
       const metrics = this.calculateAppointmentMetrics(appointments, dateRange);
 
       // Cache the metrics
-      await this.cacheService.set(cacheKey, metrics, this.METRICS_CACHE_TTL);
+      await this.cacheService.set(cacheKey, metrics, {
+        ttl: this.METRICS_CACHE_TTL,
+        tags: [appointmentMetricsTag(clinicId)],
+      });
 
       const processingTime = Date.now() - startTime;
       return {
@@ -1472,7 +1556,11 @@ export class CoreAppointmentService {
       case 'ASSISTANT_DOCTOR':
         // For clinical roles, ensure we filter by the doctorId (which is the UUID in Doctor table)
         // context.doctorId should be pre-resolved in the AppointmentsService wrapper.
-        where['doctorId'] = context.doctorId || context.userId;
+        // An assistant without a Doctor row of their own lists the doctors they cover
+        // (context.doctorIds, resolved by AppointmentsService.getAppointments).
+        where['doctorId'] = context.doctorIds
+          ? { in: context.doctorIds }
+          : context.doctorId || context.userId;
         break;
       case 'PATIENT':
         // Appointment.patientId references Patient.id, while Appointment.userId is the booking user.
@@ -1667,21 +1755,28 @@ export class CoreAppointmentService {
     }
   }
 
-  private async invalidateAppointmentCache(clinicId: string): Promise<void> {
+  /**
+   * Tag sets only (SMEMBERS + DEL), never a keyspace SCAN: this runs on every create / update /
+   * cancel. The clinic's appointment lists (HTTP interceptor and service level), the detail of
+   * the appointment, the doctor availability grids and this clinic's metrics are all registered
+   * in these tags when they are written. The previous globs (`*clinic:<id>:appointments:*`,
+   * `healthcare:appointment:*` for every clinic, ...) walked the whole keyspace per write.
+   */
+  private async invalidateAppointmentCache(
+    clinicId: string,
+    appointmentId?: string
+  ): Promise<void> {
     try {
-      const patterns = [
-        // Leading `*` reaches both the key-factory keys (`healthcare:clinic:<id>:appointments:…`)
-        // and the HTTP cache interceptor's clinic-scoped keys (`clinic:<id>:appointments:…`).
-        `*clinic:${clinicId}:appointments:*`,
-        `healthcare:appointment:*`,
-        `metrics:${clinicId}:*`,
-        `doctor:*:clinic:${clinicId}:*availability*`, // Matches enhanced key pattern
-        `availability:${clinicId}:*`,
-      ];
-
-      for (const pattern of patterns) {
-        await this.cacheService.delPattern(pattern);
-      }
+      await this.cacheService.invalidateCollectionTags(
+        [
+          'appointments',
+          'clinic_appointments',
+          'doctor_availability',
+          appointmentMetricsTag(clinicId),
+          ...(appointmentId ? [`appointment:${appointmentId}`] : []),
+        ],
+        clinicId
+      );
 
       await this.eventService.emit('doctor.availability.changed', {
         clinicId,
@@ -1879,7 +1974,16 @@ export class CoreAppointmentService {
         }
         return [];
       };
-      const extractDaySessions = (value: unknown, dayName: string): SessionWindow[] => {
+      const extractDaySessions = (raw: unknown, dayName: string): SessionWindow[] => {
+        // Location hours are stored as a JSON string (PUT .../working-hours): read them as JSON.
+        let value = raw;
+        if (typeof value === 'string') {
+          try {
+            value = JSON.parse(value) as unknown;
+          } catch {
+            return [];
+          }
+        }
         if (!value) return [];
         if (isRecord(value) && dayName in value) {
           return extractSessions(value[dayName]);
@@ -1893,12 +1997,12 @@ export class CoreAppointmentService {
       };
       const workingHours = { ...defaultWorkingHours };
       let sessionWindows: SessionWindow[] = [];
-      let slotDuration = 30;
-      if (_context?.appointmentType === 'VIDEO_CALL') {
-        slotDuration = 15;
-      } else if (_context?.appointmentType === 'IN_PERSON' || !_context?.appointmentType) {
-        slotDuration = 3;
-      }
+      // Slot grid step = the visit length of the requested type (clinic setting, defaults
+      // in-person 3 min / video 15 min until the clinic settings are read below).
+      let slotDuration = visitMinutesForType(
+        resolveClinicVisitDurations(undefined),
+        _context?.appointmentType
+      );
       let clinicPaused = false;
       let doctorPaused = false;
       let emergencyOnly = false;
@@ -1939,7 +2043,25 @@ export class CoreAppointmentService {
               select: { settings: true } as PrismaDelegateArgs,
             } as PrismaDelegateArgs);
 
-            return { association, clinic };
+            // The visit's own location decides its closed weekdays (same as the booking check).
+            const requestedLocation =
+              _context.locationId && _context.appointmentType !== 'VIDEO_CALL'
+                ? await (
+                    client as unknown as {
+                      clinicLocation: {
+                        findFirst: (args: PrismaDelegateArgs) => Promise<unknown>;
+                      };
+                    }
+                  ).clinicLocation.findFirst({
+                    where: {
+                      id: _context.locationId,
+                      clinicId: _context.clinicId,
+                    } as PrismaDelegateArgs,
+                    select: { workingHours: true } as PrismaDelegateArgs,
+                  } as PrismaDelegateArgs)
+                : null;
+
+            return { association, clinic, requestedLocation };
           });
 
           const associationData = doctorClinic as {
@@ -1951,6 +2073,7 @@ export class CoreAppointmentService {
               location?: { workingHours?: unknown } | null;
             } | null;
             clinic?: { settings?: unknown } | null;
+            requestedLocation?: { workingHours?: unknown } | null;
           } | null;
 
           const association = associationData?.association;
@@ -1974,18 +2097,11 @@ export class CoreAppointmentService {
             ? doctorControlMap[doctorId]
             : {};
 
-          const configuredAppointmentDuration = Number(appointmentSettings['appointmentDuration']);
-          if (_context?.appointmentType === 'VIDEO_CALL') {
-            // Video proposals are always quarter-hour slots in the patient UX and validation flow.
-            slotDuration = 15;
-          } else {
-            slotDuration = Math.max(
-              3,
-              Number.isFinite(configuredAppointmentDuration)
-                ? configuredAppointmentDuration
-                : slotDuration
-            );
-          }
+          // Same resolution as the booking (visit-duration.util), so every offered slot books.
+          slotDuration = visitMinutesForType(
+            resolveClinicVisitDurations(clinicSettings),
+            _context?.appointmentType
+          );
           clinicPaused = Boolean(
             clinicOpdControls['isOpdPaused'] ?? clinicOpdControls['clinicPaused'] ?? false
           );
@@ -2059,6 +2175,65 @@ export class CoreAppointmentService {
                   reason: 'Clinic is closed on this holiday',
                 },
                 message: 'Clinic is closed on this holiday',
+              };
+            }
+
+            // Closed weekday (clinic working days, location per-day hours): no slot is offered on
+            // a day the booking would refuse.
+            const workingDay = resolveDayBookability({
+              dateKey: date,
+              clinicSettings,
+              locationWorkingHours:
+                _context?.appointmentType === 'VIDEO_CALL'
+                  ? null
+                  : (associationData?.requestedLocation?.workingHours ??
+                    association.location?.workingHours),
+            });
+            if (!workingDay.open) {
+              return {
+                doctorId,
+                date,
+                available: false,
+                availableSlots: [],
+                bookedSlots: [],
+                workingHours,
+                restrictions: {
+                  clinicPaused,
+                  doctorPaused,
+                  emergencyOnly,
+                  generalConsultationEnabled,
+                  videoConsultationEnabled,
+                  reason: workingDay.message,
+                },
+                message: workingDay.message,
+              };
+            }
+
+            // Holidays / closures / approved doctor leave from the clinic_holidays table.
+            const calendarClosure = await this.readCalendarClosure(
+              _context.clinicId,
+              doctorId,
+              date,
+              _context?.appointmentType === 'VIDEO_CALL' ? null : (_context.locationId ?? null)
+            );
+            if (calendarClosure.closed) {
+              const reason = calendarClosure.reason ?? 'Clinic is closed on this day';
+              return {
+                doctorId,
+                date,
+                available: false,
+                availableSlots: [],
+                bookedSlots: [],
+                workingHours,
+                restrictions: {
+                  clinicPaused,
+                  doctorPaused,
+                  emergencyOnly,
+                  generalConsultationEnabled,
+                  videoConsultationEnabled,
+                  reason,
+                },
+                message: reason,
               };
             }
 
@@ -2193,17 +2368,25 @@ export class CoreAppointmentService {
       const dayStart = new Date(`${date}T00:00:00.000+05:30`);
       const dayEnd = new Date(`${date}T23:59:59.999+05:30`);
 
-      const appointmentsResult = await this.databaseService.findAppointmentsSafe(
-        {
-          doctorId,
-          ...(_context?.clinicId && { clinicId: _context.clinicId }),
-          // Filter to only active appointments on the requested date.
-          // Cancelled/Completed/No-show/Expired appointments free up the slot.
-          date: { gte: dayStart, lte: dayEnd },
-          status: { notIn: ['CANCELLED', 'COMPLETED', 'NO_SHOW', 'EXPIRED'] },
-        },
-        { rowLevelSecurity: false }
-      );
+      // Only the slot columns are read: the grid needs type/time/duration (status for the log),
+      // not the patient/doctor/location relations of the list query. On a busy day (hundreds of
+      // visits) this runs on every slot-grid load and inside every booking.
+      const appointmentsResult = await this.databaseService.executeHealthcareRead(async client => {
+        const delegate = client['appointment'] as unknown as {
+          findMany: (args: PrismaDelegateArgs) => Promise<unknown[]>;
+        };
+        return await delegate.findMany({
+          where: {
+            doctorId,
+            ...(_context?.clinicId && { clinicId: _context.clinicId }),
+            // Filter to only active appointments on the requested date.
+            // Cancelled/Completed/No-show/Expired appointments free up the slot.
+            date: { gte: dayStart, lte: dayEnd },
+            status: { notIn: [...SLOT_FREEING_STATUSES] },
+          },
+          select: { id: true, type: true, time: true, duration: true, status: true },
+        } as PrismaDelegateArgs);
+      });
 
       // Ensure appointments is an array
       // findAppointmentsSafe should return AppointmentWithRelations[], but handle edge cases
@@ -2233,6 +2416,12 @@ export class CoreAppointmentService {
       appointments = appointments.filter(
         apt => appointmentSlotKind(apt.type) === requestedSlotKind
       );
+      const occupiedSlots = appointments.map(apt => ({
+        id: String(apt.id ?? ''),
+        type: apt.type ?? null,
+        time: apt.time ?? null,
+        duration: Number(apt.duration) || null,
+      }));
 
       // DEBUG: Log appointments for video slots issue
       void this.loggingService.log(
@@ -2242,7 +2431,7 @@ export class CoreAppointmentService {
         'CoreAppointmentService.getDoctorAvailability',
         {
           appointmentsCount: appointments.length,
-          appointmentsTimes: appointments.map(a => ({
+          appointmentsTimes: appointments.slice(0, 20).map(a => ({
             time: a.time,
             duration: a.duration,
             status: a.status,
@@ -2308,26 +2497,15 @@ export class CoreAppointmentService {
             }
           }
 
-          // Check if slot is booked - account for appointment duration (default 30 min)
-          // A slot is unavailable if it falls within any existing appointment's time range
-          const isBooked = appointments.some((apt: AppointmentItem) => {
-            const aptTime = (apt as Record<string, unknown>)['time'] as string | undefined;
-            if (!aptTime) return false;
-            const aptDuration =
-              ((apt as Record<string, unknown>)['duration'] as number | undefined) || 30;
-            // Extract time parts - using non-null assertion on split result
-            const timeParts = (aptTime || '').split(':');
-            const aptHour = parseInt(timeParts[0] || '0', 10);
-            const aptMin = parseInt(timeParts[1] || '0', 10);
-            const aptStartMinutes = aptHour * 60 + aptMin;
-
-            // Slot overlaps with appointment if:
-            // Appointment start is before slot end AND Appointment end is after slot start
-            const slotEndMinutes = currentMinutes + slotDuration;
-            const aptEndMinutes = aptStartMinutes + aptDuration;
-
-            return aptStartMinutes < slotEndMinutes && aptEndMinutes > currentMinutes;
-          });
+          // Booked when an appointment of the same kind overlaps [slot, slot + visit length); a row
+          // without a duration occupies one visit length (same rule as the booking check).
+          const isBooked = isSlotTaken(
+            occupiedSlots,
+            requestedSlotKind,
+            currentMinutes,
+            slotDuration,
+            slotDuration
+          );
 
           // Mark slot as unavailable if an appointment of the same kind holds it
           // Video filtering happens earlier - if we reach here, slot is within video window
@@ -2443,6 +2621,55 @@ export class CoreAppointmentService {
     }
   }
 
+  /**
+   * Booking-side working-day check (clinic `workingDays` setting, the location's per-day hours,
+   * holiday dates in the settings). A failed lookup falls back to the clinic default days
+   * (Mon-Fri), the rule that applied before the setting existed.
+   */
+  private async resolveBookableDay(
+    clinicId: string,
+    dateKey: string,
+    locationId: string | null
+  ): Promise<DayBookability> {
+    let clinicSettings: unknown = undefined;
+    let locationWorkingHours: unknown = undefined;
+    try {
+      const loaded = await this.databaseService.executeHealthcareRead(async client => {
+        const typed = client as unknown as {
+          clinic: { findUnique: (args: PrismaDelegateArgs) => Promise<unknown> };
+          clinicLocation: { findFirst: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        const clinic = (await typed.clinic.findUnique({
+          where: { id: clinicId } as PrismaDelegateArgs,
+          select: { settings: true } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs)) as { settings?: unknown } | null;
+        const location = locationId
+          ? ((await typed.clinicLocation.findFirst({
+              where: { id: locationId, clinicId } as PrismaDelegateArgs,
+              select: { workingHours: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs)) as { workingHours?: unknown } | null)
+          : null;
+        return { settings: clinic?.settings, workingHours: location?.workingHours };
+      });
+      clinicSettings = loaded.settings;
+      locationWorkingHours = loaded.workingHours;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.WARN,
+        `Working-day lookup failed, using the default working days: ${error instanceof Error ? error.message : String(error)}`,
+        'CoreAppointmentService.resolveBookableDay',
+        { clinicId, dateKey }
+      );
+    }
+    return resolveDayBookability({
+      dateKey,
+      clinicSettings,
+      locationWorkingHours,
+      closedDateKeys: this.extractHolidayClosures(this.extractAppointmentSettings(clinicSettings)),
+    });
+  }
+
   private extractAppointmentSettings(settings: unknown): Record<string, unknown> {
     if (typeof settings !== 'object' || settings === null || Array.isArray(settings)) {
       return {};
@@ -2504,6 +2731,38 @@ export class CoreAppointmentService {
     }
 
     return { start, end };
+  }
+
+  /**
+   * Closure of `dayKey` from the clinic_holidays table (see clinic-closure.util). Fails open with a
+   * warning: a lookup error must not take availability / booking down.
+   */
+  private async readCalendarClosure(
+    clinicId: string,
+    doctorId: string,
+    dayKey: string,
+    locationId: string | null
+  ): Promise<ClosureDecision> {
+    try {
+      return await readClosureForDay(this.databaseService, clinicId, doctorId, {
+        dayKey,
+        locationId,
+      });
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.WARN,
+        'Clinic holiday lookup failed; treating the day as open',
+        'CoreAppointmentService.readCalendarClosure',
+        {
+          clinicId,
+          doctorId,
+          dayKey,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      return { closed: false, reason: null };
+    }
   }
 
   private extractHolidayClosures(settings: Record<string, unknown>): Set<string> {

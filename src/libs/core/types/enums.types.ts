@@ -352,6 +352,10 @@ export enum MovementType {
   ADJUSTMENT = 'ADJUSTMENT',
   EXPIRED_WRITE_OFF = 'EXPIRED_WRITE_OFF',
   RETURN_IN = 'RETURN_IN',
+  /** Batch (part) sent back to the supplier. */
+  RETURN_TO_SUPPLIER = 'RETURN_TO_SUPPLIER',
+  /** Batch (part) discarded (damaged / recalled / expired and destroyed). */
+  DISCARD_WRITE_OFF = 'DISCARD_WRITE_OFF',
 }
 
 /**

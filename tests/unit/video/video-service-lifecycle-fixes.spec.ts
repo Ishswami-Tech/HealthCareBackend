@@ -97,7 +97,13 @@ describe('VideoService lifecycle fixes', () => {
         where: { id: string; clinicId: string; status: string };
         data: { status: string };
       };
-      expect(args.where).toEqual({ id: 'appt-1', clinicId: CLINIC, status: 'IN_PROGRESS' });
+      // Compare-and-set on the open statuses the end route completes (IN_PROGRESS, and CONFIRMED
+      // for a visit run without the start hop), scoped to the appointment's clinic.
+      expect(args.where).toEqual({
+        id: 'appt-1',
+        clinicId: CLINIC,
+        status: { in: ['IN_PROGRESS', 'CONFIRMED'] },
+      });
       expect(args.data.status).toBe('COMPLETED');
       expect(emittedEvents(eventService, 'video.consultation.ended')).toHaveLength(1);
       expect(emittedEvents(eventService, 'appointment.completed')).toHaveLength(1);
@@ -160,10 +166,23 @@ describe('VideoService lifecycle fixes', () => {
       expect(eventService.emitEnterprise).not.toHaveBeenCalled();
     });
 
-    it('does not let a CLINIC_ADMIN complete a visit that never started', async () => {
+    // The end route completes a CONFIRMED video visit directly (a doctor who ran the call without
+    // the start hop leaves it CONFIRMED); only a SCHEDULED visit is refused as never started.
+    it('lets a CLINIC_ADMIN complete a CONFIRMED visit run without the start hop', async () => {
       const { service, clients } = createHarness();
       clients.appointment['findUnique']?.mockResolvedValue(
         makeAppointment({ status: 'CONFIRMED' })
+      );
+
+      await adminEnd(service, staffCaller('CLINIC_ADMIN'));
+
+      expect(clients.appointment['updateMany']).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not let a CLINIC_ADMIN complete a SCHEDULED visit that never started', async () => {
+      const { service, clients } = createHarness();
+      clients.appointment['findUnique']?.mockResolvedValue(
+        makeAppointment({ status: 'SCHEDULED' })
       );
 
       const error = await captureError(adminEnd(service, staffCaller('CLINIC_ADMIN')));

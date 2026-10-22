@@ -7,6 +7,11 @@ import { FastifyAdapter } from '@bull-board/fastify';
 import { Queue } from 'bullmq';
 
 import { isCacheEnabled } from '@config/cache.config';
+import {
+  createQueueDashboardAuthHook,
+  resolveQueueDashboardAccess,
+  type QueueDashboardHook,
+} from '@security/queue-dashboard-auth';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
@@ -20,6 +25,10 @@ import { HEALTHCARE_QUEUE } from '@queue/src/queue.constants';
 
 type FastifyLikeInstance = {
   register: (plugin: unknown, options?: { prefix?: string }) => unknown;
+};
+
+type FastifyScopedInstance = FastifyLikeInstance & {
+  addHook: (name: 'onRequest', hook: QueueDashboardHook) => unknown;
 };
 
 function isFastifyLikeInstance(value: unknown): value is FastifyLikeInstance {
@@ -73,6 +82,14 @@ export class BullBoardService implements OnModuleInit {
       return;
     }
 
+    // P0-4: job payloads hold PHI and the UI can retry/delete jobs. Production-like envs only
+    // mount it with QUEUE_DASHBOARD_ENABLED=true plus Basic-auth credentials (+ optional IP list).
+    const dashboardAccess = resolveQueueDashboardAccess();
+    if (!dashboardAccess.mount) {
+      this.logger.warn(`Bull Board skipped: ${dashboardAccess.reason}.`);
+      return;
+    }
+
     const httpAdapter = this.httpAdapterHost.httpAdapter;
     this.logger.debug('httpAdapter:', !!httpAdapter);
     if (!httpAdapter) {
@@ -108,8 +125,15 @@ export class BullBoardService implements OnModuleInit {
       });
 
       this.logger.log('BullBoard about to register route...');
+      // Encapsulated plugin: the auth hook applies to every dashboard route (UI, assets, API)
+      // and to nothing else on the server.
+      const authHook = createQueueDashboardAuthHook(dashboardAccess);
+      const protectedDashboard = async (instance: FastifyScopedInstance): Promise<void> => {
+        instance.addHook('onRequest', authHook);
+        await instance.register(serverAdapter.registerPlugin());
+      };
       const registerWithTimeout = Promise.race([
-        appInstance.register(serverAdapter.registerPlugin(), { prefix: routePrefix }),
+        appInstance.register(protectedDashboard, { prefix: routePrefix }),
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error('BullBoard register timeout after 10s')), 10000)
         ),
@@ -117,7 +141,7 @@ export class BullBoardService implements OnModuleInit {
       await registerWithTimeout;
       this.logger.log('BullBoard route registered successfully');
       this.bullBoardRegistered = true;
-      this.logger.log('Bull Board registered at /queue-dashboard');
+      this.logger.log(`Bull Board registered at /queue-dashboard (${dashboardAccess.reason})`);
     } catch (error) {
       this.logger.error(
         `Bull Board registration failed: ${error instanceof Error ? error.message : String(error)}`

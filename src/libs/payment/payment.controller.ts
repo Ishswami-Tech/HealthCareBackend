@@ -18,6 +18,7 @@ import {
   BadRequestException,
   ForbiddenException,
   UnauthorizedException,
+  ServiceUnavailableException,
   Req,
   Get,
   Put,
@@ -61,6 +62,12 @@ import { resolveClinicUUID } from '@utils/clinic.utils';
 import { QueueService } from '@queue/src/queue.service';
 import { JobType, JobPriorityLevel } from '@core/types/queue.types';
 import type { PaymentProcessingJobData } from '@queue/src/queue.processor';
+import {
+  WEBHOOK_PROCESSED_TTL_SECONDS,
+  buildWebhookEventId,
+  webhookJobId,
+  webhookProcessedKey,
+} from '@payment/webhook-dedupe.util';
 
 type BillingServiceLike = {
   assertPublicPaymentIntentAmount: (
@@ -252,18 +259,31 @@ export class PaymentController {
     return this.getRecord(value) || {};
   }
 
+  /**
+   * True when this exact delivery (provider + reference + event) was already processed. Only
+   * CHECKS: the marker is written by `markWebhookProcessed` after the delivery was processed (or
+   * durably enqueued), so a delivery that failed half-way is processed again when the provider
+   * retries it.
+   */
   private async ensureWebhookNotProcessed(
     provider: string,
     paymentId?: string,
     paymentSessionId?: string,
-    orderId?: string
+    orderId?: string,
+    eventType?: string
   ): Promise<boolean> {
-    const identifier = paymentId || paymentSessionId || orderId;
-    if (!identifier) {
+    const eventId = buildWebhookEventId({
+      provider,
+      paymentId,
+      paymentSessionId,
+      orderId,
+      eventType,
+    });
+    if (!eventId) {
       return false;
     }
 
-    const key = `webhook:processed:${provider}:${identifier}`;
+    const key = webhookProcessedKey(eventId);
     const alreadyProcessed = await this.cacheService.exists(key);
 
     if (alreadyProcessed) {
@@ -272,13 +292,55 @@ export class PaymentController {
         LogLevel.INFO,
         `Duplicate ${provider} webhook ignored: ${key}`,
         'PaymentController',
-        { provider, paymentId, paymentSessionId, orderId, cacheKey: key }
+        { provider, paymentId, paymentSessionId, orderId, eventType, cacheKey: key }
       );
       return true;
     }
-
-    await this.cacheService.set(key, '1', 86400);
     return false;
+  }
+
+  /** Marks a delivery processed; called only after it was processed / enqueued successfully. */
+  private async markWebhookProcessed(
+    provider: string,
+    paymentId?: string,
+    paymentSessionId?: string,
+    orderId?: string,
+    eventType?: string
+  ): Promise<void> {
+    const eventId = buildWebhookEventId({
+      provider,
+      paymentId,
+      paymentSessionId,
+      orderId,
+      eventType,
+    });
+    if (!eventId) {
+      return;
+    }
+    try {
+      await this.cacheService.set(webhookProcessedKey(eventId), '1', WEBHOOK_PROCESSED_TTL_SECONDS);
+    } catch (error) {
+      // Not fatal: the delivery is processed; a redelivery is idempotent (finaliser claim).
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        `Failed to mark ${provider} webhook processed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        'PaymentController',
+        { provider, eventId }
+      );
+    }
+  }
+
+  /**
+   * A webhook whose processing failed answers non-2xx so the provider retries it (a 200 with
+   * success:false is treated as delivered and the confirmation was lost). The body stays generic.
+   */
+  private webhookProcessingFailure(provider: string): ServiceUnavailableException {
+    return new ServiceUnavailableException(
+      `${provider} webhook could not be processed right now; please retry`
+    );
   }
 
   private getFirstArrayRecordAtPath(source: unknown, path: string[]): Record<string, unknown> {
@@ -539,7 +601,8 @@ export class PaymentController {
           PaymentProvider.RAZORPAY,
           paymentId,
           undefined,
-          orderId
+          orderId,
+          event
         )
       ) {
         return { success: true };
@@ -566,6 +629,13 @@ export class PaymentController {
         { clinicId: resolvedClinicId, event }
       );
 
+      await this.markWebhookProcessed(
+        PaymentProvider.RAZORPAY,
+        paymentId,
+        undefined,
+        orderId,
+        event
+      );
       return { success: true };
     } catch (error) {
       await this.loggingService.log(
@@ -578,7 +648,7 @@ export class PaymentController {
           error: error instanceof Error ? error.stack : undefined,
         }
       );
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
+      throw this.webhookProcessingFailure('razorpay');
     }
   }
 
@@ -653,6 +723,8 @@ export class PaymentController {
         ['payment_status'],
         ['paymentStatus'],
       ]).toUpperCase();
+      // The delivery's identity: webhook type + payment status (one cf_payment_id sends several).
+      const cashfreeEventType = `${this.getFirstStringAtPath(body, [['type'], ['event']])}:${paymentStatus}`;
       const resolvedClinicId =
         clinicId ||
         clinicIdFromTags ||
@@ -695,7 +767,8 @@ export class PaymentController {
           PaymentProvider.CASHFREE,
           paymentId,
           undefined,
-          orderId
+          orderId,
+          cashfreeEventType
         )
       ) {
         return { success: true };
@@ -728,8 +801,18 @@ export class PaymentController {
           surchargeServiceCharge: surchargeServiceCharge ?? 0,
           surchargeServiceTax: surchargeServiceTax ?? 0,
         };
+        // Durably enqueued BEFORE the delivery is marked processed (below), with a deterministic
+        // job id so a concurrent duplicate delivery cannot enqueue it twice. A failed enqueue
+        // throws -> non-2xx -> Cashfree retries.
+        const eventId = buildWebhookEventId({
+          provider: PaymentProvider.CASHFREE,
+          paymentId,
+          orderId,
+          eventType: cashfreeEventType,
+        });
         await this.queueService.addJob(JobType.PAYMENT_PROCESSING, 'cashfree_webhook', jobData, {
           priority: JobPriorityLevel.HIGH,
+          ...(eventId ? { correlationId: webhookJobId(eventId) } : {}),
         });
       }
 
@@ -741,6 +824,13 @@ export class PaymentController {
         { clinicId: resolvedClinicId, paymentStatus, orderId, paymentId }
       );
 
+      await this.markWebhookProcessed(
+        PaymentProvider.CASHFREE,
+        paymentId,
+        undefined,
+        orderId,
+        cashfreeEventType
+      );
       return { success: true };
     } catch (error) {
       await this.loggingService.log(
@@ -753,7 +843,7 @@ export class PaymentController {
           error: error instanceof Error ? error.stack : undefined,
         }
       );
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
+      throw this.webhookProcessingFailure('cashfree');
     }
   }
 
@@ -902,7 +992,8 @@ export class PaymentController {
           PaymentProvider.PHONEPE,
           transactionId,
           merchantTransactionId,
-          refundId
+          refundId,
+          `${normalizedCallbackType}:${state}`
         )
       ) {
         return { success: true };
@@ -946,6 +1037,13 @@ export class PaymentController {
         }
       );
 
+      await this.markWebhookProcessed(
+        PaymentProvider.PHONEPE,
+        transactionId,
+        merchantTransactionId,
+        refundId,
+        `${normalizedCallbackType}:${state}`
+      );
       return { success: true };
     } catch (error) {
       await this.loggingService.log(
@@ -958,7 +1056,7 @@ export class PaymentController {
           error: error instanceof Error ? error.stack : undefined,
         }
       );
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
+      throw this.webhookProcessingFailure('phonepe');
     }
   }
 
@@ -1036,7 +1134,8 @@ export class PaymentController {
           PaymentProvider.EASEBUZZ,
           paymentId,
           undefined,
-          merchantTxnId
+          merchantTxnId,
+          status
         )
       ) {
         return { success: true };
@@ -1061,6 +1160,13 @@ export class PaymentController {
         { clinicId: resolvedClinicId, status, merchantTxnId }
       );
 
+      await this.markWebhookProcessed(
+        PaymentProvider.EASEBUZZ,
+        paymentId,
+        undefined,
+        merchantTxnId,
+        status
+      );
       return { success: true };
     } catch (error) {
       await this.loggingService.log(
@@ -1073,7 +1179,7 @@ export class PaymentController {
           error: error instanceof Error ? error.stack : undefined,
         }
       );
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
+      throw this.webhookProcessingFailure('easebuzz');
     }
   }
 
@@ -1168,7 +1274,13 @@ export class PaymentController {
       }
 
       if (
-        await this.ensureWebhookNotProcessed(PaymentProvider.PAYTM, paymentId, undefined, orderId)
+        await this.ensureWebhookNotProcessed(
+          PaymentProvider.PAYTM,
+          paymentId,
+          undefined,
+          orderId,
+          resultStatus
+        )
       ) {
         return { success: true };
       }
@@ -1192,6 +1304,13 @@ export class PaymentController {
         { clinicId: resolvedClinicId, resultStatus, orderId }
       );
 
+      await this.markWebhookProcessed(
+        PaymentProvider.PAYTM,
+        paymentId,
+        undefined,
+        orderId,
+        resultStatus
+      );
       return { success: true };
     } catch (error) {
       await this.loggingService.log(
@@ -1204,7 +1323,7 @@ export class PaymentController {
           error: error instanceof Error ? error.stack : undefined,
         }
       );
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
+      throw this.webhookProcessingFailure('paytm');
     }
   }
 
@@ -1284,7 +1403,15 @@ export class PaymentController {
         return { success: false, error: 'Invalid PayU webhook signature' };
       }
 
-      if (await this.ensureWebhookNotProcessed(PaymentProvider.PAYU, txnId, undefined, orderId)) {
+      if (
+        await this.ensureWebhookNotProcessed(
+          PaymentProvider.PAYU,
+          txnId,
+          undefined,
+          orderId,
+          status
+        )
+      ) {
         return { success: true };
       }
 
@@ -1307,6 +1434,7 @@ export class PaymentController {
         { clinicId: resolvedClinicId, status, orderId }
       );
 
+      await this.markWebhookProcessed(PaymentProvider.PAYU, txnId, undefined, orderId, status);
       return { success: true };
     } catch (error) {
       await this.loggingService.log(
@@ -1319,7 +1447,7 @@ export class PaymentController {
           error: error instanceof Error ? error.stack : undefined,
         }
       );
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
+      throw this.webhookProcessingFailure('payu');
     }
   }
 
@@ -1432,7 +1560,15 @@ export class PaymentController {
         return { success: false, error: 'Invalid Zoho webhook signature' };
       }
 
-      if (await this.ensureWebhookNotProcessed(PaymentProvider.ZOHO, paymentId, paymentSessionId)) {
+      if (
+        await this.ensureWebhookNotProcessed(
+          PaymentProvider.ZOHO,
+          paymentId,
+          paymentSessionId,
+          undefined,
+          `${event}:${paymentStatus}`
+        )
+      ) {
         return { success: true };
       }
 
@@ -1463,6 +1599,13 @@ export class PaymentController {
         }
       );
 
+      await this.markWebhookProcessed(
+        PaymentProvider.ZOHO,
+        paymentId,
+        paymentSessionId,
+        undefined,
+        `${event}:${paymentStatus}`
+      );
       return { success: true };
     } catch (error) {
       await this.loggingService.log(
@@ -1475,7 +1618,7 @@ export class PaymentController {
           error: error instanceof Error ? error.stack : undefined,
         }
       );
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
+      throw this.webhookProcessingFailure('zoho');
     }
   }
 
@@ -1583,7 +1726,14 @@ export class PaymentController {
           error: error instanceof Error ? error.stack : undefined,
         }
       );
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
+      // An explicit failure: nothing was verified or settled for these references. The page
+      // shows this one state (never "verified"); the raw gateway error stays in the log.
+      return {
+        success: false,
+        error: 'The payment could not be verified with the payment provider.',
+        code: 'PAYMENT_VERIFICATION_FAILED',
+        retryable: false,
+      };
     }
   }
 

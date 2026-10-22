@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, Request, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, Request, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
@@ -7,6 +7,7 @@ import { ProfileCompletionGuard } from '@core/guards/profile-completion.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
+import { ReceptionClinicalRedactionInterceptor } from '@core/interceptors/clinical-redaction.interceptor';
 import { RequiresProfileCompletion } from '@core/decorators/profile-completion.decorator';
 import { Role } from '@core/types/enums.types';
 import type { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
@@ -35,6 +36,7 @@ const STAFF_ROLES: Role[] = [
 @ApiBearerAuth()
 @Controller('patient-directory')
 @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard, ProfileCompletionGuard)
+@UseInterceptors(ReceptionClinicalRedactionInterceptor)
 @RequiresProfileCompletion()
 export class PatientDirectoryController {
   constructor(private readonly directory: PatientDirectoryService) {}

@@ -92,6 +92,11 @@ import type { CacheService } from '@infrastructure/cache/cache.service';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { CircuitBreakerService } from '@core/resilience/circuit-breaker.service';
+import {
+  isCriticalDomainEvent,
+  liftEnvelopeFields,
+  resolveEventRateLimitKey,
+} from '@infrastructure/events/event-envelope.util';
 
 // Internal imports - Types (EventCategory, EventPriority, and EventStatus are used as values)
 import { EventCategory, EventPriority, EventStatus } from '@core/types';
@@ -102,6 +107,50 @@ import type {
   EventMetrics,
   EventSubscription,
 } from '@core/types';
+
+/** Event index retention: matches cleanupExpiredEvents (7 days). */
+const EVENT_INDEX_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+/** TTL on every event index key, refreshed on each write. */
+const EVENT_INDEX_TTL_SECONDS = 7 * 24 * 60 * 60;
+/**
+ * Newest entries kept in the global time index the buffered flush writes. Dragonfly runs
+ * noeviction: an unbounded index would eventually block BullMQ and the live queue.
+ */
+export const EVENT_TIMESTAMP_INDEX_MAX_ENTRIES = 20_000;
+
+/**
+ * The pipeline commands of one buffered flush. ioredis exposes pipeline commands as LOWER-case
+ * methods only, so the old upper-case `SET` / `ZADD` were silently skipped (the cache client only
+ * applies a command it finds) and buffered events were never stored. Every write is bounded: the
+ * event key carries its TTL, the time index is trimmed by age and by count and gets a TTL.
+ */
+export function buildEventFlushCommands(
+  events: ReadonlyArray<{ eventId: string; timestamp: string; ttlSeconds: number; json: string }>,
+  now: number
+): Array<{ command: string; args: unknown[] }> {
+  if (events.length === 0) return [];
+  return [
+    ...events.flatMap(event => [
+      {
+        command: 'set',
+        args: [`event:${event.eventId}`, event.json, 'EX', Math.max(1, event.ttlSeconds)],
+      },
+      {
+        command: 'zadd',
+        args: ['events:by_timestamp', new Date(event.timestamp).getTime() || now, event.eventId],
+      },
+    ]),
+    {
+      command: 'zremrangebyscore',
+      args: ['events:by_timestamp', 0, now - EVENT_INDEX_RETENTION_MS],
+    },
+    {
+      command: 'zremrangebyrank',
+      args: ['events:by_timestamp', 0, -(EVENT_TIMESTAMP_INDEX_MAX_ENTRIES + 1)],
+    },
+    { command: 'expire', args: ['events:by_timestamp', EVENT_INDEX_TTL_SECONDS] },
+  ];
+}
 
 @Injectable()
 export class EventService implements OnModuleInit, OnModuleDestroy {
@@ -153,12 +202,18 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
 
     if (emitterWithOnAny.onAny && typeof emitterWithOnAny.onAny === 'function') {
       emitterWithOnAny.onAny((event: string, ...args: unknown[]) => {
+        // Ids only: the full args (appointment / patient / payment objects) used to be written
+        // to the log store, which the log viewer then served.
+        const first = args[0] as { eventId?: unknown; source?: unknown } | undefined;
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.DEBUG,
           `Event emitted: ${event}`,
           'EventService',
-          { args }
+          {
+            eventId: typeof first?.eventId === 'string' ? first.eventId : undefined,
+            source: typeof first?.source === 'string' ? first.source : undefined,
+          }
         );
       });
     }
@@ -243,9 +298,9 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
   /**
    * Check rate limit for event emission
    */
-  private checkRateLimit(source: string): boolean {
+  private checkRateLimit(source: string, eventType: string): boolean {
     const now = Date.now();
-    const key = `rate_limit:${source}`;
+    const key = resolveEventRateLimitKey(source, eventType);
     const current = this.rateLimitMap.get(key);
 
     if (!current || now > current.resetTime) {
@@ -257,17 +312,22 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (current.count >= this.maxEventsPerSecond) {
-      void this.loggingService.log(
-        LogType.SECURITY,
-        LogLevel.WARN,
-        'Event rate limit exceeded',
-        'EventService',
-        {
-          source,
-          count: current.count,
-          limit: this.maxEventsPerSecond,
-        }
-      );
+      current.count++;
+      // Log once per window, not once per over-limit event (that was its own log flood).
+      if (current.count === this.maxEventsPerSecond + 1) {
+        void this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.WARN,
+          'Event rate limit exceeded',
+          'EventService',
+          {
+            source,
+            eventType,
+            limit: this.maxEventsPerSecond,
+            dropped: !isCriticalDomainEvent(eventType),
+          }
+        );
+      }
       return false;
     }
 
@@ -288,7 +348,17 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
    * ```
    */
   async emit(event: string, payload: unknown): Promise<void> {
-    await this.emitEnterprise(event, {
+    await this.emitEnterprise(event, this.buildSimpleEnvelope(event, payload));
+  }
+
+  /**
+   * Envelope for the simple API. clinicId/userId (and routing ids in metadata) are lifted from
+   * the payload: without them room-based consumers (socket broadcaster, clinic event index)
+   * could not route the event, e.g. `appointment.checked_in` never reached clinic staff.
+   */
+  private buildSimpleEnvelope(event: string, payload: unknown): EnterpriseEventPayload {
+    const lifted = liftEnvelopeFields(payload);
+    return {
       eventId: this.generateEventId(),
       eventType: event,
       category: EventCategory.SYSTEM,
@@ -296,8 +366,11 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       timestamp: nowIso(),
       source: 'EventService',
       version: '1.0.0',
+      ...(lifted.clinicId ? { clinicId: lifted.clinicId } : {}),
+      ...(lifted.userId ? { userId: lifted.userId } : {}),
+      ...(lifted.metadata ? { metadata: lifted.metadata } : {}),
       payload,
-    } as EnterpriseEventPayload);
+    };
   }
 
   /**
@@ -311,20 +384,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
    * ```
    */
   async emitAsync(event: string, payload: unknown): Promise<void> {
-    await this.emitEnterprise(
-      event,
-      {
-        eventId: this.generateEventId(),
-        eventType: event,
-        category: EventCategory.SYSTEM,
-        priority: EventPriority.NORMAL,
-        timestamp: nowIso(),
-        source: 'EventService',
-        version: '1.0.0',
-        payload,
-      } as EnterpriseEventPayload,
-      { async: true }
-    );
+    await this.emitEnterprise(event, this.buildSimpleEnvelope(event, payload), { async: true });
   }
 
   /**
@@ -513,10 +573,13 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
   ): Promise<EventResult> {
     const startTime = Date.now();
     const source = payload.source || 'unknown';
+    // Money / appointment-state events are never dropped by the limiter or the breaker.
+    const critical = isCriticalDomainEvent(eventType);
 
     try {
-      // Rate limiting check
-      if (!this.checkRateLimit(source)) {
+      // Rate limiting check: one bucket per source + event type, so a noisy event type no
+      // longer starves the others. Over-limit critical events are logged and still emitted.
+      if (!this.checkRateLimit(source, eventType) && !critical) {
         throw new HealthcareError(
           ErrorCode.RATE_LIMIT_EXCEEDED,
           'Event emission rate limit exceeded',
@@ -530,8 +593,9 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
         );
       }
 
-      // Use CircuitBreakerService if available
-      if (this.circuitBreakerService) {
+      // Use CircuitBreakerService if available. Critical events bypass it: an open breaker
+      // used to drop EVERY event (payments, check-ins included) for the 60s recovery window.
+      if (this.circuitBreakerService && !critical) {
         return await this.circuitBreakerService.execute(
           async () => this.executeEventEmission(eventType, payload, options, startTime),
           {
@@ -1000,6 +1064,11 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       if (clinicKey) {
         await this.cacheService.zadd(clinicKey, timestamp, event.eventId);
       }
+
+      await this.boundEventIndexes(
+        [categoryKey, userKey, clinicKey].filter((key): key is string => key !== null),
+        timestamp
+      );
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
@@ -1015,6 +1084,27 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Every event index key gets a TTL and the per-user/clinic/category sets drop members older
+   * than the retention window. They used to grow forever without a TTL (481 `events:user:*`
+   * sets locally), and Dragonfly runs noeviction, so unbounded keys eventually block BullMQ and
+   * the live queue. The TTL is refreshed on every write, so an active index never disappears.
+   */
+  private async boundEventIndexes(scopedKeys: readonly string[], now: number): Promise<void> {
+    const cutoff = now - EVENT_INDEX_RETENTION_MS;
+    // One pipelined round-trip (ioredis applies the key prefix to pipeline commands too).
+    await this.cacheService.multi([
+      ...scopedKeys.flatMap(key => [
+        { command: 'zremrangebyscore', args: [key, 0, cutoff] },
+        { command: 'expire', args: [key, EVENT_INDEX_TTL_SECONDS] },
+      ]),
+      ...['events', 'events:by_timestamp', 'events:by_priority'].map(key => ({
+        command: 'expire',
+        args: [key, EVENT_INDEX_TTL_SECONDS],
+      })),
+    ]);
+  }
+
   private async flushEventBuffer() {
     if (this.eventBuffer.length === 0) return;
 
@@ -1022,28 +1112,22 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       const events = [...this.eventBuffer];
       this.eventBuffer.length = 0; // Clear buffer
 
-      // Batch process events
-      const pipeline: Array<{ command: string; args: unknown[] }> = [];
-      for (const event of events) {
-        if (
-          event.priority !== EventPriority.CRITICAL &&
-          event.priority !== EventPriority.EMERGENCY
-        ) {
-          pipeline.push({
-            command: 'SET',
-            args: [
-              `event:${event.eventId}`,
-              JSON.stringify(event),
-              'EX',
-              this.getTTLByPriority(event.priority),
-            ],
-          });
-          pipeline.push({
-            command: 'ZADD',
-            args: ['events:by_timestamp', new Date(event.timestamp).getTime(), event.eventId],
-          });
-        }
-      }
+      // Batch process events (CRITICAL / EMERGENCY ones were stored synchronously already).
+      const pipeline = buildEventFlushCommands(
+        events
+          .filter(
+            event =>
+              event.priority !== EventPriority.CRITICAL &&
+              event.priority !== EventPriority.EMERGENCY
+          )
+          .map(event => ({
+            eventId: event.eventId,
+            timestamp: event.timestamp,
+            ttlSeconds: this.getTTLByPriority(event.priority),
+            json: JSON.stringify(event),
+          })),
+        Date.now()
+      );
 
       if (pipeline.length > 0) {
         // Execute batch operations
@@ -1229,6 +1313,10 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
         }
 
         await this.cacheService.zremrangebyscore('events:by_timestamp', 0, expiredTime);
+        // by_priority is scored by priority, not time, so it can only be trimmed by member.
+        await this.cacheService.multi([
+          { command: 'zrem', args: ['events:by_priority', ...expiredIds] },
+        ]);
 
         void this.loggingService.log(
           LogType.SYSTEM,

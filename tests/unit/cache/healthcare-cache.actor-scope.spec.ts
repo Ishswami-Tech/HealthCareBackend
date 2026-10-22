@@ -5,7 +5,8 @@
  * On a cache HIT the handler (and its ownership check) never runs and RbacGuard lets a PATIENT
  * through on role permission alone, so a template without `{userId}` (e.g. `appointments:detail:{id}`)
  * would serve patient A's cached response to patient B. The key therefore always names the caller
- * for a PATIENT (`u-<userId>`) and the role for staff (`r-<ROLE>`).
+ * (`u-<userId>`) for patients AND staff; staff routes that opt in with `shareAcrossRole` share one
+ * entry per role (`r-<ROLE>`).
  */
 
 import { lastValueFrom, of } from 'rxjs';
@@ -71,6 +72,8 @@ function createHarness() {
     del: jest.fn().mockResolvedValue(1),
     ttl: jest.fn().mockResolvedValue(0),
     rPush: jest.fn().mockResolvedValue(1),
+    lTrim: jest.fn().mockResolvedValue('OK'),
+    expire: jest.fn().mockResolvedValue(1),
   };
   const reflector = { get: jest.fn() };
   const interceptor = new HealthcareCacheInterceptor(
@@ -233,15 +236,29 @@ describe('HealthcareCacheInterceptor actor scoping', () => {
   });
 
   describe('staff callers', () => {
-    it('two staff of the same role in the same clinic share an entry', async () => {
+    it('two staff of the same role in the same clinic get separate entries by default', async () => {
       const harness = createHarness();
 
       const first = await harness.readKey(caller(DOCTOR_1, 'DOCTOR'));
       const second = await harness.readKey(caller(DOCTOR_2, 'DOCTOR'));
 
+      expect(first).not.toBe(second);
+      expect(first).toContain(`:${HANDLER}:u-${DOCTOR_1}:q-`);
+      expect(second).toContain(`:${HANDLER}:u-${DOCTOR_2}:q-`);
+    });
+
+    it('a route that opts in with shareAcrossRole shares one entry per role', async () => {
+      const harness = createHarness();
+      const shared = { ...DETAIL, shareAcrossRole: true };
+
+      const first = await harness.readKey(caller(DOCTOR_1, 'DOCTOR'), shared);
+      const second = await harness.readKey(caller(DOCTOR_2, 'DOCTOR'), shared);
+      const receptionist = await harness.readKey(caller(RECEPTIONIST, 'RECEPTIONIST'), shared);
+
       expect(first).toBe(second);
       expect(first).toContain(`:${HANDLER}:r-DOCTOR:q-`);
       expect(first).not.toContain(DOCTOR_1);
+      expect(receptionist).not.toBe(first);
     });
 
     it('a receptionist and a doctor of the same clinic never share an entry', async () => {
@@ -269,6 +286,7 @@ describe('HealthcareCacheInterceptor actor scoping', () => {
 
       const key = await harness.readKey(caller(DOCTOR_1, 'DOCTOR'), {
         keyTemplate: 'scope:{userRole}:{id}',
+        shareAcrossRole: true,
       });
 
       expect(key).toBe(
@@ -285,7 +303,7 @@ describe('HealthcareCacheInterceptor actor scoping', () => {
       );
 
       expect(none).not.toBe(filtered);
-      expect(filtered).toMatch(/:r-DOCTOR:q-[0-9a-f]{32}$/);
+      expect(filtered).toMatch(new RegExp(`:u-${DOCTOR_1}:q-[0-9a-f]{32}$`));
     });
   });
 
@@ -369,7 +387,10 @@ describe('HealthcareCacheInterceptor actor scoping', () => {
 
     it('neutralises braces so a segment can never reintroduce a placeholder', () => {
       expect(resolveActorKeySegment('x:{id}', {}, actor('a{b}', 'PATIENT'))).toBe('u-a%7Bb%7D');
-      expect(resolveActorKeySegment('x:{id}', {}, actor('s', 'ROLE{x}'))).toBe('r-ROLE%7Bx%7D');
+      expect(resolveActorKeySegment('x:{id}', {}, actor('s', 'ROLE{x}'), true)).toBe(
+        'r-ROLE%7Bx%7D'
+      );
+      expect(resolveActorKeySegment('x:{id}', {}, actor('s{1}', 'DOCTOR'))).toBe('u-s%7B1%7D');
     });
 
     it('does not segment an unauthenticated actor', () => {
@@ -388,6 +409,19 @@ describe('HealthcareCacheInterceptor actor scoping', () => {
       expect(resolveActorKeySegment('x:{id}', params, actor(PATIENT_A, 'PATIENT'))).toBe(
         `u-${PATIENT_A}`
       );
+    });
+
+    it('scopes staff by user unless the route shares across the role', () => {
+      expect(resolveActorKeySegment('x:{id}', {}, actor(DOCTOR_1, 'DOCTOR'))).toBe(`u-${DOCTOR_1}`);
+      expect(resolveActorKeySegment('x:{id}', {}, actor(DOCTOR_1, 'DOCTOR'), true)).toBe(
+        'r-DOCTOR'
+      );
+      // {userId} already naming the caller: the role keeps the segment (no duplicate user).
+      expect(
+        resolveActorKeySegment('x:{userId}', { userId: DOCTOR_1 }, actor(DOCTOR_1, 'DOCTOR'))
+      ).toBe('r-DOCTOR');
+      // A staff token without a user id falls back to the role.
+      expect(resolveActorKeySegment('x:{id}', {}, actor(undefined, 'DOCTOR'))).toBe('r-DOCTOR');
     });
 
     it('throws for a patient without a user id', () => {

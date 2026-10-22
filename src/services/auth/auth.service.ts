@@ -1,3 +1,4 @@
+import { hasUsablePassword } from '@services/auth/core/has-password.util';
 import { nowIso } from '@utils/date-time.util';
 import { Inject, Injectable, UnauthorizedException, forwardRef } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -563,6 +564,8 @@ export class AuthService {
       const user = await this.databaseService.createUserSafe({
         email: registerDto.email,
         password: hashedPassword,
+        // The holder chose this password (hasUsablePassword): "Change password" is offered.
+        passwordChangedAt: new Date(),
         userid,
         name: `${registerDto.firstName} ${registerDto.lastName}`,
         age,
@@ -1537,6 +1540,10 @@ export class AuthService {
           timestamp: nowIso(),
         }
       );
+      if (verificationResult.rateLimited) {
+        // Per-identifier OTP lockout (5 wrong codes): surface as 429, not "invalid code".
+        throw this.errors.rateLimitExceeded(verificationResult.message, 'AuthService.verifyOtp');
+      }
       throw this.errors.otpInvalid('AuthService.verifyOtp', verificationResult.message);
     }
 
@@ -2221,6 +2228,10 @@ export class AuthService {
       phoneVerified?: boolean | null;
       phoneVerifiedAt?: Date | string | null;
       profilePicture?: string | null;
+      /** Only read to derive hasPassword; the hash never leaves this method. */
+      password?: string | null;
+      /** Set once the holder chose a password (see hasUsablePassword). */
+      passwordChangedAt?: Date | string | null;
     },
     options: {
       clinicId?: string | undefined;
@@ -2273,6 +2284,16 @@ export class AuthService {
       profileComplete: options.profileComplete,
       requiresProfileCompletion: options.requiresProfileCompletion,
       ...(options.loginMethod ? { loginMethod: options.loginMethod } : {}),
+      // Only when the row was loaded with its password column (absent != "no password").
+      ...('password' in user
+        ? {
+            hasPassword: hasUsablePassword({
+              password: user.password,
+              passwordChangedAt: user.passwordChangedAt,
+              role: String(user.role),
+            }),
+          }
+        : {}),
     };
   }
 

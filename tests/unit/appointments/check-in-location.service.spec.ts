@@ -25,7 +25,7 @@ import {
 } from '@services/appointments/plugins/therapy/check-in-location.service';
 import type { ProcessCheckInOptions } from '@core/types/appointment.types';
 import { FakeDb, createCacheStub, createLoggingStub, type Row } from './test-helpers';
-import { istSlot, pinClock, unpinClock } from './check-in-time-helpers';
+import { PINNED_NOW, istSlot, pinClock, unpinClock } from './check-in-time-helpers';
 
 const CLINIC = 'clinic-1';
 const OTHER_CLINIC = 'clinic-2';
@@ -218,7 +218,8 @@ describe('CheckInLocationService.processCheckIn', () => {
           id: 'sub-1',
           clinicId: CLINIC,
           status: 'ACTIVE',
-          currentPeriodEnd: new Date(Date.now() - 1000),
+          // Relative to the pinned clock (it.each data is built before pinClock() runs).
+          currentPeriodEnd: new Date(PINNED_NOW.getTime() - 1000),
         },
       ],
     ])(

@@ -69,6 +69,9 @@ Environment variables:
   COOLIFY_CONFIG_FILE  Path to coolify-apps.env (default: devops/config/coolify-apps.env)
   COOLIFY_APP_UUID     Explicit Coolify app UUID override
   DEPLOY_ENV           Environment name (preprod|production)
+  RUN_DB_MIGRATIONS    true | status (default) | false - see docs/DEPLOY_MIGRATIONS.md
+  MIGRATE_DATABASE_URL Optional explicit DB URL for the migration container
+  MIGRATE_NETWORK      Docker network for migrations when no api container runs (default: coolify)
 
 Example:
   DEPLOY_ENV=preprod COOLIFY_API_TOKEN="xxx" $0 \\
@@ -204,13 +207,17 @@ if [[ -n "$IMAGE" ]]; then
     # Coolify does the same thing for preprod — we're just doing it manually.
     sudo mkdir -p "$SERVICE_DIR"
 
-    # We need the DB credentials from the service's env to build the compose
-    DB_URL=$(ssh ${{ env.SSH_OPTS || '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-      "grep '^DATABASE_URL=' /opt/healthcare-production/.env.production 2>/dev/null | cut -d= -f2- | head -1" || echo "postgresql://postgres:postgres@postgres:5432/userdb?schema=public")
+    # Secrets (DATABASE_URL, JWT_SECRET, ...) are NOT written into the generated compose file.
+    # They come from the env_file below (and Coolify secrets). The previous version embedded
+    # GitHub-expression syntax that cannot run on the VPS and silently fell back to the
+    # postgres:postgres superuser default.
+    PROD_ENV_FILE="${PROD_ENV_FILE:-/opt/healthcare-production/.env.production}"
+    if ! sudo grep -q '^DATABASE_URL=' "$PROD_ENV_FILE" 2>/dev/null; then
+      log_error "DATABASE_URL is not set in ${PROD_ENV_FILE}; refusing to generate a compose file"
+      exit 1
+    fi
 
     CACHE_PREFIX="production:"
-    JWT_SECRET=$(ssh ${{ env.SSH_OPTS || '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-      "grep '^JWT_SECRET=' /opt/healthcare-production/.env.production 2>/dev/null | cut -d= -f2- | head -1" || echo "")
 
     sudo tee "$COMPOSE_FILE" > /dev/null << COMPOSE_EOF
 services:
@@ -219,10 +226,9 @@ services:
     container_name: api-${APP_UUID}
     hostname: api
     env_file:
-      - /opt/healthcare-production/.env.production
+      - ${PROD_ENV_FILE}
       - .env
     environment:
-      DATABASE_URL: '${DB_URL}'
       DRAGONFLY_KEY_PREFIX: '${CACHE_PREFIX}'
       CACHE_PREFIX: '${CACHE_PREFIX}'
       NODE_ENV: production
@@ -240,9 +246,9 @@ services:
       DRAGONFLY_ENABLED: 'true'
       DRAGONFLY_HOST: dhpn8hj78kg3ivu0ohdbypmn
       DRAGONFLY_PORT: 6379
-      JWT_SECRET: '${JWT_SECRET}'
       ENABLE_HTTP2: 'false'
-      TRUST_PROXY: 1
+      TRUSTED_PROXY_HOPS: 1
+      DB_POOL_SIZE: 25
     networks:
       - coolify
     restart: unless-stopped
@@ -252,10 +258,9 @@ services:
     container_name: worker-${APP_UUID}
     hostname: worker
     env_file:
-      - /opt/healthcare-production/.env.production
+      - ${PROD_ENV_FILE}
       - .env
     environment:
-      DATABASE_URL: '${DB_URL}'
       DRAGONFLY_KEY_PREFIX: '${CACHE_PREFIX}'
       CACHE_PREFIX: '${CACHE_PREFIX}'
       NODE_ENV: production
@@ -265,7 +270,7 @@ services:
       DOCKER_ENV: 'true'
       CRON_TIMEZONE: Asia/Kolkata
       TZ: Asia/Kolkata
-      JWT_SECRET: '${JWT_SECRET}'
+      DB_POOL_SIZE: 10
     networks:
       - coolify
     restart: unless-stopped
@@ -291,6 +296,109 @@ COMPOSE_EOF
     fi
   fi
 fi
+
+# ─── Database migrations (P0-3) ──────────────────────────────────────────────
+# Runs BEFORE Coolify starts the new release, in a one-shot container from the NEW image, so
+# the old release keeps serving until the schema is ready. CI runs the pre-deployment backup
+# job before this script.
+#
+# RUN_DB_MIGRATIONS:
+#   true   - `prisma migrate status` pre-check (fails on failed migrations, history drift or an
+#            unmanaged schema), then `prisma migrate deploy`, which holds a Postgres advisory
+#            lock so concurrent runs cannot double-apply. Any failure aborts the deploy here.
+#   status - pre-check only; prints pending/drift and NEVER blocks the deploy (default).
+#   false  - skip.
+# Switch an environment to `true` only after docs/DEPLOY_MIGRATIONS.md was followed on a prod copy.
+RUN_DB_MIGRATIONS="${RUN_DB_MIGRATIONS:-status}"
+
+resolve_migration_database_url() {
+  if [[ -n "${MIGRATE_DATABASE_URL:-}" ]]; then
+    printf '%s' "$MIGRATE_DATABASE_URL"
+    return 0
+  fi
+  local candidates=("/data/coolify/services/${APP_UUID}/.env")
+  if [[ "$DEPLOY_ENV" == "production" ]]; then
+    candidates+=("/opt/healthcare-backend/.env.production" "/opt/healthcare-production/.env.production")
+  else
+    candidates+=("/opt/healthcare-preprod/.env.preprod")
+  fi
+  local file value
+  for file in "${candidates[@]}"; do
+    value=$(sudo grep -E '^DATABASE_URL=' "$file" 2>/dev/null | tail -1 | cut -d= -f2- \
+      | sed -e "s/^['\"]//" -e "s/['\"]\$//" || true)
+    if [[ -n "$value" ]]; then
+      printf '%s' "$value"
+      return 0
+    fi
+  done
+  return 1
+}
+
+run_db_migrations() {
+  local mode="$1"
+  local db_url network env_tmp exit_code
+  local -a script_args=()
+  [[ "$mode" == "status" ]] && script_args=(--status-only)
+
+  if ! db_url=$(resolve_migration_database_url); then
+    if [[ "$mode" == "status" ]]; then
+      log_warn "Migrations (status): DATABASE_URL not found - skipping the read-only status check"
+      return 0
+    fi
+    log_error "Migrations: DATABASE_URL not found (Coolify service .env or app env file). Aborting deploy."
+    exit 1
+  fi
+
+  # Share the network namespace of the running api container so the DB host resolves exactly
+  # as it does for the app. Fall back to MIGRATE_NETWORK (default: coolify) on a first deploy.
+  if sudo docker inspect "api-${APP_UUID}" > /dev/null 2>&1; then
+    network="container:api-${APP_UUID}"
+  else
+    network="${MIGRATE_NETWORK:-coolify}"
+  fi
+
+  # Pass the URL through a 0600 temp env file, never on the command line or in logs.
+  env_tmp=$(umask 077 && mktemp)
+  MIGRATE_ENV_TMP="$env_tmp"
+  trap 'rm -f "${MIGRATE_ENV_TMP:-}"' EXIT
+  printf 'DATABASE_URL=%s\n' "$db_url" > "$env_tmp"
+
+  log_info "Migrations (${mode}): running deploy-migrate.js from ${IMAGE} (network: ${network})"
+  set +e
+  sudo docker run --rm \
+    --network "$network" \
+    --env-file "$env_tmp" \
+    -e NODE_ENV=production \
+    -e APP_MODE=migrate \
+    --entrypoint node \
+    "$IMAGE" \
+    /app/scripts/deploy-migrate.js "${script_args[@]}"
+  exit_code=$?
+  set -e
+  rm -f "$env_tmp"
+
+  if [[ $exit_code -ne 0 ]]; then
+    if [[ "$mode" == "status" ]]; then
+      log_warn "Migrations (status): pre-check reported a problem (exit ${exit_code}). NOT blocking this deploy."
+      log_warn "Pending migrations are NOT applied in status mode. Follow docs/DEPLOY_MIGRATIONS.md."
+      return 0
+    fi
+    log_error "Migrations failed (exit ${exit_code}). The new release was NOT deployed."
+    log_error "See docs/DEPLOY_MIGRATIONS.md. Restore from the pre-deployment backup only if a migration half-applied."
+    exit 1
+  fi
+  if [[ "$mode" == "status" ]]; then
+    log_warn "Migrations (status): check done; pending migrations (if listed above) were NOT applied"
+  else
+    log_success "Migrations: database schema is up to date"
+  fi
+}
+
+case "$RUN_DB_MIGRATIONS" in
+  true)   run_db_migrations apply ;;
+  status) run_db_migrations status ;;
+  *)      log_warn "RUN_DB_MIGRATIONS=${RUN_DB_MIGRATIONS} - skipping Prisma migrations for ${DEPLOY_ENV}" ;;
+esac
 
 # Coolify v4 deploy endpoint: POST /api/v1/deploy
 # Use uuid-only (not tag) — Coolify deploys whatever image the service is configured with

@@ -4,7 +4,7 @@
  * @description Stock level computation, movement recording, and on-hand reconciliation
  */
 
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, HttpStatus } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
@@ -52,6 +52,12 @@ interface FefoBatchRow {
   lotNumber: string;
   expiryDate: Date;
   quantityOnHand: number | null;
+}
+
+/** How a medicine is named in a refusal message (never its UUID). */
+function medicineLabel(name: string | null | undefined): string {
+  const trimmed = typeof name === 'string' ? name.trim() : '';
+  return trimmed ? trimmed : 'this medicine';
 }
 
 /**
@@ -304,14 +310,16 @@ export class InventoryService {
 
     const medicine = await client.medicine.findFirst({
       where: { id: medicineId, clinicId },
-      select: { stock: true },
+      select: { stock: true, name: true },
     });
     if (!medicine) {
-      throw new NotFoundException(`Medicine ${medicineId} not found in clinic ${clinicId}`);
+      throw new NotFoundException('Medicine not found in this clinic');
     }
+    // A business refusal (409), named for the pharmacist; the ids stay in the metadata.
     throw new HealthcareError(
       ErrorCode.PHARMACY_STOCK_INSUFFICIENT,
-      `Insufficient stock for medicine ${medicineId}: ${medicine.stock ?? 0} on hand, requested ${Math.abs(delta)}`,
+      `Insufficient stock for ${medicineLabel(medicine.name)}: ${medicine.stock ?? 0} on hand, requested ${Math.abs(delta)}`,
+      HttpStatus.CONFLICT,
       { medicineId, onHand: medicine.stock ?? 0, requested: Math.abs(delta) }
     );
   }
@@ -343,7 +351,8 @@ export class InventoryService {
     userId: string,
     clinicId: string,
     tx?: PrismaTransactionClientWithDelegates,
-    emitEvent = true
+    emitEvent = true,
+    referenceType: 'PRESCRIPTION' | 'DIRECT_DISPENSE' = 'PRESCRIPTION'
   ): Promise<FefoDispenseResult[]> {
     this.logger.info('FEFO dispense initiated', {
       module: 'Inventory',
@@ -368,7 +377,7 @@ export class InventoryService {
 
         const medicine = await client.medicine.findFirst({
           where: { id: item.medicineId, clinicId },
-          select: { stock: true },
+          select: { stock: true, name: true },
         });
         const stockBeforeDispense = (medicine?.stock ?? 0) + item.quantity;
 
@@ -407,9 +416,12 @@ export class InventoryService {
               clinicId,
               movementType: MovementType.DISPENSE_OUT,
               quantity: -take,
-              reason: `FEFO dispense for prescription ${prescriptionId}`,
+              reason:
+                referenceType === 'DIRECT_DISPENSE'
+                  ? `FEFO direct dispense ${prescriptionId}`
+                  : `FEFO dispense for prescription ${prescriptionId}`,
               referenceId: prescriptionId,
-              referenceType: 'PRESCRIPTION',
+              referenceType,
               recordedById: userId,
             },
           });
@@ -426,7 +438,8 @@ export class InventoryService {
         if (remaining > unbatchedAvailable) {
           throw new HealthcareError(
             ErrorCode.PHARMACY_STOCK_INSUFFICIENT,
-            `Insufficient stock for medicine ${item.medicineId}: short by ${remaining - unbatchedAvailable} units`,
+            `Insufficient stock for ${medicineLabel(medicine?.name)}: short by ${remaining - unbatchedAvailable} units`,
+            HttpStatus.CONFLICT,
             {
               medicineId: item.medicineId,
               shortage: remaining - unbatchedAvailable,
@@ -486,7 +499,8 @@ export class InventoryService {
     items: Array<{ medicineId: string; quantity: number }>,
     userId: string,
     clinicId: string,
-    tx: PrismaTransactionClientWithDelegates
+    tx: PrismaTransactionClientWithDelegates,
+    referenceType: 'PRESCRIPTION' | 'DIRECT_DISPENSE' = 'PRESCRIPTION'
   ): Promise<
     Array<{
       medicineId: string;
@@ -508,7 +522,7 @@ export class InventoryService {
           where: {
             clinicId,
             productId: item.medicineId,
-            referenceType: 'PRESCRIPTION',
+            referenceType,
             referenceId: prescriptionId,
             movementType: { in: [MovementType.DISPENSE_OUT, MovementType.RETURN_IN] },
           },
@@ -550,9 +564,9 @@ export class InventoryService {
             clinicId,
             movementType: MovementType.RETURN_IN,
             quantity: restorable,
-            reason: `Dispense reversal for prescription ${prescriptionId}`,
+            reason: `Dispense reversal for ${referenceType === 'DIRECT_DISPENSE' ? 'direct dispense' : 'prescription'} ${prescriptionId}`,
             referenceId: prescriptionId,
-            referenceType: 'PRESCRIPTION',
+            referenceType,
             recordedById: userId,
           },
         });

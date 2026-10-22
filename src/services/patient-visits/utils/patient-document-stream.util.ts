@@ -44,6 +44,15 @@ export interface PatientDocumentStream {
   contentLength: number;
 }
 
+/** RFC 6266 Content-Disposition with an ASCII fallback and a UTF-8 file name. */
+export function contentDispositionHeader(
+  disposition: 'inline' | 'attachment',
+  fileName: string
+): string {
+  const asciiName = fileName.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+  return `${disposition}; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+}
+
 export type ByteRange = { start: number; end: number } | null | 'unsatisfiable';
 
 /** Parses a single `bytes=start-end` / `bytes=start-` / `bytes=-suffix` range. */
@@ -114,7 +123,7 @@ export async function streamLocalObject(
 }
 
 export async function streamS3Object(
-  storage: S3StorageService,
+  storage: Pick<S3StorageService, 'getPresignedDownloadUrl'>,
   ref: StoredFileRef,
   rangeHeader: string | undefined
 ): Promise<PatientDocumentStream> {

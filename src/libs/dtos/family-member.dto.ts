@@ -106,6 +106,15 @@ export class CreateFamilyMemberDto {
   @IsString()
   @MaxLength(FAMILY_MEMBER_NOTES_MAX_LENGTH)
   notes?: string;
+
+  @ApiPropertyOptional({
+    example: 'Penicillin, peanuts',
+    description: 'Known allergies, free text',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  allergies?: string;
 }
 
 /**
@@ -140,6 +149,15 @@ export class UpdateFamilyMemberDto {
   @IsString()
   @MaxLength(FAMILY_MEMBER_NOTES_MAX_LENGTH)
   notes?: string;
+
+  @ApiPropertyOptional({
+    example: 'Penicillin, peanuts',
+    description: 'Known allergies, free text',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  allergies?: string;
 }
 
 export interface FamilyMemberResponse {
@@ -155,6 +173,7 @@ export interface FamilyMemberResponse {
   dateOfBirth: string | null;
   phone: string | null;
   notes: string | null;
+  allergies: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;

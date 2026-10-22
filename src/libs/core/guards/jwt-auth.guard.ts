@@ -17,6 +17,7 @@ import { CacheService } from '@infrastructure/cache/cache.service';
 import { IS_PUBLIC_KEY } from '@core/decorators/public.decorator';
 import {
   buildAuthRateLimitKey,
+  decideSessionAccess,
   resolveVerifiedSessionId,
   resolveVerifiedUserId,
   shouldCheckLockout,
@@ -306,6 +307,12 @@ export class JwtAuthGuard implements CanActivate {
           throw new UnauthorizedException('No token provided');
         }
         const payload: JwtPayload = await this.verifyToken(token);
+        // Dev skips the session store, but a logged-out / revoked session still ends here
+        // (one cache read), so logout behaves like production.
+        const devSessionId = resolveVerifiedSessionId(payload);
+        if (devSessionId && (await this.sessionManagementService.isSessionRevoked(devSessionId))) {
+          throw new UnauthorizedException('Session has been revoked');
+        }
         // Map JWT payload to request.user format expected by guards
         // RbacGuard expects request.user.id, but JWT uses 'sub' for user ID
         request.user = {
@@ -811,8 +818,25 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     let sessionData = await this.getSessionData(userId, sessionId);
+    // getSession() already returns null for a revoked id, so the revocation list is read only
+    // when nothing usable is stored (one extra cache read on the cold-cache path only).
+    const decision = decideSessionAccess({
+      hasActiveSession: sessionData !== null,
+      revoked:
+        sessionData === null && (await this.sessionManagementService.isSessionRevoked(sessionId)),
+    });
+    if (decision === 'reject') {
+      void logger.log(
+        LogType.SECURITY,
+        LogLevel.WARN,
+        'Session validation failed: session was revoked',
+        'JwtAuthGuard',
+        { userId, sessionId }
+      );
+      throw new UnauthorizedException('Session has been revoked');
+    }
 
-    if (!sessionData) {
+    if (decision === 'restore') {
       // Cache can be cold after Redis/container restart. Recover session from still-valid JWT context.
       const tokenExp =
         typeof (request.user as JwtPayload)?.['exp'] === 'number'

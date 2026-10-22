@@ -1,4 +1,11 @@
-import { Injectable, OnModuleInit, Inject, Optional, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleInit,
+  Inject,
+  Optional,
+  UnauthorizedException,
+  forwardRef,
+} from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -191,6 +198,11 @@ export class SessionManagementService implements OnModuleInit {
       metadata?: Record<string, unknown>;
     }
   ): Promise<SessionData> {
+    // A logged-out / revoked / evicted session is never brought back: getSession() returns null
+    // for it exactly like for a cold cache, so the revocation list is checked explicitly.
+    if (await this.isSessionBlacklisted(sessionId)) {
+      throw new UnauthorizedException('Session has been revoked');
+    }
     const existing = await this.getSession(sessionId);
     if (existing) {
       return existing;
@@ -389,18 +401,25 @@ export class SessionManagementService implements OnModuleInit {
     try {
       const session = await this.getSessionRaw(sessionId);
       if (!session) {
+        // Not stored (cold cache / already gone): still revoke the id, otherwise the next request
+        // with its access token would restore it (JwtAuthGuard cold-cache recovery).
+        const timeout =
+          this.config?.sessionTimeout || this.configService.getEnvNumber('SESSION_TIMEOUT', 86400);
+        await this.cacheService.set(`${this.BLACKLIST_PREFIX}${sessionId}`, '1', timeout);
         return false;
       }
 
       // Add to blacklist
+      // Kept at least one session timeout, so an access token issued for this session (and still
+      // within its own lifetime) can never restore it after the stored session is gone.
       const blacklistKey = `${this.BLACKLIST_PREFIX}${sessionId}`;
+      const sessionTimeout =
+        this.config?.sessionTimeout || this.configService.getEnvNumber('SESSION_TIMEOUT', 86400);
       const ttl = Math.max(
-        0,
+        sessionTimeout,
         Math.floor((new Date(session.expiresAt).getTime() - Date.now()) / 1000)
       );
-      if (ttl > 0) {
-        await this.cacheService.set(blacklistKey, '1', ttl);
-      }
+      await this.cacheService.set(blacklistKey, '1', ttl);
 
       // Remove from session storage
       const sessionKey = this.getSessionKey(sessionId);
@@ -732,6 +751,16 @@ export class SessionManagementService implements OnModuleInit {
    * @param sessionId - Session identifier
    * @returns True if session is blacklisted
    */
+  /** True when the session id was revoked (logout / revoke / eviction); see invalidateSession. */
+  async isSessionRevoked(sessionId: string): Promise<boolean> {
+    try {
+      return await this.isSessionBlacklisted(sessionId);
+    } catch {
+      // Revocation list unreadable: treat as not revoked; the session lookup still gates access.
+      return false;
+    }
+  }
+
   private async isSessionBlacklisted(sessionId: string): Promise<boolean> {
     const blacklistKey = `${this.BLACKLIST_PREFIX}${sessionId}`;
     const value = await this.cacheService.get(blacklistKey);

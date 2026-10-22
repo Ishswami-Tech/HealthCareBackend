@@ -58,6 +58,13 @@ import { AppointmentLocationService } from './plugins/location/appointment-locat
 import { AppointmentConfirmationService } from './plugins/confirmation/appointment-confirmation.service';
 import { CheckInService } from './plugins/checkin/check-in.service';
 import { CheckInLocationService } from './plugins/therapy/check-in-location.service';
+import { OpsDbService } from '@services/clinic-ops/services/ops-db.service';
+import { CheckInLogService } from '@services/clinic-ops/services/check-in-log.service';
+import { InPersonController } from './in-person/in-person.controller';
+import { InPersonVisitService } from './in-person/in-person-visit.service';
+import { InPersonCheckInService } from './in-person/in-person-check-in.service';
+import { InPersonDeskService } from './in-person/in-person-desk.service';
+import { InPersonQueueMaintenanceService } from './in-person/in-person-queue-maintenance.service';
 import { PaymentService } from './plugins/payment/payment.service';
 // VideoService and VideoConsultationTracker are provided by VideoModule (imported below)
 import { AppointmentCommunicationsService } from './communications/appointment-communications.service';
@@ -133,7 +140,7 @@ import { EHRModule } from '@services/ehr/ehr.module';
     // @infrastructure/queue.
     EventEmitterModule, // Already configured in AppModule with forRoot()
   ],
-  controllers: [AppointmentPluginController, AppointmentsController],
+  controllers: [AppointmentPluginController, AppointmentsController, InPersonController],
   providers: [
     // Core Services
     AppointmentsService,
@@ -180,6 +187,15 @@ import { EHRModule } from '@services/ehr/ehr.module';
     AppointmentConfirmationService,
     CheckInService,
     CheckInLocationService,
+    // Check-in attempt log (stateless, DB + logging only): provided here too so appointments does not
+    // have to import ClinicOpsModule (which depends on pharmacy / billing modules).
+    OpsDbService,
+    CheckInLogService,
+    InPersonVisitService,
+    InPersonCheckInService,
+    InPersonDeskService,
+    // Worker crons (live queue consistency, token counter cleanup, "you're next" notifications).
+    InPersonQueueMaintenanceService,
     PaymentService,
     // VideoService and VideoConsultationTracker are provided by VideoModule (imported above)
     AppointmentCommunicationsService,
@@ -227,6 +243,10 @@ import { EHRModule } from '@services/ehr/ehr.module';
     AppointmentAnalyticsService,
     CheckInService,
     CheckInLocationService,
+    CheckInLogService,
+    InPersonVisitService,
+    InPersonCheckInService,
+    InPersonDeskService,
     AppointmentNotificationService,
   ],
 })

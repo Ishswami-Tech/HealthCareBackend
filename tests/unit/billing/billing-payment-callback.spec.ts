@@ -19,7 +19,8 @@ jest.mock(
 );
 jest.mock('@infrastructure/database', () => ({ DatabaseService: class {} }));
 
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
+import { DEFAULT_RENEWAL_WINDOW_DAYS } from '@services/billing/subscription-purchase-guard.util';
 import { createBillingService } from './billing-test-harness';
 import { CLINIC_ID, createFinalisationWorld } from './billing-finalisation-world';
 import type { FinalisationWorld } from './billing-finalisation-world';
@@ -242,9 +243,18 @@ describe('BillingService.processSubscriptionPayment invoice reuse', () => {
     payments,
   });
 
-  function reuseHarness(payments: Array<{ status: string }>) {
+  // The one-plan / renewal-window guard only opens a renewal payment for a running plan inside the
+  // last DEFAULT_RENEWAL_WINDOW_DAYS of its paid period: these fixtures sit 3 days before the end.
+  const DAY_MS = 24 * 3600 * 1000;
+  const renewableActivePlan = (): Record<string, unknown> =>
+    planFixture({ status: 'ACTIVE', currentPeriodEnd: new Date(Date.now() + 3 * DAY_MS) });
+
+  function reuseHarness(
+    payments: Array<{ status: string }>,
+    subscription: Record<string, unknown> = renewableActivePlan()
+  ) {
     const databaseService = {
-      findSubscriptionByIdSafe: jest.fn().mockResolvedValue(planFixture({ status: 'ACTIVE' })),
+      findSubscriptionByIdSafe: jest.fn().mockResolvedValue(subscription),
       findInvoicesSafe: jest.fn().mockResolvedValue([pendingInvoice(payments)]),
       findUserByIdSafe: jest.fn().mockResolvedValue({ id: 'user-1' }),
     };
@@ -260,19 +270,22 @@ describe('BillingService.processSubscriptionPayment invoice reuse', () => {
   // The harness configures no backend URL, so the call stops right after the invoice decision.
   const STOP = 'API URL is not configured in application config';
 
-  it('does NOT reuse an invoice that already has an open (PENDING) payment attempt', async () => {
-    const { service, createInvoice } = reuseHarness([{ status: 'PENDING' }]);
+  // An invoice that already carries a live payment (open attempt or settled one) is never reused
+  // for a NEW gateway order on a new invoice either: it is resumed through the invoice payment
+  // path, so the same period can never end up with two payable invoices.
+  it.each([['PENDING'], ['COMPLETED']])(
+    'resumes (does not duplicate or re-order) an invoice that already has a %s payment',
+    async paymentStatus => {
+      const { service, createInvoice } = reuseHarness([{ status: paymentStatus }]);
+      const resume = jest
+        .spyOn(service, 'processInvoicePayment')
+        .mockResolvedValue({ resumed: true } as never);
 
-    await expect(service.processSubscriptionPayment('sub-1')).rejects.toThrow(STOP);
-    expect(createInvoice).toHaveBeenCalledTimes(1);
-  });
-
-  it('does NOT reuse an invoice that already has a COMPLETED payment', async () => {
-    const { service, createInvoice } = reuseHarness([{ status: 'COMPLETED' }]);
-
-    await expect(service.processSubscriptionPayment('sub-1')).rejects.toThrow(STOP);
-    expect(createInvoice).toHaveBeenCalledTimes(1);
-  });
+      await expect(service.processSubscriptionPayment('sub-1')).resolves.toEqual({ resumed: true });
+      expect(resume).toHaveBeenCalledWith('inv-old', undefined, undefined);
+      expect(createInvoice).not.toHaveBeenCalled();
+    }
+  );
 
   it('reuses an invoice whose earlier attempts all failed or were cancelled', async () => {
     const { service, createInvoice } = reuseHarness([
@@ -288,6 +301,41 @@ describe('BillingService.processSubscriptionPayment invoice reuse', () => {
     const { service, createInvoice } = reuseHarness([]);
 
     await expect(service.processSubscriptionPayment('sub-1')).rejects.toThrow(STOP);
+    expect(createInvoice).not.toHaveBeenCalled();
+  });
+
+  it('opens a renewal for an ACTIVE plan whose period has already ended', async () => {
+    const expired = planFixture({
+      status: 'ACTIVE',
+      currentPeriodEnd: new Date(Date.now() - DAY_MS),
+    });
+    const { service, createInvoice } = reuseHarness([], expired);
+
+    await expect(service.processSubscriptionPayment('sub-1')).rejects.toThrow(STOP);
+    expect(createInvoice).not.toHaveBeenCalled();
+  });
+
+  it('refuses (409) a renewal while the ACTIVE plan has more than 7 days left', async () => {
+    const running = planFixture({
+      status: 'ACTIVE',
+      currentPeriodEnd: new Date(Date.now() + (DEFAULT_RENEWAL_WINDOW_DAYS + 3) * DAY_MS),
+    });
+    const { service, createInvoice, databaseService } = reuseHarness([], running);
+
+    const refusal = await service.processSubscriptionPayment('sub-1').then(
+      () => null,
+      (error: unknown) => error
+    );
+
+    expect(refusal).toBeInstanceOf(ConflictException);
+    expect((refusal as ConflictException).getStatus()).toBe(409);
+    expect((refusal as ConflictException).getResponse()).toMatchObject({
+      code: 'SUBSCRIPTION_RENEWAL_NOT_OPEN',
+      subscriptionId: 'sub-1',
+    });
+    expect((refusal as ConflictException).message).toMatch(/^This plan is active\. Renewal opens/);
+    // Refused before any invoice decision: no invoice lookup, reuse or creation.
+    expect(databaseService['findInvoicesSafe']).not.toHaveBeenCalled();
     expect(createInvoice).not.toHaveBeenCalled();
   });
 });
@@ -312,6 +360,9 @@ describe('BillingService.createSubscription reuse of an unpaid subscription', ()
       findBillingPlanByIdSafe: jest.fn().mockResolvedValue(plan),
       findSubscriptionsSafe: jest.fn().mockResolvedValue([cancelled]),
       updateSubscriptionSafe: jest.fn().mockResolvedValue({ id: 'sub-1' }),
+      // One-plan guard: the unpaid checkout has no payment attempt (listSubscriptionPayments -> []),
+      // and no other plan of the clinic is running, so the purchase may go ahead.
+      executeHealthcareWrite: jest.fn().mockResolvedValue([]),
     };
     const { service } = createBillingService({ databaseService });
 

@@ -20,6 +20,7 @@ import {
   UpdatePharmacyPrescriptionDto,
   DispensePrescriptionDto,
   PrescriptionStatus,
+  publishedPrescriptionStatusFilter,
   CreateSupplierDto,
   UpdateSupplierDto,
   INVENTORY_DEFAULT_EXPIRING_DAYS,
@@ -30,8 +31,24 @@ import {
   type InventoryFilters,
 } from '@dtos/pharmacy.dto';
 import type { Medicine } from '@core/types/database.types';
-import { formatDateKeyInIST } from '@utils/date-time.util';
+import { summarizeStockLevels, type StockLevelSummary } from '@utils/stock-level.util';
+import {
+  duplicateMedicineMessage,
+  normalizeMedicineForm,
+  normalizeMedicineName,
+} from '@services/pharmacy/services/medicine-identity.util';
 import { loadDashboardMetrics, loadSalesReport } from './pharmacy-sales.queries';
+import {
+  findDoctorIdOfUser,
+  loadPrescriptionPage,
+  loadPrescriptionSummary,
+} from '@services/pharmacy/services/prescription-list.queries';
+import {
+  PrescriptionListRangeError,
+  type PrescriptionListFilters,
+  type PrescriptionListScope,
+  type PrescriptionSummary,
+} from '@services/pharmacy/services/prescription-list.util';
 import {
   DEFAULT_STATS_PERIOD,
   type SalesGroupBy,
@@ -39,6 +56,47 @@ import {
   type StatsPeriod,
 } from './pharmacy-sales.util';
 import { buildPrescriptionPdf } from './prescription-pdf.util';
+import { prescriptionPdfFileName } from '@services/pharmacy/services/prescription-file-name.util';
+import {
+  cancelRefusal,
+  cashSettlesInvoice,
+  derivePrescriptionPaymentState,
+  dispenseStateOf,
+  isUnapprovedPrescription,
+  planPrescriptionCash,
+  planPrescriptionPaymentAttempt,
+  prescriptionBillingRefusal,
+  type PrescriptionAttemptRow,
+} from '@services/pharmacy/services/prescription-payment.util';
+import { PAYMENT_EXPIRES_AT_KEY, paymentWindowEnd } from '@services/billing/payment-window.util';
+import {
+  buildPharmacyInvoiceDescription,
+  prescriptionReference,
+} from '@services/billing/invoice-description.util';
+import {
+  PAST_EXPIRY_MESSAGE,
+  isFutureExpiry,
+} from '@services/pharmacy/services/medicine-expiry.util';
+import { loadPrescriptionPdfContext } from '@services/pharmacy/services/prescription-pdf-context.util';
+import {
+  EMPTY_HANDOVER_STATE,
+  latestHandoverByPrescription,
+  readyForHandoverAfter,
+  type HandoverStateRow,
+  type PrescriptionHandoverState,
+} from '@services/pharmacy/services/prescription-handover-state.util';
+import {
+  isOffMedicineDesk,
+  medicineDeskLifecycleStatus,
+  type MedicineDeskLifecycleStatus,
+} from '@services/pharmacy/services/medicine-desk-status.util';
+import {
+  LEGACY_PRESCRIPTION_LIST_LIMIT,
+  MEDICINE_DESK_ACTIVE_STATUSES,
+  sliceLegacyPrescriptionWindow,
+  type LegacyPrescriptionList,
+} from '@services/pharmacy/services/prescription-legacy-list.util';
+import { toSlimPrescriptionListRow } from '@services/pharmacy/services/prescription-list-slim.util';
 import { LogLevel, LogType, AppointmentQueueCategory } from '@core/types';
 import { PrismaDelegateArgs, PrismaTransactionClientWithDelegates } from '@core/types/prisma.types';
 import { PaymentMethod, PaymentStatus, Role } from '@core/types/enums.types';
@@ -78,6 +136,28 @@ const PATIENT_USER_SELECT = {
   dateOfBirth: true,
 } as const;
 
+/** Relations of a prescription list row (legacy list and paged list share the row shape). */
+const PRESCRIPTION_LIST_INCLUDE = {
+  items: { include: { medicine: true } },
+  patient: { include: { user: { select: PATIENT_USER_SELECT } } },
+  doctor: { include: { user: { select: { id: true, name: true } } } },
+  location: true,
+} as const;
+
+/** Roles that may list DRAFT / RETURNED prescriptions (assistant-doctor review workflow). */
+const DRAFT_LISTING_ROLES: ReadonlySet<string> = new Set([
+  'DOCTOR',
+  'ASSISTANT_DOCTOR',
+  'CLINIC_ADMIN',
+  'SUPER_ADMIN',
+]);
+
+/** Caller of the prescription list / summary. */
+export interface PrescriptionListCallerContext {
+  readonly role?: string | undefined;
+  readonly userId?: string | undefined;
+}
+
 /**
  * Deterministic per-clinic prescription number: RX-<IST yyyymmdd>-<first 8 id chars>.
  * The same expression backfills existing rows in the 20261004100000 migration, so the
@@ -87,9 +167,7 @@ export function buildPrescriptionNumber(prescription: {
   id: string;
   date?: Date | string | null;
 }): string {
-  const dateKey = formatDateKeyInIST(prescription.date ?? new Date()).replace(/-/g, '');
-  const idPart = prescription.id.replace(/-/g, '').slice(0, 8).toUpperCase();
-  return `RX-${dateKey}-${idPart}`;
+  return prescriptionReference({ id: prescription.id, date: prescription.date ?? null });
 }
 
 /**
@@ -273,6 +351,8 @@ interface PrescriptionInvoiceRecord {
   prescriptionId: string | null;
 }
 
+type PrescriptionForAccess = Awaited<ReturnType<PharmacyService['getPrescriptionByIdForAccess']>>;
+
 interface BillingServiceLike {
   ensurePrescriptionInvoice: (
     prescriptionId: string,
@@ -303,11 +383,14 @@ interface BillingServiceLike {
     requester?: { userId?: string; role?: string; clinicId?: string },
     options?: { skipWhatsApp?: boolean }
   ) => Promise<unknown>;
-  updateInvoice: (
-    id: string,
-    data: { status: string },
-    requester?: { userId?: string; role?: string; clinicId?: string }
-  ) => Promise<unknown>;
+  generateInvoicePDF?: (invoiceId: string) => Promise<void>;
+  /** System void (PENDING-guarded: a PAID invoice is never voided). True when it voided. */
+  voidInvoiceInternal: (
+    invoiceId: string,
+    clinicId: string,
+    reason: string,
+    extraMetadata?: Record<string, unknown>
+  ) => Promise<boolean>;
 }
 
 @Injectable()
@@ -477,43 +560,40 @@ export class PharmacyService {
       status?: PaymentStatus | string | null;
       metadata?: unknown;
       createdAt?: Date | null;
-    }>
+    }>,
+    invoiceStatus?: string | null
   ) {
     const totalAmount = this.getPrescriptionTotal(prescription);
     const linkedPayments = this.getPrescriptionPayments(payments, prescription.id);
-    const paidAmount = Number(
-      linkedPayments
-        .filter(payment => String(payment.status) === PharmacyService.COMPLETED_PAYMENT_STATUS)
-        .reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
-        .toFixed(2)
-    );
-    const pendingAmount = Math.max(0, Number((totalAmount - paidAmount).toFixed(2)));
-
-    let paymentStatus: 'PENDING' | 'PARTIAL' | 'PAID' = 'PENDING';
-    if (pendingAmount <= 0 && totalAmount > 0) {
-      paymentStatus = 'PAID';
-    } else if (paidAmount > 0 && pendingAmount > 0) {
-      paymentStatus = 'PARTIAL';
-    }
-
+    const collectedAmount = linkedPayments
+      .filter(payment => String(payment.status) === PharmacyService.COMPLETED_PAYMENT_STATUS)
+      .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+    // One derivation for amounts + status (paise), so pendingAmount, paymentStatus and the
+    // readyForHandover / waitingForPayment flags built from it never disagree.
     return {
-      totalAmount,
-      paidAmount,
-      pendingAmount,
-      paymentStatus,
-      canDispense: totalAmount <= 0 || pendingAmount <= 0,
+      ...derivePrescriptionPaymentState({ totalAmount, collectedAmount, invoiceStatus }),
       payments: linkedPayments,
     };
+  }
+
+  /** How a medicine is named in a refusal message (never its UUID). */
+  private medicineLabel(name: string | null | undefined): string {
+    const trimmed = typeof name === 'string' ? name.trim() : '';
+    return trimmed ? trimmed : 'This medicine';
   }
 
   private getPrescriptionItemRemainingQuantity(item: PrescriptionDispenseItem): number {
     return Math.max(0, Number(item.quantity || 0) - Number(item.dispensedQuantity || 0));
   }
 
+  /**
+   * FILLED when nothing remains, PARTIAL while something is dispensed, PENDING when nothing is
+   * (a full reverse-dispense goes back to PENDING instead of "PARTIAL with 0 dispensed").
+   */
   private getPrescriptionDispenseStatus(items: PrescriptionDispenseItem[]): PrescriptionStatus {
-    return items.every(item => this.getPrescriptionItemRemainingQuantity(item) <= 0)
-      ? PrescriptionStatus.FILLED
-      : PrescriptionStatus.PARTIAL;
+    const state = dispenseStateOf(items);
+    if (state === 'FILLED') return PrescriptionStatus.FILLED;
+    return state === 'PARTIAL' ? PrescriptionStatus.PARTIAL : PrescriptionStatus.PENDING;
   }
 
   private normalizeDispenseRequestItems(
@@ -726,22 +806,12 @@ export class PharmacyService {
     prescriptionStatus?: PrescriptionStatus | string | null;
     paymentStatus: 'PENDING' | 'PARTIAL' | 'PAID';
     isActiveQueueEntry: boolean;
-  }): 'WAITING_FOR_PAYMENT' | 'READY_FOR_HANDOVER' | 'DISPENSED' | 'CANCELLED' {
-    const prescriptionStatus = String(args.prescriptionStatus || '').toUpperCase();
-
-    if (prescriptionStatus === 'FILLED') {
-      return 'DISPENSED';
-    }
-
-    if (prescriptionStatus === 'CANCELLED') {
-      return 'CANCELLED';
-    }
-
-    if (!args.isActiveQueueEntry) {
-      return args.paymentStatus === 'PAID' ? 'READY_FOR_HANDOVER' : 'WAITING_FOR_PAYMENT';
-    }
-
-    return args.paymentStatus === 'PAID' ? 'READY_FOR_HANDOVER' : 'WAITING_FOR_PAYMENT';
+  }): MedicineDeskLifecycleStatus {
+    // Drafts (DRAFT / RETURNED) keep their own status; they are not waiting for payment.
+    return medicineDeskLifecycleStatus(
+      args.prescriptionStatus ? String(args.prescriptionStatus) : null,
+      args.paymentStatus
+    );
   }
 
   private toMedicineDeskQueueResponse<
@@ -801,11 +871,12 @@ export class PharmacyService {
       queueCategory: AppointmentQueueCategory.MEDICINE_DESK,
       queueOwnerId: context.queueOwnerId,
       queueStatus:
-        lifecycleStatus === 'DISPENSED'
-          ? 'DISPENSED'
-          : lifecycleStatus === 'CANCELLED'
-            ? 'CANCELLED'
-            : 'PENDING',
+        lifecycleStatus === 'DISPENSED' ||
+        lifecycleStatus === 'CANCELLED' ||
+        lifecycleStatus === 'DRAFT' ||
+        lifecycleStatus === 'RETURNED'
+          ? lifecycleStatus
+          : 'PENDING',
       status: prescriptionStatus === 'PARTIAL' ? 'PARTIAL' : lifecycleStatus,
       position: queuePosition,
       queuePosition,
@@ -880,9 +951,9 @@ export class PharmacyService {
         clinicId,
         PharmacyService.MEDICINE_QUEUE_DOMAIN
       );
+      // Finished, cancelled and still-draft prescriptions never sit in the desk queue.
       const isInactive = (prescription: T): boolean =>
-        String(prescription.status || '').toUpperCase() === 'FILLED' ||
-        String(prescription.status || '').toUpperCase() === 'CANCELLED';
+        isOffMedicineDesk(prescription.status ? String(prescription.status) : null);
       const activePrescriptionIds = new Set(
         clinicPrescriptions.filter(prescription => !isInactive(prescription)).map(p => p.id)
       );
@@ -908,10 +979,7 @@ export class PharmacyService {
       }
 
       for (const prescription of clinicPrescriptions) {
-        if (
-          String(prescription.status || '').toUpperCase() === 'FILLED' ||
-          String(prescription.status || '').toUpperCase() === 'CANCELLED'
-        ) {
+        if (isInactive(prescription)) {
           continue;
         }
 
@@ -985,30 +1053,36 @@ export class PharmacyService {
        * only the payments of the listed prescriptions and never prune the queue.
        */
       completeClinicSet?: boolean;
+      /**
+       * The list is every ACTIVE (desk-queue) prescription of the clinic(s) it spans: stale
+       * queue entries are pruned (as for a complete set), but only the listed prescriptions'
+       * payments are loaded.
+       */
+      completeActiveDeskSet?: boolean;
     } = {}
   ) {
     if (prescriptions.length === 0) {
       return prescriptions;
     }
 
-    const payments = clinicId
-      ? options.completeClinicSet
-        ? await this.databaseService.findPaymentsSafe({ clinicId })
-        : await this.findPaymentsForPrescriptions(
-            clinicId,
-            prescriptions.map(prescription => prescription.id)
-          )
-      : [];
-    const invoicesByPrescriptionId = clinicId
-      ? await this.findPrescriptionInvoicesSafe(
-          clinicId,
-          prescriptions.map(prescription => prescription.id)
-        )
-      : new Map<string, { id: string; invoiceNumber: string; status: string }>();
+    // Payments and invoices are looked up per clinic. With a clinicId every listed prescription
+    // belongs to it; without one (a patient's list across the clinics they are registered with)
+    // each prescription is matched within its own clinic.
+    const prescriptionIdsByClinic = this.groupPrescriptionIdsByClinic(prescriptions, clinicId);
+    const payments =
+      clinicId && options.completeClinicSet
+        ? await this.findClinicPrescriptionDispensePayments(clinicId)
+        : options.completeClinicSet
+          ? []
+          : await this.findPaymentsForClinicPrescriptions(prescriptionIdsByClinic);
+    const invoicesByPrescriptionId = await this.findInvoicesForClinicPrescriptions(
+      clinicId || !options.completeClinicSet ? prescriptionIdsByClinic : new Map<string, string[]>()
+    );
     await this.syncMedicineDeskQueueEntries(prescriptions, {
-      pruneMissing: options.completeClinicSet === true,
+      pruneMissing: options.completeClinicSet === true || options.completeActiveDeskSet === true,
     });
     const deskContext = await this.loadPrescriptionDeskContext(prescriptions);
+    const handoverByPrescriptionId = await this.loadLatestHandovers(prescriptions);
 
     const queueByClinic = new Map<
       string,
@@ -1038,7 +1112,11 @@ export class PharmacyService {
     }
 
     return prescriptions.map(prescription => {
-      const paymentState = this.buildPrescriptionPaymentState(prescription, payments);
+      const paymentState = this.buildPrescriptionPaymentState(
+        prescription,
+        payments,
+        invoicesByPrescriptionId.get(prescription.id)?.status ?? null
+      );
       const queueState = queueByClinic.get(prescription.clinicId);
       const queuePosition = Number(queueState?.positions.get(prescription.id) || 0);
       const totalInQueue = Number(queueState?.totalInQueue || 0);
@@ -1067,11 +1145,59 @@ export class PharmacyService {
         doctorRole: String(prescription.doctor?.user?.role || 'DOCTOR').toUpperCase(),
         invoice: invoicesByPrescriptionId.get(prescription.id) ?? null,
       });
+      const handover = handoverByPrescriptionId.get(prescription.id) ?? EMPTY_HANDOVER_STATE;
       return {
         ...response,
         ...this.buildPrescriptionDeskFields(prescription, deskContext),
+        readyForHandover: readyForHandoverAfter(response.readyForHandover, handover),
+        handover: { ...handover },
       };
     });
+  }
+
+  /**
+   * Latest counter hand-over per prescription in ONE query (no N+1). Scoped to the clinics of
+   * the listed (already authorised) prescriptions. Best-effort: a failure only blanks the field.
+   */
+  private async loadLatestHandovers(
+    prescriptions: Array<{ id: string; clinicId: string }>
+  ): Promise<Map<string, PrescriptionHandoverState>> {
+    const prescriptionIds = Array.from(new Set(prescriptions.map(rx => rx.id).filter(Boolean)));
+    const clinicIds = Array.from(new Set(prescriptions.map(rx => rx.clinicId).filter(Boolean)));
+    if (prescriptionIds.length === 0 || clinicIds.length === 0) {
+      return new Map();
+    }
+    try {
+      const rows = await this.databaseService.executeHealthcareRead(async client => {
+        const delegate = (client as unknown as { dispenseHandover?: LooseDelegate })
+          .dispenseHandover;
+        if (!delegate) return [];
+        return await delegate.findMany({
+          where: {
+            clinicId: { in: clinicIds },
+            prescriptionId: { in: prescriptionIds },
+            status: { not: 'SUPERSEDED' },
+          } as PrismaDelegateArgs,
+          select: {
+            prescriptionId: true,
+            status: true,
+            createdAt: true,
+            handedOverAt: true,
+          } as PrismaDelegateArgs,
+          orderBy: { createdAt: 'desc' } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      });
+      return latestHandoverByPrescription(rows as unknown as HandoverStateRow[]);
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'Failed to load prescription hand-over state',
+        'PharmacyService',
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+      return new Map();
+    }
   }
 
   /**
@@ -1324,6 +1450,86 @@ export class PharmacyService {
     });
   }
 
+  /**
+   * The clinic's prescription-dispense payments only (`metadata.paymentFor`), not every payment
+   * it ever took: `buildPrescriptionPaymentState` ignores the others anyway, so the computed
+   * state is identical while appointment / subscription payments stay in the database.
+   */
+  private async findClinicPrescriptionDispensePayments(
+    clinicId: string
+  ): ReturnType<PharmacyService['findPaymentsForPrescriptions']> {
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return await typedClient.payment.findMany({
+        where: {
+          clinicId,
+          metadata: {
+            path: ['paymentFor'],
+            equals: PharmacyService.PAYMENT_FOR_PRESCRIPTION_DISPENSE,
+          },
+        } as unknown as PrismaDelegateArgs,
+        select: {
+          id: true,
+          amount: true,
+          status: true,
+          metadata: true,
+          createdAt: true,
+        } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+  }
+
+  /** Prescription ids keyed by clinic: all under `clinicId` when given, else by their own clinic. */
+  private groupPrescriptionIdsByClinic(
+    prescriptions: ReadonlyArray<{ id: string; clinicId: string }>,
+    clinicId?: string
+  ): Map<string, string[]> {
+    const grouped = new Map<string, string[]>();
+    for (const prescription of prescriptions) {
+      const key = clinicId || prescription.clinicId;
+      if (!key) continue;
+      grouped.set(key, [...(grouped.get(key) ?? []), prescription.id]);
+    }
+    return grouped;
+  }
+
+  /** Payments of the listed prescriptions, each matched within its clinic, in one query. */
+  private async findPaymentsForClinicPrescriptions(
+    prescriptionIdsByClinic: Map<string, string[]>
+  ): ReturnType<PharmacyService['findPaymentsForPrescriptions']> {
+    const entries = Array.from(prescriptionIdsByClinic.entries());
+    if (entries.length <= 1) {
+      const [only] = entries;
+      return only ? await this.findPaymentsForPrescriptions(only[0], only[1]) : [];
+    }
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return await typedClient.payment.findMany({
+        where: {
+          OR: entries.flatMap(([clinicId, ids]) =>
+            Array.from(new Set(ids)).map(prescriptionId => ({
+              clinicId,
+              metadata: { path: ['prescriptionId'], equals: prescriptionId },
+            }))
+          ),
+        } as unknown as PrismaDelegateArgs,
+        include: { invoice: true, appointment: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+  }
+
+  /** Pharmacy invoices of the listed prescriptions, one batched lookup per clinic. */
+  private async findInvoicesForClinicPrescriptions(
+    prescriptionIdsByClinic: Map<string, string[]>
+  ): Promise<Map<string, PrescriptionInvoiceRecord>> {
+    const perClinic = await Promise.all(
+      Array.from(prescriptionIdsByClinic.entries()).map(([clinicId, ids]) =>
+        this.findPrescriptionInvoicesSafe(clinicId, ids)
+      )
+    );
+    return new Map(perClinic.flatMap(map => Array.from(map.entries())));
+  }
+
   /** Best-effort batched invoice lookup — never throws. */
   private async findPrescriptionInvoicesSafe(
     clinicId: string,
@@ -1340,6 +1546,30 @@ export class PharmacyService {
     }
   }
 
+  /**
+   * Busts the cached prescription lists / summary (tags: prescriptions, pharmacy). Also called by
+   * the assistant-doctor draft workflow (return / resubmit / discard), whose status changes do not
+   * go through the medicine-desk queue. Never throws: a cache failure is logged.
+   */
+  async invalidatePrescriptionListCache(context: Record<string, string> = {}): Promise<void> {
+    try {
+      // With context.clinicId only that clinic's lists are busted (plus clinic-less entries);
+      // without it, every clinic's (the old global behaviour).
+      await this.cacheService.invalidateCollectionTags(
+        ['prescriptions', 'pharmacy'],
+        context['clinicId']
+      );
+    } catch (cacheError) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'Failed to invalidate prescription list cache',
+        'PharmacyService',
+        { ...context, error: (cacheError as Error).message }
+      );
+    }
+  }
+
   private async emitMedicineDeskQueueUpdated(
     clinicId: string,
     prescriptionId: string,
@@ -1349,18 +1579,7 @@ export class PharmacyService {
     // GET /pharmacy/prescriptions is cached (tags: pharmacy, prescriptions).
     // Every queue state change must bust it or the Prescription Management
     // page keeps showing "Payment pending" after a payment lands.
-    try {
-      await this.cacheService.invalidateCacheByTag('prescriptions');
-      await this.cacheService.invalidateCacheByTag('pharmacy');
-    } catch (cacheError) {
-      await this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.WARN,
-        'Failed to invalidate prescription list cache',
-        'PharmacyService',
-        { prescriptionId, action, error: (cacheError as Error).message }
-      );
-    }
+    await this.invalidatePrescriptionListCache({ prescriptionId, action, clinicId });
 
     try {
       const prescription = await this.getPrescriptionByIdForAccess(prescriptionId, clinicId);
@@ -1434,6 +1653,8 @@ export class PharmacyService {
     patientId: string;
     doctorId: string;
     status: PrescriptionStatus | string;
+    date?: Date | string | null;
+    prescriptionNumber?: string | null;
     items: Array<{
       quantity?: number | null;
       medicineId?: string | null;
@@ -1770,6 +1991,13 @@ export class PharmacyService {
     if (expiry && Number.isNaN(expiry.getTime())) {
       throw new BadRequestException('Invalid expiryDate');
     }
+    if (expiry && !isFutureExpiry(expiry)) {
+      throw new BadRequestException(PAST_EXPIRY_MESSAGE);
+    }
+    // Checked in a read before the write: an HTTP error thrown inside a write is re-wrapped.
+    await this.databaseService.executeHealthcareRead(client =>
+      this.assertMedicineNameFree(client, clinicId, dto.name, resolved.category ?? null)
+    );
 
     const medicine = await this.databaseService.executeHealthcareWrite(
       async client => {
@@ -1779,7 +2007,7 @@ export class PharmacyService {
         }
         return await typedClient.medicine.create({
           data: {
-            name: dto.name.trim(),
+            name: normalizeMedicineName(dto.name),
             manufacturer: dto.manufacturer,
             type: medicineType,
             ...(resolved.category ? { category: resolved.category } : {}),
@@ -1841,9 +2069,18 @@ export class PharmacyService {
     if (expiry && Number.isNaN(expiry.getTime())) {
       throw new BadRequestException('Invalid expiryDate');
     }
+    if (expiry && !isFutureExpiry(expiry)) {
+      throw new BadRequestException(PAST_EXPIRY_MESSAGE);
+    }
     const changedFields = Object.entries(dto)
       .filter(([, value]) => value !== undefined)
       .map(([key]) => key);
+    if (dto.name !== undefined || resolved.category) {
+      const rename = { name: dto.name, form: resolved.category ?? null };
+      await this.databaseService.executeHealthcareRead(client =>
+        this.assertRenameFree(client, id, clinicId, rename)
+      );
+    }
 
     const medicine = await this.databaseService.executeHealthcareWrite(
       async client => {
@@ -1876,7 +2113,7 @@ export class PharmacyService {
         const data: Record<string, unknown> = {
           ...(dto.quantityChange !== undefined && { stock: { increment: dto.quantityChange } }),
           ...(dto.price !== undefined && { price: dto.price }),
-          ...(dto.name !== undefined && { name: dto.name.trim() }),
+          ...(dto.name !== undefined && { name: normalizeMedicineName(dto.name) }),
           ...(resolved.type && { type: resolved.type }),
           ...(resolved.category && { category: resolved.category }),
           ...(dto.manufacturer !== undefined && { manufacturer: dto.manufacturer }),
@@ -1899,9 +2136,27 @@ export class PharmacyService {
           throw new BadRequestException('No editable fields supplied');
         }
 
-        return await typedClient.medicine.update({
-          where: { id } as PrismaDelegateArgs,
+        const quantityChange = dto.quantityChange ?? 0;
+        if (quantityChange >= 0) {
+          return await typedClient.medicine.update({
+            where: { id } as PrismaDelegateArgs,
+            data: data as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        }
+        // A stock reduction is guarded at write time (`stock >= |change|`): the snapshot check
+        // above cannot stop two concurrent reductions (or a reduction racing a dispense) from
+        // driving the stock below zero.
+        const guarded = await typedClient.medicine.updateMany({
+          where: { id, clinicId, stock: { gte: Math.abs(quantityChange) } } as PrismaDelegateArgs,
           data: data as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+        if (guarded.count !== 1) {
+          throw new ConflictException(
+            'Stock changed meanwhile and cannot go below zero, reload and retry'
+          );
+        }
+        return await typedClient.medicine.findUnique({
+          where: { id } as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
       },
       {
@@ -1978,49 +2233,183 @@ export class PharmacyService {
     return result;
   }
 
-  async findAllPrescriptions(clinicId?: string, scope?: { readonly doctorUserId: string }) {
+  /**
+   * Legacy (no `page`) list: the most recent LEGACY_PRESCRIPTION_LIST_LIMIT prescriptions of the
+   * clinic (drafts excluded), newest first, instead of every prescription ever written. `total`
+   * is only counted when the window is truncated (one extra row is fetched to detect it).
+   */
+  async findRecentPrescriptions(
+    clinicId?: string,
+    scope?: { readonly doctorUserId?: string; readonly medicinesOnly?: boolean },
+    limit: number = LEGACY_PRESCRIPTION_LIST_LIMIT
+  ): Promise<LegacyPrescriptionList<Record<string, unknown>>> {
+    // Drafts / returned drafts are an assistant-doctor review workflow, not prescriptions yet.
+    const where: Record<string, unknown> = { status: { notIn: ['DRAFT', 'RETURNED'] } };
+    if (clinicId) where['clinicId'] = clinicId;
+    // A doctor sees the prescriptions they wrote, not every prescription of the clinic.
+    if (scope?.doctorUserId) where['doctor'] = { userId: scope.doctorUserId };
+    // The pharmacist desk / hand-over lists skip note-only (advice) prescriptions: no medicine.
+    if (scope?.medicinesOnly) where['items'] = { some: {} };
+
+    const { rows, truncated, total } = await this.databaseService.executeHealthcareRead(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        const fetched = await typedClient.prescription.findMany({
+          where: where as PrismaDelegateArgs,
+          include: PRESCRIPTION_LIST_INCLUDE as unknown as PrismaDelegateArgs,
+          orderBy: [{ date: 'desc' }, { id: 'desc' }] as unknown as PrismaDelegateArgs,
+          take: limit + 1,
+        } as PrismaDelegateArgs);
+        const window = sliceLegacyPrescriptionWindow(fetched, limit);
+        const count = window.truncated
+          ? await typedClient.prescription.count({
+              where: where as PrismaDelegateArgs,
+            } as PrismaDelegateArgs)
+          : window.rows.length;
+        return { ...window, total: count };
+      }
+    );
+
+    // Complete set only when nothing was cut off: then (as before) every clinic payment is read
+    // and stale queue entries are pruned. A truncated window is a subset: payments of the listed
+    // prescriptions only, no pruning (getMedicineDeskQueue / stats keep the queue in step).
+    const data = await this.enrichPrescriptionsWithPaymentState(rows, clinicId, {
+      completeClinicSet: !scope?.doctorUserId && !scope?.medicinesOnly && !truncated,
+    });
+    return { data: data as unknown as Array<Record<string, unknown>>, total, truncated };
+  }
+
+  /** Every active (desk-queue) prescription of the clinic, via the clinicId+status index. */
+  private async findActiveDeskPrescriptions(clinicId?: string) {
     const prescriptions = await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-      const where: Record<string, unknown> = {};
+      const where: Record<string, unknown> = {
+        status: { in: [...MEDICINE_DESK_ACTIVE_STATUSES] },
+      };
       if (clinicId) where['clinicId'] = clinicId;
-      // A doctor sees the prescriptions they wrote, not every prescription of the clinic.
-      if (scope?.doctorUserId) where['doctor'] = { userId: scope.doctorUserId };
-
       return await typedClient.prescription.findMany({
         where: where as PrismaDelegateArgs,
-        include: {
-          items: {
-            include: {
-              medicine: true,
-            },
-          },
-          patient: {
-            include: {
-              user: {
-                select: PATIENT_USER_SELECT,
-              },
-            },
-          },
-          doctor: {
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                },
-              },
-            },
-          },
-          location: true,
-        } as PrismaDelegateArgs,
+        include: PRESCRIPTION_LIST_INCLUDE as unknown as PrismaDelegateArgs,
       } as PrismaDelegateArgs);
     });
-
-    // Every prescription of the clinic (or of all clinics when no clinic is given), or only the
-    // doctor's own when scoped; the payment-state enrichment then covers only that subset.
     return await this.enrichPrescriptionsWithPaymentState(prescriptions, clinicId, {
-      completeClinicSet: !scope,
+      completeActiveDeskSet: true,
     });
+  }
+
+  /**
+   * Clinic (and, for a DOCTOR, own-prescription) scope of the paged list and the summary.
+   * Null when a DOCTOR caller has no doctor profile: they wrote nothing.
+   */
+  private async resolvePrescriptionListScope(
+    clinicId: string | undefined,
+    caller: PrescriptionListCallerContext
+  ): Promise<PrescriptionListScope | null> {
+    if (!clinicId) {
+      throw new ForbiddenException('Clinic context required');
+    }
+    const role = String(caller.role ?? '').toUpperCase();
+    const allowDrafts = DRAFT_LISTING_ROLES.has(role);
+    if (role !== String(Role.DOCTOR)) {
+      // The pharmacist works the medicine desk: a note-only prescription has nothing to dispense.
+      return role === String(Role.PHARMACIST)
+        ? { clinicId, allowDrafts, medicinesOnly: true }
+        : { clinicId, allowDrafts };
+    }
+    const doctorId = caller.userId
+      ? await findDoctorIdOfUser(this.databaseService, caller.userId)
+      : null;
+    return doctorId ? { clinicId, doctorId, allowDrafts } : null;
+  }
+
+  /** A bad dateFrom / dateTo is the caller's mistake (400), anything else propagates. */
+  private rethrowRangeError(error: unknown): never {
+    if (error instanceof PrescriptionListRangeError) {
+      throw new BadRequestException(error.message);
+    }
+    throw error;
+  }
+
+  /**
+   * One page of prescriptions, filtered, searched and sorted in the database (a doctor writes
+   * ~500 a day). Rows have the legacy list shape: only the page is enriched with the payment /
+   * medicine-desk state, and only that page's payments are read.
+   */
+  async findPrescriptionsPage(
+    clinicId: string | undefined,
+    filters: PrescriptionListFilters,
+    caller: PrescriptionListCallerContext
+  ) {
+    const scope = await this.resolvePrescriptionListScope(clinicId, caller);
+    if (!scope) {
+      return { data: [], total: 0, page: filters.page, limit: filters.limit };
+    }
+    let page: Awaited<ReturnType<typeof loadPrescriptionPage>>;
+    try {
+      page = await loadPrescriptionPage(
+        this.databaseService,
+        scope,
+        filters,
+        PRESCRIPTION_LIST_INCLUDE
+      );
+    } catch (error) {
+      this.rethrowRangeError(error);
+    }
+    const rows = page.rows as unknown as Parameters<
+      PharmacyService['enrichPrescriptionsWithPaymentState']
+    >[0];
+    const data = await this.enrichPrescriptionsWithPaymentState(rows, scope.clinicId);
+    // Paged rows keep every top-level field; nested records are reduced to what the clients read.
+    return {
+      data: data.map(row => toSlimPrescriptionListRow(row)),
+      total: page.total,
+      page: filters.page,
+      limit: filters.limit,
+    };
+  }
+
+  /** Counters of the doctor / pharmacy prescription screens, computed with groupBy / count. */
+  async getPrescriptionSummary(
+    clinicId: string | undefined,
+    dates: { readonly dateFrom?: string; readonly dateTo?: string },
+    caller: PrescriptionListCallerContext
+  ): Promise<PrescriptionSummary> {
+    const scope = await this.resolvePrescriptionListScope(clinicId, caller);
+    if (!scope) {
+      return {
+        total: 0,
+        active: 0,
+        completed: 0,
+        cancelled: 0,
+        drafts: 0,
+        today: 0,
+        uniquePatients: 0,
+      };
+    }
+    try {
+      return await loadPrescriptionSummary(this.databaseService, scope, dates);
+    } catch (error) {
+      return this.rethrowRangeError(error);
+    }
+  }
+
+  /** Roles that may see a prescription that is still a draft (or returned for changes). */
+  private static readonly DRAFT_VISIBLE_ROLES: ReadonlySet<string> = new Set([
+    'DOCTOR',
+    'ASSISTANT_DOCTOR',
+    'CLINIC_ADMIN',
+    'SUPER_ADMIN',
+  ]);
+
+  /** A DRAFT / RETURNED prescription is invisible (404) to patients, pharmacy and the front desk. */
+  private assertPrescriptionVisibleToRole(status: unknown, role: string | undefined): void {
+    const normalized = (typeof status === 'string' ? status : '').toUpperCase();
+    if (
+      (normalized === 'DRAFT' || normalized === 'RETURNED') &&
+      !PharmacyService.DRAFT_VISIBLE_ROLES.has(String(role ?? '').toUpperCase())
+    ) {
+      throw new NotFoundException('Prescription not found');
+    }
   }
 
   /**
@@ -2041,6 +2430,7 @@ export class PharmacyService {
       isPatientCaller ? undefined : clinicId
     );
     await this.ensurePatientMayReadPrescription(prescription, actor);
+    this.assertPrescriptionVisibleToRole(prescription.status, actor?.role);
     const [enriched] = await this.enrichPrescriptionsWithPaymentState(
       [
         prescription as unknown as {
@@ -2118,10 +2508,14 @@ export class PharmacyService {
         return [];
       }
 
+      const canSeeDrafts = PharmacyService.DRAFT_VISIBLE_ROLES.has(
+        String(caller.role ?? '').toUpperCase()
+      );
       return await typedClient.prescription.findMany({
         where: {
           patientId: patient.id,
           ...(clinicScope ? { clinicId: clinicScope } : {}),
+          ...(canSeeDrafts ? {} : { status: { notIn: ['DRAFT', 'RETURNED'] } }),
         } as PrismaDelegateArgs,
         include: {
           items: {
@@ -2152,8 +2546,9 @@ export class PharmacyService {
       } as PrismaDelegateArgs);
     });
 
-    const clinicId = result[0]?.clinicId;
-    return await this.enrichPrescriptionsWithPaymentState(result, clinicId);
+    // Staff lists hold only the request clinic's rows; a patient's list may span clinics, so
+    // its payment state is resolved per prescription clinic (no clinicId passed).
+    return await this.enrichPrescriptionsWithPaymentState(result, clinicScope);
   }
 
   async createPrescription(
@@ -2168,6 +2563,10 @@ export class PharmacyService {
     if (noteOnly && !dto.diagnosis?.trim() && !dto.notes?.trim()) {
       throw new BadRequestException('Add a medicine, or a diagnosis or advice for the patient');
     }
+
+    // The assistant doctor only PREPARES prescriptions: they stay DRAFT (invisible to the pharmacy
+    // desk) until the doctor approves them (see RxDraftService).
+    const isAssistantDraft = String(actor?.role ?? '').toUpperCase() === 'ASSISTANT_DOCTOR';
 
     const prescription = await this.databaseService.executeHealthcareWrite(
       async client => {
@@ -2209,7 +2608,14 @@ export class PharmacyService {
             diagnosis: dto.diagnosis,
             ...(dto.visitId && { visitId: dto.visitId }),
             ...(dto.validUntil && { validUntil: resolveValidUntil(dto.validUntil) }),
-            ...(noteOnly && { status: 'FILLED' }),
+            ...(isAssistantDraft
+              ? {
+                  status: 'DRAFT',
+                  draftedByUserId: actor?.userId ?? null,
+                  draftedByRole: 'ASSISTANT_DOCTOR',
+                  submittedAt: prescribedAt,
+                }
+              : noteOnly && { status: 'FILLED' }),
             items: {
               create: dto.items.map(item => ({
                 medicineId: item.medicineId,
@@ -2242,6 +2648,11 @@ export class PharmacyService {
       }
     );
 
+    if (isAssistantDraft) {
+      await this.invalidatePatientEhrCache(dto.patientId);
+      return prescription;
+    }
+
     await this.syncMedicineDeskQueueEntries([
       {
         id: String((prescription as { id?: string }).id),
@@ -2267,6 +2678,36 @@ export class PharmacyService {
       'CREATED'
     );
     return prescription;
+  }
+
+  /**
+   * Called after the doctor approves an assistant's DRAFT (status already PENDING): from here on the
+   * prescription behaves exactly like one the doctor wrote - it enters the medicine-desk queue and
+   * the patient's EHR cache is refreshed.
+   */
+  async publishApprovedPrescription(prescriptionId: string, clinicId: string): Promise<void> {
+    const prescription = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return await typedClient.prescription.findUnique({
+        where: { id: prescriptionId } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+    if (!prescription || prescription.clinicId !== clinicId) {
+      throw new NotFoundException('Prescription not found');
+    }
+    await this.syncMedicineDeskQueueEntries([
+      {
+        id: prescriptionId,
+        clinicId,
+        patientId: String(prescription.patientId),
+        doctorId: String(prescription.doctorId),
+        locationId: (prescription as { locationId?: string | null }).locationId ?? null,
+        status: (prescription as { status?: PrescriptionStatus | string }).status || 'PENDING',
+        date: (prescription as { date?: Date | string | null }).date || new Date(),
+      },
+    ]);
+    await this.invalidatePatientEhrCache(String(prescription.patientId));
+    await this.emitMedicineDeskQueueUpdated(clinicId, prescriptionId, 'CREATED');
   }
 
   /** Every medicine of a prescription must be an ACTIVE medicine of the clinic. */
@@ -2321,10 +2762,19 @@ export class PharmacyService {
     )) as unknown as {
       patientId: string;
       status: string;
+      draftedByUserId?: string | null;
       doctor?: { user?: { id?: string | null } | null } | null;
       items: Array<{ dispensedQuantity?: number | null }>;
     };
-    if (current.doctor?.user?.id !== actor.userId) {
+    if (String(actor.role ?? '').toUpperCase() === 'ASSISTANT_DOCTOR') {
+      // The assistant only ever edits a draft they prepared themselves, never a live prescription.
+      const isOwnOpenDraft =
+        current.draftedByUserId === actor.userId &&
+        ['DRAFT', 'RETURNED'].includes(String(current.status).toUpperCase());
+      if (!isOwnOpenDraft) {
+        throw new ForbiddenException('You can only edit your own draft prescriptions');
+      }
+    } else if (current.doctor?.user?.id !== actor.userId) {
       throw new ForbiddenException('Only the prescribing doctor can edit this prescription');
     }
     this.assertPrescriptionEditable(current);
@@ -2439,7 +2889,7 @@ export class PharmacyService {
     status: string;
     items: Array<{ dispensedQuantity?: number | null }>;
   }): void {
-    if (String(prescription.status).toUpperCase() !== 'PENDING') {
+    if (!['PENDING', 'DRAFT', 'RETURNED'].includes(String(prescription.status).toUpperCase())) {
       throw new BadRequestException(
         'Only prescriptions that have not been dispensed or cancelled can be edited'
       );
@@ -2515,6 +2965,12 @@ export class PharmacyService {
           throw new BadRequestException('Prescription does not belong to this clinic');
         }
 
+        if (['DRAFT', 'RETURNED'].includes(String(existing.status).toUpperCase())) {
+          throw new BadRequestException(
+            'A draft prescription must be approved by the doctor before its status can change'
+          );
+        }
+
         // Immutability: reject updates when already FILLED
         if (String(existing.status) === 'FILLED') {
           throw new BadRequestException(
@@ -2524,6 +2980,25 @@ export class PharmacyService {
 
         if (String(existing.status) === 'CANCELLED' && String(status) !== 'CANCELLED') {
           throw new BadRequestException('Cannot update a cancelled prescription');
+        }
+
+        // Money collected against the prescription is never dropped silently by a cancel: the
+        // payment has to be refunded first (no automatic refunds here).
+        if (String(status) === 'CANCELLED' && String(existing.status) !== 'CANCELLED') {
+          const completed = (await typedClient.payment.findMany({
+            where: {
+              clinicId: existing.clinicId,
+              status: PaymentStatus.COMPLETED,
+              metadata: { path: ['prescriptionId'], equals: prescriptionId },
+            } as PrismaDelegateArgs,
+            select: { amount: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs)) as unknown as Array<{ amount: number | null }>;
+          const refusal = cancelRefusal(
+            completed.reduce((sum, row) => sum + Number(row.amount ?? 0), 0)
+          );
+          if (refusal) {
+            throw new ConflictException(refusal);
+          }
         }
 
         const updatedPrescription = await typedClient.prescription.update({
@@ -2571,6 +3046,10 @@ export class PharmacyService {
     }
 
     if (clinicId) {
+      if (String(status) === 'CANCELLED') {
+        // Nothing was collected (checked above): the bill of a cancelled prescription is void.
+        await this.voidPrescriptionInvoiceIfUnpaid(prescriptionId, clinicId);
+      }
       await this.emitMedicineDeskQueueUpdated(clinicId, prescriptionId, 'CANCELLED');
     }
 
@@ -2588,385 +3067,362 @@ export class PharmacyService {
       ...(dispenser.id ? { dispensedById: dispenser.id } : {}),
       ...(dispenser.name ? { dispensedByName: dispenser.name } : {}),
     };
+    // executeHealthcareWrite keeps the audit trail and cache invalidation; the work itself runs in
+    // ONE SQL transaction, so a refused (409) loser rolls back every stock decrement it made.
     const dispenseSummary = await this.databaseService.executeHealthcareWrite(
-      async client => {
-        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-          prescriptionItem: {
-            update: (args: PrismaDelegateArgs) => Promise<unknown>;
-            updateMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
-          };
-        };
+      async () =>
+        this.databaseService.executeInTransaction(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
 
-        const existing = await typedClient.prescription.findUnique({
-          where: { id: prescriptionId } as PrismaDelegateArgs,
-          include: {
-            items: {
-              include: {
-                medicine: true,
+          const existing = await typedClient.prescription.findUnique({
+            where: { id: prescriptionId } as PrismaDelegateArgs,
+            include: {
+              items: {
+                include: {
+                  medicine: true,
+                },
               },
-            },
-          } as PrismaDelegateArgs,
-        } as PrismaDelegateArgs);
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
 
-        if (!existing) {
-          throw new NotFoundException('Prescription not found');
-        }
-
-        if (clinicId && existing.clinicId !== clinicId) {
-          throw new BadRequestException('Prescription does not belong to this clinic');
-        }
-
-        const normalizedStatus = String(existing.status || '').toUpperCase();
-        if (normalizedStatus === 'CANCELLED') {
-          throw new BadRequestException('Cancelled prescriptions cannot be dispensed');
-        }
-
-        if (normalizedStatus === 'FILLED') {
-          throw new BadRequestException(
-            'Cannot modify a prescription that has already been dispensed'
-          );
-        }
-
-        const existingItems = (existing.items || []) as PrescriptionDispenseItem[];
-        const payments = await this.databaseService.findPaymentsSafe({
-          clinicId: existing.clinicId,
-        });
-        const paymentState = this.buildPrescriptionPaymentState(
-          {
-            id: String(existing.id),
-            date: existing.date,
-            items: existingItems,
-          },
-          payments
-        );
-
-        if (!paymentState.canDispense) {
-          throw new BadRequestException(
-            `Prescription payment is pending. Remaining amount: INR ${paymentState.pendingAmount}`
-          );
-        }
-
-        const requestItems = this.normalizeDispenseRequestItems(dto.items);
-        const effectiveRequestItems =
-          requestItems.length > 0
-            ? requestItems
-            : this.buildFullDispenseRequestItems(existingItems);
-
-        if (effectiveRequestItems.length === 0) {
-          throw new BadRequestException('Prescription has already been fully dispensed');
-        }
-
-        const existingByItemId = new Map(
-          existingItems
-            .filter(item => Boolean(item.id))
-            .map(item => [String(item.id), item] as const)
-        );
-        const existingByMedicineId = new Map<string, PrescriptionDispenseItem[]>();
-        for (const item of existingItems) {
-          if (!item.medicineId) {
-            continue;
+          if (!existing) {
+            throw new NotFoundException('Prescription not found');
           }
 
-          const key = String(item.medicineId);
-          const currentItems = existingByMedicineId.get(key) || [];
-          currentItems.push(item);
-          existingByMedicineId.set(key, currentItems);
-        }
-        const inventoryMedicineIds = Array.from(
-          new Set(
-            effectiveRequestItems.flatMap(item =>
-              [item.medicineId, item.substituteMedicineId].filter(Boolean)
-            )
-          )
-        ) as string[];
-        const inventoryMedicines = inventoryMedicineIds.length
-          ? await typedClient.medicine.findMany({
-              where: {
-                clinicId: existing.clinicId,
-                id: {
-                  in: inventoryMedicineIds,
-                },
-              } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs)
-          : [];
-        const medicineById = new Map(
-          inventoryMedicines.map(medicine => [String(medicine.id), medicine] as const)
-        );
-        const dispenseAt = dto.dispensedAt ? new Date(dto.dispensedAt) : new Date();
+          if (clinicId && existing.clinicId !== clinicId) {
+            throw new BadRequestException('Prescription does not belong to this clinic');
+          }
 
-        if (Number.isNaN(dispenseAt.getTime())) {
-          throw new BadRequestException('Invalid dispensedAt value');
-        }
-
-        let totalRequestedQuantity = 0;
-        let totalDispensedQuantity = 0;
-        const appliedRequests: Array<{
-          prescriptionItemId: string;
-          requestItem: PrescriptionDispenseRequestItem;
-          inventoryMedicineId: string;
-          lotHistory: PrescriptionDispenseBatchHistoryEntry[];
-          eventHistory: PrescriptionDispenseBatchHistoryEntry[];
-        }> = [];
-
-        for (const requestItem of effectiveRequestItems) {
-          const inventoryMedicineId = requestItem.substituteMedicineId || requestItem.medicineId;
-          const inventoryMedicine = medicineById.get(inventoryMedicineId);
-
-          if (!inventoryMedicine) {
+          const normalizedStatus = String(existing.status || '').toUpperCase();
+          if (normalizedStatus === 'DRAFT' || normalizedStatus === 'RETURNED') {
             throw new BadRequestException(
-              requestItem.substituteMedicineId
-                ? `Substitute medicine ${inventoryMedicineId} is not part of this clinic inventory`
-                : `Medicine ${requestItem.medicineId} is not part of this clinic inventory`
+              'A draft prescription must be approved by the doctor before it can be dispensed'
+            );
+          }
+          if (normalizedStatus === 'CANCELLED') {
+            throw new BadRequestException('Cancelled prescriptions cannot be dispensed');
+          }
+
+          if (normalizedStatus === 'FILLED') {
+            throw new BadRequestException(
+              'Cannot modify a prescription that has already been dispensed'
             );
           }
 
-          const prescriptionItem = requestItem.prescriptionItemId
-            ? existingByItemId.get(requestItem.prescriptionItemId)
-            : (existingByMedicineId.get(requestItem.medicineId) || []).find(
-                item => this.getPrescriptionItemRemainingQuantity(item) > 0
-              );
-
-          if (!prescriptionItem) {
-            throw new BadRequestException(
-              requestItem.prescriptionItemId
-                ? `Prescription item ${requestItem.prescriptionItemId} is not part of this prescription`
-                : `Medicine ${requestItem.medicineId} is not part of this prescription`
-            );
-          }
-
-          const remainingQuantity = this.getPrescriptionItemRemainingQuantity(prescriptionItem);
-          if (remainingQuantity <= 0) {
-            throw new BadRequestException(
-              `Medicine ${requestItem.medicineId} has already been fully dispensed`
-            );
-          }
-
-          if (requestItem.quantity > remainingQuantity) {
-            throw new BadRequestException(
-              `Requested quantity for medicine ${requestItem.medicineId} exceeds remaining quantity (${remainingQuantity})`
-            );
-          }
-
-          const availableStock = Number(inventoryMedicine.stock || 0);
-          if (availableStock < requestItem.quantity) {
-            throw new BadRequestException(
-              `Insufficient stock for medicine ${inventoryMedicineId}. Available: ${availableStock}, requested: ${requestItem.quantity}`
-            );
-          }
-
-          // FEFO consumes stock inside this transaction (atomic with the item and
-          // status updates). When batches were consumed, the history records the
-          // real lots so a reversal restores exactly what was taken.
-          const [fefoResult] = await this.inventoryService.dispenseFefo(
-            prescriptionId,
+          const existingItems = (existing.items || []) as PrescriptionDispenseItem[];
+          // Only this prescription's payments, read on the transaction's connection.
+          const payments = await typedClient.payment.findMany({
+            where: {
+              clinicId: existing.clinicId,
+              metadata: { path: ['prescriptionId'], equals: prescriptionId },
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+          const paymentState = this.buildPrescriptionPaymentState(
             {
-              items: [
-                {
-                  prescriptionItemId: String(prescriptionItem.id),
-                  medicineId: inventoryMedicineId,
-                  quantity: requestItem.quantity,
-                },
-              ],
+              id: String(existing.id),
+              date: existing.date,
+              items: existingItems,
             },
-            dispenser.id ?? 'system',
-            existing.clinicId,
-            typedClient,
-            false
+            payments
           );
-          const consumedBatches = fefoResult?.consumedBatches ?? [];
-          const fefoLots = [
-            ...consumedBatches.map(batch => ({
-              quantity: batch.quantity,
-              batchNumber: batch.lotNumber,
-              expiryDate: batch.expiryDate.toISOString(),
-            })),
-            ...(consumedBatches.length > 0 && (fefoResult?.unbatchedQuantity ?? 0) > 0
-              ? [{ quantity: fefoResult?.unbatchedQuantity ?? 0 }]
-              : []),
-          ];
-          const appliedRequestItem: PrescriptionDispenseRequestItem = {
-            ...requestItem,
-            lots: fefoLots.length > 0 ? fefoLots : requestItem.lots,
-          };
-          const requestLots =
-            appliedRequestItem.lots.length > 0
-              ? appliedRequestItem.lots
-              : [
+
+          if (!paymentState.canDispense) {
+            // State conflict (not a malformed request): collect the balance, then dispense.
+            throw new ConflictException(
+              `Prescription payment is pending. Remaining amount: INR ${Number(paymentState.pendingAmount).toFixed(2)}`
+            );
+          }
+
+          const requestItems = this.normalizeDispenseRequestItems(dto.items);
+          const effectiveRequestItems =
+            requestItems.length > 0
+              ? requestItems
+              : this.buildFullDispenseRequestItems(existingItems);
+
+          if (effectiveRequestItems.length === 0) {
+            throw new BadRequestException('Prescription has already been fully dispensed');
+          }
+
+          const existingByItemId = new Map(
+            existingItems
+              .filter(item => Boolean(item.id))
+              .map(item => [String(item.id), item] as const)
+          );
+          const existingByMedicineId = new Map<string, PrescriptionDispenseItem[]>();
+          for (const item of existingItems) {
+            if (!item.medicineId) {
+              continue;
+            }
+
+            const key = String(item.medicineId);
+            const currentItems = existingByMedicineId.get(key) || [];
+            currentItems.push(item);
+            existingByMedicineId.set(key, currentItems);
+          }
+          const inventoryMedicineIds = Array.from(
+            new Set(
+              effectiveRequestItems.flatMap(item =>
+                [item.medicineId, item.substituteMedicineId].filter(Boolean)
+              )
+            )
+          ) as string[];
+          const inventoryMedicines = inventoryMedicineIds.length
+            ? await typedClient.medicine.findMany({
+                where: {
+                  clinicId: existing.clinicId,
+                  id: {
+                    in: inventoryMedicineIds,
+                  },
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs)
+            : [];
+          const medicineById = new Map(
+            inventoryMedicines.map(medicine => [String(medicine.id), medicine] as const)
+          );
+          const dispenseAt = dto.dispensedAt ? new Date(dto.dispensedAt) : new Date();
+
+          if (Number.isNaN(dispenseAt.getTime())) {
+            throw new BadRequestException('Invalid dispensedAt value');
+          }
+
+          let totalRequestedQuantity = 0;
+          let totalDispensedQuantity = 0;
+          const plans: Array<{
+            requestItem: PrescriptionDispenseRequestItem;
+            prescriptionItem: PrescriptionDispenseItem;
+            inventoryMedicineId: string;
+            prescribedName: string;
+          }> = [];
+
+          // 1. Validate every line against the snapshot (no writes yet).
+          for (const requestItem of effectiveRequestItems) {
+            const inventoryMedicineId = requestItem.substituteMedicineId || requestItem.medicineId;
+            const inventoryMedicine = medicineById.get(inventoryMedicineId);
+
+            if (!inventoryMedicine) {
+              throw new BadRequestException(
+                requestItem.substituteMedicineId
+                  ? 'The substitute medicine is not part of this clinic inventory'
+                  : 'This medicine is not part of this clinic inventory'
+              );
+            }
+
+            const prescriptionItem = requestItem.prescriptionItemId
+              ? existingByItemId.get(requestItem.prescriptionItemId)
+              : (existingByMedicineId.get(requestItem.medicineId) || []).find(
+                  item => this.getPrescriptionItemRemainingQuantity(item) > 0
+                );
+
+            if (!prescriptionItem) {
+              throw new BadRequestException(
+                requestItem.prescriptionItemId
+                  ? 'A selected item is not part of this prescription'
+                  : `${this.medicineLabel(inventoryMedicine.name)} is not part of this prescription`
+              );
+            }
+
+            const remainingQuantity = this.getPrescriptionItemRemainingQuantity(prescriptionItem);
+            const prescribedName = this.medicineLabel(
+              prescriptionItem.medicine?.name ?? inventoryMedicine.name
+            );
+            if (remainingQuantity <= 0) {
+              throw new BadRequestException(`${prescribedName} has already been fully dispensed`);
+            }
+
+            if (requestItem.quantity > remainingQuantity) {
+              throw new BadRequestException(
+                `Requested quantity for ${prescribedName} exceeds remaining quantity (${remainingQuantity})`
+              );
+            }
+
+            const availableStock = Number(inventoryMedicine.stock || 0);
+            if (availableStock < requestItem.quantity) {
+              throw new ConflictException(
+                `Insufficient stock for ${this.medicineLabel(inventoryMedicine.name)}. Available: ${availableStock}, requested: ${requestItem.quantity}`
+              );
+            }
+
+            plans.push({ requestItem, prescriptionItem, inventoryMedicineId, prescribedName });
+          }
+
+          // 2. Claim every line BEFORE touching stock. The guarded UPDATE row-locks the line: a
+          // concurrent dispense of the same line waits here, then matches no row (quantity and
+          // dispensedAt moved on) and is refused with a 409 having decremented nothing. Lines are
+          // claimed in id order so two multi-line dispenses can never deadlock each other.
+          for (const plan of [...plans].sort((a, b) =>
+            String(a.prescriptionItem.id).localeCompare(String(b.prescriptionItem.id))
+          )) {
+            const claimedQuantity = Number(plan.prescriptionItem.dispensedQuantity || 0);
+            const claim = await typedClient.prescriptionItem.updateMany({
+              where: {
+                id: String(plan.prescriptionItem.id),
+                dispensedQuantity: claimedQuantity,
+                dispensedAt: plan.prescriptionItem.dispensedAt
+                  ? new Date(plan.prescriptionItem.dispensedAt)
+                  : null,
+              } as PrismaDelegateArgs,
+              data: {
+                dispensedQuantity: claimedQuantity + plan.requestItem.quantity,
+                dispensedAt: dispenseAt,
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+            if (claim.count !== 1) {
+              throw new ConflictException(
+                `${plan.prescribedName} was dispensed concurrently, please retry`
+              );
+            }
+          }
+
+          // 3. FEFO consumes stock (guarded `stock >= qty` / per-batch UPDATEs) inside this
+          // transaction, medicine id order (consistent lock order across dispenses). The history
+          // records the real lots so a reversal restores exactly what was taken.
+          for (const plan of [...plans].sort((a, b) =>
+            a.inventoryMedicineId.localeCompare(b.inventoryMedicineId)
+          )) {
+            const { requestItem, prescriptionItem, inventoryMedicineId } = plan;
+            const [fefoResult] = await this.inventoryService.dispenseFefo(
+              prescriptionId,
+              {
+                items: [
                   {
+                    prescriptionItemId: String(prescriptionItem.id),
+                    medicineId: inventoryMedicineId,
                     quantity: requestItem.quantity,
                   },
-                ];
-          const lotHistory: PrescriptionDispenseBatchHistoryEntry[] = requestLots.map(lot => ({
-            quantity: Number(lot.quantity || 0),
-            ...(lot.batchNumber ? { batchNumber: lot.batchNumber } : {}),
-            ...(lot.expiryDate ? { expiryDate: lot.expiryDate } : {}),
-            medicineId: inventoryMedicineId,
-            originalMedicineId: requestItem.medicineId,
-            ...(requestItem.substituteMedicineId
-              ? { substituteMedicineId: requestItem.substituteMedicineId }
-              : {}),
-            eventType: requestItem.substituteMedicineId
-              ? ('SUBSTITUTION' as const)
-              : ('DISPENSE' as const),
-            ...(requestItem.substitutionReason ? { reason: requestItem.substitutionReason } : {}),
-            dispensedAt: dispenseAt.toISOString(),
-            ...dispenserFields,
-          }));
-          const eventHistory = requestLots.map(lot =>
-            this.buildDispenseEventHistoryEntry({
+                ],
+              },
+              dispenser.id ?? 'system',
+              existing.clinicId,
+              typedClient,
+              false
+            );
+            const consumedBatches = fefoResult?.consumedBatches ?? [];
+            const fefoLots = [
+              ...consumedBatches.map(batch => ({
+                quantity: batch.quantity,
+                batchNumber: batch.lotNumber,
+                expiryDate: batch.expiryDate.toISOString(),
+              })),
+              ...(consumedBatches.length > 0 && (fefoResult?.unbatchedQuantity ?? 0) > 0
+                ? [{ quantity: fefoResult?.unbatchedQuantity ?? 0 }]
+                : []),
+            ];
+            const appliedRequestItem: PrescriptionDispenseRequestItem = {
+              ...requestItem,
+              lots: fefoLots.length > 0 ? fefoLots : requestItem.lots,
+            };
+            const requestLots =
+              appliedRequestItem.lots.length > 0
+                ? appliedRequestItem.lots
+                : [
+                    {
+                      quantity: requestItem.quantity,
+                    },
+                  ];
+            const lotHistory: PrescriptionDispenseBatchHistoryEntry[] = requestLots.map(lot => ({
               quantity: Number(lot.quantity || 0),
+              ...(lot.batchNumber ? { batchNumber: lot.batchNumber } : {}),
+              ...(lot.expiryDate ? { expiryDate: lot.expiryDate } : {}),
               medicineId: inventoryMedicineId,
               originalMedicineId: requestItem.medicineId,
               ...(requestItem.substituteMedicineId
                 ? { substituteMedicineId: requestItem.substituteMedicineId }
                 : {}),
-              ...(lot.batchNumber ? { batchNumber: lot.batchNumber } : {}),
-              ...(lot.expiryDate ? { expiryDate: lot.expiryDate } : {}),
-              eventType: requestItem.substituteMedicineId ? 'SUBSTITUTION' : 'DISPENSE',
+              eventType: requestItem.substituteMedicineId
+                ? ('SUBSTITUTION' as const)
+                : ('DISPENSE' as const),
               ...(requestItem.substitutionReason ? { reason: requestItem.substitutionReason } : {}),
-              dispensedAt: dispenseAt,
+              dispensedAt: dispenseAt.toISOString(),
               ...dispenserFields,
-            })
-          );
-          const latestBatchNumber =
-            [...requestLots].reverse().find(lot => Boolean(lot.batchNumber))?.batchNumber || null;
-          const latestBatchExpiryDate =
-            [...requestLots].reverse().find(lot => Boolean(lot.expiryDate))?.expiryDate || null;
+            }));
+            const eventHistory = requestLots.map(lot =>
+              this.buildDispenseEventHistoryEntry({
+                quantity: Number(lot.quantity || 0),
+                medicineId: inventoryMedicineId,
+                originalMedicineId: requestItem.medicineId,
+                ...(requestItem.substituteMedicineId
+                  ? { substituteMedicineId: requestItem.substituteMedicineId }
+                  : {}),
+                ...(lot.batchNumber ? { batchNumber: lot.batchNumber } : {}),
+                ...(lot.expiryDate ? { expiryDate: lot.expiryDate } : {}),
+                eventType: requestItem.substituteMedicineId ? 'SUBSTITUTION' : 'DISPENSE',
+                ...(requestItem.substitutionReason
+                  ? { reason: requestItem.substitutionReason }
+                  : {}),
+                dispensedAt: dispenseAt,
+                ...dispenserFields,
+              })
+            );
+            const latestBatchNumber =
+              [...requestLots].reverse().find(lot => Boolean(lot.batchNumber))?.batchNumber || null;
+            const latestBatchExpiryDate =
+              [...requestLots].reverse().find(lot => Boolean(lot.expiryDate))?.expiryDate || null;
 
-          totalRequestedQuantity += requestItem.quantity;
-          totalDispensedQuantity += requestItem.quantity;
+            totalRequestedQuantity += requestItem.quantity;
+            totalDispensedQuantity += requestItem.quantity;
 
-          const nextDispensedQuantity =
-            Number(prescriptionItem.dispensedQuantity || 0) + requestItem.quantity;
+            // The line is locked by this transaction's claim: record batches and history on it.
+            await typedClient.prescriptionItem.update({
+              where: { id: String(prescriptionItem.id) } as PrismaDelegateArgs,
+              data: {
+                ...(latestBatchNumber ? { dispensedBatchNumber: latestBatchNumber } : {}),
+                ...(latestBatchExpiryDate
+                  ? { dispensedBatchExpiryDate: new Date(latestBatchExpiryDate) }
+                  : {}),
+                dispenseBatchHistory: this.appendDispenseHistory(
+                  prescriptionItem.dispenseBatchHistory || null,
+                  lotHistory
+                ),
+                dispenseEventHistory: this.appendDispenseEventHistory(
+                  prescriptionItem.dispenseEventHistory || null,
+                  eventHistory
+                ),
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          }
 
-          // Optimistic guard: a concurrent dispense of the same item changes
-          // dispensedQuantity first, so this matches no row and we roll back.
-          const itemUpdate = await typedClient.prescriptionItem.updateMany({
+          // 4. Status from the committed lines: lock the prescription row (last, after lines and
+          // stock), then re-read every line, so two dispenses of different lines of the same
+          // prescription cannot both compute PARTIAL from stale snapshots. A prescription
+          // cancelled meanwhile refuses the dispense (and rolls the stock back).
+          const prescriptionLock = await typedClient.prescription.updateMany({
             where: {
-              id: String(prescriptionItem.id),
-              dispensedQuantity: Number(prescriptionItem.dispensedQuantity || 0),
+              id: prescriptionId,
+              status: { notIn: ['CANCELLED', 'DRAFT', 'RETURNED'] },
             } as PrismaDelegateArgs,
-            data: {
-              dispensedQuantity: nextDispensedQuantity,
-              dispensedAt: dispenseAt,
-              ...(latestBatchNumber ? { dispensedBatchNumber: latestBatchNumber } : {}),
-              ...(latestBatchExpiryDate
-                ? { dispensedBatchExpiryDate: new Date(latestBatchExpiryDate) }
-                : {}),
-              dispenseBatchHistory: this.appendDispenseHistory(
-                prescriptionItem.dispenseBatchHistory || null,
-                lotHistory
-              ),
-              dispenseEventHistory: this.appendDispenseEventHistory(
-                prescriptionItem.dispenseEventHistory || null,
-                eventHistory
-              ),
-            } as PrismaDelegateArgs,
+            data: { status: existing.status } as PrismaDelegateArgs,
           } as PrismaDelegateArgs);
-          if (itemUpdate.count !== 1) {
+          if (prescriptionLock.count !== 1) {
             throw new ConflictException(
-              `Prescription item ${prescriptionItem.id} was dispensed concurrently, please retry`
+              'This prescription was changed while it was being dispensed, please reload and retry'
             );
           }
+          const currentItems = (await typedClient.prescriptionItem.findMany({
+            where: { prescriptionId } as PrismaDelegateArgs,
+            select: { quantity: true, dispensedQuantity: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs)) as unknown as PrescriptionDispenseItem[];
+          const nextStatus = this.getPrescriptionDispenseStatus(currentItems);
+          const remainingQuantity = currentItems.reduce(
+            (sum, item) => sum + this.getPrescriptionItemRemainingQuantity(item),
+            0
+          );
 
-          appliedRequests.push({
-            prescriptionItemId: String(prescriptionItem.id),
-            requestItem: appliedRequestItem,
-            inventoryMedicineId,
-            lotHistory,
-            eventHistory,
-          });
-        }
-
-        const requestItemsByItemId = new Map(
-          effectiveRequestItems
-            .filter(item => Boolean(item.prescriptionItemId))
-            .map(item => [String(item.prescriptionItemId), item] as const)
-        );
-        const requestItemsByMedicineId = new Map<string, PrescriptionDispenseRequestItem[]>();
-        for (const item of effectiveRequestItems) {
-          if (item.prescriptionItemId) {
-            continue;
-          }
-
-          const currentItems = requestItemsByMedicineId.get(item.medicineId) || [];
-          currentItems.push(item);
-          requestItemsByMedicineId.set(item.medicineId, currentItems);
-        }
-
-        const updatedItems = existingItems.map(item => {
-          const requestItem = item.id
-            ? requestItemsByItemId.get(String(item.id))
-            : item.medicineId
-              ? (requestItemsByMedicineId.get(String(item.medicineId)) || [])[0]
-              : undefined;
-          const dispensedQuantity = Number(item.dispensedQuantity || 0);
-          const nextDispensedQuantity = requestItem
-            ? dispensedQuantity + requestItem.quantity
-            : dispensedQuantity;
-          const appliedRequest = item.id
-            ? appliedRequests.find(entry => entry.prescriptionItemId === String(item.id))
-            : item.medicineId
-              ? appliedRequests.find(
-                  entry => entry.requestItem.medicineId === String(item.medicineId)
-                )
-              : undefined;
-          const requestLots =
-            appliedRequest?.requestItem.lots && appliedRequest.requestItem.lots.length > 0
-              ? appliedRequest.requestItem.lots
-              : requestItem
-                ? [{ quantity: requestItem.quantity }]
-                : [];
-          const latestBatchNumber =
-            [...requestLots].reverse().find(lot => Boolean(lot.batchNumber))?.batchNumber || null;
-          const latestBatchExpiryDate =
-            [...requestLots].reverse().find(lot => Boolean(lot.expiryDate))?.expiryDate || null;
+          await typedClient.prescription.update({
+            where: { id: prescriptionId } as PrismaDelegateArgs,
+            data: {
+              status: nextStatus,
+              ...(dto.notes ? { notes: dto.notes } : {}),
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
 
           return {
-            ...item,
-            dispensedQuantity: nextDispensedQuantity,
-            dispensedAt: requestItem ? dispenseAt : item.dispensedAt || null,
-            ...(latestBatchNumber ? { dispensedBatchNumber: latestBatchNumber } : {}),
-            ...(latestBatchExpiryDate
-              ? { dispensedBatchExpiryDate: new Date(latestBatchExpiryDate) }
-              : {}),
-            ...(requestItem
-              ? {
-                  dispenseBatchHistory: this.appendDispenseHistory(
-                    item.dispenseBatchHistory || null,
-                    appliedRequest?.lotHistory || []
-                  ),
-                  dispenseEventHistory: this.appendDispenseEventHistory(
-                    item.dispenseEventHistory || null,
-                    appliedRequest?.eventHistory || []
-                  ),
-                }
-              : {}),
-          };
-        });
-
-        const nextStatus = this.getPrescriptionDispenseStatus(updatedItems);
-        const remainingQuantity = updatedItems.reduce(
-          (sum, item) => sum + this.getPrescriptionItemRemainingQuantity(item),
-          0
-        );
-
-        await typedClient.prescription.update({
-          where: { id: prescriptionId } as PrismaDelegateArgs,
-          data: {
             status: nextStatus,
-            ...(dto.notes ? { notes: dto.notes } : {}),
-          } as PrismaDelegateArgs,
-        } as PrismaDelegateArgs);
-
-        return {
-          status: nextStatus,
-          dispensedAt: dispenseAt,
-          totalRequestedQuantity,
-          totalDispensedQuantity,
-          remainingQuantity,
-        };
-      },
+            dispensedAt: dispenseAt,
+            totalRequestedQuantity,
+            totalDispensedQuantity,
+            remainingQuantity,
+          };
+        }),
       {
         userId: dispenser.id ?? 'system',
         clinicId: clinicId ?? 'unknown',
@@ -3105,203 +3561,247 @@ export class PharmacyService {
     clinicId?: string,
     actor?: PharmacyActor
   ) {
+    // One SQL transaction (audit + cache invalidation from executeHealthcareWrite): the line is
+    // claimed before any stock is restored, so a concurrent second reversal is refused (409)
+    // without adding the stock back twice.
     const reversalSummary = await this.databaseService.executeHealthcareWrite(
-      async client => {
-        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-          prescriptionItem: {
-            update: (args: PrismaDelegateArgs) => Promise<unknown>;
-            updateMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
-          };
-        };
-        const existing = await typedClient.prescription.findUnique({
-          where: { id: prescriptionId } as PrismaDelegateArgs,
-          include: {
-            items: {
-              include: {
-                medicine: true,
+      async () =>
+        this.databaseService.executeInTransaction(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          const existing = await typedClient.prescription.findUnique({
+            where: { id: prescriptionId } as PrismaDelegateArgs,
+            include: {
+              items: {
+                include: {
+                  medicine: true,
+                },
               },
-            },
-          } as PrismaDelegateArgs,
-        } as PrismaDelegateArgs);
-
-        if (!existing) {
-          throw new NotFoundException('Prescription not found');
-        }
-
-        if (clinicId && existing.clinicId !== clinicId) {
-          throw new BadRequestException('Prescription does not belong to this clinic');
-        }
-
-        const existingItems = (existing.items || []) as PrescriptionDispenseItem[];
-        const targetItemIds = (dto.items || [])
-          .map(item => item.prescriptionItemId)
-          .filter((value): value is string => Boolean(value));
-        const itemsToReverse =
-          targetItemIds.length > 0
-            ? existingItems.filter(item => targetItemIds.includes(String(item.id || '')))
-            : existingItems.filter(item => Number(item.dispensedQuantity || 0) > 0);
-
-        if (itemsToReverse.length === 0) {
-          throw new BadRequestException(
-            'No dispensed prescription items are available for reversal'
-          );
-        }
-
-        const now = new Date();
-        const reversedItemIds: string[] = [];
-
-        for (const item of itemsToReverse) {
-          const requestedReversalQuantity = (dto.items || []).find(
-            reversalItem => String(reversalItem.prescriptionItemId || '') === String(item.id || '')
-          )?.quantity;
-          const currentDispensedQuantity = Number(item.dispensedQuantity || 0);
-          if (
-            typeof requestedReversalQuantity === 'number' &&
-            requestedReversalQuantity > 0 &&
-            requestedReversalQuantity !== currentDispensedQuantity
-          ) {
-            throw new BadRequestException(
-              `Reversal quantity for item ${item.id} must match the currently dispensed quantity (${currentDispensedQuantity})`
-            );
-          }
-
-          const eventHistory = this.normalizeStoredDispenseEventHistory(
-            item.dispenseEventHistory || item.dispenseBatchHistory || null
-          );
-          const reversibleEvents = eventHistory.filter(
-            entry => entry.eventType !== 'REVERSAL' && !entry.reversedAt
-          );
-
-          if (reversibleEvents.length === 0) {
-            continue;
-          }
-
-          const reversalTotal = reversibleEvents.reduce(
-            (sum, entry) => sum + Number(entry.quantity || 0),
-            0
-          );
-          const medicineUpdates = reversibleEvents.reduce((accumulator, entry) => {
-            const medicineId = String(entry.medicineId || item.medicineId || '');
-            if (!medicineId) {
-              return accumulator;
-            }
-
-            accumulator.set(
-              medicineId,
-              (accumulator.get(medicineId) || 0) + Number(entry.quantity || 0)
-            );
-            return accumulator;
-          }, new Map<string, number>());
-
-          // Restores exactly what the dispense took (same batches via the
-          // DISPENSE_OUT movements, legacy un-batched units straight to stock),
-          // clinic scoped and inside this transaction.
-          await this.inventoryService.restoreDispense(
-            prescriptionId,
-            Array.from(medicineUpdates.entries()).map(([medicineId, quantity]) => ({
-              medicineId,
-              quantity,
-            })),
-            actor?.userId ?? 'system',
-            existing.clinicId,
-            typedClient
-          );
-
-          const updatedEventHistory = eventHistory.map(entry => {
-            if (entry.eventType === 'REVERSAL' || entry.reversedAt) {
-              return entry;
-            }
-
-            return {
-              ...entry,
-              reversedAt: now.toISOString(),
-              reversalReason: dto.reason,
-            };
-          });
-
-          const latestReversibleEvent = reversibleEvents[reversibleEvents.length - 1];
-          const originalReversibleEvent = reversibleEvents[0];
-          const reversalEvent = this.buildDispenseEventHistoryEntry({
-            quantity: reversalTotal,
-            medicineId: String(latestReversibleEvent?.medicineId || item.medicineId || ''),
-            originalMedicineId: String(
-              item.medicineId || originalReversibleEvent?.originalMedicineId || ''
-            ),
-            eventType: 'REVERSAL',
-            reason: dto.reason,
-            dispensedAt: now,
-            reversedAt: now,
-            reversalReason: dto.reason,
-          });
-
-          const reversalUpdate = await typedClient.prescriptionItem.updateMany({
-            where: {
-              id: String(item.id),
-              dispensedQuantity: currentDispensedQuantity,
-            } as PrismaDelegateArgs,
-            data: {
-              dispensedQuantity: 0,
-              dispensedAt: null,
-              dispensedBatchNumber: null,
-              dispensedBatchExpiryDate: null,
-              dispenseBatchHistory: this.appendDispenseHistory(item.dispenseBatchHistory || null, [
-                ...reversibleEvents.map(entry =>
-                  this.buildDispenseEventHistoryEntry({
-                    quantity: Number(entry.quantity || 0),
-                    medicineId: String(entry.medicineId || item.medicineId || ''),
-                    originalMedicineId: String(entry.originalMedicineId || item.medicineId || ''),
-                    ...(entry.substituteMedicineId
-                      ? { substituteMedicineId: entry.substituteMedicineId }
-                      : {}),
-                    ...(entry.batchNumber ? { batchNumber: entry.batchNumber } : {}),
-                    ...(entry.expiryDate ? { expiryDate: entry.expiryDate } : {}),
-                    eventType: 'REVERSAL',
-                    ...(entry.reason ? { reason: entry.reason } : {}),
-                    dispensedAt: new Date(entry.dispensedAt),
-                    reversedAt: now,
-                    reversalReason: dto.reason,
-                  })
-                ),
-              ]),
-              dispenseEventHistory: [...updatedEventHistory, reversalEvent],
             } as PrismaDelegateArgs,
           } as PrismaDelegateArgs);
-          if (reversalUpdate.count !== 1) {
+
+          if (!existing) {
+            throw new NotFoundException('Prescription not found');
+          }
+
+          if (clinicId && existing.clinicId !== clinicId) {
+            throw new BadRequestException('Prescription does not belong to this clinic');
+          }
+
+          // The medicines already left the counter: undoing the dispense would put stock back
+          // that the patient took home. A taken-back hand-over (UNDONE) may be reversed again.
+          const handoverDelegate = (client as unknown as { dispenseHandover?: LooseDelegate })
+            .dispenseHandover;
+          const handoverRows = handoverDelegate
+            ? await handoverDelegate.findMany({
+                where: {
+                  prescriptionId,
+                  clinicId: existing.clinicId,
+                  status: { not: 'SUPERSEDED' },
+                } as PrismaDelegateArgs,
+                select: {
+                  prescriptionId: true,
+                  status: true,
+                  createdAt: true,
+                  handedOverAt: true,
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs)
+            : [];
+          const handover = latestHandoverByPrescription(
+            handoverRows as unknown as HandoverStateRow[]
+          ).get(prescriptionId);
+          if (handover?.status === 'HANDED_OVER') {
             throw new ConflictException(
-              `Prescription item ${item.id} was changed concurrently, please retry the reversal`
+              'Already handed over to the patient — record a return instead of undoing the dispense'
             );
           }
 
-          reversedItemIds.push(String(item.id));
-        }
+          const existingItems = (existing.items || []) as PrescriptionDispenseItem[];
+          const targetItemIds = (dto.items || [])
+            .map(item => item.prescriptionItemId)
+            .filter((value): value is string => Boolean(value));
+          const itemsToReverse =
+            targetItemIds.length > 0
+              ? existingItems.filter(item => targetItemIds.includes(String(item.id || '')))
+              : existingItems.filter(item => Number(item.dispensedQuantity || 0) > 0);
 
-        const refreshedItems = existingItems.map(item =>
-          reversedItemIds.includes(String(item.id))
-            ? {
-                ...item,
+          if (itemsToReverse.length === 0) {
+            throw new BadRequestException(
+              'No dispensed prescription items are available for reversal'
+            );
+          }
+
+          const now = new Date();
+          const reversedItemIds: string[] = [];
+          const restoreByMedicineId = new Map<string, number>();
+
+          // 1. Claim every line BEFORE restoring stock (id order, the same lock order as a
+          // dispense). The guarded UPDATE row-locks the line: a concurrent second reversal waits,
+          // then matches no row (quantity and dispensedAt moved on) and is refused with a 409
+          // having restored nothing.
+          for (const item of [...itemsToReverse].sort((a, b) =>
+            String(a.id || '').localeCompare(String(b.id || ''))
+          )) {
+            const requestedReversalQuantity = (dto.items || []).find(
+              reversalItem =>
+                String(reversalItem.prescriptionItemId || '') === String(item.id || '')
+            )?.quantity;
+            const currentDispensedQuantity = Number(item.dispensedQuantity || 0);
+            if (
+              typeof requestedReversalQuantity === 'number' &&
+              requestedReversalQuantity > 0 &&
+              requestedReversalQuantity !== currentDispensedQuantity
+            ) {
+              throw new BadRequestException(
+                `Reversal quantity for ${this.medicineLabel(item.medicine?.name)} must match the currently dispensed quantity (${currentDispensedQuantity})`
+              );
+            }
+
+            const eventHistory = this.normalizeStoredDispenseEventHistory(
+              item.dispenseEventHistory || item.dispenseBatchHistory || null
+            );
+            const reversibleEvents = eventHistory.filter(
+              entry => entry.eventType !== 'REVERSAL' && !entry.reversedAt
+            );
+
+            if (reversibleEvents.length === 0) {
+              continue;
+            }
+
+            const reversalTotal = reversibleEvents.reduce(
+              (sum, entry) => sum + Number(entry.quantity || 0),
+              0
+            );
+
+            const updatedEventHistory = eventHistory.map(entry => {
+              if (entry.eventType === 'REVERSAL' || entry.reversedAt) {
+                return entry;
+              }
+
+              return {
+                ...entry,
+                reversedAt: now.toISOString(),
+                reversalReason: dto.reason,
+              };
+            });
+
+            const latestReversibleEvent = reversibleEvents[reversibleEvents.length - 1];
+            const originalReversibleEvent = reversibleEvents[0];
+            const reversalEvent = this.buildDispenseEventHistoryEntry({
+              quantity: reversalTotal,
+              medicineId: String(latestReversibleEvent?.medicineId || item.medicineId || ''),
+              originalMedicineId: String(
+                item.medicineId || originalReversibleEvent?.originalMedicineId || ''
+              ),
+              eventType: 'REVERSAL',
+              reason: dto.reason,
+              dispensedAt: now,
+              reversedAt: now,
+              reversalReason: dto.reason,
+            });
+
+            const reversalUpdate = await typedClient.prescriptionItem.updateMany({
+              where: {
+                id: String(item.id),
+                dispensedQuantity: currentDispensedQuantity,
+                dispensedAt: item.dispensedAt ? new Date(item.dispensedAt) : null,
+              } as PrismaDelegateArgs,
+              data: {
                 dispensedQuantity: 0,
                 dispensedAt: null,
                 dispensedBatchNumber: null,
                 dispensedBatchExpiryDate: null,
+                dispenseBatchHistory: this.appendDispenseHistory(
+                  item.dispenseBatchHistory || null,
+                  [
+                    ...reversibleEvents.map(entry =>
+                      this.buildDispenseEventHistoryEntry({
+                        quantity: Number(entry.quantity || 0),
+                        medicineId: String(entry.medicineId || item.medicineId || ''),
+                        originalMedicineId: String(
+                          entry.originalMedicineId || item.medicineId || ''
+                        ),
+                        ...(entry.substituteMedicineId
+                          ? { substituteMedicineId: entry.substituteMedicineId }
+                          : {}),
+                        ...(entry.batchNumber ? { batchNumber: entry.batchNumber } : {}),
+                        ...(entry.expiryDate ? { expiryDate: entry.expiryDate } : {}),
+                        eventType: 'REVERSAL',
+                        ...(entry.reason ? { reason: entry.reason } : {}),
+                        dispensedAt: new Date(entry.dispensedAt),
+                        reversedAt: now,
+                        reversalReason: dto.reason,
+                      })
+                    ),
+                  ]
+                ),
+                dispenseEventHistory: [...updatedEventHistory, reversalEvent],
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+            if (reversalUpdate.count !== 1) {
+              throw new ConflictException(
+                `${this.medicineLabel(item.medicine?.name)} was changed concurrently, please retry the reversal`
+              );
+            }
+
+            for (const entry of reversibleEvents) {
+              const medicineId = String(entry.medicineId || item.medicineId || '');
+              if (medicineId) {
+                restoreByMedicineId.set(
+                  medicineId,
+                  (restoreByMedicineId.get(medicineId) || 0) + Number(entry.quantity || 0)
+                );
               }
-            : item
-        );
-        const nextStatus = this.getPrescriptionDispenseStatus(refreshedItems);
+            }
+            reversedItemIds.push(String(item.id));
+          }
 
-        await typedClient.prescription.update({
-          where: { id: prescriptionId } as PrismaDelegateArgs,
-          data: {
+          // 2. Restores exactly what the dispense took (same batches via the DISPENSE_OUT
+          // movements, legacy un-batched units straight to stock), clinic scoped, inside this
+          // transaction, in medicine id order.
+          if (restoreByMedicineId.size > 0) {
+            await this.inventoryService.restoreDispense(
+              prescriptionId,
+              Array.from(restoreByMedicineId.entries())
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([medicineId, quantity]) => ({ medicineId, quantity })),
+              actor?.userId ?? 'system',
+              existing.clinicId,
+              typedClient
+            );
+          }
+
+          // 3. Status from the committed lines: lock the prescription row (last), then re-read it.
+          await typedClient.prescription.updateMany({
+            where: { id: prescriptionId } as PrismaDelegateArgs,
+            data: { status: existing.status } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+          const current = (await typedClient.prescription.findUnique({
+            where: { id: prescriptionId } as PrismaDelegateArgs,
+            select: {
+              notes: true,
+              items: { select: { quantity: true, dispensedQuantity: true } },
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs)) as unknown as {
+            notes?: string | null;
+            items?: PrescriptionDispenseItem[];
+          } | null;
+          const nextStatus = this.getPrescriptionDispenseStatus(current?.items ?? []);
+          const currentNotes = current?.notes ?? null;
+
+          await typedClient.prescription.update({
+            where: { id: prescriptionId } as PrismaDelegateArgs,
+            data: {
+              status: nextStatus,
+              notes: `${currentNotes ? `${currentNotes}\n` : ''}Reversal: ${dto.reason}`.trim(),
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+
+          return {
+            reversedItemCount: reversedItemIds.length,
             status: nextStatus,
-            notes: `${existing.notes ? `${existing.notes}\n` : ''}Reversal: ${dto.reason}`.trim(),
-          } as PrismaDelegateArgs,
-        } as PrismaDelegateArgs);
-
-        return {
-          reversedItemCount: reversedItemIds.length,
-          status: nextStatus,
-          reversedAt: now.toISOString(),
-        };
-      },
+            reversedAt: now.toISOString(),
+          };
+        }),
       {
         userId: actor?.userId ?? 'system',
         clinicId: clinicId ?? 'unknown',
@@ -3368,19 +3868,37 @@ export class PharmacyService {
         return;
       }
 
-      const payments = await this.databaseService.findPaymentsSafe({ clinicId });
-      const hasCompletedPayment = payments.some(payment => {
-        const metadata = this.asRecord(payment.metadata);
-        return (
-          metadata?.['prescriptionId'] === prescriptionId &&
-          String(payment.status).toUpperCase() === PharmacyService.COMPLETED_PAYMENT_STATUS
-        );
+      // Only this prescription's payments (and any booked straight against its invoice).
+      const payments = await this.databaseService.executeHealthcareRead(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return await typedClient.payment.findMany({
+          where: {
+            clinicId,
+            OR: [
+              { invoiceId: invoice.id },
+              { metadata: { path: ['prescriptionId'], equals: prescriptionId } },
+            ],
+          } as PrismaDelegateArgs,
+          select: { id: true, status: true } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       });
+      const hasCompletedPayment = payments.some(
+        payment => String(payment.status).toUpperCase() === PharmacyService.COMPLETED_PAYMENT_STATUS
+      );
       if (hasCompletedPayment) {
         return;
       }
 
-      await billingService.updateInvoice(invoice.id, { status: 'VOID' }, { clinicId });
+      // System void: the public invoice edit refuses status changes. The write is guarded on
+      // PENDING, so a bill paid in the meantime stays PAID (refunds are a manual step).
+      await billingService.voidInvoiceInternal(
+        invoice.id,
+        clinicId,
+        'PRESCRIPTION_DISPENSE_REVERSED',
+        {
+          prescriptionId,
+        }
+      );
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
@@ -3409,7 +3927,8 @@ export class PharmacyService {
   ): Promise<PharmacyBatchAuditEntry[]> {
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-      const where: Record<string, unknown> = {};
+      // Unapproved assistant drafts were never dispensable: keep them out of the audit.
+      const where: Record<string, unknown> = { status: publishedPrescriptionStatusFilter() };
       if (clinicId) where['clinicId'] = clinicId;
       if (filters?.prescriptionId) where['id'] = filters.prescriptionId;
 
@@ -3613,11 +4132,21 @@ export class PharmacyService {
       diagnosis?: string | null;
       prescriptionNumber?: string | null;
       visitId?: string | null;
+      appointmentId?: string | null;
+      validUntil?: Date | string | null;
+      draftedByUserId?: string | null;
       items: Array<
         PrescriptionDispenseItem & {
           dosage?: string | null;
           frequency?: string | null;
           duration?: string | null;
+          instructions?: string | null;
+          medicine?: {
+            name?: string | null;
+            unit?: string | null;
+            dosage?: string | null;
+            category?: string | null;
+          } | null;
         }
       >;
       patient?: {
@@ -3631,10 +4160,13 @@ export class PharmacyService {
       } | null;
       doctor?: {
         licenseNumber?: string | null;
+        qualification?: string | null;
+        specialization?: string | null;
         user?: { id?: string | null; name?: string | null } | null;
       } | null;
     };
 
+    this.assertPrescriptionVisibleToRole(prescription.status, actor.role);
     if (isPatientCaller) {
       await this.ensurePatientMayReadPrescription(prescription, this.toReadActor(actor));
     } else if (role === 'DOCTOR') {
@@ -3645,32 +4177,46 @@ export class PharmacyService {
       throw new ForbiddenException('Not allowed to download this prescription');
     }
 
-    const clinicName = await this.databaseService.executeHealthcareRead(async client => {
-      const loose = client as unknown as {
-        clinic?: { findUnique: (args: PrismaDelegateArgs) => Promise<LooseRecord | null> };
-      };
-      const clinic = await loose.clinic?.findUnique({
-        where: { id: prescription.clinicId } as PrismaDelegateArgs,
-        select: { name: true } as PrismaDelegateArgs,
-      } as PrismaDelegateArgs);
-      return typeof clinic?.['name'] === 'string' ? clinic['name'] : 'Clinic';
+    // Letterhead + optional sections, all from this prescription's clinic / patient / visit.
+    const pdfContext = await loadPrescriptionPdfContext(this.databaseService, this.loggingService, {
+      clinicId: prescription.clinicId,
+      patientId: prescription.patientId,
+      patientUserId: prescription.patient?.user?.id ?? null,
+      visitId: prescription.visitId ?? null,
+      appointmentId: prescription.appointmentId ?? null,
+      draftedByUserId: prescription.draftedByUserId ?? null,
     });
     const deskContext = await this.loadPrescriptionDeskContext([prescription]);
     const desk = this.buildPrescriptionDeskFields(prescription, deskContext);
 
     const buffer = await buildPrescriptionPdf({
       prescriptionNumber: desk.prescriptionNumber,
-      clinicName,
+      prescriptionId: prescription.id,
+      clinicName: pdfContext.clinic.name,
+      clinicCode: pdfContext.clinic.code,
+      clinicAddress: pdfContext.clinic.address,
+      clinicPhone: pdfContext.clinic.phone,
+      clinicEmail: pdfContext.clinic.email,
+      clinicLogo: pdfContext.clinic.logo,
       prescribedAt: prescription.date ?? null,
       patientName: prescription.patient?.user?.name || 'Patient',
       patientAge: desk.patientAge,
       patientGender: desk.patientGender,
       patientNumber: desk.patientNumber,
+      patientUhid: desk.patientUhid,
+      patientWeight: pdfContext.weight,
+      patientAllergies: pdfContext.allergies,
       doctorName: prescription.doctor?.user?.name || 'Doctor',
       doctorRegistrationNumber: prescription.doctor?.licenseNumber?.trim() || null,
+      doctorQualification: prescription.doctor?.qualification ?? null,
+      doctorSpecialization: prescription.doctor?.specialization ?? null,
       diagnosis: prescription.diagnosis ?? null,
       notes: prescription.notes ?? null,
       status: String(prescription.status),
+      validUntil: prescription.validUntil ?? null,
+      investigations: pdfContext.investigations,
+      followUp: pdfContext.followUp,
+      draftedByName: pdfContext.draftedByName,
       items: (prescription.items || []).map(item => ({
         medicineName: item.medicine?.name || 'Medicine',
         quantity: Number(item.quantity || 0),
@@ -3678,9 +4224,15 @@ export class PharmacyService {
         frequency: item.frequency ?? null,
         duration: item.duration ?? null,
         unit: item.medicine?.unit ?? null,
+        instructions: item.instructions ?? null,
+        strength: item.medicine?.dosage ?? null,
+        category: item.medicine?.category ?? null,
       })),
     });
-    return { fileName: `prescription-${desk.prescriptionNumber}.pdf`, buffer };
+    return {
+      fileName: prescriptionPdfFileName(desk.prescriptionNumber, prescription.patient?.user?.name),
+      buffer,
+    };
   }
 
   /** Dispensed totals with a per-day or per-medicine breakdown, clinic scoped. */
@@ -3710,18 +4262,18 @@ export class PharmacyService {
 
       const where: Record<string, unknown> = {};
       if (clinicId) where['clinicId'] = clinicId;
-
-      const totalMedicines = await typedClient.medicine.count({
-        where: where as PrismaDelegateArgs,
-      } as PrismaDelegateArgs);
+      // Same rows as the inventory list (active medicines only).
+      const medicineWhere = { ...where, isActive: true };
 
       // Note-only prescriptions (diagnosis / advice, no items) are not desk work: leave them out.
+      // Unapproved assistant drafts are not desk work either.
+      const prescriptionWhere = { ...where, status: publishedPrescriptionStatusFilter() };
       const totalPrescriptions = await typedClient.prescription.count({
-        where: { ...where, items: { some: {} } } as PrismaDelegateArgs,
+        where: { ...prescriptionWhere, items: { some: {} } } as PrismaDelegateArgs,
       } as PrismaDelegateArgs);
 
       const prescriptions = await typedClient.prescription.findMany({
-        where: where as PrismaDelegateArgs,
+        where: prescriptionWhere as PrismaDelegateArgs,
         include: {
           items: {
             include: {
@@ -3747,17 +4299,17 @@ export class PharmacyService {
       // by the inventory layer) directly; findExpiringSoon delegates to pharmacy-inventory
       // for the stockBatch-level expiry scan.
       const medicines = await typedClient.medicine.findMany({
-        where: where as PrismaDelegateArgs,
-        select: { stock: true, minStockThreshold: true } as PrismaDelegateArgs,
+        where: medicineWhere as PrismaDelegateArgs,
+        select: { stock: true, minStockThreshold: true, price: true } as PrismaDelegateArgs,
       } as PrismaDelegateArgs);
-
-      const lowStockCount = medicines.filter(
-        m => (m.stock ?? 0) <= (m.minStockThreshold ?? 0)
-      ).length;
+      // One stock-level definition everywhere: low = 0 < stock <= reorder level, out = stock <= 0.
+      const stockLevels = summarizeStockLevels(medicines);
 
       return {
-        totalMedicines,
-        lowStock: lowStockCount,
+        totalMedicines: stockLevels.total,
+        lowStock: stockLevels.lowStock,
+        outOfStock: stockLevels.outOfStock,
+        inventoryValue: stockLevels.totalValue,
         totalPrescriptions,
         pendingPrescriptions: enrichedPrescriptions.filter(prescription =>
           Boolean((prescription as { activeQueueEntry?: boolean }).activeQueueEntry)
@@ -3781,7 +4333,7 @@ export class PharmacyService {
   }
 
   async getMedicineDeskQueue(clinicId?: string) {
-    const prescriptions = await this.findAllPrescriptions(clinicId);
+    const prescriptions = await this.findActiveDeskPrescriptions(clinicId);
     return prescriptions
       .filter(prescription =>
         Boolean((prescription as { activeQueueEntry?: boolean }).activeQueueEntry)
@@ -3817,7 +4369,98 @@ export class PharmacyService {
     });
   }
 
+  /**
+   * Supplier names are unique per clinic, compared without case and outer spaces (deleted
+   * suppliers excluded; `excludeId` is the supplier being renamed). A clash is a 409.
+   */
+  /**
+   * 409 when an active medicine of the clinic already has this name (strength is part of the
+   * name) and dosage form, case-insensitive with spaces normalised (`excludeId`: the one edited).
+   */
+  private async assertMedicineNameFree(
+    client: unknown,
+    clinicId: string,
+    name: string,
+    form: string | null,
+    excludeId?: string
+  ): Promise<void> {
+    const typedClient = client as {
+      medicine: { findFirst: (args: PrismaDelegateArgs) => Promise<unknown> };
+    };
+    const normalizedForm = normalizeMedicineForm(form);
+    const clash = await typedClient.medicine.findFirst({
+      where: {
+        clinicId,
+        isActive: true,
+        name: { equals: normalizeMedicineName(name), mode: 'insensitive' },
+        category: normalizedForm ? { equals: normalizedForm, mode: 'insensitive' } : null,
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      } as PrismaDelegateArgs,
+      select: { id: true } as PrismaDelegateArgs,
+    } as PrismaDelegateArgs);
+    if (clash) {
+      throw new ConflictException(duplicateMedicineMessage(name, normalizedForm));
+    }
+  }
+
+  /** Duplicate check of an edit: the medicine's next name / form against the clinic's others. */
+  private async assertRenameFree(
+    client: unknown,
+    id: string,
+    clinicId: string,
+    next: { name: string | undefined; form: string | null }
+  ): Promise<void> {
+    const typedClient = client as {
+      medicine: {
+        findFirst: (
+          args: PrismaDelegateArgs
+        ) => Promise<{ name?: string | null; category?: string | null } | null>;
+      };
+    };
+    const current = await typedClient.medicine.findFirst({
+      where: { id, clinicId } as PrismaDelegateArgs,
+      select: { name: true, category: true } as PrismaDelegateArgs,
+    } as PrismaDelegateArgs);
+    if (!current) return; // the write reports "Medicine not found"
+    const name = next.name ?? current.name ?? '';
+    if (!name.trim()) return;
+    await this.assertMedicineNameFree(
+      client,
+      clinicId,
+      name,
+      next.form ?? current.category ?? null,
+      id
+    );
+  }
+
+  private async assertSupplierNameFree(
+    client: unknown,
+    clinicId: string,
+    name: string,
+    excludeId?: string
+  ): Promise<void> {
+    const typedClient = client as {
+      supplier: { findFirst: (args: PrismaDelegateArgs) => Promise<unknown> };
+    };
+    const clash = await typedClient.supplier.findFirst({
+      where: {
+        clinicId,
+        deletedAt: null,
+        name: { equals: name.trim(), mode: 'insensitive' },
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      } as PrismaDelegateArgs,
+      select: { id: true } as PrismaDelegateArgs,
+    } as PrismaDelegateArgs);
+    if (clash) {
+      throw new ConflictException(`A supplier named "${name.trim()}" already exists`);
+    }
+  }
+
   async addSupplier(dto: CreateSupplierDto, clinicId: string) {
+    // Checked in a read before the write: an HTTP error thrown inside a write is re-wrapped.
+    await this.databaseService.executeHealthcareRead(client =>
+      this.assertSupplierNameFree(client, clinicId, dto.name)
+    );
     const created = await this.databaseService.executeHealthcareWrite(
       async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
@@ -3855,6 +4498,12 @@ export class PharmacyService {
   }
 
   async updateSupplier(id: string, dto: UpdateSupplierDto, clinicId: string) {
+    if (dto.name !== undefined) {
+      const name = dto.name;
+      await this.databaseService.executeHealthcareRead(client =>
+        this.assertSupplierNameFree(client, clinicId, name, id)
+      );
+    }
     const updatedSupplier = await this.databaseService.executeHealthcareWrite(
       async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
@@ -3887,6 +4536,28 @@ export class PharmacyService {
     );
     await this.invalidateSupplierCache('supplier-updated');
     return updatedSupplier;
+  }
+
+  /**
+   * Whole-inventory stock counts and value of the clinic's active medicines (not the page on
+   * screen, not the active filter): low = 0 < stock <= reorder level, out = stock <= 0, plus how
+   * many expire within the default window. One definition for every tile that counts stock.
+   */
+  async getInventorySummary(
+    clinicId?: string
+  ): Promise<StockLevelSummary & { expiringSoon: number }> {
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      const where = await this.buildInventoryWhere(typedClient, clinicId, undefined);
+      const medicines = await typedClient.medicine.findMany({
+        where,
+        select: { stock: true, minStockThreshold: true, price: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+      const expiringSoon = await typedClient.medicine.count({
+        where: await this.buildInventoryWhere(typedClient, clinicId, { expiringSoon: true }),
+      } as PrismaDelegateArgs);
+      return { ...summarizeStockLevels(medicines), expiringSoon };
+    });
   }
 
   /**
@@ -3945,12 +4616,24 @@ export class PharmacyService {
   ) {
     const prescription = await this.getPrescriptionByIdForAccess(prescriptionId, clinicId);
     this.ensurePatientOwnsPrescription(prescription, actor?.userId, actor?.role);
+    // A draft is still with the doctor: nothing to bill. A patient does not learn it exists.
+    if (isUnapprovedPrescription(String(prescription.status))) {
+      if (isPatientRole(actor?.role)) {
+        throw new NotFoundException('Prescription not found');
+      }
+      throw new ConflictException(prescriptionBillingRefusal(String(prescription.status)));
+    }
 
-    const payments = await this.databaseService.findPaymentsSafe({
-      clinicId: prescription.clinicId,
-    });
-    const paymentState = this.buildPrescriptionPaymentState(prescription, payments);
+    const payments = await this.findPrescriptionLinkedPayments(
+      prescription.clinicId,
+      prescription.id
+    );
     const invoice = await this.findPrescriptionInvoiceSafe(prescription.id, clinicId);
+    const paymentState = this.buildPrescriptionPaymentState(
+      prescription,
+      payments,
+      invoice?.status ?? null
+    );
 
     return {
       prescriptionId: prescription.id,
@@ -3995,14 +4678,7 @@ export class PharmacyService {
   ) {
     const prescription = await this.getPrescriptionByIdForAccess(prescriptionId, clinicId);
     this.ensurePatientOwnsPrescription(prescription, actor?.userId, actor?.role);
-
-    if (String(prescription.status) === 'CANCELLED') {
-      throw new BadRequestException('Cancelled prescriptions cannot be paid');
-    }
-
-    if (String(prescription.status) === 'FILLED') {
-      throw new BadRequestException('Prescription has already been dispensed');
-    }
+    this.assertPrescriptionBillable(String(prescription.status), actor?.role);
 
     const paymentState = await this.getPrescriptionPaymentSummary(prescriptionId, clinicId, actor);
 
@@ -4011,6 +4687,73 @@ export class PharmacyService {
         alreadyPaid: true,
         ...paymentState,
         prescriptionId,
+      };
+    }
+
+    // One "Pay" at a time per prescription: a double press (or a retry racing the first request)
+    // gets a 409 instead of opening a second gateway order and a second PENDING row.
+    const lockKey = `lock:pharmacy:rx-payment-intent:${prescription.id}`;
+    if (!(await this.cacheService.acquireLock(lockKey, 30))) {
+      throw new ConflictException(
+        'A payment for this prescription is already being started. Please wait a moment.'
+      );
+    }
+    try {
+      return await this.openPrescriptionPaymentAttempt(prescription, paymentState, actor, provider);
+    } finally {
+      await this.cacheService.releaseLock(lockKey).catch(() => false);
+    }
+  }
+
+  /** Reuses the live open attempt (same amount, inside its window) or opens a new one. */
+  private async openPrescriptionPaymentAttempt(
+    prescription: PrescriptionForAccess,
+    paymentState: { pendingAmount: number; totalAmount: number },
+    actor?: { userId?: string; role?: string },
+    provider?: string
+  ) {
+    const invoice = await this.ensurePrescriptionInvoiceSafe(
+      prescription.id,
+      prescription.clinicId,
+      actor
+    );
+    const invoiceFields = invoice
+      ? {
+          invoiceId: invoice.id,
+          invoiceNumber: invoice.invoiceNumber,
+          invoice: {
+            id: invoice.id,
+            invoiceNumber: invoice.invoiceNumber,
+            clinicId: prescription.clinicId,
+          },
+        }
+      : {};
+    const linked = await this.findPrescriptionLinkedPayments(
+      prescription.clinicId,
+      prescription.id
+    );
+    const plan = planPrescriptionPaymentAttempt(linked, paymentState.pendingAmount);
+
+    if (plan.reuseId) {
+      const reused = linked.find(row => row.id === plan.reuseId);
+      const checkout = this.asRecord(this.asRecord(reused?.metadata)?.['checkout']) ?? {};
+      return {
+        ...paymentState,
+        prescriptionId: prescription.id,
+        clinicId: prescription.clinicId,
+        paymentId: plan.reuseId,
+        reused: true,
+        paymentIntent: {
+          ...checkout,
+          success: true,
+          metadata: {
+            ...(this.asRecord(checkout['metadata']) ?? {}),
+            paymentRecordId: plan.reuseId,
+            prescriptionId: prescription.id,
+            clinicId: prescription.clinicId,
+          },
+        },
+        ...invoiceFields,
       };
     }
 
@@ -4023,7 +4766,7 @@ export class PharmacyService {
       ...(prescription.patient?.user?.email && { customerEmail: prescription.patient.user.email }),
       ...(prescription.patient?.user?.phone && { customerPhone: prescription.patient.user.phone }),
       ...(prescription.patient?.user?.name && { customerName: prescription.patient.user.name }),
-      description: `Prescription payment for ${prescription.id}`,
+      description: buildPharmacyInvoiceDescription(prescriptionReference(prescription)),
       clinicId: prescription.clinicId,
       metadata: this.getPrescriptionPaymentMetadata(prescription.id),
     };
@@ -4033,13 +4776,30 @@ export class PharmacyService {
       paymentIntentOptions,
       normalizedProvider
     );
+    if (!paymentIntentResult.success) {
+      // Never record an attempt for an order the gateway did not open.
+      throw new BadRequestException(
+        paymentIntentResult.error || 'The payment could not be started. Please try again.'
+      );
+    }
 
-    const invoice = await this.ensurePrescriptionInvoiceSafe(
-      prescription.id,
+    // Older open attempts can no longer be paid usefully: close them so only one stays live.
+    await this.supersedePrescriptionAttempts(
+      plan.supersedeIds,
+      linked,
       prescription.clinicId,
       actor
     );
 
+    const checkout = {
+      paymentId: paymentIntentResult.paymentId ?? null,
+      orderId: paymentIntentResult.orderId ?? null,
+      provider: paymentIntentResult.provider,
+      amount: paymentIntentResult.amount,
+      currency: paymentIntentResult.currency,
+      status: paymentIntentResult.status,
+      metadata: this.asRecord(paymentIntentResult.metadata) ?? {},
+    };
     const paymentRecord = await this.databaseService.createPaymentSafe({
       amount: paymentState.pendingAmount,
       clinicId: prescription.clinicId,
@@ -4049,10 +4809,13 @@ export class PharmacyService {
       ...(paymentIntentResult.paymentId || paymentIntentResult.orderId
         ? { transactionId: paymentIntentResult.paymentId || paymentIntentResult.orderId }
         : {}),
-      description: `Prescription payment for ${prescription.id}`,
+      description: buildPharmacyInvoiceDescription(prescriptionReference(prescription)),
       metadata: {
         ...(this.asRecord(paymentIntentResult.metadata) || {}),
         ...this.getPrescriptionPaymentMetadata(prescription.id),
+        ...(paymentIntentResult.orderId ? { orderId: paymentIntentResult.orderId } : {}),
+        [PAYMENT_EXPIRES_AT_KEY]: paymentWindowEnd(new Date()).toISOString(),
+        checkout,
       },
     });
 
@@ -4070,16 +4833,73 @@ export class PharmacyService {
       clinicId: prescription.clinicId,
       paymentId: paymentRecord.id,
       paymentIntent: paymentIntentResult,
-      ...(invoice && {
-        invoiceId: invoice.id,
-        invoiceNumber: invoice.invoiceNumber,
-        invoice: {
-          id: invoice.id,
-          invoiceNumber: invoice.invoiceNumber,
-          clinicId: prescription.clinicId,
-        },
-      }),
+      ...invoiceFields,
     };
+  }
+
+  private async supersedePrescriptionAttempts(
+    ids: readonly string[],
+    rows: readonly PrescriptionAttemptRow[],
+    clinicId: string,
+    actor?: { userId?: string; role?: string }
+  ): Promise<void> {
+    const closedAt = new Date().toISOString();
+    for (const id of ids) {
+      const row = rows.find(candidate => candidate.id === id);
+      await this.databaseService.executeHealthcareWrite(
+        async client =>
+          (client as unknown as PrismaTransactionClientWithDelegates).payment.updateMany({
+            where: { id, status: PaymentStatus.PENDING } as PrismaDelegateArgs,
+            data: {
+              status: PaymentStatus.CANCELLED,
+              metadata: {
+                ...(this.asRecord(row?.metadata) ?? {}),
+                closedReason: 'SUPERSEDED_BY_NEW_ATTEMPT',
+                closedAt,
+              },
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs),
+        {
+          userId: actor?.userId ?? 'system',
+          userRole: actor?.role ?? 'system',
+          clinicId,
+          resourceType: 'PAYMENT',
+          operation: 'SUPERSEDE_ATTEMPT',
+          resourceId: id,
+          timestamp: new Date(),
+        }
+      );
+    }
+  }
+
+  /**
+   * 409 when the prescription cannot be billed now (draft with the doctor, cancelled, or already
+   * dispensed). A patient gets a 404 for a draft: it is not theirs to see yet.
+   */
+  private assertPrescriptionBillable(status: string, role?: string): void {
+    const refusal = prescriptionBillingRefusal(status);
+    if (!refusal) return;
+    if (isUnapprovedPrescription(status) && isPatientRole(role)) {
+      throw new NotFoundException('Prescription not found');
+    }
+    throw new ConflictException(refusal);
+  }
+
+  /** Payments recorded for one prescription (metadata.prescriptionId), any status, newest first. */
+  private async findPrescriptionLinkedPayments(
+    clinicId: string,
+    prescriptionId: string
+  ): Promise<Array<PrescriptionAttemptRow & { createdAt: Date }>> {
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return (await typedClient.payment.findMany({
+        where: {
+          clinicId,
+          metadata: { path: ['prescriptionId'], equals: prescriptionId },
+        } as PrismaDelegateArgs,
+        orderBy: { createdAt: 'desc' } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as unknown as Array<PrescriptionAttemptRow & { createdAt: Date }>;
+    });
   }
 
   /**
@@ -4097,57 +4917,193 @@ export class PharmacyService {
     if (!clinicId) throw new BadRequestException('Clinic ID is required');
 
     const prescription = await this.getPrescriptionByIdForAccess(prescriptionId, clinicId);
-
-    if (String(prescription.status) === 'CANCELLED') {
-      throw new BadRequestException('Cancelled prescriptions cannot be paid');
-    }
-    if (String(prescription.status) === 'FILLED') {
-      throw new BadRequestException('Prescription has already been dispensed');
-    }
+    this.assertPrescriptionBillable(String(prescription.status), actor?.role);
 
     const paymentState = await this.getPrescriptionPaymentSummary(prescriptionId, clinicId, actor);
     if (paymentState.pendingAmount <= 0) {
       return { alreadyPaid: true, ...paymentState, prescriptionId };
     }
 
-    const cashAmount = amount !== undefined ? Number(amount) : paymentState.pendingAmount;
-    if (!Number.isFinite(cashAmount) || cashAmount <= 0) {
-      throw new BadRequestException('Cash amount must be greater than zero');
-    }
-    if (cashAmount > paymentState.pendingAmount) {
-      throw new BadRequestException(
-        `Cash amount exceeds pending amount of INR ${paymentState.pendingAmount}`
-      );
-    }
-
     const invoice = await this.ensurePrescriptionInvoiceSafe(prescription.id, clinicId, actor);
+    const outcome = await this.insertCashPaymentLocked(
+      prescription,
+      paymentState.totalAmount,
+      invoice?.id ?? null,
+      actor,
+      amount
+    );
+    if (outcome.kind === 'refused') throw new ConflictException(outcome.message);
+    if (outcome.kind === 'invalid') throw new BadRequestException(outcome.message);
 
-    const paymentRecord = await this.databaseService.createPaymentSafe({
-      amount: Number(cashAmount.toFixed(2)),
-      clinicId: prescription.clinicId,
-      ...(prescription.patient?.user?.id && { userId: prescription.patient.user.id }),
-      ...(invoice && { invoiceId: invoice.id }),
-      status: PaymentStatus.COMPLETED,
-      method: PaymentMethod.CASH,
-      description: `Cash payment for prescription ${prescription.id}`,
-      metadata: {
-        ...this.getPrescriptionPaymentMetadata(prescription.id),
-        paymentMethod: PaymentMethod.CASH,
-        collectedBy: actor.userId ?? null,
-        collectedByRole: actor.role ?? null,
-        collectedAt: new Date().toISOString(),
-      },
-    });
-
+    await this.cacheService.invalidateCacheByTag('payments').catch(() => 0);
+    if (outcome.invoiceSettled && invoice) {
+      await this.afterCashSettledInvoice(invoice.id, clinicId);
+    }
     await this.emitMedicineDeskQueueUpdated(clinicId, prescription.id, 'PAYMENT_UPDATED');
 
     const updatedState = await this.getPrescriptionPaymentSummary(prescriptionId, clinicId, actor);
     return {
       ...updatedState,
       prescriptionId: prescription.id,
-      paymentId: paymentRecord.id,
+      paymentId: outcome.paymentId,
       method: PaymentMethod.CASH,
-      ...(invoice && { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber }),
+      ...(invoice && {
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        invoiceStatus: outcome.invoiceSettled ? 'PAID' : String(invoice.status),
+      }),
     };
+  }
+
+  /**
+   * Post-commit side effects of a cash settlement (best effort): drop the invoice caches and
+   * rebuild the PDF so the receipt reads PAID. No WhatsApp receipt is sent from the counter.
+   */
+  private async afterCashSettledInvoice(invoiceId: string, clinicId: string): Promise<void> {
+    await this.databaseService
+      .invalidateEntityCache('invoice', invoiceId, clinicId)
+      .catch(() => undefined);
+    await Promise.all(
+      ['invoices', `invoice:${invoiceId}`].map(tag =>
+        this.cacheService.invalidateCacheByTag(tag).catch(() => 0)
+      )
+    );
+    const billingService = this.getBillingService();
+    if (!billingService?.generateInvoicePDF) return;
+    try {
+      await billingService.generateInvoicePDF(invoiceId);
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        'Failed to regenerate pharmacy invoice PDF after cash settlement',
+        'PharmacyService',
+        { invoiceId, error: error instanceof Error ? error.message : String(error) }
+      );
+    }
+  }
+
+  /**
+   * Re-reads the balance and inserts the cash payment under row locks (the prescription, then
+   * its invoice: the same invoice row the billing desk's record-payment locks), so two clicks
+   * can never both collect the balance.
+   */
+  private async insertCashPaymentLocked(
+    prescription: PrescriptionForAccess,
+    totalAmount: number,
+    invoiceId: string | null,
+    actor: { userId?: string; role?: string },
+    amount?: number
+  ): Promise<
+    | { kind: 'refused'; message: string }
+    | { kind: 'invalid'; message: string }
+    | { kind: 'created'; paymentId: string; invoiceSettled: boolean }
+  > {
+    return await this.databaseService.executeInTransaction(async client => {
+      const tx = client as unknown as PrismaTransactionClientWithDelegates;
+      const locked = await tx.$queryRaw<Array<{ status: string }>>`
+        SELECT "status"::text AS "status" FROM "Prescription" WHERE "id" = ${prescription.id} FOR UPDATE`;
+      const lockedInvoice = invoiceId
+        ? (
+            await tx.$queryRaw<
+              Array<{ status: string; totalAmount: number | null; metadata: object | null }>
+            >`SELECT "status"::text AS "status", "totalAmount", "metadata" FROM "Invoice" WHERE "id" = ${invoiceId} FOR UPDATE`
+          )[0]
+        : undefined;
+      const refusal = prescriptionBillingRefusal(locked[0]?.status);
+      if (refusal) return { kind: 'refused' as const, message: refusal };
+
+      const completed = (await tx.payment.findMany({
+        where: {
+          clinicId: prescription.clinicId,
+          status: PaymentStatus.COMPLETED,
+          metadata: { path: ['prescriptionId'], equals: prescription.id },
+        } as PrismaDelegateArgs,
+        select: { amount: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as unknown as Array<{ amount: number | null }>;
+      const paidPaise = completed.reduce(
+        (sum, row) => sum + Math.round(Number(row.amount ?? 0) * 100),
+        0
+      );
+      const pendingPaise = Math.max(0, Math.round(totalAmount * 100) - paidPaise);
+      const plan = planPrescriptionCash(
+        pendingPaise / 100,
+        amount !== undefined ? Number(amount) : undefined
+      );
+      if (!plan.ok) return { kind: 'invalid' as const, message: plan.message };
+
+      const created = (await tx.payment.create({
+        data: {
+          amount: plan.amount,
+          clinicId: prescription.clinicId,
+          ...(prescription.patient?.user?.id && { userId: prescription.patient.user.id }),
+          ...(invoiceId && { invoiceId }),
+          status: PaymentStatus.COMPLETED,
+          method: PaymentMethod.CASH,
+          description: `Cash payment — ${buildPharmacyInvoiceDescription(prescriptionReference(prescription))}`,
+          metadata: {
+            ...this.getPrescriptionPaymentMetadata(prescription.id),
+            paymentMethod: PaymentMethod.CASH,
+            collectedBy: actor.userId ?? null,
+            collectedByRole: actor.role ?? null,
+            collectedAt: new Date().toISOString(),
+          },
+        } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as unknown as { id: string };
+
+      const invoiceSettled = await this.settleInvoiceForCashLocked(
+        tx,
+        invoiceId,
+        lockedInvoice,
+        prescription,
+        created.id
+      );
+      return { kind: 'created' as const, paymentId: created.id, invoiceSettled };
+    });
+  }
+
+  /**
+   * N3: once the collected total covers the PHARMACY invoice, it moves to PAID (paidAt) inside
+   * the cash-payment transaction, exactly like an online payment settles it. Dispensing stays a
+   * separate step. Counts every COMPLETED payment on the invoice or linked to the prescription
+   * (the new cash row included), so billing-desk partials are not double counted or missed.
+   */
+  private async settleInvoiceForCashLocked(
+    tx: PrismaTransactionClientWithDelegates,
+    invoiceId: string | null,
+    lockedInvoice:
+      { status: string; totalAmount: number | null; metadata: object | null } | undefined,
+    prescription: PrescriptionForAccess,
+    paymentId: string
+  ): Promise<boolean> {
+    if (!invoiceId || !lockedInvoice) return false;
+    const status = String(lockedInvoice.status).toUpperCase();
+    if (status === 'PAID' || status === 'REFUNDED' || status === 'VOID') return false;
+
+    const rows = (await tx.payment.findMany({
+      where: {
+        clinicId: prescription.clinicId,
+        status: PaymentStatus.COMPLETED,
+        OR: [{ invoiceId }, { metadata: { path: ['prescriptionId'], equals: prescription.id } }],
+      } as PrismaDelegateArgs,
+      select: { id: true, amount: true } as PrismaDelegateArgs,
+    } as PrismaDelegateArgs)) as unknown as Array<{ id: string; amount: number | null }>;
+    const paidPaise = rows.reduce((sum, row) => sum + Math.round(Number(row.amount ?? 0) * 100), 0);
+    const totalPaise = Math.round(Number(lockedInvoice.totalAmount ?? 0) * 100);
+    if (!cashSettlesInvoice(paidPaise, 0, totalPaise)) return false;
+
+    const metadata =
+      lockedInvoice.metadata && typeof lockedInvoice.metadata === 'object'
+        ? (lockedInvoice.metadata as Record<string, unknown>)
+        : {};
+    const result = (await tx.invoice.updateMany({
+      where: { id: invoiceId, status: { not: 'PAID' } } as PrismaDelegateArgs,
+      data: {
+        status: 'PAID',
+        paidAt: new Date(),
+        metadata: { ...metadata, settledByPaymentId: paymentId },
+      } as PrismaDelegateArgs,
+    } as PrismaDelegateArgs)) as unknown as { count: number };
+    return result.count === 1;
   }
 }

@@ -1,17 +1,11 @@
-import {
-  Injectable,
-  Inject,
-  forwardRef,
-  BadRequestException,
-  ForbiddenException,
-} from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { AppointmentAnalyticsService } from '../appointments/plugins/analytics/appointment-analytics.service';
-import { BillingService } from '../billing/billing.service';
 import { DatabaseService } from '@infrastructure/database';
 import type { AnalyticsFilter, AppointmentMetrics } from '@core/types/appointment.types';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { formatDateKeyInIST } from '@utils/date-time.util';
+import { startOfIstDay } from '@utils/clock.util';
 import {
   buildEarningsSplitReport,
   type EarningsSplitReport,
@@ -28,6 +22,12 @@ import {
   type DoctorEarningsSummary,
   type PaidConsultationRow,
 } from './doctor-earnings.util';
+import {
+  foldRangeFinancials,
+  resolveAnalyticsRange,
+  type AnalyticsDateRange,
+  type RangeFinancials,
+} from './analytics-range.util';
 
 export interface DoctorFeeSetting {
   userId: string;
@@ -66,6 +66,17 @@ interface BillingStats {
   netProfit?: number;
 }
 
+interface RangeFinancialsClient {
+  payment: {
+    aggregate(
+      args: unknown
+    ): Promise<{ _sum: { amount?: number | null; refundAmount?: number | null } }>;
+  };
+  clinicExpense: {
+    aggregate(args: unknown): Promise<{ _sum: { amount?: number | null } }>;
+  };
+}
+
 interface PatientAnalyticsClient {
   patient: {
     count(args: { where: Record<string, unknown> }): Promise<number>;
@@ -88,8 +99,6 @@ function isBillingStats(value: unknown): value is BillingStats {
 export class AnalyticsService {
   constructor(
     private readonly appointmentAnalytics: AppointmentAnalyticsService,
-    @Inject(forwardRef(() => BillingService))
-    private readonly billingService: BillingService,
     private readonly databaseService: DatabaseService,
     private readonly loggingService: LoggingService
   ) {}
@@ -104,9 +113,10 @@ export class AnalyticsService {
     );
     const range = this.getDateRange(period);
 
+    // Money of the selected window (an IST day for 'day'), not the clinic's lifetime total.
     const [appointmentMetrics, billingStats] = await Promise.all([
       this.appointmentAnalytics.getAppointmentMetrics(clinicId, range),
-      this.billingService.getStats(clinicId),
+      this.getRangeFinancials(clinicId, range),
     ]);
 
     return {
@@ -117,7 +127,9 @@ export class AnalyticsService {
           ? appointmentMetrics.data.totalAppointments
           : 0,
         revenue: isBillingStats(billingStats) ? billingStats.totalRevenue : 0,
-        // Add more summary data as needed by frontend
+        netRevenue: billingStats.netRevenue,
+        from: billingStats.from,
+        to: billingStats.to,
       },
     };
   }
@@ -127,10 +139,47 @@ export class AnalyticsService {
     return await this.appointmentAnalytics.getAppointmentMetrics(clinicId, range, filters);
   }
 
-  async getRevenueAnalytics(clinicId: string, _filters: AnalyticsQueryFilters = {}) {
-    // Currently BillingService.getStats only takes clinicId.
-    // In a real app we'd add date range filtering to it.
-    return await this.billingService.getStats(clinicId);
+  /**
+   * Revenue, refunds and expenses of the requested window: `startDate` / `endDate` when both
+   * are given, else `period` (day = the IST day, default month). An empty window is all zeros.
+   */
+  async getRevenueAnalytics(
+    clinicId: string,
+    filters: AnalyticsQueryFilters = {}
+  ): Promise<RangeFinancials> {
+    const range = resolveAnalyticsRange(this.getDateRange(filters.period ?? 'month'), filters);
+    return await this.getRangeFinancials(clinicId, range);
+  }
+
+  /** Completed payments (by payment time), refunds (by refund time) and expenses of a window. */
+  private async getRangeFinancials(
+    clinicId: string,
+    range: AnalyticsDateRange
+  ): Promise<RangeFinancials> {
+    const window = { gte: range.from, lte: range.to };
+    const sums = await this.databaseService.executeHealthcareRead(async client => {
+      const db = client as unknown as RangeFinancialsClient;
+      const [revenue, refunds, expenses] = await Promise.all([
+        db.payment.aggregate({
+          where: { clinicId, status: 'COMPLETED', createdAt: window },
+          _sum: { amount: true },
+        }),
+        db.payment.aggregate({
+          where: { clinicId, refundedAt: window },
+          _sum: { refundAmount: true },
+        }),
+        db.clinicExpense.aggregate({
+          where: { clinicId, date: window },
+          _sum: { amount: true },
+        }),
+      ]);
+      return {
+        revenue: revenue._sum?.amount ?? 0,
+        refunds: refunds._sum?.refundAmount ?? 0,
+        expenses: expenses._sum?.amount ?? 0,
+      };
+    });
+    return foldRangeFinancials(range, sums);
   }
 
   async getPatientAnalytics(clinicId: string, _filters: AnalyticsQueryFilters = {}) {
@@ -408,7 +457,8 @@ export class AnalyticsService {
 
     switch (period) {
       case 'day':
-        from.setHours(0, 0, 0, 0);
+        // The IST day (Appointment.date is the IST-midnight day key), not the server UTC day.
+        from.setTime((startOfIstDay(to) ?? from).getTime());
         break;
       case 'week':
         from.setDate(to.getDate() - 7);

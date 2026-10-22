@@ -56,6 +56,23 @@ export function classifySearchTerm(raw: string | undefined | null): PatientSearc
   return { kind: 'name', value: tokens.join(' '), tokens };
 }
 
+/** Pharmacy staff need at least this many letters of a name (a looser name would list half the clinic). */
+export const PHARMACY_NAME_MIN_LETTERS = 3;
+
+export const PHARMACY_SEARCH_MESSAGE = `Search by name (at least ${PHARMACY_NAME_MIN_LETTERS} letters), UHID or phone number`;
+
+/**
+ * Pharmacy staff look one patient up (clinic scoped, one small page): a UHID, a phone number, or a
+ * name of at least three letters, like the assistant's picker. Other kinds (register / OPD numbers,
+ * e-mail) and short names are refused.
+ */
+export function isPharmacySearchAllowed(search: PatientSearchTerm | null | undefined): boolean {
+  if (!search) return false;
+  if (search.kind === 'uhid' || search.kind === 'phone') return true;
+  if (search.kind !== 'name') return false;
+  return search.value.replace(/\s+/g, '').length >= PHARMACY_NAME_MIN_LETTERS;
+}
+
 /** Escapes `%`, `_` and `\` so a typed value is matched literally by LIKE / ILIKE. */
 export function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, match => `\\${match}`);

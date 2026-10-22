@@ -7,7 +7,8 @@ services:
       - /opt/healthcare-backend/.env.production
       - .env
     environment:
-      DATABASE_URL: 'postgresql://postgres:postgres@maxa5uf95pbau93eslhisek0:5432/userdb?schema=public'
+      # Least-privilege app role, stored ONLY as a Coolify secret (never committed).
+      DATABASE_URL: '${DATABASE_URL:?DATABASE_URL must be set as a Coolify secret}'
       DRAGONFLY_KEY_PREFIX: 'healthcare:'
       CACHE_PREFIX: 'healthcare:'
       NODE_ENV: production
@@ -25,27 +26,33 @@ services:
       DRAGONFLY_ENABLED: 'true'
       DRAGONFLY_HOST: dragonfly
       DRAGONFLY_PORT: 6379
-      JWT_SECRET: '${JWT_SECRET}'
+      JWT_SECRET: '${JWT_SECRET:?JWT_SECRET must be set as a Coolify secret}'
       ENABLE_HTTP2: 'false'
-      TRUST_PROXY: 1
+      # Exactly one trusted proxy hop (Traefik). Use 2 if Cloudflare proxies in front of Traefik.
+      TRUSTED_PROXY_HOPS: '${TRUSTED_PROXY_HOPS:-1}'
+      # DB pool budget (prod Postgres max_connections=120): api 25 (+2 health) per replica.
+      DB_POOL_SIZE: '${API_DB_POOL_SIZE:-25}'
+      DB_STATEMENT_TIMEOUT_MS: '15000'
+      DB_LOCK_TIMEOUT_MS: '5000'
       LOG_LEVEL: info
       ENABLE_AUDIT_LOGS: 'true'
-      SECURITY_RATE_LIMIT: 'true'
-      SECURITY_RATE_LIMIT_MAX: 4000
-      SECURITY_RATE_LIMIT_WINDOW_MS: 1000
       CACHE_TTL: 3600
-      RATE_LIMIT_TTL: 60
-      RATE_LIMIT_MAX: 600
+      # Global limiter: per verified user / per anonymous client IP (never IP+User-Agent).
+      RATE_LIMIT_USER_MAX: '${RATE_LIMIT_USER_MAX:-300}'
+      RATE_LIMIT_ANON_MAX: '${RATE_LIMIT_ANON_MAX:-3000}'
+      # Optional: Next.js server egress IP(s), exempt from anonymous per-IP buckets only.
+      RATE_LIMIT_TRUSTED_IPS: '${RATE_LIMIT_TRUSTED_IPS:-}'
       API_RATE_LIMIT: 1000
       AUTH_RATE_LIMIT: 30
-      HEAVY_RATE_LIMIT: 50
-      USER_RATE_LIMIT: 500
       HEALTH_RATE_LIMIT: 2000
       NPM_CONFIG_LOGLEVEL: error
     expose:
       - '8088'
+    # Traefik reaches the API over the Docker network. The host port is bound to loopback only
+    # (host-local health/verify scripts), so the API is NOT reachable from the internet while
+    # bypassing Traefik TLS, its middlewares and its client-IP handling.
     ports:
-      - '8088:8088'
+      - '127.0.0.1:8088:8088'
     volumes:
       - '/data/coolify/services/5sdkic5wk4l6zpflypayt9mb/../logs:/app/logs'
     networks:
@@ -99,7 +106,8 @@ services:
       - /opt/healthcare-backend/.env.production
       - .env
     environment:
-      DATABASE_URL: 'postgresql://postgres:postgres@maxa5uf95pbau93eslhisek0:5432/userdb?schema=public'
+      # Least-privilege app role, stored ONLY as a Coolify secret (never committed).
+      DATABASE_URL: '${DATABASE_URL:?DATABASE_URL must be set as a Coolify secret}'
       DRAGONFLY_KEY_PREFIX: 'healthcare:'
       CACHE_PREFIX: 'healthcare:'
       NODE_ENV: production
@@ -122,6 +130,16 @@ services:
       ENABLE_AUDIT_LOGS: 'true'
       ENABLE_BULL_BOARD: 'true'
       BULL_BOARD_URL: /queue-dashboard
+      # P0-4: Bull Board (PHI job payloads, retry/delete) is NOT mounted in production unless
+      # QUEUE_DASHBOARD_ENABLED=true AND Basic-auth credentials (password >= 16 chars) are set.
+      QUEUE_DASHBOARD_ENABLED: '${QUEUE_DASHBOARD_ENABLED:-false}'
+      QUEUE_DASHBOARD_USER: '${QUEUE_DASHBOARD_USER:-}'
+      QUEUE_DASHBOARD_PASSWORD: '${QUEUE_DASHBOARD_PASSWORD:-}'
+      QUEUE_DASHBOARD_ALLOWED_IPS: '${QUEUE_DASHBOARD_ALLOWED_IPS:-}'
+      TRUSTED_PROXY_HOPS: '${TRUSTED_PROXY_HOPS:-1}'
+      DB_POOL_SIZE: '${WORKER_DB_POOL_SIZE:-10}'
+      DB_STATEMENT_TIMEOUT_MS: '60000'
+      DB_LOCK_TIMEOUT_MS: '5000'
       COOLIFY_RESOURCE_UUID: 5sdkic5wk4l6zpflypayt9mb
       COOLIFY_CONTAINER_NAME: worker-5sdkic5wk4l6zpflypayt9mb
       COOLIFY_FQDN: backend-service-v1.ishswami.in
@@ -131,8 +149,9 @@ services:
       SERVICE_NAME_WORKER: worker
     volumes:
       - '/data/coolify/services/5sdkic5wk4l6zpflypayt9mb/../logs:/app/logs'
+    # Loopback only (see api). Bull Board is reached through Traefik, behind its own auth.
     ports:
-      - '8089:8088'
+      - '127.0.0.1:8089:8088'
     networks:
       5sdkic5wk4l6zpflypayt9mb: null
       coolify: null
@@ -176,7 +195,9 @@ services:
       - coolify.service.subId=10
       - coolify.service.subType=application
       - coolify.service.subName=worker
-      # Traefik routing: /queue-dashboard/* goes to worker container
+      # Traefik routing: /queue-dashboard/* goes to worker container. The worker only serves the
+      # dashboard when QUEUE_DASHBOARD_ENABLED=true (otherwise 404); every request then needs
+      # Basic auth and, if QUEUE_DASHBOARD_ALLOWED_IPS is set, an allow-listed client IP.
       # Priority 100 ensures this router wins over the API catch-all (PathPrefix `/`)
       - traefik.enable=true
       - traefik.docker.network=coolify

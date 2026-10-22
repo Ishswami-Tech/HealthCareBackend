@@ -1,8 +1,10 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Inject,
   Optional,
@@ -25,6 +27,11 @@ import { RolesGuard } from '@core/guards/roles.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { Role } from '@core/types/enums.types';
+import {
+  assertDoctorControlsVisit,
+  assertQueueStatusAllowed,
+} from '@core/rbac/visit-authority.util';
+import { resolveReceptionistLocationOrThrow } from '@utils/staff-location.util';
 import { findTreatmentCatalogEntryOrUndefined } from '@core/types/treatment-catalog.types';
 import { QueueMonitoringService } from '../monitoring/queue-monitoring.service';
 import type {
@@ -32,12 +39,30 @@ import type {
   ManualQueueAlertUpdateInput,
 } from '../monitoring/queue-monitoring.service';
 import { QueueService } from '../queue.service';
-import { HEALTHCARE_QUEUE } from '../queue.constants';
+import { HEALTHCARE_QUEUE, NOTIFICATION_JOB_RETENTION } from '../queue.constants';
 import { JobType } from '@core/types/queue.types';
 import type { DetailedQueueMetrics } from '@core/types/queue.types';
 import { AppointmentQueueService } from '../services/appointment-queue.service';
+import { supportsRawSql } from '../services/location-token.allocator';
+import {
+  DOCTOR_BUSY_CODE,
+  DOCTOR_BUSY_MESSAGE,
+  startVisitAtomically,
+} from '../services/doctor-visit-start.util';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { formatDateKeyInIST, nowIso } from '../../../../utils/date-time.util';
+import {
+  NOT_CHECKED_IN_MESSAGE,
+  canStartInPersonVisit,
+  computeQueuePlace,
+  deriveInPersonStage,
+  isInLiveQueue,
+  isListableQueueRow,
+  queueTokenLabel,
+  requiresInPersonCheckIn,
+  type InPersonStage,
+} from '../../../../utils/in-person-flow.util';
+import { resolveClinicVisitDurations } from '../../../../utils/visit-duration.util';
 
 interface QueueQuery {
   type?: string;
@@ -47,6 +72,8 @@ interface QueueQuery {
   locationId?: string;
   date?: string;
   limit?: string;
+  /** 1-based page of the filtered list (with `limit`, default 100). */
+  page?: string;
   jobType?: string;
   jobFamily?: string;
   family?: string;
@@ -118,8 +145,13 @@ interface QueueEntryLike {
   position?: number;
   queuePosition?: number;
   totalInQueue?: number;
-  /** Stable per doctor/day ticket number (in-person consultation lane only). */
+  /** Stable per location/day ticket number (in-person consultation lane only). */
   tokenNumber?: number | null;
+  /** Location-prefixed display token stored at check-in ("B-004"). */
+  tokenLabel?: string | null;
+  /** Tags of the live entry: walk-in, raised priority (SENIOR / PREGNANT / EMERGENCY). */
+  isWalkIn?: boolean;
+  priorityLabel?: string;
   /** Minutes the patient has waited so far (checked-in -> started, or -> now while waiting). */
   waitTime?: number | null;
   estimatedWaitTime?: number | null;
@@ -136,11 +168,17 @@ interface QueueEntryLike {
   scheduledDate?: string | null;
   scheduledTime?: string | null;
   paymentStatus?: string | null;
+  /** V2 in-person stage (CHECKED_IN / WITH_DOCTOR / ...) and display token ("K-014"). */
+  stage?: InPersonStage;
+  token?: string | null;
 }
 
 /** Stored queue entry fields operationalEntry passes through (the cache keeps them as JSON). */
 interface StoredQueueEntryExtras {
   tokenNumber?: unknown;
+  tokenLabel?: unknown;
+  isWalkIn?: unknown;
+  priorityLabel?: unknown;
   estimatedWaitTime?: unknown;
   confirmedAt?: unknown;
   priority?: unknown;
@@ -150,10 +188,22 @@ interface StoredQueueEntryExtras {
 }
 
 /** Appointment fields the queue rows are decorated with at read time. */
+/** The appointment facts that decide whether a live entry is listed (light read). */
+interface QueueListableFacts {
+  id: string;
+  type: string | null;
+  status: string | null;
+  checkedInAt: Date | null;
+}
+
 interface QueueAppointmentDecoration {
   id: string;
   date: Date | string | null;
   time: string | null;
+  type: string | null;
+  treatmentType?: string | null;
+  status: string | null;
+  checkedInAt: Date | null;
   patient: { user: { name: string | null; firstName: string | null; lastName: string | null } };
   doctor: { user: { name: string | null; firstName: string | null; lastName: string | null } };
   payment: { status: string } | null;
@@ -177,6 +227,14 @@ interface MyQueuePosition {
   position: number;
   /** Stable ticket number assigned at in-person check-in (null if the entry predates tokens). */
   tokenNumber: number | null;
+  /** Display token with the location prefix ("B-004"). */
+  token: string | null;
+  /** Same as `token` (compatibility name used by GET /queue rows). */
+  tokenLabel: string | null;
+  /** Display token of the patient with the doctor at the same location, null when nobody is. */
+  nowServingToken: string | null;
+  /** Booked as a walk-in at the reception desk. */
+  isWalkIn: boolean;
   patientsAhead: number;
   totalInQueue: number;
   nowServing: boolean;
@@ -299,12 +357,14 @@ export class QueueController {
       'doctorId may be the Doctor.id or the doctor User id (the queue is keyed by Doctor.id). Rows carry patientName, doctorName, tokenNumber, scheduledDate/Time, waitTime and paymentStatus; patients see no identifiers.',
   })
   async listQueue(
-    @Query() query: QueueQuery,
+    @Query() requested: QueueQuery,
     @Req() req: ClinicAuthenticatedRequest
   ): Promise<{ success: true; data: QueueEntryLike[]; meta: Record<string, unknown> }> {
     const clinicId = this.requireClinicId(req);
     const domain = 'clinic' as const;
+    const query = await this.scopeQueueQuery(requested, req, clinicId);
     const queueDate = this.safeDate(query.date || this.today());
+    const paging = this.queuePaging(query);
 
     if (query.doctorId) {
       // The web passes the doctor's User id; the queue lives under Doctor.id.
@@ -327,15 +387,20 @@ export class QueueController {
           )
         )
         .filter(entry => this.matchEntry(entry, doctorQuery));
+      // Drop hidden (pre-arrival) rows BEFORE counting and slicing, so total / totalPages and the
+      // page contents agree; only the page is decorated (M6).
+      const { listed, rows: pageRows } = await this.listedPage(data, query.page ? paging : null);
       return {
         success: true,
-        data: this.visibleEntries(await this.decorateEntries(data), req),
+        data: this.visibleEntries(pageRows, req),
         meta: {
           clinicId,
           domain,
           doctorId,
           paused,
-          total: data.length,
+          total: listed,
+          ...(query.page ? this.pagingMeta(paging, listed) : {}),
+          ...(query.locationId ? { locationId: query.locationId } : {}),
           source: 'operational-queue',
           date: queueDate,
         },
@@ -358,14 +423,18 @@ export class QueueController {
         )
       )
       .filter(entry => this.matchEntry(entry, query));
-    const limit = query.limit ? Math.max(1, Number(query.limit)) : 100;
+    // Filter (pre-arrival rows dropped) before total / totalPages and the slice; only the page
+    // is decorated (M6).
+    const { listed, rows: pageRows } = await this.listedPage(data, paging);
     return {
       success: true,
-      data: this.visibleEntries(await this.decorateEntries(data.slice(0, limit)), req),
+      data: this.visibleEntries(pageRows, req),
       meta: {
         clinicId,
         domain,
-        total: data.length,
+        total: listed,
+        ...this.pagingMeta(paging, listed),
+        ...(query.locationId ? { locationId: query.locationId } : {}),
         source: 'operational-queue',
         date: queueDate,
         ...this.queueDashboardMeta(),
@@ -411,10 +480,14 @@ export class QueueController {
     const meta = { clinicId, date: queueDate, source: 'operational-queue' };
     if (!entry) return { success: true, data: null, meta };
 
-    // Position within the same doctor's (queue owner's) list, in clinic queue order.
+    // Position within the same doctor's (queue owner's) list AT THE SAME LOCATION (the live
+    // queue is per location per day), in clinic queue order.
     const ownerId = entry.queueOwnerId || entry.doctorId;
     const ownerQueue = clinicQueue.filter(
-      item => (item.queueOwnerId || item.doctorId) === ownerId && isActive(item.status)
+      item =>
+        (item.queueOwnerId || item.doctorId) === ownerId &&
+        (!entry.locationId || item.locationId === entry.locationId) &&
+        isActive(item.status)
     );
     const index = Math.max(
       0,
@@ -430,7 +503,19 @@ export class QueueController {
         : ownerQueue
             .slice(0, index)
             .filter(item => String(item.status || '').toUpperCase() !== 'IN_PROGRESS').length;
-    const avgConsultMinutes = 15;
+    // ETA: the clinic's in-person visit length (clinic setting), same rule as GET /in-person/*.
+    const avgConsultMinutes = await this.clinicInPersonMinutes(clinicId);
+    const place = computeQueuePlace(
+      ownerQueue.map(item => ({
+        appointmentId: item.appointmentId,
+        status: item.status ?? null,
+        tokenNumber: typeof item.tokenNumber === 'number' ? item.tokenNumber : null,
+        tokenLabel: typeof item.tokenLabel === 'string' ? item.tokenLabel : null,
+      })),
+      entry.appointmentId,
+      avgConsultMinutes
+    );
+    const servingEntry = inProgress[0];
 
     return {
       success: true,
@@ -441,10 +526,15 @@ export class QueueController {
         status,
         position: index + 1,
         tokenNumber: typeof entry.tokenNumber === 'number' ? entry.tokenNumber : null,
+        token: queueTokenLabel(entry),
+        tokenLabel: queueTokenLabel(entry),
+        nowServingToken: servingEntry ? queueTokenLabel(servingEntry) : null,
+        isWalkIn: (entry as { isWalkIn?: unknown }).isWalkIn === true,
         patientsAhead,
         totalInQueue: ownerQueue.length,
         nowServing: inProgress.length > 0,
-        estimatedWaitTime: status === 'IN_PROGRESS' ? 0 : patientsAhead * avgConsultMinutes,
+        estimatedWaitTime:
+          status === 'IN_PROGRESS' ? 0 : (place?.etaMinutes ?? patientsAhead * avgConsultMinutes),
         checkedInAt: entry.checkedInAt || null,
       },
       meta,
@@ -454,6 +544,7 @@ export class QueueController {
   @Post('add')
   @Roles(
     Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
     Role.NURSE,
     Role.THERAPIST,
     Role.COUNSELOR,
@@ -518,6 +609,7 @@ export class QueueController {
   @Patch(':patientId/status')
   @Roles(
     Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
     Role.NURSE,
     Role.RECEPTIONIST,
     Role.CLINIC_ADMIN,
@@ -538,6 +630,18 @@ export class QueueController {
     const domain = 'clinic' as const;
 
     const status = body.status.toUpperCase();
+
+    // Starting (IN_PROGRESS) and completing a consultation need visit control (doctor, or the
+    // therapist / counselor for their sessions); the assistant, nurse, front desk and clinic admin
+    // may still confirm, cancel, mark a no-show or expire an entry.
+    assertQueueStatusAllowed(req.user?.role, status);
+    // V2: the doctor starts only a checked-in (confirmed, queued) in-person visit.
+    if (status === 'IN_PROGRESS') {
+      await this.assertCheckedInForDoctor(patientId, clinicId);
+      // H2: the visit is started in the database first, atomically; a doctor who already has a
+      // consultation in progress today gets 409 and nothing is enqueued.
+      await this.startVisitInDatabase(patientId, clinicId);
+    }
 
     const context = await this.safeContext(patientId, clinicId, domain);
     if (context?.doctorId) {
@@ -652,22 +756,19 @@ export class QueueController {
   }
 
   @Post('call-next')
-  @Roles(
-    Role.DOCTOR,
-    Role.NURSE,
-    Role.RECEPTIONIST,
-    Role.CLINIC_ADMIN,
-    Role.SUPER_ADMIN,
-    Role.CLINIC_LOCATION_HEAD
-  )
-  @ApiOperation({ summary: 'Call next patient' })
+  @Roles(Role.DOCTOR)
+  @ApiOperation({ summary: 'Call next patient (doctor only)' })
   async callNext(
     @Body() body: { doctorId: string; appointmentId: string },
     @Req() req: ClinicAuthenticatedRequest
   ): Promise<{ success: true; data: unknown; message: string }> {
+    assertDoctorControlsVisit(req.user?.role);
     this.requireString(body.doctorId, 'doctorId');
     this.requireString(body.appointmentId, 'appointmentId');
     const clinicId = this.requireClinicId(req);
+    await this.assertCheckedInForDoctor(body.appointmentId, clinicId);
+    // H2: calling a patient in starts their visit (database first, atomic, one per doctor).
+    await this.startVisitInDatabase(body.appointmentId, clinicId);
     const job = await this.queueService.addJob(JobType.APPOINTMENT, 'queue.call_next', {
       doctorId: body.doctorId,
       clinicId,
@@ -681,6 +782,7 @@ export class QueueController {
   @Post('reorder')
   @Roles(
     Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
     Role.RECEPTIONIST,
     Role.CLINIC_ADMIN,
     Role.SUPER_ADMIN,
@@ -1292,8 +1394,9 @@ export class QueueController {
       {
         correlationId: notificationId,
         priority: this.jobPriority(body.priority),
-        removeOnComplete: false,
-        removeOnFail: false,
+        // Kept (they are read back as the notification inbox) but bounded, never forever.
+        removeOnComplete: NOTIFICATION_JOB_RETENTION.removeOnComplete,
+        removeOnFail: NOTIFICATION_JOB_RETENTION.removeOnFail,
       }
     );
 
@@ -1346,6 +1449,7 @@ export class QueueController {
   @Patch(':queueId/position')
   @Roles(
     Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
     Role.RECEPTIONIST,
     Role.CLINIC_ADMIN,
     Role.SUPER_ADMIN,
@@ -1710,6 +1814,48 @@ export class QueueController {
     });
   }
 
+  /**
+   * A receptionist reads only the queue of the location it is allotted to (staff assignment on the
+   * server); any `locationId` it sends is replaced. Other roles keep their own filters.
+   */
+  private async scopeQueueQuery(
+    query: QueueQuery,
+    req: ClinicAuthenticatedRequest,
+    clinicId: string
+  ): Promise<QueueQuery> {
+    if (String(req.user?.role ?? '').toUpperCase() !== String(Role.RECEPTIONIST)) return query;
+    const userId = String(req.user?.sub ?? req.user?.id ?? '');
+    if (!this.databaseService || !userId) {
+      throw new ForbiddenException('The receptionist location could not be resolved');
+    }
+    const locationId = await resolveReceptionistLocationOrThrow(
+      this.databaseService,
+      userId,
+      clinicId
+    );
+    return { ...query, locationId };
+  }
+
+  private queuePaging(query: QueueQuery): { page: number; limit: number; offset: number } {
+    const rawLimit = Number(query.limit);
+    const limit =
+      Number.isFinite(rawLimit) && rawLimit >= 1 ? Math.min(Math.floor(rawLimit), 500) : 100;
+    const rawPage = Number(query.page);
+    const page = Number.isFinite(rawPage) && rawPage >= 1 ? Math.floor(rawPage) : 1;
+    return { page, limit, offset: (page - 1) * limit };
+  }
+
+  private pagingMeta(
+    paging: { page: number; limit: number },
+    total: number
+  ): { page: number; limit: number; totalPages: number } {
+    return {
+      page: paging.page,
+      limit: paging.limit,
+      totalPages: Math.max(1, Math.ceil(total / paging.limit)),
+    };
+  }
+
   private matchEntry(entry: QueueEntryLike, query: QueueQuery): boolean {
     const doctorId = this.pick(entry.doctorId, entry.queueOwnerId);
     const locationId = entry.locationId;
@@ -1876,6 +2022,8 @@ export class QueueController {
     const notes = this.pick(entry.notes);
     const status = this.pick(entry.status, 'WAITING');
     const tokenNumber = this.asNumber(stored.tokenNumber);
+    const tokenLabel = this.asString(stored.tokenLabel);
+    const priorityLabel = this.asString(stored.priorityLabel);
     const estimatedWaitTime = this.asNumber(stored.estimatedWaitTime);
     const priority = this.asNumber(stored.priority);
     const confirmedAt = this.pick(this.asString(stored.confirmedAt));
@@ -1918,6 +2066,11 @@ export class QueueController {
       queuePosition: position,
       totalInQueue: total,
       tokenNumber: tokenNumber ?? null,
+      ...(tokenLabel ? { tokenLabel } : {}),
+      // `token` = the display label (same value as tokenLabel; K-nnn fallback for old entries).
+      token: queueTokenLabel({ tokenNumber: tokenNumber ?? null, tokenLabel: tokenLabel ?? null }),
+      isWalkIn: stored.isWalkIn === true,
+      ...(priorityLabel ? { priorityLabel } : {}),
       waitTime: this.waitMinutes(checkedInAt, startedAt, status),
       estimatedWaitTime: estimatedWaitTime ?? null,
       paused,
@@ -1936,9 +2089,60 @@ export class QueueController {
   }
 
   /**
-   * Names, scheduled slot and payment state come from the appointment rows, read once per
-   * response for the whole page (the queue cache stores ids only). Entries whose appointment is
-   * not found are returned unchanged; a database hiccup never hides the queue itself.
+   * The listable entries (pre-arrival in-person rows dropped, V2) and the decorated page of them.
+   * Two batched reads (M6): ONE light `findMany ... id IN (all live ids)` (type / status / arrival
+   * only) decides which entries are listed, so `total` and the paging stay exact; the names, slot,
+   * payment state and treatment type are then read with ONE `findMany ... id IN (page ids)` for the
+   * page alone. A database hiccup never hides the queue itself (entries are listed undecorated).
+   */
+  private async listedPage(
+    entries: QueueEntryLike[],
+    page: { offset: number; limit: number } | null
+  ): Promise<{ listed: number; rows: QueueEntryLike[] }> {
+    const listed = await this.listableEntries(entries);
+    const rows = page ? listed.slice(page.offset, page.offset + page.limit) : listed;
+    return { listed: listed.length, rows: await this.decorateEntries(rows) };
+  }
+
+  /** Entries whose appointment is listable (unknown ids, e.g. operational items, are kept). */
+  private async listableEntries(entries: QueueEntryLike[]): Promise<QueueEntryLike[]> {
+    const ids = [...new Set(entries.map(entry => entry.appointmentId).filter(Boolean))] as string[];
+    if (ids.length === 0 || !this.databaseService) return entries;
+    let rows: QueueListableFacts[];
+    try {
+      rows = await this.readAppointments<QueueListableFacts>(ids, {
+        id: true,
+        type: true,
+        status: true,
+        checkedInAt: true,
+      });
+    } catch {
+      return entries;
+    }
+    const byId = new Map(rows.map(row => [row.id, row]));
+    return entries.filter(entry => {
+      const row = entry.appointmentId ? byId.get(entry.appointmentId) : undefined;
+      return !row || isListableQueueRow(row);
+    });
+  }
+
+  private async readAppointments<T>(ids: string[], select: Record<string, unknown>): Promise<T[]> {
+    if (!this.databaseService) return [];
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const delegate = (client as unknown as Record<string, unknown>)['appointment'] as {
+        findMany: (args: {
+          where: { id: { in: string[] } };
+          select: Record<string, unknown>;
+        }) => Promise<T[]>;
+      };
+      return delegate.findMany({ where: { id: { in: ids } }, select });
+    });
+  }
+
+  /**
+   * Names, scheduled slot, payment state and the visit's treatment / appointment type (B3: the web
+   * lanes group by treatmentType) from the appointment rows, read once for the given entries.
+   * Entries whose appointment is not found are returned unchanged.
    */
   private async decorateEntries(entries: QueueEntryLike[]): Promise<QueueEntryLike[]> {
     const ids = [...new Set(entries.map(entry => entry.appointmentId).filter(Boolean))] as string[];
@@ -1946,39 +2150,55 @@ export class QueueController {
 
     let rows: QueueAppointmentDecoration[];
     try {
-      rows = await this.databaseService.executeHealthcareRead(async client => {
-        const delegate = (client as unknown as Record<string, unknown>)['appointment'] as {
-          findMany: (args: {
-            where: { id: { in: string[] } };
-            select: Record<string, unknown>;
-          }) => Promise<QueueAppointmentDecoration[]>;
-        };
-        return delegate.findMany({
-          where: { id: { in: ids } },
-          select: {
-            id: true,
-            date: true,
-            time: true,
-            patient: {
-              select: { user: { select: { name: true, firstName: true, lastName: true } } },
-            },
-            doctor: {
-              select: { user: { select: { name: true, firstName: true, lastName: true } } },
-            },
-            payment: { select: { status: true } },
-          },
-        });
+      rows = await this.readAppointments<QueueAppointmentDecoration>(ids, {
+        id: true,
+        date: true,
+        time: true,
+        type: true,
+        treatmentType: true,
+        status: true,
+        checkedInAt: true,
+        patient: {
+          select: { user: { select: { name: true, firstName: true, lastName: true } } },
+        },
+        doctor: {
+          select: { user: { select: { name: true, firstName: true, lastName: true } } },
+        },
+        payment: { select: { status: true } },
       });
     } catch {
       return entries;
     }
 
     const byId = new Map(rows.map(row => [row.id, row]));
-    return entries.map(entry => {
+    // V2: the consultation queue lists checked-in patients only (see listableEntries).
+    const arrived = entries.filter(entry => {
+      const row = entry.appointmentId ? byId.get(entry.appointmentId) : undefined;
+      return !row || isListableQueueRow(row);
+    });
+    return arrived.map(entry => {
       const row = entry.appointmentId ? byId.get(entry.appointmentId) : undefined;
       if (!row) return entry;
+      const treatmentType = this.pick(entry.treatmentType, row.treatmentType ?? undefined);
+      const appointmentType = this.pick(entry.appointmentType, row.type ?? undefined);
       return {
         ...entry,
+        ...(treatmentType ? { treatmentType } : {}),
+        ...(appointmentType ? { appointmentType } : {}),
+        ...(treatmentType && !entry.treatmentType
+          ? {
+              // The visit's treatment ("General Consultation"), not the job family.
+              displayLabel: this.queueDisplayLabel(
+                undefined,
+                undefined,
+                undefined,
+                treatmentType,
+                appointmentType
+              ),
+            }
+          : {}),
+        stage: deriveInPersonStage(row),
+        token: queueTokenLabel(entry),
         patientName: this.displayName(row.patient?.user, 'Patient'),
         doctorName: this.displayName(row.doctor?.user, 'Doctor'),
         scheduledDate: row.date ? formatDateKeyInIST(row.date) : null,
@@ -1989,7 +2209,13 @@ export class QueueController {
   }
 
   private displayName(
-    user: { name: string | null; firstName: string | null; lastName: string | null } | undefined,
+    user:
+      | {
+          name: string | null;
+          firstName: string | null;
+          lastName: string | null;
+        }
+      | undefined,
     fallback: string
   ): string {
     const fromParts = [user?.firstName, user?.lastName]
@@ -2237,6 +2463,29 @@ export class QueueController {
     return v?.trim() || '';
   }
 
+  /** The clinic's in-person visit length (clinic settings), defaults on a read failure. */
+  private async clinicInPersonMinutes(clinicId: string): Promise<number> {
+    if (!this.databaseService) return resolveClinicVisitDurations(undefined).inPersonMinutes;
+    try {
+      const clinic = await this.databaseService.executeHealthcareRead(async client => {
+        const delegate = (client as unknown as Record<string, unknown>)['clinic'] as
+          | {
+              findUnique: (args: {
+                where: { id: string };
+                select: { settings: true };
+              }) => Promise<{ settings?: unknown } | null>;
+            }
+          | undefined;
+        return delegate
+          ? delegate.findUnique({ where: { id: clinicId }, select: { settings: true } })
+          : null;
+      });
+      return resolveClinicVisitDurations(clinic?.settings).inPersonMinutes;
+    } catch {
+      return resolveClinicVisitDurations(undefined).inPersonMinutes;
+    }
+  }
+
   private async resolvePatientProfileId(userId: string): Promise<string | null> {
     if (!this.databaseService) return null;
     try {
@@ -2440,6 +2689,68 @@ export class QueueController {
     ].filter((role): role is string => typeof role === 'string' && role.trim().length > 0);
 
     return Array.from(new Set(roles.map(role => role.trim().toUpperCase())));
+  }
+
+  /**
+   * 409 NOT_CHECKED_IN unless the appointment is an in-person visit whose arrival was recorded and
+   * that is waiting or already with the doctor (V2: the doctor calls / starts only checked-in patients). An id that is
+   * not an appointment of this clinic (an operational lane item) is left to the queue worker.
+   */
+  private async assertCheckedInForDoctor(appointmentId: string, clinicId: string): Promise<void> {
+    if (!this.databaseService) return;
+    const row = await this.databaseService.executeHealthcareRead(async client => {
+      const delegate = (client as unknown as Record<string, unknown>)['appointment'] as {
+        findFirst: (args: unknown) => Promise<{
+          id: string;
+          type: string | null;
+          status: string | null;
+          checkedInAt: Date | null;
+        } | null>;
+      };
+      return delegate.findFirst({
+        where: { id: appointmentId, clinicId },
+        select: { id: true, type: true, status: true, checkedInAt: true },
+      });
+    });
+    if (!row) return;
+    // Only in-person visits are gated; checked in (or already with the doctor) passes. A legacy
+    // CONFIRMED in-person row without checkedInAt passes when it already sits in the live queue.
+    if (!requiresInPersonCheckIn(row.type) || isInLiveQueue(row)) return;
+    const legacyCandidate =
+      String(row.status ?? '').toUpperCase() === 'CONFIRMED' && !row.checkedInAt;
+    const queued = legacyCandidate
+      ? (await this.safeContext(appointmentId, clinicId, 'clinic')) !== null
+      : false;
+    if (!canStartInPersonVisit(row, queued)) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'NOT_CHECKED_IN',
+        message: NOT_CHECKED_IN_MESSAGE,
+      });
+    }
+  }
+
+  /**
+   * Starts the visit in the database (the same atomic start as PATCH /appointments/:id/status
+   * IN_PROGRESS): 409 CONSULTATION_IN_PROGRESS when the doctor already has a consultation in progress today.
+   * A repeated start, an operational lane item (no appointment row) or a legacy row the check-in
+   * gate above let through goes on to the queue worker as before.
+   */
+  private async startVisitInDatabase(appointmentId: string, clinicId: string): Promise<void> {
+    if (!this.databaseService) return;
+    const outcome = await this.databaseService.executeInTransaction(async client =>
+      supportsRawSql(client)
+        ? await startVisitAtomically(client, { appointmentId, clinicId })
+        : null
+    );
+    if (outcome?.kind === 'doctor-busy') {
+      throw new ConflictException({
+        statusCode: 409,
+        code: DOCTOR_BUSY_CODE,
+        message: DOCTOR_BUSY_MESSAGE,
+        inProgressAppointmentId: outcome.inProgressAppointmentId,
+      });
+    }
   }
 
   private async safeContext(

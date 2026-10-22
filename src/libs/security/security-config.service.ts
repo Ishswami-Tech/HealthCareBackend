@@ -2,6 +2,11 @@ import { Injectable, Logger, INestApplication } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import type { AuthenticatedRequest, RateLimitContext } from '@core/types';
 import type { IFrameworkAdapter, IFastifyFrameworkAdapter } from '@core/types/framework.types';
+import {
+  parseIpList,
+  resolveGlobalRateLimitKey,
+  type RateLimitRequestLike,
+} from '@security/rate-limit/rate-limit-keys.util';
 
 /**
  * Security Configuration Service
@@ -184,8 +189,23 @@ export class SecurityConfigService {
         `Rate-limit Redis client error: ${error instanceof Error ? error.message : String(error)}`
       );
     });
+    // Global limit (P1): verified-user requests are keyed by user id, anonymous ones by client IP
+    // (request.ip honours only TRUSTED_PROXY_HOPS proxies, so X-Forwarded-For cannot be spoofed).
+    // User-Agent is never part of the key. Defaults are NAT-safe for a clinic: ~300/min per
+    // signed-in user (a reception PC polling every 5-10s uses 30-60/min) and ~3000/min per IP.
+    // RATE_LIMIT_TRUSTED_IPS (e.g. the Next.js server egress IP) skips the anonymous IP bucket.
+    const userMax = this.configService.getEnvNumber('RATE_LIMIT_USER_MAX', 300);
+    const anonymousMax = this.configService.getEnvNumber(
+      'RATE_LIMIT_ANON_MAX',
+      Math.max(rateLimitConfig.max, 3000)
+    );
+    const jwtSecret = this.configService.getJwtConfig()?.secret || '';
+    const trustedIps = parseIpList(this.configService.getEnv('RATE_LIMIT_TRUSTED_IPS'));
     await adapter.registerRateLimit(app, {
-      max: rateLimitConfig.max,
+      max: (_request: RateLimitRequestLike, key: string): number =>
+        key.startsWith('user:') ? userMax : anonymousMax,
+      allowList: (_request: RateLimitRequestLike, key: string): boolean =>
+        key.startsWith('ip:') && trustedIps.has(key.slice(3)),
       timeWindow: this.configService.getEnv('RATE_LIMIT_WINDOW', '1 minute'),
       redis: rateLimitRedisClient,
       // If this Redis client has any problem (disconnected, timeout,
@@ -193,12 +213,8 @@ export class SecurityConfigService {
       // rate limiting is a defense-in-depth control, not something that
       // should be able to take the whole app down if its own store hiccups.
       skipOnError: true,
-      keyGenerator: (request: Partial<AuthenticatedRequest>) => {
-        const ip = request.ip || 'unknown';
-        const userAgent = request.headers?.['user-agent'];
-        const userAgentStr = typeof userAgent === 'string' ? userAgent : 'unknown';
-        return `${ip}:${userAgentStr}`;
-      },
+      keyGenerator: (request: RateLimitRequestLike): string =>
+        resolveGlobalRateLimitKey(request, jwtSecret),
       errorResponseBuilder: (request: Partial<AuthenticatedRequest>, context: RateLimitContext) => {
         return {
           statusCode: 429,
@@ -399,7 +415,9 @@ export class SecurityConfigService {
         'baggage',
         'sentry-trace',
       ],
-      exposedHeaders: ['Set-Cookie', 'Authorization'],
+      // Content-Disposition: the web app saves invoice / receipt / report files under the name
+      // the server chose instead of a blob <uuid>.
+      exposedHeaders: ['Set-Cookie', 'Authorization', 'Content-Disposition'],
       maxAge: 86400, // 24 hours
     });
   }

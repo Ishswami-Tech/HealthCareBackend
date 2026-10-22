@@ -57,8 +57,16 @@ export class DoctorProfileFieldsDto {
   @Max(1000000, { message: 'Video consultation fee is too large' })
   videoConsultationFee?: number;
 
+  /**
+   * @deprecated Visit lengths are clinic settings (appointmentSettings.inPersonDurationMinutes /
+   * videoDurationMinutes, visit-duration.util): slot generation and booking never read this.
+   * Still accepted (and stored) so older clients do not get a 400.
+   */
   @ApiPropertyOptional({
-    description: 'Slot length in minutes (doctor-specific override)',
+    deprecated: true,
+    description:
+      'Deprecated and ignored for slots and bookings: the visit length is the clinic setting ' +
+      '(appointmentSettings.inPersonDurationMinutes / videoDurationMinutes, set by the clinic admin).',
     minimum: DOCTOR_SLOT_MINUTES_MIN,
     maximum: DOCTOR_SLOT_MINUTES_MAX,
   })

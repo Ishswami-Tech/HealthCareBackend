@@ -155,3 +155,34 @@ describe('CacheService targeted invalidations', () => {
     });
   });
 });
+
+describe('CacheService.invalidateClinicAvailabilityCache', () => {
+  const matcher =
+    (patterns: string[]) =>
+    (key: string): boolean =>
+      patterns.some(pattern => globToRegExp(pattern).test(key));
+
+  it('reaches the availability keys of the clinic only', async () => {
+    const spy = createService();
+    await spy.service.invalidateClinicAvailabilityCache('c1');
+    const matches = matcher(spy.patterns);
+    expect(
+      matches('healthcare:doctor:d1:clinic:c1:location:all:availability:2026-10-22:type:all')
+    ).toBe(true);
+    expect(matches('availability:c1:d1:2026-10-22')).toBe(true);
+    expect(
+      matches('healthcare:doctor:d1:clinic:c2:location:all:availability:2026-10-22:type:all')
+    ).toBe(false);
+    expect(matches('availability:c2:d1:2026-10-22')).toBe(false);
+  });
+
+  it('escapes glob metacharacters and does nothing without a clinic', async () => {
+    const spy = createService();
+    await spy.service.invalidateClinicAvailabilityCache('c*');
+    expect(spy.patterns).toEqual(['*doctor:*:clinic:c\\*:*availability*', 'availability:c\\*:*']);
+
+    const empty = createService();
+    await expect(empty.service.invalidateClinicAvailabilityCache('')).resolves.toBe(0);
+    expect(empty.patterns).toEqual([]);
+  });
+});

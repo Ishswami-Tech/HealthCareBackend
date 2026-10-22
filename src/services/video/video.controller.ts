@@ -637,15 +637,7 @@ export class VideoController {
    */
   @Post('consultation/start')
   @HttpCode(HttpStatus.OK)
-  @Roles(
-    Role.PATIENT,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
-    Role.THERAPIST,
-    Role.COUNSELOR,
-    Role.NURSE,
-    Role.RECEPTIONIST
-  )
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.THERAPIST, Role.COUNSELOR)
   @ClinicRoute()
   @RequireResourcePermission('video', 'update', { requireOwnership: true })
   @ApiOperation({

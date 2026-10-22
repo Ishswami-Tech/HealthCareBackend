@@ -40,6 +40,12 @@ import { ClinicGuard } from '@core/guards/clinic.guard';
 import { ClinicId, OptionalClinicId } from '@core/decorators/clinic.decorator';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { Role } from '@core/types/enums.types';
+import {
+  resolveUserSearchScope,
+  USER_SEARCH_ALLOWED_ROLES,
+  UserSearchScopeError,
+  type UserSearchScope,
+} from '@services/users/user-search-scope.util';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { RbacService } from '@core/rbac/rbac.service';
@@ -138,17 +144,38 @@ export class UsersController {
   }
 
   @Get('search')
-  @RequireResourcePermission('users', 'read')
-  @ApiOperation({ summary: 'Search users', description: 'Search users by name, email, or phone.' })
+  @Roles(...USER_SEARCH_ALLOWED_ROLES)
+  // patients:read: every role that held users:read also holds it, and it is what a patient
+  // lookup needs; staff results are narrowed to PATIENT rows of their clinic below.
+  @RequireResourcePermission('patients', 'read')
+  @ApiOperation({
+    summary: 'Search users',
+    description:
+      'Search users by name, email, or phone. `roles` filters by role (comma-separated or repeated). ' +
+      'Clinic staff (reception, doctors, pharmacy, nursing, billing) are scoped to their own clinic ' +
+      'and get PATIENT results unless they pass `roles` explicitly; admins keep the full search.',
+  })
   @ApiResponse({ status: 200, description: 'Return search results.' })
   async search(
+    @Request() req: ClinicAuthenticatedRequest,
     @Query('q') query: string,
-    @Query('roles') roles?: Role[],
+    @Query('roles') roles?: string | string[],
     @Query('limit') limit?: number,
     @Query('offset') offset?: number,
     @OptionalClinicId() clinicId?: string
   ) {
-    return this.usersService.search(query, clinicId, roles, limit, offset);
+    let scope: UserSearchScope;
+    try {
+      scope = resolveUserSearchScope({ callerRole: req.user?.role, clinicId, roles });
+    } catch (error) {
+      if (error instanceof UserSearchScopeError) {
+        throw error.kind === 'FORBIDDEN'
+          ? new ForbiddenException(error.message)
+          : new BadRequestException(error.message);
+      }
+      throw error;
+    }
+    return this.usersService.search(query, scope.clinicId, scope.roles, limit, offset);
   }
 
   @Get('stats')

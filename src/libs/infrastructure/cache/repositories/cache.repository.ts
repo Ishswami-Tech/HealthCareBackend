@@ -24,6 +24,10 @@ import {
   isProtectedKey,
 } from '@infrastructure/cache/utils/protected-keys.util';
 import { DELETE_BATCH_SIZE } from '@infrastructure/cache/utils/pattern-delete.util';
+import {
+  companionIndexTags,
+  expandRegistrationTags,
+} from '@infrastructure/cache/utils/tag-scope.util';
 
 /** Slack added to an entry's TTL so its tag-index set outlives the entry. */
 const TAG_SET_TTL_PADDING_SECONDS = 60;
@@ -93,14 +97,17 @@ export class CacheRepository implements ICacheRepository {
   private async registerTags(
     versionedKey: string,
     tags: readonly string[] | undefined,
-    ttl: number
+    ttl: number,
+    clinicId?: string
   ): Promise<void> {
     if (!tags || tags.length === 0) {
       return;
     }
 
     const provider = this.getAdvancedCacheProvider();
-    const uniqueTags = [...new Set(tags.filter(Boolean))];
+    // Collection tags are also indexed per clinic so a clinic's write can invalidate only its
+    // own lists (tag-scope.util.ts).
+    const uniqueTags = expandRegistrationTags(tags.filter(Boolean), clinicId);
 
     await Promise.all(
       uniqueTags.map(async tag => {
@@ -171,7 +178,8 @@ export class CacheRepository implements ICacheRepository {
       await this.registerTags(
         context.key,
         context.options.tags,
-        this.calculateTTL(context.options)
+        this.calculateTTL(context.options),
+        context.options.tagScopeClinicId
       );
       return processedResult;
     } catch (error) {
@@ -201,7 +209,7 @@ export class CacheRepository implements ICacheRepository {
     const ttl = this.calculateTTL(options);
     const provider = this.getCacheProvider();
     await provider.set(versionedKey, value, ttl);
-    await this.registerTags(versionedKey, options.tags, ttl);
+    await this.registerTags(versionedKey, options.tags, ttl, options.tagScopeClinicId);
   }
 
   /**
@@ -320,8 +328,24 @@ export class CacheRepository implements ICacheRepository {
       const chunk = deletable.slice(index, index + DELETE_BATCH_SIZE);
       deleted += await this.deleteTagMembers(provider, chunk);
       await provider.sRem(tagKey, ...chunk);
+      await this.forgetInCompanionIndexes(provider, tag, chunk);
     }
     return deleted;
+  }
+
+  /** Drops deleted members from the sibling index sets of a collection tag (tag-scope.util). */
+  private async forgetInCompanionIndexes(
+    provider: IAdvancedCacheProvider,
+    tag: string,
+    members: readonly string[]
+  ): Promise<void> {
+    for (const companion of companionIndexTags(tag)) {
+      try {
+        await provider.sRem(this.getTagIndexKey(companion), ...members);
+      } catch (error) {
+        this.logBookkeepingFailure('Failed to prune companion cache tag index', companion, error);
+      }
+    }
   }
 
   /** Throws when the delete fails (when the provider can tell), so the caller keeps the index. */

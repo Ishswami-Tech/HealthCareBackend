@@ -428,10 +428,43 @@ describe('the doctor slot rule', () => {
     expect(findConflictingSlotKind([inClinic], { type: 'IN_PERSON', time: '10:30' })).toBeNull();
   });
 
-  it('an existing visit without a duration occupies 30 minutes', () => {
+  it('an existing visit without a duration occupies one clinic visit length (default 3 min)', () => {
     const open = { id: 'c', type: 'IN_PERSON', time: '10:00', duration: null };
-    expect(findConflictingSlotKind([open], { type: 'IN_PERSON', time: '10:20' })).toBe('IN_CLINIC');
-    expect(findConflictingSlotKind([open], { type: 'IN_PERSON', time: '10:30' })).toBeNull();
+    expect(findConflictingSlotKind([open], { type: 'IN_PERSON', time: '10:02' })).toBe('IN_CLINIC');
+    expect(findConflictingSlotKind([open], { type: 'IN_PERSON', time: '10:03' })).toBeNull();
+    // with the clinic's own length (e.g. 5 min) passed by the booking
+    expect(
+      findConflictingSlotKind([open], {
+        type: 'IN_PERSON',
+        time: '10:04',
+        durationMinutes: 5,
+      })
+    ).toBe('IN_CLINIC');
+  });
+
+  it('the requested visit length decides the overlap (3-min in-person grid)', () => {
+    const three = { id: 'd', type: 'IN_PERSON', time: '10:00', duration: 3 };
+    expect(
+      findConflictingSlotKind([three], {
+        type: 'IN_PERSON',
+        time: '09:57',
+        durationMinutes: 3,
+      })
+    ).toBeNull();
+    expect(
+      findConflictingSlotKind([three], {
+        type: 'IN_PERSON',
+        time: '09:58',
+        durationMinutes: 3,
+      })
+    ).toBe('IN_CLINIC');
+    expect(
+      findConflictingSlotKind([three], {
+        type: 'IN_PERSON',
+        time: '10:03',
+        durationMinutes: 3,
+      })
+    ).toBeNull();
   });
 
   it('has a clear message per kind', () => {

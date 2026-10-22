@@ -64,9 +64,9 @@ export class FakeQueueCache {
     return removed;
   }
 
-  async rPush(key: string, value: string): Promise<number> {
+  async rPush(key: string, ...values: string[]): Promise<number> {
     const list = this.lists.get(key) ?? [];
-    list.push(value);
+    list.push(...values);
     this.lists.set(key, list);
     return list.length;
   }

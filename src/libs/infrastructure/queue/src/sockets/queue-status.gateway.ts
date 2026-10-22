@@ -38,6 +38,20 @@ import { LogType, LogLevel, isEventService, EnterpriseEventPayload } from '@core
 
 // Import types from centralized location
 import type { ClientSession, QueueFilters } from '@core/types/queue.types';
+import {
+  buildSlimSocketPayload,
+  isStaffRole,
+  summarizeEvent,
+} from '@communication/channels/socket/socket-room-policy';
+
+/** BullMQ queue names and appointment queue keys (`queue:<domain>:<doctorId>`). */
+const QUEUE_NAME_PATTERN = /^[A-Za-z0-9:_-]{1,128}$/;
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
 
 // Get CORS origin from environment (fallback to restricted list for security)
 const getCorsOrigin = (): string | string[] => {
@@ -66,6 +80,8 @@ export class QueueStatusGateway
   private connectedClients = new Map<string, ClientSession>();
   private queueSubscriptions = new Map<string, Set<string>>();
   private tenantSubscriptions = new Map<string, Set<string>>();
+  /** Authenticated role per socket (ClientSession has no role field). */
+  private readonly clientRoles = new Map<string, string>();
 
   private connectionMetrics = {
     totalConnections: 0,
@@ -159,32 +175,48 @@ export class QueueStatusGateway
     );
   }
 
+  /**
+   * Staff-only rooms of this namespace for a queue event. `clinic:<id>` and `doctor:<id>` are
+   * only joined by staff here (see handleConnection), and every emit is ONE call to the union.
+   */
+  private queueEventRooms(ids: { clinicId?: string; locationId?: string; doctorId?: string }) {
+    const rooms: string[] = [];
+    if (ids.clinicId) rooms.push(`clinic:${ids.clinicId}`);
+    if (ids.locationId) rooms.push(`location:${ids.locationId}`);
+    if (ids.doctorId) rooms.push(`doctor:${ids.doctorId}`);
+    return rooms;
+  }
+
   private handleQueueUpdate(event: EnterpriseEventPayload) {
     try {
-      const payload = event.payload as {
-        doctorId?: string;
-        domain?: string;
-        action?: string;
-        queuePositions?: unknown[];
-        clinicId?: string;
-        locationId?: string;
-      };
-
-      const { doctorId, domain, action, queuePositions, clinicId, locationId } = payload;
+      const summary = summarizeEvent(event);
+      const { doctorId, clinicId, locationId } = summary.ids;
+      const payload = asRecord(event.payload);
+      const domain = typeof payload?.['domain'] === 'string' ? payload['domain'] : undefined;
 
       if (domain && doctorId) {
-        const queueName = `queue:${domain}:${doctorId}`;
-        this.broadcastQueueMetrics(queueName, {
-          action,
-          queuePositions,
-          timestamp: nowIso(),
-        });
+        // Counts/action only: the old `queuePositions` array listed every patient in the queue.
+        this.broadcastQueueMetrics(
+          `queue:${domain}:${doctorId}`,
+          {
+            action: summary.action ?? null,
+            totalInQueue: summary.totalInQueue ?? null,
+            timestamp: nowIso(),
+          },
+          clinicId
+        );
       }
 
-      // Room-based broadcasting
-      if (clinicId) this.server.to(`clinic:${clinicId}`).emit('queue.updated', payload);
-      if (locationId) this.server.to(`location:${locationId}`).emit('queue.updated', payload);
-      if (doctorId) this.server.to(`doctor:${doctorId}`).emit('queue.updated', payload);
+      const rooms = this.queueEventRooms({
+        ...(clinicId ? { clinicId } : {}),
+        ...(locationId ? { locationId } : {}),
+        ...(doctorId ? { doctorId } : {}),
+      });
+      if (rooms.length > 0) {
+        this.server
+          .to(rooms)
+          .emit('queue.updated', buildSlimSocketPayload('queue.updated', summary, nowIso()));
+      }
     } catch (error) {
       safeLogError(this.loggingService, error, 'QueueStatusGateway.handleQueueUpdate');
     }
@@ -192,17 +224,21 @@ export class QueueStatusGateway
 
   private handleQueuePositionUpdate(event: EnterpriseEventPayload) {
     try {
-      const payload = event.payload as {
-        clinicId?: string;
-        locationId?: string;
-        doctorId?: string;
-      };
-      const { clinicId, locationId, doctorId } = payload;
-
-      if (clinicId) this.server.to(`clinic:${clinicId}`).emit('queue.position.updated', payload);
-      if (locationId)
-        this.server.to(`location:${locationId}`).emit('queue.position.updated', payload);
-      if (doctorId) this.server.to(`doctor:${doctorId}`).emit('queue.position.updated', payload);
+      const summary = summarizeEvent(event);
+      const { clinicId, locationId, doctorId } = summary.ids;
+      const rooms = this.queueEventRooms({
+        ...(clinicId ? { clinicId } : {}),
+        ...(locationId ? { locationId } : {}),
+        ...(doctorId ? { doctorId } : {}),
+      });
+      if (rooms.length > 0) {
+        this.server
+          .to(rooms)
+          .emit(
+            'queue.position.updated',
+            buildSlimSocketPayload('queue.position.updated', summary, nowIso())
+          );
+      }
     } catch (error) {
       safeLogError(this.loggingService, error, 'QueueStatusGateway.handleQueuePositionUpdate');
     }
@@ -229,12 +265,9 @@ export class QueueStatusGateway
           timestamp: nowIso(),
         };
 
-        const subscribers = this.queueSubscriptions.get(queueName);
-        if (subscribers) {
-          subscribers.forEach(clientId => {
-            this.server.to(clientId).emit('queue_metrics_update', update);
-          });
-        }
+        this.forEachSubscriber(queueName, clinicId, clientId => {
+          this.server.to(clientId).emit('queue_metrics_update', update);
+        });
       }
     } catch (error) {
       safeLogError(this.loggingService, error, 'QueueStatusGateway.handleQueueMetricsUpdate');
@@ -263,6 +296,7 @@ export class QueueStatusGateway
       };
 
       this.connectedClients.set(client.id, session);
+      if (user.role) this.clientRoles.set(client.id, user.role);
 
       if (!this.tenantSubscriptions.has(tenantId)) {
         this.tenantSubscriptions.set(tenantId, new Set());
@@ -272,14 +306,16 @@ export class QueueStatusGateway
       this.connectionMetrics.activeConnections++;
       this.connectionMetrics.totalConnections++;
 
-      void client.join(`tenant:${tenantId}`);
-
-      // Only the caller's own authenticated clinic room — never the
-      // client-supplied query param.
-      if (user.clinicId) void client.join(`clinic:${user.clinicId}`);
-      // Doctor-specific room: only the doctor's own room, derived from
-      // their authenticated identity, not a client-supplied doctorId.
-      if (user.role === 'DOCTOR') void client.join(`doctor:${user.userId}`);
+      void client.join(`user:${userId}`);
+      // Tenant/clinic/doctor rooms receive queue activity for every patient of the clinic, so
+      // only staff join them, and only for their own authenticated clinic (never a
+      // client-supplied query param).
+      if (isStaffRole(user.role)) {
+        void client.join(`tenant:${tenantId}`);
+        if (user.clinicId) void client.join(`clinic:${user.clinicId}`);
+        // Doctor-specific room: only the doctor's own room, derived from their identity.
+        if (user.role === 'DOCTOR') void client.join(`doctor:${user.userId}`);
+      }
 
       safeLog(
         this.loggingService,
@@ -321,6 +357,7 @@ export class QueueStatusGateway
       }
 
       this.connectedClients.delete(client.id);
+      this.clientRoles.delete(client.id);
       this.connectionMetrics.activeConnections--;
 
       safeLog(
@@ -351,7 +388,7 @@ export class QueueStatusGateway
       }
 
       const { queueName, filters } = data;
-      this.validateQueueAccess(session.tenantId, queueName);
+      this.validateQueueAccess(client.id, queueName);
 
       if (!this.queueSubscriptions.has(queueName)) {
         this.queueSubscriptions.set(queueName, new Set());
@@ -363,7 +400,7 @@ export class QueueStatusGateway
       // clinic/tenant — client-supplied filter values are never trusted for
       // room membership (they can still be used to filter query results,
       // just not to join another clinic's/doctor's broadcast room).
-      const dynamicFilters = filters as Record<string, string>;
+      const dynamicFilters = (filters ?? {}) as Record<string, string>;
       if (dynamicFilters['clinicId'] && dynamicFilters['clinicId'] === session.tenantId) {
         void client.join(`clinic:${dynamicFilters['clinicId']}`);
       }
@@ -391,20 +428,40 @@ export class QueueStatusGateway
     }
   }
 
-  broadcastQueueMetrics(queueName: string, metrics: unknown) {
+  /**
+   * @param clinicId - when the update belongs to one clinic, only that clinic's subscribers get
+   *   it (a queue name like `queue:clinic:<doctorId>` does not itself prove the tenant).
+   */
+  broadcastQueueMetrics(queueName: string, metrics: unknown, clinicId?: string) {
     const updateData = {
       queueName,
       metrics,
       timestamp: nowIso(),
     };
 
-    const subscribers = this.queueSubscriptions.get(queueName);
-    if (subscribers) {
-      subscribers.forEach(clientId => {
-        this.server.to(clientId).emit('queue_metrics_update', updateData);
-      });
-    }
+    this.forEachSubscriber(queueName, clinicId, clientId => {
+      this.server.to(clientId).emit('queue_metrics_update', updateData);
+    });
     this.updateConnectionMetrics();
+  }
+
+  private forEachSubscriber(
+    queueName: string,
+    clinicId: string | undefined,
+    send: (clientId: string) => void
+  ): void {
+    const subscribers = this.queueSubscriptions.get(queueName);
+    if (!subscribers) return;
+    subscribers.forEach(clientId => {
+      const session = this.connectedClients.get(clientId);
+      if (!session) return;
+      if (clinicId && session.tenantId !== clinicId && !this.isSuperAdmin(clientId)) return;
+      send(clientId);
+    });
+  }
+
+  private isSuperAdmin(clientId: string): boolean {
+    return this.clientRoles.get(clientId) === 'SUPER_ADMIN';
   }
 
   private async sendQueueSnapshot(client: Socket, queueName: string) {
@@ -421,9 +478,30 @@ export class QueueStatusGateway
     }
   }
 
-  private validateQueueAccess(_tenantId: string, _queueName: string): void {
-    // Basic validation
-    return;
+  /**
+   * Queue subscriptions expose queue state (job counts, appointment-queue activity), so only
+   * clinic staff may subscribe; tenant isolation is enforced at delivery (forEachSubscriber).
+   * A patient's own position reaches them on `user:<id>` in the main namespace instead.
+   */
+  private validateQueueAccess(clientId: string, queueName: unknown): void {
+    if (!isStaffRole(this.clientRoles.get(clientId))) {
+      throw new HealthcareError(
+        ErrorCode.AUTH_INSUFFICIENT_PERMISSIONS,
+        'Queue subscriptions are limited to clinic staff',
+        undefined,
+        undefined,
+        'QueueStatusGateway.validateQueueAccess'
+      );
+    }
+    if (typeof queueName !== 'string' || !QUEUE_NAME_PATTERN.test(queueName)) {
+      throw new HealthcareError(
+        ErrorCode.VALIDATION_INVALID_FORMAT,
+        'Invalid queue name',
+        undefined,
+        undefined,
+        'QueueStatusGateway.validateQueueAccess'
+      );
+    }
   }
 
   private getAccessibleQueues(_tenantId: string): string[] {

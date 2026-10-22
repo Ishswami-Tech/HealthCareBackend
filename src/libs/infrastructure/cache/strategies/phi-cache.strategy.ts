@@ -146,9 +146,11 @@ export class PHICacheStrategy extends BaseCacheStrategy {
    */
   private async logPHIAccess(key: string, operation: string): Promise<void> {
     try {
+      // DEBUG: this fired on every PHI cache read (~12% of all log lines). The HIPAA access
+      // trail is the PHI_ACCESS/AUDIT logging done by the services, not this cache-level line.
       await this.loggingService.log(
         LogType.CACHE,
-        LogLevel.INFO,
+        LogLevel.DEBUG,
         `PHI cache access: ${operation}`,
         'PHICacheStrategy',
         {

@@ -19,10 +19,18 @@ import {
   BadRequestException,
   ForbiddenException,
   Inject,
+  Optional,
   forwardRef,
   Res,
+  ServiceUnavailableException,
+  UseInterceptors,
 } from '@nestjs/common';
 import { AppointmentsService } from './appointments.service';
+import { AppointmentResponseRedactionInterceptor } from './core/appointment-response-redaction.interceptor';
+import {
+  assertAppointmentResultOk,
+  assertUnknownAppointmentResultOk,
+} from './core/appointment-result-http.util';
 // HealthService removed - unused in controller
 import {
   ApiTags,
@@ -56,9 +64,10 @@ import {
   PatientCache,
   InvalidatePatientCache,
   InvalidateAppointmentCache,
+  InvalidateAppointmentCacheByTags,
   Public,
 } from '@core/decorators';
-import { isSameIstDay, startOfIstDay } from '../../libs/utils/clock.util';
+import { startOfIstDay } from '../../libs/utils/clock.util';
 import {
   CreateAppointmentDto,
   UpdateAppointmentDto,
@@ -106,13 +115,16 @@ import { CheckInService } from './plugins/checkin/check-in.service';
 import { AppointmentQueueService } from '@infrastructure/queue';
 import {
   CheckInLocationService,
-  VIDEO_CHECK_IN_REJECTION_MESSAGE,
   type CheckInAppointmentSummary,
   type ProcessedCheckIn,
 } from './plugins/therapy/check-in-location.service';
-import { assessCheckInTiming } from '@services/appointments/core/check-in-presence.util';
-import { computeAppointmentStartTime } from '@services/appointments/core/confirmation-window.util';
-import { isVideoCallAppointmentType } from '@core/types/appointment-guards.types';
+import { RegenerateLocationQrDto } from '@services/clinic-ops/dto/clinic-ops.dto';
+import { CheckInLogService } from '@services/clinic-ops/services/check-in-log.service';
+import { computeCheckInWindow } from '@utils/in-person-flow.util';
+import { CHECK_IN_EVENT_NAMES, buildCheckInEventPayload } from './core/check-in-events.util';
+import { InPersonCheckInService } from './in-person/in-person-check-in.service';
+import type { InPersonCheckInResult } from './in-person/in-person.types';
+import { InPersonDeskService } from './in-person/in-person-desk.service';
 import {
   buildAppointmentDetailCacheKey,
   buildAppointmentListCacheKey,
@@ -132,15 +144,23 @@ import type {
   CheckedInAppointmentsResponse,
 } from '@core/types/appointment.types';
 import type { AppointmentWithRelations } from '@core/types/database.types';
+import { isBillingBlindRole, stripBillingFields } from '@core/interceptors/billing-redaction.util';
+import { unverifiedRoleClaim } from '@core/interceptors/public-role-claim.util';
 
 type CheckInServiceInput = Parameters<CheckInLocationService['processCheckIn']>[0];
-type CheckInServiceOptions = NonNullable<Parameters<CheckInLocationService['processCheckIn']>[2]>;
 
-/** Cache entries a check-in changes: the appointment detail and the patient's lists. */
-const CHECK_IN_CACHE_INVALIDATION = {
-  patterns: ['appointments:detail:*', 'appointments:upcoming:*', 'appointments:my:*'],
-  tags: ['appointments', 'appointment_data', 'check_in'],
-};
+/**
+ * Cache entries a check-in changes: the appointment detail and the patient's lists. Tags only
+ * (no keyspace SCAN per check-in): those reads are all registered in these tag sets.
+ */
+const CHECK_IN_CACHE_TAGS = [
+  'appointments',
+  'appointment_data',
+  'appointment_details',
+  'upcoming_appointments',
+  'my_appointments',
+  'check_in',
+];
 
 /**
  * Largest page the list endpoints serve. Staff dashboards ask for a whole day/week at once
@@ -207,6 +227,8 @@ export function parseAppointmentTypeFilter(type: unknown): AppointmentType | und
   required: true,
 })
 @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+// No credential (password hash ...) ever leaves an appointment route; reception gets no clinical keys.
+@UseInterceptors(AppointmentResponseRedactionInterceptor)
 @UsePipes(
   new ValidationPipe({
     transform: true,
@@ -240,7 +262,17 @@ export class AppointmentsController {
     @Inject(forwardRef(() => LocationQrService))
     private readonly locationQrService: LocationQrService,
     @Inject(forwardRef(() => AppointmentAnalyticsService))
-    private readonly analyticsService: AppointmentAnalyticsService
+    private readonly analyticsService: AppointmentAnalyticsService,
+    // Optional: the check-in log must never be a reason a scan cannot run.
+    @Optional() private readonly checkInLog?: CheckInLogService,
+    // V2: the one shared in-person check-in (QR + reception one-click). Optional for old harnesses.
+    @Optional()
+    @Inject(forwardRef(() => InPersonCheckInService))
+    private readonly inPersonCheckIn?: InPersonCheckInService,
+    // Undo a mistaken no-show (PATCH status back to CONFIRMED / SCHEDULED). Optional for harnesses.
+    @Optional()
+    @Inject(forwardRef(() => InPersonDeskService))
+    private readonly inPersonDesk?: InPersonDeskService
   ) {}
 
   private parseStatusFilter(status?: string): {
@@ -273,46 +305,11 @@ export class AppointmentsController {
     notes?: string;
     overrideReason?: string;
   }): Promise<void> {
-    const checkedInAt = nowIso();
-    const payload = {
-      appointmentId: params.appointmentId,
-      clinicId: params.clinicId,
-      userId: params.patientId || params.checkedInBy,
-      patientId: params.patientId,
-      doctorId: params.doctorId,
-      locationId: params.locationId,
-      checkedInBy: params.checkedInBy,
-      confirmedBy: params.checkedInBy,
-      checkInMethod: params.checkInMethod,
-      checkedInAt,
-      appointment: {
-        appointmentId: params.appointmentId,
-        id: params.appointmentId,
-        clinicId: params.clinicId,
-        patientId: params.patientId,
-        doctorId: params.doctorId,
-        locationId: params.locationId,
-        checkedInAt,
-        status: AppointmentStatus.CONFIRMED,
-      },
-      metadata: {
-        appointmentId: params.appointmentId,
-        clinicId: params.clinicId,
-        patientId: params.patientId,
-        doctorId: params.doctorId,
-        locationId: params.locationId,
-        checkedInBy: params.checkedInBy,
-        confirmedBy: params.checkedInBy,
-        checkInMethod: params.checkInMethod,
-        checkedInAt,
-        notes: params.notes,
-        overrideReason: params.overrideReason,
-        source: params.source,
-      },
-    };
-
-    await this.eventService.emit('appointment.checked_in', payload);
-    await this.eventService.emit('appointment.confirmed', payload);
+    // One payload shape for every check-in path (see core/check-in-events.util).
+    const payload = buildCheckInEventPayload(params);
+    for (const name of CHECK_IN_EVENT_NAMES) {
+      await this.eventService.emit(name, payload);
+    }
   }
 
   /**
@@ -403,61 +400,6 @@ export class AppointmentsController {
     }
 
     return checkIn;
-  }
-
-  /** The processCheckIn input / options for a scan-qr request on one of the caller's appointments. */
-  private buildScanCheckIn(
-    appointment: AppointmentWithRelations,
-    location: CheckInLocation,
-    scanDto: ScanLocationQRDto,
-    userId: string,
-    userRole: string | undefined,
-    isStaff: boolean
-  ): { data: CheckInServiceInput; options: CheckInServiceOptions } {
-    const data: CheckInServiceInput = {
-      appointmentId: appointment.id,
-      locationId: location.id,
-      patientId: appointment.patientId || userId,
-    };
-    // Staff (reception desk / clinical roles) never need to prove where they are, so their
-    // coordinates are neither required nor validated. A patient's scan is the presence proof;
-    // coordinates they do send must be valid and inside the location geofence. They are passed on
-    // as sent: the service parses them and rejects a malformed or out-of-fence position with a 400.
-    if (!isStaff && scanDto.coordinates !== undefined) {
-      data.coordinates = scanDto.coordinates as unknown as { lat: number; lng: number };
-    }
-    if (scanDto.deviceInfo !== undefined) {
-      data.deviceInfo = scanDto.deviceInfo;
-    }
-    return {
-      data,
-      options: {
-        actor: { userId, role: userRole },
-        presence: isStaff ? 'skip' : 'if-supplied',
-      },
-    };
-  }
-
-  private async emitScanCheckInEvents(
-    appointment: AppointmentWithRelations,
-    location: CheckInLocation,
-    clinicId: string,
-    userId: string
-  ): Promise<void> {
-    const doctorId =
-      (appointment as { doctorId?: string; doctor?: { id: string } }).doctorId ||
-      appointment.doctor?.id ||
-      '';
-    await this.emitCheckInEvents({
-      appointmentId: appointment.id,
-      clinicId,
-      patientId: appointment.patientId || userId,
-      checkedInBy: userId,
-      checkInMethod: 'qr',
-      source: 'AppointmentsController.scanLocationQRAndCheckIn',
-      ...(location.id ? { locationId: location.id } : {}),
-      ...(doctorId ? { doctorId } : {}),
-    });
   }
 
   /** Best effort: the queue position is informational and never fails a check-in. */
@@ -630,11 +572,14 @@ export class AppointmentsController {
         { userId, clinicId }
       );
 
-      const result = await this.appointmentService.createAppointment(
-        appointmentData,
-        userId,
-        clinicId,
-        req.user?.role || Role.PATIENT
+      // A refused booking is an HTTP error (400 / 409), never a 201 with success: false.
+      const result = assertAppointmentResultOk(
+        await this.appointmentService.createAppointment(
+          appointmentData,
+          userId,
+          clinicId,
+          req.user?.role || Role.PATIENT
+        )
       );
 
       await this.loggingService.log(
@@ -687,21 +632,32 @@ export class AppointmentsController {
   @ApiOperation({
     summary: 'Get backend-owned appointment service catalog',
     description:
-      'Returns bookable appointment and treatment metadata used by frontend booking, queue, and role dashboards.',
+      'Returns appointment and treatment metadata used by frontend booking, queue, and role dashboards. ' +
+      'Every catalog entry is returned; `bookable` marks the services a patient can pick in the booking ' +
+      'dialog for the clinic in X-Clinic-ID (clinic setting appointmentSettings.bookableTreatmentTypes, ' +
+      'default GENERAL_CONSULTATION, FOLLOW_UP, SPECIAL_CASE, GERIATRIC_CARE).',
   })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Appointment service catalog retrieved successfully',
     type: () => AppointmentServiceCatalogResponseDto,
   })
-  getAppointmentServiceCatalog(): ServiceResponse<AppointmentServiceCatalogResponseDto> {
-    const services = this.appointmentService.getAppointmentServiceCatalog();
+  async getAppointmentServiceCatalog(
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<AppointmentServiceCatalogResponseDto>> {
+    const services = await this.appointmentService.getAppointmentServiceCatalogForClinic(
+      req?.clinicContext?.clinicId
+    );
 
-    return {
+    const response = {
       success: true,
       data: { services },
       message: 'Appointment service catalog retrieved successfully',
     };
+    // Public route: request.user is never set, so the global billing-redaction interceptor cannot
+    // see a DOCTOR / ASSISTANT_DOCTOR here. Strip the fees for those roles from the token claim
+    // (patients keep the video fee they need to book).
+    return isBillingBlindRole(unverifiedRoleClaim(req)) ? stripBillingFields(response) : response;
   }
 
   @Get('assistant-coverage')
@@ -766,7 +722,8 @@ export class AppointmentsController {
   @Post('video/propose')
   @RateLimitAPI()
   @HttpCode(HttpStatus.CREATED)
-  @Roles(Role.PATIENT, Role.RECEPTIONIST)
+  // V2: reception never books video visits; patients book them in the app.
+  @Roles(Role.PATIENT)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'create')
   @InvalidateAppointmentCache({
@@ -1284,11 +1241,17 @@ export class AppointmentsController {
       const clinicId = req.clinicContext?.clinicId;
       const currentUserId = req.user?.sub;
       const role = req.user?.role || Role.PATIENT;
-      const receptionistLocationId = req.clinicContext?.locationId;
 
       if (!clinicId) {
         throw this.errors.validationError('clinicId', 'Clinic context is required', context);
       }
+
+      // A receptionist works at ONE location, taken from the staff assignment on the server (never
+      // from the query / header): the list is always that location's appointments.
+      const receptionistLocationId =
+        String(role) === String(Role.RECEPTIONIST) && currentUserId
+          ? await this.appointmentService.resolveReceptionistLocation(currentUserId, clinicId)
+          : undefined;
 
       // Patients can only access their own appointments
       if (req.user?.role === Role.PATIENT) {
@@ -1328,10 +1291,7 @@ export class AppointmentsController {
         }
       );
 
-      const effectiveLocationId =
-        String(role) === String(Role.RECEPTIONIST) && receptionistLocationId
-          ? receptionistLocationId
-          : locationId;
+      const effectiveLocationId = receptionistLocationId ?? locationId;
 
       const filters: AppointmentFilters & {
         statusList?: AppointmentStatus[];
@@ -1467,6 +1427,10 @@ export class AppointmentsController {
     } catch (_error) {
       if (_error instanceof HealthcareError) {
         this.errors.handleError(_error, context);
+        throw _error;
+      }
+      // 403 RECEPTION_WRONG_LOCATION (and other HTTP answers) reach the client as they are.
+      if (_error instanceof HttpException) {
         throw _error;
       }
 
@@ -2148,12 +2112,27 @@ export class AppointmentsController {
         }
       }
 
-      const result = await this.appointmentService.updateAppointment(
-        id,
-        updateData,
-        currentUserId || '',
-        clinicId,
-        req.user?.role || Role.PATIENT
+      // Product rule (same as PATCH /:id/status and DELETE /:id): a DOCTOR does not cancel
+      // appointments. The generic update accepts a status, so it needs the rule too.
+      if (
+        req.user?.role === Role.DOCTOR &&
+        String(updateData?.status ?? '').toUpperCase() === 'CANCELLED'
+      ) {
+        throw this.errors.insufficientPermissions(
+          'Doctors cannot cancel appointments. Ask the reception desk or clinic admin.'
+        );
+      }
+
+      // A refusal (invalid transition, conflict, not found) is its HTTP error (409 / 404 / 400),
+      // not a 200 with success: false that a client would show as saved.
+      const result = assertAppointmentResultOk(
+        await this.appointmentService.updateAppointment(
+          id,
+          updateData,
+          currentUserId || '',
+          clinicId,
+          req.user?.role || Role.PATIENT
+        )
       );
 
       await this.loggingService.log(
@@ -2249,14 +2228,8 @@ export class AppointmentsController {
    */
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
-  @Roles(
-    Role.PATIENT,
-    Role.RECEPTIONIST,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
-    Role.NURSE,
-    Role.CLINIC_ADMIN
-  )
+  // Product rule: a DOCTOR does not cancel appointments (reception / clinic admin / the patient do).
+  @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.ASSISTANT_DOCTOR, Role.NURSE, Role.CLINIC_ADMIN)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: true,
@@ -2359,12 +2332,15 @@ export class AppointmentsController {
         }
       }
 
-      const result = await this.appointmentService.cancelAppointment(
-        id,
-        'Cancelled by user',
-        currentUserId || '',
-        clinicId,
-        req.user?.role || Role.PATIENT
+      // A refused cancellation (wrong status, video booking ...) is a 409 / 404, never a 200.
+      const result = assertAppointmentResultOk(
+        await this.appointmentService.cancelAppointment(
+          id,
+          'Cancelled by user',
+          currentUserId || '',
+          clinicId,
+          req.user?.role || Role.PATIENT
+        )
       );
 
       // Log successful operation
@@ -2392,6 +2368,10 @@ export class AppointmentsController {
     } catch (_error) {
       if (_error instanceof HealthcareError) {
         this.errors.handleError(_error, context);
+        throw _error;
+      }
+      // A refusal (404 / 409) is the answer, not an internal failure.
+      if (_error instanceof HttpException) {
         throw _error;
       }
 
@@ -2637,12 +2617,38 @@ export class AppointmentsController {
         }
       }
 
-      const result = await this.appointmentService.updateStatus(
+      // Product rule: a DOCTOR does not cancel appointments (reception / clinic admin / the patient do).
+      if (
+        req.user?.role === Role.DOCTOR &&
+        String(updateDto.status).toUpperCase() === 'CANCELLED'
+      ) {
+        throw this.errors.insufficientPermissions(
+          'Doctors cannot cancel appointments. Ask the reception desk or clinic admin.'
+        );
+      }
+
+      // NO_SHOW -> CONFIRMED / SCHEDULED is the "undo no-show" of the desk: one implementation
+      // (InPersonDeskService) that also puts a checked-in patient back into the live queue.
+      const undone = await this.inPersonDesk?.undoNoShowIfApplicable(
         appointmentId,
-        updateDto,
-        userId,
+        String(updateDto.status),
         clinicId,
-        req.user?.role || 'USER'
+        { userId: String(req.user?.sub ?? userId), role: String(req.user?.role ?? '') }
+      );
+      if (undone) {
+        return { success: true, data: undone, message: 'No-show undone' };
+      }
+
+      // A refusal from the state machine (e.g. CANCELLATION_NOT_ALLOWED for a checked-in visit)
+      // is its HTTP error (409 with the core message), never "updated to X" with success: true.
+      const result = assertUnknownAppointmentResultOk(
+        await this.appointmentService.updateStatus(
+          appointmentId,
+          updateDto,
+          userId,
+          clinicId,
+          req.user?.role || 'USER'
+        )
       );
 
       await this.loggingService.log(
@@ -2665,9 +2671,13 @@ export class AppointmentsController {
         message: `Appointment status updated to ${updateDto.status}`,
       };
     } catch (error) {
+      // A business refusal (4xx, e.g. 409 consultation in progress) is expected traffic: WARN.
+      const refused =
+        (error instanceof HttpException && error.getStatus() < 500) ||
+        (error instanceof HealthcareError && error.getStatus() < 500);
       await this.loggingService.log(
         LogType.ERROR,
-        LogLevel.ERROR,
+        refused ? LogLevel.WARN : LogLevel.ERROR,
         `Failed to update status: ${error instanceof Error ? error.message : String(error)}`,
         context,
         {
@@ -2840,15 +2850,7 @@ export class AppointmentsController {
    */
   @Post('complete/bulk')
   @HttpCode(HttpStatus.OK)
-  @Roles(
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
-    Role.THERAPIST,
-    Role.COUNSELOR,
-    Role.NURSE,
-    Role.RECEPTIONIST,
-    Role.CLINIC_ADMIN
-  )
+  @Roles(Role.DOCTOR, Role.THERAPIST, Role.COUNSELOR, Role.CLINIC_ADMIN)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: false,
@@ -2945,14 +2947,7 @@ export class AppointmentsController {
 
   @Post(':id/complete')
   @HttpCode(HttpStatus.OK)
-  @Roles(
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
-    Role.THERAPIST,
-    Role.COUNSELOR,
-    Role.NURSE,
-    Role.RECEPTIONIST
-  )
+  @Roles(Role.DOCTOR, Role.THERAPIST, Role.COUNSELOR)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: false,
@@ -3049,13 +3044,8 @@ export class AppointmentsController {
    */
   @Post(':id/check-in')
   @HttpCode(HttpStatus.OK)
-  @Roles(
-    Role.RECEPTIONIST,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
-    Role.NURSE,
-    Role.CLINIC_LOCATION_HEAD
-  )
+  // V2: reception one-click check-in (allotted location only). The assistant / doctor never check in.
+  @Roles(Role.RECEPTIONIST, Role.CLINIC_ADMIN, Role.CLINIC_LOCATION_HEAD)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: true,
@@ -3083,7 +3073,7 @@ export class AppointmentsController {
     description:
       'The arrival was recorded but the doctor queue could not be updated. Retry the same request: it re-adds the queue entry and is otherwise idempotent',
   })
-  @InvalidateAppointmentCache(CHECK_IN_CACHE_INVALIDATION)
+  @InvalidateAppointmentCacheByTags(CHECK_IN_CACHE_TAGS)
   async checkInAppointment(
     @Param('id', ParseUUIDPipe) appointmentId: string,
     @Body(ValidationPipe) checkInDto: ProcessCheckInDto,
@@ -3103,9 +3093,15 @@ export class AppointmentsController {
         throw this.errors.authenticationError('User not authenticated', context);
       }
 
-      // Same implementation as force-check-in and scan-qr (receptionist mode: no coordinates).
-      // The request / response contract stays what the web action depends on: the body fields
-      // checkInMethod / notes / locationId are accepted and the answer is { success, data.message }.
+      // V2: the shared in-person check-in (same service as the patient QR scan), which also writes
+      // the MANUAL attempt to the check-in log. The legacy answer shape stays { success, data.message }.
+      if (this.inPersonCheckIn) {
+        await this.inPersonCheckIn.checkInManually(appointmentId, clinicId, {
+          userId,
+          role: userRole,
+        });
+        return { success: true, data: { message: 'Check-in processed successfully' } };
+      }
       const appointment = await this.checkInLocationService.getAppointmentForCheckIn(
         appointmentId,
         clinicId,
@@ -3185,14 +3181,8 @@ export class AppointmentsController {
    */
   @Post(':id/force-check-in')
   @HttpCode(HttpStatus.OK)
-  @Roles(
-    Role.PATIENT,
-    Role.RECEPTIONIST,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
-    Role.NURSE,
-    Role.CLINIC_LOCATION_HEAD
-  )
+  // V2: no check-in by the assistant doctor.
+  @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR, Role.NURSE, Role.CLINIC_LOCATION_HEAD)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: true,
@@ -3219,7 +3209,7 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.BAD_REQUEST,
     description:
-      'Video appointment, the appointment can no longer be checked in, it is not on today (IST), or (patients) it is outside the 30 min before .. 3 h after window',
+      'Video appointment, the appointment can no longer be checked in, it is not on today (IST), or (patients) it is outside the 20 min before .. 45 min after window',
   })
   @ApiResponse({
     status: HttpStatus.SERVICE_UNAVAILABLE,
@@ -3235,7 +3225,7 @@ export class AppointmentsController {
     status: HttpStatus.NOT_FOUND,
     description: 'Appointment not found',
   })
-  @InvalidateAppointmentCache(CHECK_IN_CACHE_INVALIDATION)
+  @InvalidateAppointmentCacheByTags(CHECK_IN_CACHE_TAGS)
   async forceCheckInAppointment(
     @Param('id', ParseUUIDPipe) appointmentId: string,
     @Body() forceCheckInDto: ForceCheckInDto,
@@ -3363,23 +3353,19 @@ export class AppointmentsController {
   // QR CODE CHECK-IN ENDPOINTS
   // =============================================
 
+  /** @deprecated V2: use POST /in-person/check-in. QR scanning is for patients only. */
   @Post('check-in/scan-qr')
   @RateLimitAPI()
   @HttpCode(HttpStatus.OK)
-  @Roles(
-    Role.PATIENT,
-    Role.RECEPTIONIST,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
-    Role.CLINIC_LOCATION_HEAD
-  )
+  @Roles(Role.PATIENT)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update')
-  @InvalidateAppointmentCache(CHECK_IN_CACHE_INVALIDATION)
+  @InvalidateAppointmentCacheByTags(CHECK_IN_CACHE_TAGS)
   @ApiOperation({
-    summary: 'Scan location QR code and check in',
+    summary: 'Scan location QR code and check in (deprecated: use POST /in-person/check-in)',
+    deprecated: true,
     description:
-      'Scans a location QR code and automatically checks in the patient if they have a valid appointment for that location. Validates appointment, processes check-in, and adds patient to doctor queue.',
+      'Deprecated thin delegate of POST /in-person/check-in (same InPersonCheckInService: QR validation, 20 min before .. 45 min after window, plan check, token, check-in log). Answers the legacy { success, data, message } shape.',
   })
   @ApiConsumes('application/json')
   @ApiProduces('application/json')
@@ -3418,507 +3404,95 @@ export class AppointmentsController {
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<ServiceResponse<ScanLocationQRResponseDto['data']>> {
     const context = 'AppointmentsController.scanLocationQRAndCheckIn';
-    const startTime = Date.now();
-
-    try {
-      const clinicId = req.clinicContext?.clinicId;
-      const userId = req.user?.sub;
-
-      if (!clinicId) {
-        throw this.errors.validationError('clinicId', 'Clinic context is required', context);
-      }
-
-      if (!userId) {
-        throw this.errors.authenticationError('User not authenticated', context);
-      }
-
-      await this.loggingService.log(
-        LogType.REQUEST,
-        LogLevel.INFO,
-        'Scanning location QR code for check-in',
-        context,
-        {
-          userId,
-          clinicId,
-          qrCode: scanDto.qrCode.substring(0, 20) + '...', // Log partial QR for security
-        }
-      );
-
-      // Step 1: Verify QR code format and get location
-      // First, try to parse QR code as JSON (LocationQrService format)
-      let locationIdFromQR: string | null = null;
-      let qrSignatureValid = false;
-      try {
-        const qrData = JSON.parse(scanDto.qrCode) as {
-          locationId?: string;
-          type?: string;
-        };
-        if (qrData.locationId && qrData.type === 'LOCATION_CHECK_IN') {
-          locationIdFromQR = qrData.locationId;
-          // Verify the signed poster QR (HMAC + clinic match)
-          qrSignatureValid = this.locationQrService.verifyLocationQR(
-            scanDto.qrCode,
-            qrData.locationId,
-            clinicId
-          );
-        }
-      } catch {
-        // If not JSON format, treat as direct QR code string (database lookup)
-      }
-
-      if (locationIdFromQR && !qrSignatureValid) {
-        throw this.errors.validationError(
-          'qrCode',
-          'This clinic QR code is not valid for this clinic',
-          context
-        );
-      }
-
-      // Signed poster QR (GET locations/:locationId/qr-code) carries the location id;
-      // the printed/manual code is the stored CheckInLocation.qrCode.
-      const location = locationIdFromQR
-        ? await this.checkInLocationService.getLocationById(locationIdFromQR, clinicId)
-        : await this.checkInLocationService.getLocationByQRCode(scanDto.qrCode, clinicId);
-
-      // Appointments reference ClinicLocation ids; a CheckInLocation links to one via locationId.
-      const appointmentLocationId = location.locationId || location.id;
-
-      if (!location.isActive) {
-        throw this.errors.validationError('location', 'Check-in location is not active', context, {
-          locationId: location.id,
-        });
-      }
-
-      // If QR code was in JSON format, verify it matches the location
-      if (
-        locationIdFromQR &&
-        locationIdFromQR !== location.id &&
-        locationIdFromQR !== location.locationId
-      ) {
-        throw this.errors.validationError(
-          'qrCode',
-          'QR code does not match the location',
-          context,
-          { qrLocationId: locationIdFromQR, dbLocationId: location.id }
-        );
-      }
-
-      const userRole = req.user?.role;
-      const staffRoles: string[] = [
-        Role.RECEPTIONIST,
-        Role.DOCTOR,
-        Role.ASSISTANT_DOCTOR,
-        Role.CLINIC_ADMIN,
-        Role.SUPER_ADMIN,
-        Role.NURSE,
-      ];
-      const isStaff = userRole && staffRoles.includes(userRole);
-
-      // Step 2: Resolve appointments for this location
-      let appointments: AppointmentWithRelations[] = [];
-
-      if (isStaff) {
-        if (!scanDto.appointmentId) {
-          throw this.errors.validationError(
-            'appointmentId',
-            'appointmentId is required for staff QR check-in',
-            context
-          );
-        }
-
-        const scopedAppointment = (await this.appointmentService.getAppointmentById(
-          scanDto.appointmentId,
-          clinicId
-        )) as AppointmentWithRelations | null;
-
-        // Video visits are paid and joined online; they have no clinic check-in or queue.
-        if (scopedAppointment && isVideoCallAppointmentType(scopedAppointment.type)) {
-          throw new BadRequestException(VIDEO_CHECK_IN_REJECTION_MESSAGE);
-        }
-
-        if (
-          scopedAppointment &&
-          (scopedAppointment.locationId === appointmentLocationId ||
-            scopedAppointment.locationId === location.id) &&
-          (String(scopedAppointment.status) === String(AppointmentStatus.CONFIRMED) ||
-            String(scopedAppointment.status) === String(AppointmentStatus.SCHEDULED))
-        ) {
-          appointments = [scopedAppointment];
-        }
-      } else {
-        appointments = await this.appointmentService.findUserAppointmentsByLocation(
-          userId,
-          appointmentLocationId,
-          clinicId
-        );
-
-        // The lookup above only ever returns in-person visits. A patient who names one of their
-        // own video appointments gets the clear answer instead of a confusing "not found".
-        if (
-          scanDto.appointmentId &&
-          !appointments.some(candidate => candidate.id === scanDto.appointmentId) &&
-          (await this.appointmentService.isOwnedVideoAppointment(
-            scanDto.appointmentId,
-            clinicId,
-            userId
-          ))
-        ) {
-          throw new BadRequestException(VIDEO_CHECK_IN_REJECTION_MESSAGE);
-        }
-      }
-
-      if (appointments.length === 0) {
-        await this.loggingService.log(
-          LogType.APPOINTMENT,
-          LogLevel.WARN,
-          'No appointment found for location QR scan',
-          context,
-          {
-            userId,
-            locationId: location.id,
-            clinicId,
-          }
-        );
-
-        throw this.errors.checkInNoAppointmentFound(location.id, context);
-      }
-
-      // Step 3: Handle multiple appointments or specific appointment selection
-      const today = startOfIstDay(new Date());
-      if (!today) {
-        throw new BadRequestException('Unable to determine current date');
-      }
-
-      // Appointments without a recorded clinic arrival can still be confirmed into queue
-      const eligibleAppointments = appointments.filter(a => !a.checkedInAt);
-      const alreadyConfirmedAppointments = appointments.filter(a => !!a.checkedInAt);
-
-      if (eligibleAppointments.length === 0) {
-        const existingAppointment = scanDto.appointmentId
-          ? alreadyConfirmedAppointments.find(a => a.id === scanDto.appointmentId)
-          : alreadyConfirmedAppointments.length === 1
-            ? alreadyConfirmedAppointments[0]
-            : null;
-
-        if (!existingAppointment && alreadyConfirmedAppointments.length > 1) {
-          const sortedExistingAppointments = alreadyConfirmedAppointments.sort((a, b) => {
-            const dateA = new Date(a.date);
-            const dateB = new Date(b.date);
-
-            const aIsToday = isSameIstDay(dateA, today);
-            const bIsToday = isSameIstDay(dateB, today);
-
-            if (aIsToday && !bIsToday) return -1;
-            if (!aIsToday && bIsToday) return 1;
-            if (dateA.getTime() !== dateB.getTime()) return dateA.getTime() - dateB.getTime();
-            return a.time.localeCompare(b.time);
-          });
-
-          return {
-            success: false,
-            data: {
-              requiresSelection: true,
-              eligibleAppointments: sortedExistingAppointments.map(a => ({
-                id: a.id,
-                date: a.date,
-                time: a.time,
-                startTime: computeAppointmentStartTime(a)?.toISOString() ?? null,
-                doctor: a.doctor
-                  ? { id: a.doctor.id, name: a.doctor.user?.name || 'Doctor' }
-                  : undefined,
-                type: a.type,
-                status: a.status,
-              })),
-              message: `Multiple confirmed appointments found. Please select one to view queue status.`,
-            } as unknown as {
-              appointmentId: string;
-              locationId: string;
-              locationName: string;
-              checkedInAt: string;
-              queuePosition: number;
-              totalInQueue: number;
-              estimatedWaitTime: number;
-              doctorId: string;
-              doctorName: string;
-            },
-          };
-        }
-
-        if (!existingAppointment) {
-          throw this.errors.checkInNoAppointmentFound(location.id, context);
-        }
-
-        // The arrival is recorded, but the doctor's live queue is verified on every scan and
-        // repaired when an earlier attempt committed the arrival and then failed to queue it
-        // (that attempt answered 503, so a retry has to be able to finish the job). A failure
-        // here surfaces as 503 instead of reporting "in queue" for an entry that does not exist.
-        const repair = this.buildScanCheckIn(
-          existingAppointment,
-          location,
-          scanDto,
-          userId,
-          userRole,
-          Boolean(isStaff)
-        );
-        const repaired = await this.checkInLocationService.processCheckIn(
-          repair.data,
-          clinicId,
-          repair.options
-        );
-        if (repaired.queueRepaired) {
-          // The events the failed attempt never reached.
-          await this.emitScanCheckInEvents(existingAppointment, location, clinicId, userId);
-        }
-
-        const queuePosition = await this.lookupQueuePosition(
-          existingAppointment.id,
-          clinicId,
-          context
-        );
-
-        const doctorName = existingAppointment.doctor?.user?.name || 'Doctor';
-        const doctorId =
-          (existingAppointment as { doctorId?: string; doctor?: { id: string } }).doctorId ||
-          existingAppointment.doctor?.id ||
-          '';
-
-        return {
-          success: true,
-          data: {
-            appointmentId: existingAppointment.id,
-            locationId: location.id,
-            locationName: location.locationName,
-            checkedInAt: existingAppointment.checkedInAt?.toISOString() || nowIso(),
-            queuePosition: queuePosition?.position || 0,
-            totalInQueue: queuePosition?.totalInQueue || 0,
-            estimatedWaitTime: queuePosition?.estimatedWaitTime || 0,
-            doctorId,
-            doctorName,
-          },
-          message: 'Appointment already confirmed and in queue',
-        };
-      }
-
-      // If appointmentId is provided, use that specific appointment
-      let appointment = eligibleAppointments[0];
-      if (scanDto.appointmentId) {
-        const specifiedAppointment = eligibleAppointments.find(a => a.id === scanDto.appointmentId);
-        if (!specifiedAppointment) {
-          throw this.errors.appointmentNotFound(scanDto.appointmentId, context);
-        }
-        appointment = specifiedAppointment;
-      } else if (eligibleAppointments.length > 1) {
-        // Multiple appointments - return them for client selection
-        // Sort appointments: today first, then by date/time
-        const sortedAppointments = eligibleAppointments.sort((a, b) => {
-          const dateA = new Date(a.date);
-          const dateB = new Date(b.date);
-
-          // Today's appointments first
-          const aIsToday = isSameIstDay(dateA, today);
-          const bIsToday = isSameIstDay(dateB, today);
-
-          if (aIsToday && !bIsToday) return -1;
-          if (!aIsToday && bIsToday) return 1;
-
-          // Then by date/time
-          if (dateA.getTime() !== dateB.getTime()) {
-            return dateA.getTime() - dateB.getTime();
-          }
-
-          // Finally by time
-          return a.time.localeCompare(b.time);
-        });
-
-        // Return multiple appointments for client selection
-        return {
-          success: false,
-          data: {
-            requiresSelection: true,
-            eligibleAppointments: sortedAppointments.map(a => ({
-              id: a.id,
-              date: a.date,
-              time: a.time,
-              startTime: computeAppointmentStartTime(a)?.toISOString() ?? null,
-              doctor: a.doctor
-                ? { id: a.doctor.id, name: a.doctor.user?.name || 'Doctor' }
-                : undefined,
-              type: a.type,
-              status: a.status,
-            })),
-            message: `Multiple appointments found. Please specify appointmentId to check in.`,
-          } as unknown as {
-            appointmentId: string;
-            locationId: string;
-            locationName: string;
-            checkedInAt: string;
-            queuePosition: number;
-            totalInQueue: number;
-            estimatedWaitTime: number;
-            doctorId: string;
-            doctorName: string;
-          },
-        };
-      } else {
-        // Single appointment - proceed normally
-        appointment = eligibleAppointments[0];
-      }
-
-      if (!appointment) {
-        throw this.errors.checkInNoAppointmentFound(location.id, context);
-      }
-
-      // Step 4: Validate appointment
-      if (
-        appointment.locationId !== appointmentLocationId &&
-        appointment.locationId !== location.id
-      ) {
-        throw this.errors.checkInWrongLocation(
-          appointment.locationId,
-          appointmentLocationId,
-          context
-        );
-      }
-
-      // Check if arrival is already confirmed
-      if (appointment.checkedInAt) {
-        throw this.errors.checkInAlreadyConfirmed(appointment.id, context);
-      }
-
-      // Step 4.5: Validate time window for check-in (30 min before to 3 hours after)
-      // appointment.time is an IST wall-clock string ("15:40"); combine it with the
-      // appointment's calendar day in IST (+05:30), not setHours() which applies the
-      // server's local/UTC timezone and silently shifts the window by 5.5 hours.
-      const timing = assessCheckInTiming(appointment.date, appointment.time);
-      if (!timing) {
-        throw new BadRequestException('Unable to determine appointment time');
-      }
-      const appointmentDate = timing.appointmentAt;
-      const now = new Date();
-      const isWithinWindow = timing.isWithinWindow;
-
-      if (!isWithinWindow && !isStaff) {
-        await this.loggingService.log(
-          LogType.APPOINTMENT,
-          LogLevel.WARN,
-          'Check-in attempted outside time window',
-          context,
-          {
-            appointmentId: appointment.id,
-            appointmentTime: appointmentDate.toISOString(),
-            currentTime: now.toISOString(),
-            userId,
-            userRole,
-          }
-        );
-
-        throw this.errors.checkInTimeWindowExpired(
-          appointmentDate.toISOString(),
-          now.toISOString(),
-          context
-        );
-      }
-
-      // Log staff override if applicable
-      if (!isWithinWindow && isStaff) {
-        await this.loggingService.log(
-          LogType.APPOINTMENT,
-          LogLevel.INFO,
-          'Staff override: Check-in outside time window',
-          context,
-          {
-            appointmentId: appointment.id,
-            appointmentTime: appointmentDate.toISOString(),
-            currentTime: now.toISOString(),
-            userId,
-            userRole,
-            overrideReason: 'Staff override',
-          }
-        );
-      }
-
-      // Step 5: Process check-in using CheckInLocationService
-      const scanCheckIn = this.buildScanCheckIn(
-        appointment,
-        location,
-        scanDto,
-        userId,
-        userRole,
-        Boolean(isStaff)
-      );
-      const checkIn = await this.checkInLocationService.processCheckIn(
-        scanCheckIn.data,
-        clinicId,
-        scanCheckIn.options
-      );
-
-      // Step 6: Add to doctor queue (done by processCheckIn); read the position back
-      const queuePosition = await this.lookupQueuePosition(appointment.id, clinicId, context);
-
-      // Step 7: Get doctor information
-      const doctorName = appointment.doctor?.user?.name || 'Doctor';
-      const doctorId =
-        (appointment as { doctorId?: string; doctor?: { id: string } }).doctorId ||
-        appointment.doctor?.id ||
-        '';
-
-      // A concurrent scan already checked this appointment in; nothing changed, so no events
-      // (unless this call repaired a queue entry an earlier attempt never created).
-      if (!checkIn.alreadyCheckedIn || checkIn.queueRepaired) {
-        await this.emitScanCheckInEvents(appointment, location, clinicId, userId);
-      }
-
-      await this.loggingService.log(
-        LogType.APPOINTMENT,
-        LogLevel.INFO,
-        'Location QR check-in successful',
-        context,
-        {
-          appointmentId: appointment.id,
-          locationId: location.id,
-          userId,
-          clinicId,
-          queuePosition: queuePosition?.position,
-          responseTime: Date.now() - startTime,
-        }
-      );
-
-      return {
-        success: true,
-        data: {
-          appointmentId: appointment.id,
-          locationId: location.id,
-          locationName: location.locationName,
-          checkedInAt: checkIn.checkInTime.toISOString(),
-          queuePosition: queuePosition?.position || 0,
-          totalInQueue: queuePosition?.totalInQueue || 0,
-          estimatedWaitTime: queuePosition?.estimatedWaitTime || 0,
-          doctorId,
-          doctorName,
-        },
-        message: 'Checked in successfully',
-      };
-    } catch (error) {
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to scan QR and check in: ${error instanceof Error ? error.message : String(error)}`,
-        context,
-        {
-          qrCode: scanDto.qrCode.substring(0, 20) + '...',
-          userId: req.user?.sub,
-          clinicId: req.clinicContext?.clinicId,
-          error: error instanceof Error ? error.stack : undefined,
-          responseTime: Date.now() - startTime,
-        }
-      );
-
-      if (error instanceof HealthcareError || error instanceof HttpException) {
-        throw error;
-      }
-
-      throw this.errors.internalServerError(context);
+    const clinicId = req.clinicContext?.clinicId;
+    const userId = req.user?.sub || req.user?.id;
+    if (!clinicId) {
+      throw this.errors.validationError('clinicId', 'Clinic context is required', context);
     }
+    if (!userId) {
+      throw this.errors.authenticationError('User not authenticated', context);
+    }
+    if (!this.inPersonCheckIn) {
+      // Optional injection (forwardRef): the module always provides it, but a partially wired
+      // instance must answer a retryable 503, not an opaque 500.
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'CHECK_IN_UNAVAILABLE',
+        message:
+          'QR check-in is temporarily unavailable. Please try again in a moment or check in at the reception desk.',
+      });
+    }
+
+    // Thin delegate: the same InPersonCheckInService path as POST /in-person/check-in (QR
+    // validation, 20 min before .. 45 min after window, plan check via processCheckIn, events,
+    // check-in log, token). Only the legacy response shape is mapped here.
+    const result = await this.inPersonCheckIn.checkIn(
+      {
+        qrCode: scanDto.qrCode,
+        ...(scanDto.appointmentId ? { appointmentId: scanDto.appointmentId } : {}),
+        ...(scanDto.coordinates !== undefined
+          ? { coordinates: scanDto.coordinates as unknown as { lat: number; lng: number } }
+          : {}),
+        ...(scanDto.deviceInfo !== undefined
+          ? { deviceInfo: scanDto.deviceInfo as Record<string, unknown> }
+          : {}),
+      },
+      clinicId,
+      { userId, role: String(req.user?.role ?? '').toUpperCase() }
+    );
+    return this.toLegacyScanResponse(result, clinicId, context);
+  }
+
+  /** InPersonCheckInResult -> the `{ success, data, message }` shape scan-qr callers expect. */
+  private async toLegacyScanResponse(
+    result: InPersonCheckInResult,
+    clinicId: string,
+    context: string
+  ): Promise<ServiceResponse<ScanLocationQRResponseDto['data']>> {
+    if (result.result === 'SELECT_APPOINTMENT') {
+      return {
+        success: false,
+        data: {
+          requiresSelection: true,
+          eligibleAppointments: result.candidates.map(visit => ({
+            id: visit.appointmentId,
+            date: visit.date,
+            time: visit.time,
+            startTime:
+              computeCheckInWindow({
+                date: visit.date,
+                time: visit.time,
+              })?.startsAt.toISOString() ?? null,
+            doctor: { id: visit.doctorId, name: visit.doctorName },
+            type: 'IN_PERSON',
+            status: visit.appointmentStatus,
+          })),
+          message: 'Multiple appointments found. Please specify appointmentId to check in.',
+        } as unknown as ScanLocationQRResponseDto['data'],
+      };
+    }
+
+    const { visit, alreadyCheckedIn } = result;
+    const queuePosition = await this.lookupQueuePosition(visit.appointmentId, clinicId, context);
+    return {
+      success: true,
+      data: {
+        appointmentId: visit.appointmentId,
+        locationId: visit.locationId ?? '',
+        locationName: visit.locationName ?? '',
+        checkedInAt: visit.checkedInAt ?? nowIso(),
+        queuePosition: queuePosition?.position || visit.position || 0,
+        totalInQueue: queuePosition?.totalInQueue || 0,
+        estimatedWaitTime: queuePosition?.estimatedWaitTime || visit.etaMinutes || 0,
+        doctorId: visit.doctorId,
+        doctorName: visit.doctorName,
+        token: visit.token,
+        alreadyCheckedIn,
+      } as ScanLocationQRResponseDto['data'],
+      message: alreadyCheckedIn
+        ? 'Appointment already confirmed and in queue'
+        : 'Checked in successfully',
+    };
   }
 
   // =============================================
@@ -4491,7 +4065,11 @@ export class AppointmentsController {
       }
 
       // Generate QR code data string using LocationQrService
-      const qrCodeDataString = this.locationQrService.generateLocationQR(location.id, clinicId);
+      const qrCodeDataString = this.locationQrService.generateLocationQR(
+        location.id,
+        clinicId,
+        location.qrVersion ?? 1
+      );
 
       // Generate QR code image using QrService
       const qrCodeDataUrl = await this.qrService.generateQR(qrCodeDataString);
@@ -4549,6 +4127,53 @@ export class AppointmentsController {
 
       throw this.errors.internalServerError(context);
     }
+  }
+
+  @Post('locations/:locationId/qr-code/regenerate')
+  @RateLimitAPI({ points: 5, duration: 60 })
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.CLINIC_ADMIN, Role.CLINIC_LOCATION_HEAD, Role.SUPER_ADMIN)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'update')
+  @ApiOperation({
+    summary: 'Regenerate the clinic poster QR of a location',
+    description:
+      'Rotates the signed poster QR: the previously printed poster stops checking patients in (the scan answers that the QR was replaced) and the new QR is returned for printing.',
+  })
+  @ApiParam({ name: 'locationId', description: 'UUID of the check-in location', type: String })
+  async regenerateLocationQRCode(
+    @Param('locationId', ParseUUIDPipe) locationId: string,
+    @Body() body: RegenerateLocationQrDto | undefined,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<{
+    locationId: string;
+    locationName: string;
+    qrVersion: number;
+    qrCode: string;
+    qrCodeString: string;
+    rotatedAt: string;
+  }> {
+    const context = 'AppointmentsController.regenerateLocationQRCode';
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) {
+      throw this.errors.validationError('clinicId', 'Clinic context is required', context);
+    }
+    const rotated = await this.checkInLocationService.rotateQr(locationId, clinicId, {
+      userId: req.user?.sub ?? 'unknown',
+      role: String(req.user?.role ?? 'unknown'),
+      ...(body?.reason ? { reason: body.reason } : {}),
+    });
+    const qrVersion = rotated.qrVersion ?? 1;
+    const qrCodeString = this.locationQrService.generateLocationQR(rotated.id, clinicId, qrVersion);
+    const qrCode = await this.qrService.generateQR(qrCodeString);
+    return {
+      locationId: rotated.id,
+      locationName: rotated.locationName,
+      qrVersion,
+      qrCode,
+      qrCodeString,
+      rotatedAt: (rotated.qrRotatedAt ?? new Date()).toISOString(),
+    };
   }
 
   // =============================================

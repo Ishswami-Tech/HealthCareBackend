@@ -60,12 +60,13 @@ describe('video visit completion: the doctor and the clinic admin only', () => {
     expect(auditEntries()).toHaveLength(0);
   });
 
-  it('an assistant doctor who is the appointment doctor completes it like any treating doctor', async () => {
+  it('an assistant doctor never completes a visit, even as the appointment doctor (only the doctor does)', async () => {
     harness.db.insert('appointment', paidVideoRow());
 
-    const result = (await complete(Role.ASSISTANT_DOCTOR, 'user-doctor')) as { success: boolean };
+    const error = await rejection(complete(Role.ASSISTANT_DOCTOR, 'user-doctor'));
 
-    expect(result.success).toBe(true);
+    expect(error.getStatus()).toBe(403);
+    expect(harness.db.rows('appointment')[0]?.['status']).toBe('IN_PROGRESS');
   });
 
   it('the clinic admin completes, and the audit entry names actor, role, appointment and previous status', async () => {
@@ -314,17 +315,15 @@ describe('in-person visit completion: the treating doctor, an admin, or a coveri
     }
   );
 
-  it('an assistant doctor completes when the clinic coverage assigns them to the treating doctor', async () => {
+  it('an assistant doctor is refused even when the clinic coverage assigns them to the treating doctor', async () => {
     harness.db.insert('appointment', appointmentRow());
     jest.spyOn(harness.service, 'resolveDoctorEntityId').mockResolvedValue('doctor-assistant');
     coverage(['doctor-1']);
 
-    const result = (await complete(Role.ASSISTANT_DOCTOR, 'user-assistant')) as {
-      success: boolean;
-    };
+    const error = await rejection(complete(Role.ASSISTANT_DOCTOR, 'user-assistant'));
 
-    expect(result.success).toBe(true);
-    expect(harness.db.rows('appointment')[0]?.['status']).toBe('COMPLETED');
+    expect(error.getStatus()).toBe(403);
+    expect(harness.db.rows('appointment')[0]?.['status']).not.toBe('COMPLETED');
   });
 
   it.each([

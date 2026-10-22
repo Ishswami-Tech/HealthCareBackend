@@ -20,7 +20,23 @@ import { QueueMonitoringModule } from './monitoring/queue-monitoring.module';
 import { LoggingModule } from '@infrastructure/logging';
 import { ResilienceModule } from '@core/resilience/resilience.module';
 import { QueueHealthMonitorService } from './queue-health-monitor.service';
-import { HEALTHCARE_QUEUE, DEAD_LETTER_QUEUE } from './queue.constants';
+import {
+  HEALTHCARE_QUEUE,
+  DEAD_LETTER_QUEUE,
+  DLQ_CONFIG,
+  JOB_COMPLETION_MARKER_TTL_SECONDS,
+  JOB_RETENTION,
+} from './queue.constants';
+import { runJobOnce, type CompletionMarkerStore } from './worker-lifecycle/job-idempotency.util';
+
+/** The worker's own BullMQ connection (queue DB) as a marker store; null if unavailable. */
+async function resolveMarkerStore(worker: Worker): Promise<CompletionMarkerStore | null> {
+  try {
+    return await worker.getBackend().client;
+  } catch {
+    return null;
+  }
+}
 import { Queue, Worker, Job } from 'bullmq';
 // Use direct imports to avoid TDZ issues with barrel exports
 import { DatabaseModule } from '@infrastructure/database/database.module';
@@ -156,8 +172,10 @@ export class QueueModule {
                 maxMemoryUsage: 2 * 1024 * 1024 * 1024, // 2GB
               },
               defaultJobOptions: {
-                removeOnComplete: 1000, // Keep more completed jobs for monitoring
-                removeOnFail: 500, // Keep more failed jobs for debugging
+                // Bounded by count AND age: Dragonfly runs noeviction, so finished-job hashes
+                // must never grow without limit.
+                removeOnComplete: JOB_RETENTION.removeOnComplete,
+                removeOnFail: JOB_RETENTION.removeOnFail,
                 attempts: 5, // More retries for reliability
                 backoff: {
                   type: 'exponential',
@@ -179,8 +197,8 @@ export class QueueModule {
             name: queueName,
             defaultJobOptions: {
               delay: Math.floor(index / 20) * 200, // Optimized stagger for 1M users
-              removeOnComplete: 1000, // Keep more completed jobs for monitoring
-              removeOnFail: 500, // Keep more failed jobs for debugging
+              removeOnComplete: JOB_RETENTION.removeOnComplete,
+              removeOnFail: JOB_RETENTION.removeOnFail,
               attempts: 5, // More retries for reliability
               backoff: {
                 type: 'exponential',
@@ -193,12 +211,13 @@ export class QueueModule {
           })
         ),
         // Dead-letter queue — jobs that exhaust all retry attempts are routed here
-        // instead of being silently discarded. Never auto-removes.
+        // instead of being silently discarded. Bounded: see DLQ_CONFIG (0 would mean
+        // "delete immediately" in BullMQ, not "keep forever").
         BullModule.registerQueue({
           name: DEAD_LETTER_QUEUE,
           defaultJobOptions: {
-            removeOnComplete: 0, // Retain completed DLQ jobs forever
-            removeOnFail: 0, // Retain failed DLQ jobs forever
+            removeOnComplete: DLQ_CONFIG.removeOnComplete,
+            removeOnFail: DLQ_CONFIG.removeOnFail,
             attempts: 1, // No retries in DLQ itself
             priority: 0,
             lifo: false,
@@ -269,11 +288,26 @@ export class QueueModule {
                   for (const queueName of queueNames) {
                     const concurrency = queueName.includes('appointment') ? 200 : 100;
 
-                    const worker = new Worker(
+                    const worker: Worker = new Worker(
                       queueName,
                       async (job: Job<JobData, unknown, string>) => {
                         const typedJob = job as unknown as Job<CanonicalJobEnvelope>;
-                        return await queueProcessor.processJob(typedJob);
+                        // A job re-delivered after it already completed (worker killed before
+                        // BullMQ recorded completion) is skipped instead of run twice.
+                        const markerStore = await resolveMarkerStore(worker);
+                        const outcome = await runJobOnce(
+                          markerStore,
+                          {
+                            queueName: job.queueName,
+                            id: job.id,
+                            timestamp: job.timestamp,
+                          },
+                          JOB_COMPLETION_MARKER_TTL_SECONDS,
+                          () => queueProcessor.processJob(typedJob)
+                        );
+                        return outcome.skipped
+                          ? { success: true, skipped: true, reason: 'already completed' }
+                          : outcome.result;
                       },
                       {
                         connection: {
@@ -311,6 +345,11 @@ export class QueueModule {
                         void deadLetterQueueService.moveToDeadLetter(job, err);
                       }
                     });
+
+                    // Tracked so QueueService.onModuleDestroy and the worker's SIGTERM handler
+                    // can close it: an unclosed worker is killed mid-job on every deploy and
+                    // the job runs a second time after the stall check.
+                    workers.push(worker);
                   }
 
                   return workers;

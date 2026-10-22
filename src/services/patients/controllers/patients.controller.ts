@@ -11,7 +11,11 @@ import {
   Request,
   ForbiddenException,
   BadRequestException,
+  UseInterceptors,
+  Res,
+  HttpStatus,
 } from '@nestjs/common';
+import type { FastifyReply } from 'fastify';
 import {
   ApiOperation,
   ApiBearerAuth,
@@ -30,9 +34,11 @@ import { RequiresProfileCompletion } from '@core/decorators/profile-completion.d
 import { Roles } from '@core/decorators/roles.decorator';
 import { Role } from '@core/types/enums.types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
+import { ReceptionClinicalRedactionInterceptor } from '@core/interceptors/clinical-redaction.interceptor';
 import { CreatePatientDto, UpdatePatientDto } from '@dtos/patient.dto';
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
 import { PatientsService } from '../patients.service';
+import { contentDispositionHeader } from '@services/patient-visits/utils/patient-document-stream.util';
 import { PatientDashboardSummaryDto } from '../dashboard-summary.dto';
 
 interface MulterFile {
@@ -93,6 +99,8 @@ export const FastifyFile = createParamDecorator(
 
 @Controller('patients')
 @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard, ProfileCompletionGuard)
+// Reception reads patient lists / profiles without clinical fields (product rule 4).
+@UseInterceptors(ReceptionClinicalRedactionInterceptor)
 @RequiresProfileCompletion()
 @ApiBearerAuth()
 export class PatientsController {
@@ -200,6 +208,10 @@ export class PatientsController {
     };
     const category = readField('category');
     const description = readField('description');
+    // Report name and report date from the upload form (stored as title / report date, not
+    // folded into the free-text note).
+    const title = readField('title');
+    const reportDate = readField('reportDate');
 
     return await this.patientsService.uploadPatientDocument(
       patientId,
@@ -214,6 +226,8 @@ export class PatientsController {
       {
         ...(category ? { category } : {}),
         ...(description ? { description } : {}),
+        ...(title ? { title } : {}),
+        ...(reportDate ? { reportDate } : {}),
       }
     );
   }
@@ -281,6 +295,62 @@ export class PatientsController {
       resourceType: 'HEALTH_RECORD',
       clinicId,
     });
+  }
+
+  // Authenticated byte stream of one document (local disk or S3, HTTP Range honoured).
+  // Same access rules as the listing (PatientsService.getPatientDocumentContent):
+  // PATIENT own record / ACTIVE dependent; staff a clinical role with medical-records:read,
+  // request-clinic documents only.
+  @Get(':id/documents/:documentId/content')
+  @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN)
+  @ApiOperation({ summary: 'Download / stream a patient document' })
+  @ApiQuery({ name: 'disposition', required: false, enum: ['inline', 'attachment'] })
+  @ApiResponse({ status: 200, description: 'File bytes' })
+  async streamDocumentContent(
+    @Param('id') patientId: string,
+    @Param('documentId') documentId: string,
+    @Query('disposition') disposition: string | undefined,
+    @Request() req: ClinicAuthenticatedRequest,
+    @Res() res: FastifyReply
+  ): Promise<FastifyReply> {
+    const userId = req.user?.id || req.user?.sub;
+    const clinicId = req.clinicContext?.clinicId;
+    if (!userId || !clinicId) {
+      throw new BadRequestException('User or clinic not found in request');
+    }
+    if (disposition !== undefined && disposition !== 'inline' && disposition !== 'attachment') {
+      throw new BadRequestException('disposition must be "inline" or "attachment"');
+    }
+    const content = await this.patientsService.getPatientDocumentContent(
+      patientId,
+      documentId,
+      {
+        userId,
+        userRole: req.user?.role || Role.PATIENT,
+        operation: 'READ',
+        resourceType: 'HEALTH_RECORD',
+        clinicId,
+      },
+      req.headers.range
+    );
+
+    res.header('Content-Type', content.mimeType);
+    res.header(
+      'Content-Disposition',
+      contentDispositionHeader(
+        disposition === 'attachment' ? 'attachment' : 'inline',
+        content.fileName
+      )
+    );
+    res.header('Content-Length', String(content.contentLength));
+    res.header('Accept-Ranges', 'bytes');
+    res.header('X-Content-Type-Options', 'nosniff');
+    res.header('Cache-Control', 'private, no-store');
+    if (content.partial) {
+      res.status(HttpStatus.PARTIAL_CONTENT);
+      res.header('Content-Range', `bytes ${content.start}-${content.end}/${content.fileSize}`);
+    }
+    return res.send(content.stream);
   }
 
   // PATIENT: only own (or ACTIVE dependent's) documents they uploaded. Staff: clinical
@@ -399,10 +469,10 @@ export class PatientsController {
     if (!clinicId) {
       throw new BadRequestException('Clinic ID not found in context');
     }
+    // The doctor's list is narrowed to their patients; the assistant doctor works for any patient
+    // of the clinic (product rule 5), so it is not narrowed.
     const doctorUserId =
-      req.user?.role === Role.DOCTOR || req.user?.role === Role.ASSISTANT_DOCTOR
-        ? (req.user?.id ?? req.user?.sub)
-        : undefined;
+      req.user?.role === Role.DOCTOR ? (req.user?.id ?? req.user?.sub) : undefined;
     const hasPagination = page !== undefined || limit !== undefined || search !== undefined;
     if (hasPagination) {
       return this.patientsService.getClinicPatientsPaginated(
@@ -442,10 +512,10 @@ export class PatientsController {
     if (paramClinicId !== validatedClinicId) {
       throw new ForbiddenException('Cannot access patients from a different clinic');
     }
+    // The doctor's list is narrowed to their patients; the assistant doctor works for any patient
+    // of the clinic (product rule 5), so it is not narrowed.
     const doctorUserId =
-      req.user?.role === Role.DOCTOR || req.user?.role === Role.ASSISTANT_DOCTOR
-        ? (req.user?.id ?? req.user?.sub)
-        : undefined;
+      req.user?.role === Role.DOCTOR ? (req.user?.id ?? req.user?.sub) : undefined;
 
     const hasPagination = page !== undefined || limit !== undefined || search !== undefined;
     if (hasPagination) {

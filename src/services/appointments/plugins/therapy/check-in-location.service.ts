@@ -17,6 +17,16 @@ import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { ClinicLocationService } from '@services/clinic/services/clinic-location.service';
 import { AppointmentQueueService } from '@infrastructure/queue';
+import {
+  NoActivePlanError,
+  needsPlanLink,
+  type InPersonPlanLinker,
+} from '@services/appointments/core/check-in-plan.util';
+import {
+  assignLocationToken,
+  supportsRawSql,
+  type LocationToken,
+} from '@infrastructure/queue/src/services/location-token.allocator';
 import type { ClinicLocationResponseDto } from '@core/types/clinic.types';
 import type {
   CheckInLocation,
@@ -51,6 +61,13 @@ import {
   resolveForceCheckInRadiusMeters,
   type GeoCoordinates,
 } from '../../core/check-in-presence.util';
+import {
+  DEFAULT_TOKEN_PREFIX,
+  checkInWindowState,
+  computeCheckInWindow,
+  locationTokenPrefix,
+  readWalkInFlag,
+} from '@utils/in-person-flow.util';
 
 export {
   FORCE_CHECK_IN_MAX_DISTANCE_METERS,
@@ -111,10 +128,17 @@ interface CheckInAppointmentRow {
   status: string;
   date?: Date | string | null;
   time?: string | null;
+  /** Slot length in minutes (the patient window does not depend on it: start + 45 min, V2). */
+  duration?: number | null;
   locationId?: string | null;
   checkedInAt?: Date | null;
   subscriptionId?: string | null;
   isSubscriptionBased?: boolean | null;
+  priority?: string | null;
+  metadata?: unknown;
+  /** Durable location/day token stored at check-in (null before the first check-in). */
+  tokenNumber?: number | null;
+  tokenLabel?: string | null;
 }
 
 /**
@@ -180,7 +204,8 @@ interface CheckInTransactionClient {
   };
 }
 
-type CheckInClaimOutcome = { claimed: false } | { claimed: true; row: CheckInRow };
+type CheckInClaimOutcome =
+  { claimed: false } | { claimed: true; row: CheckInRow; token: LocationToken | null };
 
 @Injectable()
 export class CheckInLocationService {
@@ -204,30 +229,83 @@ export class CheckInLocationService {
     private readonly clinicLocationService?: ClinicLocationService
   ) {}
 
-  private async ensureActiveInPersonCoverage(appointment: {
-    clinicId?: string | null;
-    subscriptionId?: string | null;
-    isSubscriptionBased?: boolean | null;
-  }): Promise<void> {
-    if (!appointment.subscriptionId || !appointment.isSubscriptionBased) {
-      throw new BadRequestException(
-        'This in-person appointment needs an active plan before check-in'
-      );
+  /**
+   * The booking service's plan lookup + link (registered by the in-person module at start-up;
+   * injecting AppointmentsService here would be an import cycle).
+   */
+  private planLinker?: InPersonPlanLinker;
+
+  registerPlanLinker(linker: InPersonPlanLinker): void {
+    this.planLinker = linker;
+  }
+
+  private async ensureActiveInPersonCoverage(
+    appointment: CheckInAppointmentRow
+  ): Promise<CheckInAppointmentRow> {
+    // Safety net (H1): a visit booked without the plan link (older staff bookings) gets the
+    // patient's active plan linked here, the same link the booking path makes.
+    const covered = needsPlanLink(appointment)
+      ? await this.linkActivePlanIfMissing(appointment)
+      : appointment;
+    if (!covered.subscriptionId || !covered.isSubscriptionBased) {
+      // Clinic setting "walk-in without a plan": free, or with a desk bill (never for video).
+      if (await this.planLinker?.allowWithoutPlan?.(covered)) return covered;
+      throw new NoActivePlanError('missing');
     }
 
     const subscription = await this.databaseService.findSubscriptionByIdSafe(
-      appointment.subscriptionId
+      covered.subscriptionId
     );
-    if (!subscription || subscription.clinicId !== appointment.clinicId) {
-      throw new BadRequestException('The active plan for this appointment could not be found');
+    if (!subscription || subscription.clinicId !== covered.clinicId) {
+      throw new NoActivePlanError('notFound');
     }
 
     if (String(subscription.status) !== 'ACTIVE' && String(subscription.status) !== 'TRIALING') {
-      throw new BadRequestException('The active plan for this appointment is no longer valid');
+      throw new NoActivePlanError('notValid');
     }
 
     if (subscription.currentPeriodEnd < new Date()) {
-      throw new BadRequestException('The active plan coverage period has ended');
+      throw new NoActivePlanError('ended');
+    }
+    return covered;
+  }
+
+  /**
+   * Links the patient's eligible in-person plan to an appointment that has none (never throws:
+   * no plan, or a failed link, leaves the appointment as it was and check-in refuses it).
+   */
+  private async linkActivePlanIfMissing(
+    appointment: CheckInAppointmentRow
+  ): Promise<CheckInAppointmentRow> {
+    const linker = this.planLinker;
+    if (!linker) return appointment;
+    try {
+      const plan = await linker.findActivePlan(appointment.patientId, appointment.clinicId);
+      if (!plan) return appointment;
+      await linker.linkPlan(plan, appointment.id, appointment.clinicId);
+      const fresh = await this.loadAppointmentForCheckIn(appointment.id, appointment.clinicId);
+      void this.loggingService.log(
+        LogType.APPOINTMENT,
+        LogLevel.WARN,
+        'Linked the patient plan to an in-person appointment at check-in (booked without it)',
+        'CheckInLocationService',
+        { appointmentId: appointment.id, subscriptionId: plan.subscriptionId }
+      );
+      return fresh;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.APPOINTMENT,
+        LogLevel.WARN,
+        `Plan link at check-in failed: ${error instanceof Error ? error.message : String(error)}`,
+        'CheckInLocationService',
+        { appointmentId: appointment.id }
+      );
+      try {
+        // A concurrent request may have linked it meanwhile.
+        return await this.loadAppointmentForCheckIn(appointment.id, appointment.clinicId);
+      } catch {
+        return appointment;
+      }
     }
   }
 
@@ -789,6 +867,80 @@ export class CheckInLocationService {
   }
 
   /**
+   * Rotates the clinic poster QR of a location: bumps `qrVersion`, so the signed QR printed earlier
+   * stops validating (the scan answers "replaced" and the attempt is logged as EXPIRED_QR).
+   */
+  async rotateQr(
+    locationId: string,
+    clinicId: string,
+    actor: { userId: string; role: string; reason?: string }
+  ): Promise<CheckInLocation> {
+    const existing = await this.databaseService.executeHealthcareRead(async client => {
+      return await (
+        client as unknown as {
+          checkInLocation: { findFirst: <T>(args: T) => Promise<CheckInLocation | null> };
+        }
+      ).checkInLocation.findFirst({ where: { id: locationId, clinicId } } as never);
+    });
+    if (!existing) {
+      throw new NotFoundException(`Location with ID ${locationId} not found`);
+    }
+
+    const rotated = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        return await (
+          client as unknown as {
+            checkInLocation: { update: <T>(args: T) => Promise<CheckInLocation> };
+          }
+        ).checkInLocation.update({
+          where: { id: locationId },
+          data: { qrVersion: { increment: 1 }, qrRotatedAt: new Date() },
+        } as never);
+      },
+      {
+        userId: actor.userId,
+        userRole: actor.role,
+        clinicId,
+        resourceType: 'CHECK_IN_LOCATION',
+        operation: 'QR_REGENERATE',
+        resourceId: locationId,
+        details: actor.reason ? { reason: actor.reason } : {},
+      }
+    );
+
+    // Every cached copy still carries the old version: drop them all.
+    const keys = [
+      `checkin-location:id:${clinicId}:${locationId}`,
+      `checkin-location:id:all:${locationId}`,
+      `checkin-locations:clinic:${clinicId}:all`,
+      `checkin-locations:clinic:${clinicId}:true`,
+      `checkin-locations:clinic:${clinicId}:false`,
+      ...(existing.qrCode
+        ? [
+            `checkin-location:qr:${clinicId}:${existing.qrCode}`,
+            `checkin-location:qr:all:${existing.qrCode}`,
+          ]
+        : []),
+    ];
+    for (const key of keys) {
+      await this.cacheService.del(key);
+    }
+    await this.cacheService.invalidateCacheByTag('qr_codes');
+    if (rotated.locationId && this.locationCacheService) {
+      await this.locationCacheService.invalidateLocation(rotated.locationId, clinicId);
+    }
+
+    await this.loggingService.log(
+      LogType.BUSINESS,
+      LogLevel.INFO,
+      'Check-in location QR regenerated',
+      'CheckInLocationService',
+      { locationId, clinicId, qrVersion: rotated.qrVersion }
+    );
+    return rotated;
+  }
+
+  /**
    * Delete check-in location
    */
   async deleteCheckInLocation(locationId: string, clinicId?: string): Promise<void> {
@@ -961,6 +1113,7 @@ export class CheckInLocationService {
       await this.ensureActiveInPersonCoverage(appointment);
 
       const checkedInAt = new Date();
+      const tokenPrefix = await this.tokenPrefixOf(appointment.locationId || data.locationId);
       const outcome = await this.databaseService.executeInTransaction<CheckInClaimOutcome>(
         async client => {
           const tx = client as unknown as CheckInTransactionClient;
@@ -996,7 +1149,13 @@ export class CheckInLocationService {
             : await tx.checkIn.create({
                 data: { appointmentId: data.appointmentId, ...rowData },
               });
-          return { claimed: true, row };
+          // Durable token (audit P0-1): next number of the location/day series from the
+          // database counter, stored on the appointment in this same transaction, so a
+          // checked-in appointment always holds its token and a retry returns the same one.
+          const token = supportsRawSql(client)
+            ? await assignLocationToken(client, data.appointmentId, { prefix: tokenPrefix })
+            : null;
+          return { claimed: true, row, token };
         }
       );
 
@@ -1023,9 +1182,16 @@ export class CheckInLocationService {
       try {
         // The live doctor queue is not part of the database transaction; a failure here is
         // retry-safe because the idempotent branch above re-queues a CONFIRMED arrival.
-        await this.ensureQueued(appointment, data);
+        const queued: CheckInAppointmentRow = outcome.token
+          ? {
+              ...appointment,
+              tokenNumber: outcome.token.tokenNumber,
+              tokenLabel: outcome.token.tokenLabel,
+            }
+          : appointment;
+        await this.ensureQueued(queued, data);
       } finally {
-        await this.invalidateCheckInCaches(data.appointmentId, data.patientId);
+        await this.invalidateCheckInCaches(data.appointmentId, data.patientId, appointment.userId);
       }
 
       await this.loggingService.log(
@@ -1185,7 +1351,7 @@ export class CheckInLocationService {
    * When an arrival may be recorded. The live queue is keyed by today's IST date, so no caller
    * may check in an appointment that is not on today's IST date (a patient would otherwise end
    * up CONFIRMED in today's queue for next week's visit). A patient, or a caller that did not
-   * identify itself (fail closed), must also be inside the 30 min before .. 3 h after window;
+   * identify itself (fail closed), must also be inside the 20 min before .. 45 min after window (V2);
    * staff may check in outside it on the same day.
    */
   private assertCheckInTiming(
@@ -1196,13 +1362,24 @@ export class CheckInLocationService {
     if (!timing) {
       throw new BadRequestException(CHECK_IN_TIME_UNKNOWN_MESSAGE);
     }
-    if (!timing.isSameIstDay) {
-      throw createCheckInNotTodayException();
-    }
 
     const role = String(actor?.role ?? '').toUpperCase();
-    if (!STAFF_CHECK_IN_ROLES.has(role) && !timing.isWithinWindow) {
-      throw createCheckInWindowClosedException();
+    const isStaff = STAFF_CHECK_IN_ROLES.has(role);
+    // V2 rule 3: a patient's own check-in is open from 20 min before until 45 min after the slot
+    // start (QR_WINDOW_* in in-person-flow.util). Fail closed when the slot cannot be computed.
+    const window = computeCheckInWindow(appointment);
+    const now = new Date();
+    const windowOpen = window !== null && checkInWindowState(window, now) === 'OPEN';
+    // An open patient window may cross midnight (23:45 slot at 00:10); the arrival then joins
+    // the live queue of the day the patient is actually at the desk. Staff stay same-day only.
+    if (!timing.isSameIstDay && (isStaff || !windowOpen)) {
+      throw createCheckInNotTodayException();
+    }
+    if (isStaff) {
+      return;
+    }
+    if (!windowOpen) {
+      throw createCheckInWindowClosedException(window, now);
     }
   }
 
@@ -1422,7 +1599,11 @@ export class CheckInLocationService {
         queueChanged = queueRepaired;
       } finally {
         if (queueChanged) {
-          await this.invalidateCheckInCaches(data.appointmentId, data.patientId);
+          await this.invalidateCheckInCaches(
+            data.appointmentId,
+            data.patientId,
+            appointment.userId
+          );
         }
       }
     }
@@ -1482,6 +1663,51 @@ export class CheckInLocationService {
    * lock (a stuck holder, or the cache being down) is also a 503: reporting success there would
    * leave a CONFIRMED arrival with no queue entry and no way to tell.
    */
+  /**
+   * Priority staff raised before arrival (SENIOR / PREGNANT / EMERGENCY, see POST
+   * /queue-ops/appointments/:id/priority) carries into the live queue entry at check-in.
+   */
+  private queuePriorityOf(appointment: CheckInAppointmentRow): {
+    priority?: string;
+    priorityLabel?: string;
+    priorityReason?: string;
+  } {
+    const priority = String(appointment.priority ?? '').toUpperCase();
+    if (!priority || priority === 'NORMAL') return {};
+    const meta = (appointment.metadata ?? {}) as {
+      priorityLabel?: unknown;
+      priorityReason?: unknown;
+    };
+    return {
+      priority,
+      ...(typeof meta.priorityLabel === 'string' ? { priorityLabel: meta.priorityLabel } : {}),
+      ...(typeof meta.priorityReason === 'string' ? { priorityReason: meta.priorityReason } : {}),
+    };
+  }
+
+  /** Token prefix of the queue's clinic location (never throws: falls back to K). */
+  private async tokenPrefixOf(locationId: string | undefined): Promise<string> {
+    if (!locationId) return DEFAULT_TOKEN_PREFIX;
+    try {
+      const location = await this.databaseService.executeHealthcareRead(async client => {
+        const delegate = client['clinicLocation'] as unknown as
+          | {
+              findUnique?: (args: unknown) => Promise<{ name?: string; settings?: unknown } | null>;
+            }
+          | undefined;
+        return delegate?.findUnique
+          ? await delegate.findUnique({
+              where: { id: locationId },
+              select: { name: true, settings: true },
+            })
+          : null;
+      });
+      return locationTokenPrefix(location);
+    } catch {
+      return DEFAULT_TOKEN_PREFIX;
+    }
+  }
+
   private async ensureQueued(
     appointment: CheckInAppointmentRow,
     data: ProcessCheckInDto
@@ -1491,6 +1717,7 @@ export class CheckInLocationService {
 
     try {
       const queueLocationId = appointment.locationId || data.locationId;
+      const tokenPrefix = await this.tokenPrefixOf(queueLocationId);
       await this.appointmentQueueService.checkIn(
         {
           appointmentId: data.appointmentId,
@@ -1500,6 +1727,21 @@ export class CheckInLocationService {
           appointmentType: appointment.type,
           // Queue entries are filtered by the appointment's ClinicLocation id (GET /queue?locationId=).
           ...(queueLocationId ? { locationId: queueLocationId } : {}),
+          ...this.queuePriorityOf(appointment),
+          // One token series per location per day (K-001 Kothrud, B-001 Baner, ...). The token
+          // stored on the appointment is reused; without one the queue reads / allocates it.
+          tokenPrefix,
+          ...(typeof appointment.tokenNumber === 'number' && appointment.tokenNumber > 0
+            ? {
+                tokenNumber: appointment.tokenNumber,
+                ...(appointment.tokenLabel ? { tokenLabel: appointment.tokenLabel } : {}),
+              }
+            : {}),
+          ...(readWalkInFlag(appointment.metadata) ? { isWalkIn: true } : {}),
+          // A re-queue of a recorded arrival keeps its place (M4: undo no-show, queue repair).
+          ...(appointment.checkedInAt
+            ? { checkedInAt: new Date(appointment.checkedInAt).toISOString() }
+            : {}),
         },
         'clinic'
       );
@@ -1564,10 +1806,20 @@ export class CheckInLocationService {
    * Drop the cached appointment views of a changed arrival. Runs in `finally` blocks, so a cache
    * outage is logged and must never replace the real outcome (or turn a success into a failure).
    */
-  private async invalidateCheckInCaches(appointmentId: string, patientId: string): Promise<void> {
+  private async invalidateCheckInCaches(
+    appointmentId: string,
+    patientId: string,
+    userId?: string | null
+  ): Promise<void> {
     try {
       await this.cacheService.invalidateCacheByTag(`appointment:${appointmentId}`);
       await this.cacheService.invalidateCacheByTag(`patient:${patientId}`);
+      // The patient's own reads (GET /appointments/my-appointments, /patients/me/dashboard-summary)
+      // are tagged with the user id: without this the home visit card kept "Check in with QR"
+      // for up to the cache TTL after a successful check-in.
+      if (userId) {
+        await this.cacheService.invalidateCacheByTag(`user:${userId}`);
+      }
     } catch (error) {
       await this.loggingService.log(
         LogType.SYSTEM,

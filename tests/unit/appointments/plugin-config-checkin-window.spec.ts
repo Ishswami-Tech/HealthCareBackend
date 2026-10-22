@@ -1,5 +1,6 @@
 /**
- * The check-in window has ONE definition: 30 minutes before .. 3 hours after the appointment time.
+ * The check-in window has ONE definition: 20 minutes before .. 45 minutes after the appointment
+ * time (QR_WINDOW_* in in-person-flow.util).
  * The plugin config default must be that same constant, not a second hand-typed number.
  */
 import { describe, it, expect } from '@jest/globals';
@@ -23,9 +24,9 @@ function buildService(): PluginConfigService {
 }
 
 describe('check-in window defaults', () => {
-  it('pins the product rule at 30 minutes before and 3 hours after', () => {
-    expect(CHECK_IN_WINDOW_BEFORE_MINUTES).toBe(30);
-    expect(CHECK_IN_WINDOW_AFTER_MINUTES).toBe(180);
+  it('pins the product rule at 20 minutes before and 45 minutes after', () => {
+    expect(CHECK_IN_WINDOW_BEFORE_MINUTES).toBe(20);
+    expect(CHECK_IN_WINDOW_AFTER_MINUTES).toBe(45);
   });
 
   it('defaults the confirmation plugin window to the shared constants', async () => {

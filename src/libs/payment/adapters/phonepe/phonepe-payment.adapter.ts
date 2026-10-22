@@ -14,6 +14,7 @@ import { HttpService } from '@infrastructure/http';
 import { LoggingService } from '@logging';
 import { LogType, LogLevel } from '@core/types';
 import { BasePaymentAdapter } from '../base/base-payment-adapter';
+import { getProviderOrderExpiry } from '@config/payment-window.config';
 import type * as PhonePeSdk from '@phonepe-pg/pg-sdk-node';
 import type {
   PaymentIntentOptions,
@@ -230,7 +231,8 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
       const paymentRequest = sdk.CreateSdkOrderRequest.StandardCheckoutBuilder()
         .merchantOrderId(merchantOrderId)
         .amount(amountInPaise)
-        .expireAfter(1200)
+        // The app-wide payment window (plus the provider buffer), in seconds.
+        .expireAfter(Math.round((getProviderOrderExpiry().getTime() - Date.now()) / 1000))
         .build();
 
       const client = this.getClient();

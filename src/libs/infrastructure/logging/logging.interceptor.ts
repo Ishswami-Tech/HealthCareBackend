@@ -27,6 +27,23 @@ interface HttpResponse {
   statusCode: number;
 }
 
+/**
+ * The error code of a failed request: the error's own `code` (HealthcareError), else the `code`
+ * of an HttpException body (e.g. 409 { code: 'CONSULTATION_IN_PROGRESS' }), else UNKNOWN_ERROR.
+ */
+function errorCodeOf(error: unknown): string {
+  const own = (error as { code?: unknown } | null)?.code;
+  if (typeof own === 'string' && own) return own;
+  const getResponse = (error as { getResponse?: () => unknown } | null)?.getResponse;
+  if (typeof getResponse === 'function') {
+    const body = getResponse.call(error) as { code?: unknown } | string | null;
+    if (body && typeof body === 'object' && typeof body.code === 'string' && body.code) {
+      return body.code;
+    }
+  }
+  return 'UNKNOWN_ERROR';
+}
+
 @Injectable()
 export class LoggingInterceptor implements NestInterceptor {
   private readonly SKIP_LOG_PATHS = [
@@ -108,7 +125,7 @@ export class LoggingInterceptor implements NestInterceptor {
               duration: `${duration}ms`,
               error: {
                 message: (error as Error).message,
-                code: (error as { code?: string }).code || 'UNKNOWN_ERROR',
+                code: errorCodeOf(error),
                 statusCode,
               },
             }

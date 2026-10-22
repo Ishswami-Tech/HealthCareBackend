@@ -11,6 +11,8 @@ import {
   UseGuards,
   Request,
   NotFoundException,
+  BadRequestException,
+  Optional,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -32,6 +34,8 @@ import { ClinicLocationService } from '@services/clinic/services/clinic-location
 import { ClinicIdPipe } from '@core/pipes/clinic-id.pipe';
 import { CreateClinicLocationDto, UpdateClinicLocationDto } from '@dtos/clinic.dto';
 import { Cache as CacheDecorator, InvalidateClinicCache } from '@core/decorators';
+import { CacheService } from '@infrastructure/cache/cache.service';
+import { parseWorkingHours } from './working-hours.util';
 import type {
   ClinicLocationUpdateInput,
   ClinicLocationResponseDto,
@@ -43,7 +47,36 @@ import type {
 @UseGuards(JwtAuthGuard, RolesGuard, RbacGuard)
 @Controller('clinics/:clinicId/locations')
 export class ClinicLocationController {
-  constructor(private readonly locationService: ClinicLocationService) {}
+  constructor(
+    private readonly locationService: ClinicLocationService,
+    @Optional() private readonly cacheService?: CacheService
+  ) {}
+
+  /** Validated working hours as the stored JSON string; a 400 with the reason otherwise. */
+  private storedWorkingHours(input: unknown): string {
+    const result = parseWorkingHours(input);
+    if (!result.ok) throw new BadRequestException(result.error);
+    return result.stored;
+  }
+
+  /** The location must belong to the clinic in the path (a location id alone is not a scope). */
+  private async assertLocationInClinic(id: string, clinicId: string): Promise<void> {
+    const location = await this.locationService.getClinicLocationById(id, false, clinicId);
+    if (!location || location.clinicId !== clinicId) {
+      throw new NotFoundException(`Location with ID ${id} not found`);
+    }
+  }
+
+  /**
+   * Doctor availability is computed from the location hours and cached per doctor and clinic:
+   * drop those entries so the next read uses the new hours (same keys as the appointment cache).
+   */
+  private async clearAvailabilityCache(clinicId: string): Promise<void> {
+    if (!this.cacheService) return;
+    // Clinic-bound keys only: a location change of one clinic never flushes another's slots.
+    // Best effort, as before: a cache failure never fails the location write (entries age out).
+    await this.cacheService.invalidateClinicAvailabilityCache(clinicId).catch(() => 0);
+  }
 
   @Post()
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.CLINIC_LOCATION_HEAD)
@@ -76,12 +109,9 @@ export class ClinicLocationController {
         timezone: createLocationDto.timezone ?? 'Asia/Kolkata',
         clinicId,
         locationId: `LOC-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        workingHours:
-          typeof createLocationDto.workingHours === 'string'
-            ? createLocationDto.workingHours
-            : createLocationDto.workingHours
-              ? JSON.stringify(createLocationDto.workingHours)
-              : '9:00 AM - 5:00 PM',
+        workingHours: createLocationDto.workingHours
+          ? this.storedWorkingHours(createLocationDto.workingHours)
+          : JSON.stringify({ start: '09:00', end: '17:00' }),
       },
       userId
     );
@@ -188,6 +218,7 @@ export class ClinicLocationController {
     @Request() req: { user?: { id?: string; sub?: string } }
   ): Promise<ClinicLocationResponseDto> {
     const userId = req.user?.id || req.user?.sub || 'system';
+    await this.assertLocationInClinic(id, clinicId);
     // Handle workingHours conversion properly - convert object to JSON string for ClinicLocationUpdateInput
     const updateData: ClinicLocationUpdateInput = {
       ...(updateLocationDto.name !== undefined && { name: updateLocationDto.name }),
@@ -204,14 +235,13 @@ export class ClinicLocationController {
       ...(updateLocationDto.longitude !== undefined && { longitude: updateLocationDto.longitude }),
       ...(updateLocationDto.settings !== undefined && { settings: updateLocationDto.settings }),
       ...(updateLocationDto.workingHours !== undefined && {
-        workingHours:
-          typeof updateLocationDto.workingHours === 'string'
-            ? updateLocationDto.workingHours
-            : JSON.stringify(updateLocationDto.workingHours),
+        workingHours: this.storedWorkingHours(updateLocationDto.workingHours),
       }),
     };
 
-    return await this.locationService.updateLocation(id, updateData, userId);
+    const updated = await this.locationService.updateLocation(id, updateData, userId);
+    if (updateData.workingHours !== undefined) await this.clearAvailabilityCache(clinicId);
+    return updated;
   }
 
   /** PATCH alias of PUT :id (the web sends PATCH); same body, roles, permission and cache busting. */
@@ -239,7 +269,8 @@ export class ClinicLocationController {
   }
 
   @Put(':id/working-hours')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.CLINIC_LOCATION_HEAD, Role.RECEPTIONIST)
+  // Schedule is the clinic admin's (product rule 7); reception no longer edits location hours.
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.CLINIC_LOCATION_HEAD)
   @RequireResourcePermission('clinics', 'update')
   @InvalidateClinicCache({
     tags: ['clinic_locations', 'clinic:{clinicId}', 'clinic_location:{id}'],
@@ -265,18 +296,21 @@ export class ClinicLocationController {
   @ApiParam({ name: 'id', description: 'ID of the location' })
   async updateWorkingHours(
     @Param('id') id: string,
-    @Param('clinicId', ClinicIdPipe) _clinicId: string,
+    @Param('clinicId', ClinicIdPipe) clinicId: string,
     @Body('workingHours') workingHours: unknown,
     @Request() req: { user?: { id?: string; sub?: string } }
   ): Promise<ClinicLocationResponseDto> {
     const userId = req.user?.id || req.user?.sub || 'system';
 
+    // { start: 'HH:MM', end: 'HH:MM' } (start < end) or per-day hours; anything else is a 400.
+    await this.assertLocationInClinic(id, clinicId);
     const updateData: ClinicLocationUpdateInput = {
-      workingHours:
-        typeof workingHours === 'string' ? workingHours : JSON.stringify(workingHours || {}),
+      workingHours: this.storedWorkingHours(workingHours),
     };
 
-    return await this.locationService.updateLocation(id, updateData, userId);
+    const updated = await this.locationService.updateLocation(id, updateData, userId);
+    await this.clearAvailabilityCache(clinicId);
+    return updated;
   }
 
   @Delete(':id')

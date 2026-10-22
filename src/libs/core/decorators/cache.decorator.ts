@@ -408,6 +408,22 @@ export const InvalidateAppointmentCache = (
 };
 
 /**
+ * Hot-path variant of {@link InvalidateAppointmentCache}: TAGS ONLY, no pattern deletes.
+ *
+ * Every pattern delete walks the whole Dragonfly keyspace with SCAN (thousands of keys per
+ * check-in / walk-in under load). Every cached appointment read registers its key in tag sets
+ * (`appointments` scoped to the clinic, `my_appointments`, `appointment:<id>`, ...), so the tag
+ * invalidation (SMEMBERS + DEL per tag set) already reaches them; the `clinic:<id>:appointment(s):*`
+ * globs only matched the same, already tagged entries. Use on frequent writes (check-in, walk-in).
+ */
+export const InvalidateAppointmentCacheByTags = (tags: readonly string[]) => {
+  return InvalidateCache({
+    patterns: [],
+    tags: [...new Set([...tags, 'appointments', 'appointment_data'])],
+  });
+};
+
+/**
  * Invalidate clinic cache decorator
  *
  * @param options - Cache invalidation options (invalidateClinic is automatically set)

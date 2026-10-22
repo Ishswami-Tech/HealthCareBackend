@@ -383,13 +383,14 @@ export class CreateAppointmentDto {
   @IsNotEmpty({ message: 'Patient ID is required' })
   patientId!: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: 'doctor-uuid-123',
-    description: 'Doctor ID for the appointment',
+    description:
+      'Doctor ID for the appointment. Optional: the clinic has one doctor, who is assigned when it is omitted.',
   })
+  @IsOptional()
   @IsUUID('4', { message: 'Doctor ID must be a valid UUID' })
-  @IsNotEmpty({ message: 'Doctor ID is required' })
-  doctorId!: string;
+  doctorId?: string;
 
   @ApiPropertyOptional({
     example: 'CL0001',
@@ -426,16 +427,20 @@ export class CreateAppointmentDto {
   @IsNotEmpty({ message: 'Appointment date is required' })
   appointmentDate!: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: 3,
-    description: 'Appointment duration in minutes',
+    description:
+      'Ignored: the server sets the visit length from the clinic settings by appointment type ' +
+      '(appointmentSettings.inPersonDurationMinutes, default 3 / videoDurationMinutes, default 15). ' +
+      'Still accepted (and validated) for older clients.',
     minimum: 3,
     maximum: 480,
   })
+  @IsOptional()
   @IsNumber({}, { message: 'Duration must be a number' })
   @Min(3, { message: 'Duration must be at least 3 minutes' })
   @Max(480, { message: 'Duration cannot exceed 8 hours' })
-  duration!: number;
+  duration?: number;
 
   @ApiProperty({
     example: 'IN_PERSON',
@@ -457,16 +462,16 @@ export class CreateAppointmentDto {
   treatmentType?: TreatmentType = TreatmentType.GENERAL_CONSULTATION;
 
   @ApiPropertyOptional({
-    example: 'MEDIUM',
-    description: 'Appointment priority level',
+    example: 'NORMAL',
+    description: 'Appointment priority level (default NORMAL, the same as a walk-in)',
     enum: AppointmentPriority,
-    default: AppointmentPriority.MEDIUM,
+    default: AppointmentPriority.NORMAL,
   })
   @IsOptional()
   @IsEnum(AppointmentPriority, {
     message: 'Priority must be a valid priority level',
   })
-  priority?: AppointmentPriority = AppointmentPriority.MEDIUM;
+  priority?: AppointmentPriority = AppointmentPriority.NORMAL;
 
   @ApiPropertyOptional({
     example: 'Regular checkup appointment',
@@ -603,6 +608,16 @@ export class AppointmentServiceMetadataDto {
       'GET /clinics/:id/doctors instead when this is unset.',
   })
   consultationFee?: number;
+
+  @ApiPropertyOptional({
+    example: true,
+    description:
+      'Whether a patient can pick this service in the booking dialog for the requesting clinic ' +
+      '(clinic setting appointmentSettings.bookableTreatmentTypes; default GENERAL_CONSULTATION, ' +
+      'FOLLOW_UP, SPECIAL_CASE, GERIATRIC_CARE). Informational only: booking does not reject ' +
+      'non-bookable types, so staff flows keep working.',
+  })
+  bookable?: boolean;
 }
 
 export class AppointmentServiceCatalogResponseDto {
@@ -917,6 +932,23 @@ export class AppointmentResponseDto {
   @IsOptional()
   @IsNumber({}, { message: 'Token number must be a number' })
   tokenNumber?: number | null;
+
+  @ApiPropertyOptional({
+    example: 'B-004',
+    description:
+      'Display token: location prefix + number (one series per location per day, in-person only)',
+  })
+  @IsOptional()
+  @IsString()
+  tokenLabel?: string | null;
+
+  @ApiPropertyOptional({
+    example: 'B-004',
+    description: 'Same value as tokenLabel (display token; the name the frontends read)',
+  })
+  @IsOptional()
+  @IsString()
+  token?: string | null;
 
   @ApiPropertyOptional({
     example: 3,
@@ -1313,10 +1345,10 @@ export class ProposeVideoSlotsDto {
   @IsNotEmpty()
   patientId!: string;
 
-  @ApiProperty()
+  @ApiPropertyOptional({ description: "Optional: the clinic's one doctor is used when omitted" })
+  @IsOptional()
   @IsUUID('4')
-  @IsNotEmpty()
-  doctorId!: string;
+  doctorId?: string;
 
   @ApiProperty()
   @IsClinicId()
@@ -1549,6 +1581,10 @@ export class ScanLocationQRResponseDto {
     estimatedWaitTime: number;
     doctorId: string;
     doctorName: string;
+    /** Queue token ("K-014"), same as POST /in-person/check-in visit.token. */
+    token?: string | null;
+    /** A repeated scan of an appointment that was already checked in. */
+    alreadyCheckedIn?: boolean;
   };
 
   @ApiPropertyOptional({ description: 'Error information', required: false })

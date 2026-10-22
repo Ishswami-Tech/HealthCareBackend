@@ -184,6 +184,10 @@ export class PayUPaymentAdapter extends BasePaymentAdapter {
     try {
       this.validatePaymentIntentOptions(options);
 
+      // Order expiry: PayU hosted checkout has no server-side order and the `_payment` form post
+      // has no expiry parameter, so PayU cannot refuse a late payment. The payment-window sweeps
+      // ask PayU for the txnid status (verify_payment) after window + buffer and expire the
+      // attempt when unpaid; a later payment is flagged as a late settlement by the finaliser.
       const orderId =
         options.orderId || `TXN_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 

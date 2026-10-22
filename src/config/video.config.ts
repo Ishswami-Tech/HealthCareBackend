@@ -11,6 +11,7 @@
 
 import type { VideoProviderConfig } from '@core/types/video.types';
 import { getEnv, getEnvWithDefault, getEnvBoolean } from './environment/utils';
+import { getPaymentWindowMinutes } from './payment-window.config';
 
 /**
  * Check if video is enabled
@@ -33,21 +34,13 @@ export function isVideoNoShowEnabled(): boolean {
  *
  * When a patient books a VIDEO_CALL appointment, they have this many minutes
  * to complete the payment. If the timer expires without a successful payment,
- * the appointment is auto-cancelled by the scheduler.
+ * the appointment is auto-expired by the scheduler.
  *
- * - VIDEO_CALL appointments require upfront payment (per-appointment pricing).
- * - IN_PERSON appointments use the clinic's subscription model and are not
- *   affected by this window.
- *
- * Defaults to 15 minutes.
+ * The same window applies to every payment of the app: it comes from the
+ * shared payment window (`payment-window.config.ts`, default 15 minutes).
  */
 export function getVideoPaymentWindowMinutes(): number {
-  const raw = getEnv('VIDEO_PAYMENT_WINDOW_MINUTES');
-  const parsed = raw ? Number(raw) : NaN;
-  if (Number.isFinite(parsed) && parsed > 0) {
-    return Math.min(Math.max(Math.floor(parsed), 1), 60);
-  }
-  return 15;
+  return getPaymentWindowMinutes();
 }
 
 /**

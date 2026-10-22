@@ -36,6 +36,11 @@ import {
   getEnvironment,
 } from '@config/environment/utils';
 import { LoggingInterceptor } from '@infrastructure/logging/logging.interceptor';
+import {
+  buildTrustProxyFn,
+  parseTrustedProxyHops,
+} from '@security/rate-limit/rate-limit-keys.util';
+import { BillingRedactionInterceptor } from '@core/interceptors/billing-redaction.interceptor';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import type { Server, ServerOptions } from 'socket.io';
 import cluster from 'cluster';
@@ -454,7 +459,9 @@ async function _setupWebSocketAdapter(
             });
           }
 
-          const testNamespace = server.of?.('/test');
+          // Unauthenticated echo/heartbeat namespace for local socket debugging only. Never
+          // registered outside development (it accepted anonymous connections in production).
+          const testNamespace = isDevelopment ? server.of?.('/test') : null;
           if (testNamespace && typeof testNamespace.on === 'function') {
             testNamespace.on('connection', (socket: SocketConnection) => {
               logger.log('Client connected to test namespace');
@@ -656,6 +663,21 @@ function setupProductionClustering(): boolean {
   }
 }
 
+/**
+ * Fastify `trustProxy` trusting exactly TRUSTED_PROXY_HOPS proxies (default 1 = Traefik), with
+ * the socket peer required to be a private address. Returns false for tests or an explicit 0
+ * so request.ip is the socket peer. See buildTrustProxyFn for why a plain number is not used.
+ */
+function resolveTrustProxySetting(
+  environment: string
+): ((address: string, hop: number) => boolean) | false {
+  if (environment === 'test') {
+    return false;
+  }
+  const hops = parseTrustedProxyHops(getEnv('TRUSTED_PROXY_HOPS') ?? getEnv('TRUST_PROXY'), 1);
+  return buildTrustProxyFn(hops);
+}
+
 async function bootstrap() {
   // Setup clustering for production
   if (setupProductionClustering()) {
@@ -720,7 +742,10 @@ async function bootstrap() {
       environment,
       isHorizontalScaling,
       instanceId,
-      trustProxy: envConfig.security.trustProxy === 1,
+      // Trust exactly TRUSTED_PROXY_HOPS reverse proxies (Traefik = 1; set 2 if Cloudflare proxies
+      // in front of Traefik). `true` would trust the left-most, client-controlled X-Forwarded-For
+      // entry, letting anyone pick their own rate-limit bucket. Legacy TRUST_PROXY=1 still maps to 1.
+      trustProxy: resolveTrustProxySetting(environment),
       bodyLimit:
         environment === 'production' || environment === 'staging'
           ? 50 * 1024 * 1024
@@ -963,6 +988,11 @@ async function bootstrap() {
         },
       ]);
     }
+
+    // Billing blindness for clinical roles: registered AFTER the logging interceptor and outside the
+    // `loggingService` guard so it always exists. It is a `useGlobalInterceptors` entry, so it wraps
+    // the APP_INTERCEPTOR cache interceptor and also redacts replayed cache hits.
+    middlewareManager.configureInterceptors(app, [{ interceptor: BillingRedactionInterceptor }]);
 
     logger.log('Global pipes, filters, and interceptors configured');
 

@@ -10,6 +10,7 @@ export { RoleMethods } from './role.methods';
 export { UserRoleMethods } from './user-role.methods';
 export { ClinicAdminMethods } from './clinic-admin.methods';
 export { AppointmentMethods } from './appointment.methods';
+export type { AppointmentSlotGuard } from './appointment.methods';
 export { BillingMethods } from './billing.methods';
 export { ClinicMethods } from './clinic.methods';
 export { ClinicMetricsMethods } from './clinic-metrics.methods';

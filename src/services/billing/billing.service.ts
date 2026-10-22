@@ -71,6 +71,77 @@ import {
   isAwaitingPayment,
   staleWindow,
 } from '@services/billing/stale-payment-reconcile.util';
+import {
+  CLOSED_AFTER_SETTLEMENT_REASON,
+  SUPERSEDED_REASON,
+  attemptOrderId,
+  chooseInvoiceOrderId,
+  isOpenAttempt,
+  pickCallbackPayment,
+} from '@services/billing/invoice-payment-attempt.util';
+import {
+  PAYMENT_EXPIRES_AT_KEY,
+  PAYMENT_WINDOW_BATCH_SIZE,
+  PAYMENT_WINDOW_LOCK_KEY,
+  PAYMENT_WINDOW_LOCK_TTL_SECONDS,
+  attemptExpiresAt,
+  decideWindowVerdict,
+  invoicePaymentExpiresAt,
+  isPastPaymentWindow,
+  isReadyToExpire,
+  paymentWindowEnd,
+  paymentWindowMs,
+} from '@services/billing/payment-window.util';
+import { checkCallbackBinding } from '@services/billing/callback-binding.util';
+import {
+  LEGACY_CLINIC_INVOICE_LIMIT,
+  clinicInvoiceStatusCounts,
+  sliceLegacyClinicInvoices,
+  type ClinicInvoicePage,
+  type ClinicInvoicePageQuery,
+  type LegacyClinicInvoiceList,
+} from '@services/billing/clinic-invoice-list.util';
+import {
+  isOnlineCheckoutInvoice,
+  type CheckoutInvoiceShape,
+} from '@services/billing/checkout-invoice-kind.util';
+import {
+  effectivePlanAppointmentTypes,
+  isPlanCoverableAppointmentType,
+  VIDEO_NOT_COVERED_REASON,
+} from '@services/billing/subscription-coverage.util';
+import {
+  assertPendingEditApplied,
+  assertReceiptAvailable,
+  checkInvoiceAmounts,
+  checkInvoiceEdit,
+  checkInvoicePayable,
+  TOTAL_BELOW_COLLECTED_MESSAGE,
+} from '@services/billing/invoice-amount.util';
+import {
+  planManualInvoicePayment,
+  type ManualPaymentRow,
+} from '@services/billing/manual-payment-guard.util';
+import {
+  IDEMPOTENCY_IN_FLIGHT_TTL_SECONDS,
+  IDEMPOTENCY_TTL_SECONDS,
+  idempotencyCacheKey,
+  parseIdempotencyKey,
+  readStoredResponse,
+} from '@services/billing/idempotency-key.util';
+import {
+  INVOICE_NUMBER_LOCK_KEY,
+  INVOICE_NUMBER_MAX_ATTEMPTS,
+  formatInvoiceNumber,
+  nextInvoiceSequence,
+  withInvoiceNumberRetry,
+} from '@services/billing/invoice-number.util';
+import {
+  findPurchaseBlock,
+  isDuplicatePeriodPayment,
+  isRenewalOpen,
+  renewalOpensAt,
+} from '@services/billing/subscription-purchase-guard.util';
 import { applyRefundToSplit, computePayoutSplit } from '@services/billing/payout-split.util';
 import type {
   FinalisationOutcome,
@@ -83,6 +154,8 @@ import {
   hasSubscriptionRenewalStamp,
   isAmountCovered,
   isPersistedAnomaly,
+  buildLateSettlementMetadata,
+  LATE_SETTLEMENT_REQUIRED_ACTION,
   preserveReservedSubscriptionMetadata,
   readFinalisationMarker,
   resolvePaidConfirmationExpiresAt,
@@ -102,6 +175,13 @@ import type {
 } from '@core/types/payment.types';
 import { PaymentProvider } from '@core/types/payment.types';
 import { formatDateInIST, IST_TIMEZONE, nowIso } from '@utils/date-time.util';
+import { endOfIstDay } from '@utils/clock.util';
+import {
+  buildAppointmentInvoiceDescription,
+  buildPharmacyInvoiceDescription,
+  buildPlanInvoiceDescription,
+  prescriptionReference,
+} from '@services/billing/invoice-description.util';
 import { formatCurrencyFromMinorUnits } from '@utils/currency.util';
 
 // Import centralized types
@@ -137,6 +217,20 @@ type AppointmentsServiceLike = {
 /** Name / phone joined onto staff invoice and payment rows (plain `userId` FKs, no relation). */
 type UserContact = { name: string | null; phone: string | null };
 
+/** Users matched by an invoice search (name / phone); bounds the `userId IN (...)` list. */
+const CLINIC_INVOICE_SEARCH_USER_LIMIT = 500;
+
+/** The invoice delegate calls of the clinic invoice list (paged / bounded legacy). */
+type ClinicInvoiceClient = {
+  invoice: {
+    findMany: (args: unknown) => Promise<InvoiceWithRelations[]>;
+    count: (args: { where: Record<string, unknown> }) => Promise<number>;
+    groupBy: (
+      args: unknown
+    ) => Promise<Array<{ status: unknown; _count?: { _all?: number } | undefined }>>;
+  };
+};
+
 /** One `items[]` entry of a staff invoice row (normalised from the `lineItems` JSON). */
 export type InvoiceLineItemView = {
   id: string;
@@ -168,6 +262,9 @@ type BillingAccessContext = {
   role?: string;
   clinicId?: string;
 };
+
+/** Upper bound of one "open appointment payment" request (gateway round trip included). */
+const APPOINTMENT_PAYMENT_LOCK_TTL_SECONDS = 30;
 
 @Injectable()
 export class BillingService implements OnModuleInit {
@@ -242,6 +339,8 @@ export class BillingService implements OnModuleInit {
       settleInvoice: (payment, clinicId) => this.settleInvoiceForPayment(payment, clinicId),
       isPlanAmountCovered: (subscriptionId, payment) =>
         this.isPlanAmountCovered(subscriptionId, payment),
+      isDuplicatePlanPayment: (subscriptionId, payment) =>
+        this.isDuplicatePlanPayment(subscriptionId, payment),
       renewSubscription: (subscriptionId, payment, options) =>
         this.renewSubscriptionAfterPayment(subscriptionId, {
           ...options,
@@ -315,6 +414,23 @@ export class BillingService implements OnModuleInit {
     invoiceId: string,
     task: () => Promise<boolean>
   ): Promise<boolean> {
+    // Cross-request / cross-instance idempotency: a send of the same invoice in the last 60s (a
+    // client retry or a second click) returns that attempt's result instead of messaging the
+    // patient again. The in-process lock below only covers concurrent calls.
+    const recentKey = `billing:invoice-whatsapp:recent:${invoiceId}`;
+    const cached = await this.cacheService.get<string | boolean>(recentKey).catch(() => null);
+    const recent = cached === null || cached === undefined ? null : String(cached);
+    if (recent === 'true' || recent === 'false') {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Skipping invoice WhatsApp send: the same invoice was sent within the last 60 seconds',
+        'BillingService',
+        { invoiceId }
+      );
+      return recent === 'true';
+    }
+
     const existingTask = this.invoiceWhatsAppSendLocks.get(invoiceId);
     if (existingTask) {
       await this.loggingService.log(
@@ -329,7 +445,9 @@ export class BillingService implements OnModuleInit {
 
     const taskPromise = (async () => {
       try {
-        return await task();
+        const sent = await task();
+        await this.cacheService.set(recentKey, String(sent), 60).catch(() => undefined);
+        return sent;
       } finally {
         this.invoiceWhatsAppSendLocks.delete(invoiceId);
       }
@@ -1120,6 +1238,10 @@ export class BillingService implements OnModuleInit {
           isUnlimitedAppointments: data.isUnlimitedAppointments,
         }),
         ...(data.isActive !== undefined && { isActive: data.isActive }),
+        // A plan covers in-person visits only; VIDEO_CALL is never stored as covered.
+        ...(data.appointmentTypes && {
+          appointmentTypes: effectivePlanAppointmentTypes(data.appointmentTypes),
+        }),
       });
 
       await this.loggingService.log(
@@ -1288,7 +1410,13 @@ export class BillingService implements OnModuleInit {
     }
     assertPlanWritable(existingPlan, requester);
 
-    const plan = await this.databaseService.updateBillingPlanSafe(id, data);
+    // A plan covers in-person visits only; VIDEO_CALL is never stored as covered.
+    const plan = await this.databaseService.updateBillingPlanSafe(
+      id,
+      data.appointmentTypes
+        ? { ...data, appointmentTypes: effectivePlanAppointmentTypes(data.appointmentTypes) }
+        : data
+    );
 
     await this.loggingService.log(
       LogType.SYSTEM,
@@ -1416,33 +1544,9 @@ export class BillingService implements OnModuleInit {
     });
     const now = new Date();
 
-    const hasBlockingSubscription = existingSubscriptions.some(subscription => {
-      const status = String(subscription.status);
-
-      // If it's active or trialing, ensure it's not mathematically expired
-      if (
-        status === String(SubscriptionStatus.ACTIVE) ||
-        status === String(SubscriptionStatus.TRIALING)
-      ) {
-        const targetDate = subscription.currentPeriodEnd || subscription.endDate;
-        const isExpired = targetDate && new Date(targetDate) < now;
-        return !isExpired; // If not expired, it blocks
-      }
-
-      // Do not block INCOMPLETE subscriptions; users shouldn't be locked out if they abandon a prior checkout.
-      if (status === String(SubscriptionStatus.INCOMPLETE)) {
-        return false;
-      }
-
-      // PAST_DUE subscriptions are functionally lapsed; do not block a fresh checkout
-      return false;
-    });
-
-    if (hasBlockingSubscription) {
-      throw new ConflictException(
-        'An active or pending subscription already exists for this user and plan'
-      );
-    }
+    // One plan per patient per clinic: refused while any plan of the clinic is running or
+    // another plan purchase is waiting on a live payment (the patient resumes that one).
+    await this.assertNoOtherPlanPurchase(data.userId, data.clinicId, data.planId, now);
 
     // Calculate period dates
     const startDate = data.startDate ? new Date(data.startDate) : new Date();
@@ -1861,181 +1965,237 @@ export class BillingService implements OnModuleInit {
     return updated;
   }
 
-  // ============ Invoices ============
-
-  async createInvoice(data: CreateInvoiceDto) {
-    const totalAmount = this.fromPaise(
-      this.toPaise(data.amount) + this.toPaise(data.tax || 0) - this.toPaise(data.discount || 0)
-    );
-    const maxAttempts = 3;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        const invoice = await this.createInvoiceRecordAtomically(data, totalAmount);
-        const invoiceNumber = invoice.invoiceNumber;
-
-        // Non-blocking: fire and forget all post-creation operations
-        // These MUST NOT block the invoice creation response
-        setImmediate(() => {
-          const postCreationTasks: Promise<unknown>[] = [
-            this.loggingService.log(
-              LogType.SYSTEM,
-              LogLevel.INFO,
-              'Invoice created',
-              'BillingService',
-              { invoiceId: invoice.id, invoiceNumber }
-            ),
-            this.eventService.emit('billing.invoice.created', {
-              invoiceId: invoice.id,
-              invoice,
-            }),
-            this.invalidateUserInvoiceCaches(data.userId),
-          ];
-
-          if (this.queueService) {
-            postCreationTasks.push(
-              this.queueService.addJob(
-                JobType.INVOICE_PDF,
-                'generate_pdf',
-                {
-                  invoiceId: invoice.id,
-                  clinicId: invoice.clinicId || '',
-                  userId: invoice.userId,
-                  action: 'generate_pdf',
-                  metadata: {
-                    invoiceNumber: invoice.invoiceNumber,
-                    amount:
-                      typeof invoice.amount === 'number' ? invoice.amount : Number(invoice.amount),
-                    totalAmount:
-                      typeof invoice.totalAmount === 'number'
-                        ? invoice.totalAmount
-                        : Number(invoice.totalAmount),
-                  },
-                },
-                {
-                  priority: 5, // NORMAL priority
-                  attempts: 3,
-                }
-              )
-            );
-          }
-
-          void Promise.allSettled(postCreationTasks)
-            .then(results => {
-              const rejected = results.filter(result => result.status === 'rejected');
-              if (rejected.length > 0) {
-                void this.loggingService.log(
-                  LogType.BUSINESS,
-                  LogLevel.WARN,
-                  'Invoice post-processing completed with failures',
-                  'BillingService',
-                  {
-                    invoiceId: invoice.id,
-                    invoiceNumber,
-                    failedTasks: rejected.length,
-                  }
-                );
-              }
-            })
-            .catch(() => {
-              // This should never fire (Promise.allSettled never rejects),
-              // but we guard it to prevent any unhandled rejection
-              void this.loggingService.log(
-                LogType.BUSINESS,
-                LogLevel.ERROR,
-                'Invoice post-processing promise chain failed',
-                'BillingService',
-                {
-                  invoiceId: invoice.id,
-                }
-              );
-            });
-        });
-
-        return invoice;
-      } catch (error) {
-        if (this.isInvoiceNumberUniqueConstraint(error) && attempt < maxAttempts) {
-          await this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.WARN,
-            'Invoice number collision detected, retrying with a fresh number',
-            'BillingService',
-            {
-              attempt,
-              maxAttempts,
-              clinicId: data.clinicId,
-              userId: data.userId,
-            }
-          );
-
-          continue;
-        }
-
-        await this.loggingService.log(
-          LogType.ERROR,
-          LogLevel.ERROR,
-          'Failed to create invoice',
-          'BillingService',
-          {
-            error: error instanceof Error ? error.message : 'Unknown error',
-            data,
-            attempt,
-          }
-        );
-        throw error;
+  /**
+   * Refuses a new plan purchase (409) while the patient already has a running plan in the clinic
+   * or another plan purchase there is waiting on a live payment attempt. The answer names the
+   * subscription / pending invoice so the client can show it (and resume paying it).
+   */
+  private async assertNoOtherPlanPurchase(
+    userId: string,
+    clinicId: string,
+    planId: string,
+    now: Date
+  ): Promise<void> {
+    const subscriptions = await this.databaseService.findSubscriptionsSafe({ userId, clinicId });
+    const livePendingInvoice = new Map<string, string | null>();
+    for (const subscription of subscriptions) {
+      if (String(subscription.status) !== String(SubscriptionStatus.INCOMPLETE)) {
+        continue;
+      }
+      const payments = await this.paymentStore.listSubscriptionPayments(subscription.id, clinicId);
+      const live = payments.find(
+        payment => isOpenAttempt(payment) && !isPastPaymentWindow(payment, now)
+      );
+      if (live) {
+        livePendingInvoice.set(subscription.id, live.invoiceId);
       }
     }
+    const block = findPurchaseBlock({
+      subscriptions: subscriptions.map(subscription => ({
+        id: subscription.id,
+        status: String(subscription.status),
+        planId: subscription.planId,
+        currentPeriodEnd: subscription.currentPeriodEnd,
+        endDate: subscription.endDate ?? null,
+      })),
+      planId,
+      now,
+      hasLivePayment: subscriptionId => livePendingInvoice.has(subscriptionId),
+    });
+    if (!block) {
+      return;
+    }
+    if (block.kind === 'running-plan') {
+      const opensAt = renewalOpensAt(block.subscription);
+      throw new ConflictException({
+        message: block.periodEnd
+          ? `You already have an active plan until ${formatDateInIST(block.periodEnd)}. Only one plan can be active at a time.`
+          : 'You already have an active plan. Only one plan can be active at a time.',
+        code: 'SUBSCRIPTION_ALREADY_ACTIVE',
+        subscriptionId: block.subscription.id,
+        ...(block.periodEnd ? { periodEnd: block.periodEnd.toISOString() } : {}),
+        ...(opensAt ? { renewalOpensAt: opensAt.toISOString() } : {}),
+      });
+    }
+    throw new ConflictException({
+      message:
+        'A payment for another plan is still pending. Complete or let that payment expire before choosing a new plan.',
+      code: 'SUBSCRIPTION_PAYMENT_PENDING',
+      subscriptionId: block.subscription.id,
+      pendingInvoiceId: livePendingInvoice.get(block.subscription.id) ?? null,
+    });
+  }
 
-    throw new Error('Failed to create invoice after exhausting invoice number retries');
+  // ============ Invoices ============
+
+  async createInvoice(data: CreateInvoiceDto, options: { allowZeroTotal?: boolean } = {}) {
+    // Internal callers (waived consultation fee, zero-priced prescription) may settle a zero
+    // invoice; a negative total or a discount above amount + tax is never stored.
+    const amountCheck = checkInvoiceAmounts(data, {
+      allowZeroTotal: options.allowZeroTotal ?? true,
+    });
+    if (!amountCheck.ok) {
+      throw new BadRequestException(amountCheck.message);
+    }
+    const totalAmount = amountCheck.totalAmount;
+    let invoice: Awaited<ReturnType<typeof this.createInvoiceRecordAtomically>>;
+    try {
+      // Invoice.invoiceNumber is UNIQUE: a collision (P2002) is retried with a fresh number.
+      invoice = await withInvoiceNumberRetry(
+        () => this.createInvoiceRecordAtomically(data, totalAmount),
+        {
+          maxAttempts: INVOICE_NUMBER_MAX_ATTEMPTS,
+          onCollision: (attempt, maxAttempts) =>
+            this.loggingService.log(
+              LogType.SYSTEM,
+              LogLevel.WARN,
+              'Invoice number collision detected, retrying with a fresh number',
+              'BillingService',
+              { attempt, maxAttempts, clinicId: data.clinicId, userId: data.userId }
+            ),
+        }
+      );
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to create invoice',
+        'BillingService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          data,
+        }
+      );
+      throw error;
+    }
+    const invoiceNumber = invoice.invoiceNumber;
+
+    // Non-blocking: fire and forget all post-creation operations
+    // These MUST NOT block the invoice creation response
+    setImmediate(() => {
+      const postCreationTasks: Promise<unknown>[] = [
+        this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'Invoice created',
+          'BillingService',
+          { invoiceId: invoice.id, invoiceNumber }
+        ),
+        this.eventService.emit('billing.invoice.created', {
+          invoiceId: invoice.id,
+          invoice,
+        }),
+        this.invalidateUserInvoiceCaches(data.userId),
+      ];
+
+      if (this.queueService) {
+        postCreationTasks.push(
+          this.queueService.addJob(
+            JobType.INVOICE_PDF,
+            'generate_pdf',
+            {
+              invoiceId: invoice.id,
+              clinicId: invoice.clinicId || '',
+              userId: invoice.userId,
+              action: 'generate_pdf',
+              metadata: {
+                invoiceNumber: invoice.invoiceNumber,
+                amount:
+                  typeof invoice.amount === 'number' ? invoice.amount : Number(invoice.amount),
+                totalAmount:
+                  typeof invoice.totalAmount === 'number'
+                    ? invoice.totalAmount
+                    : Number(invoice.totalAmount),
+              },
+            },
+            {
+              priority: 5, // NORMAL priority
+              attempts: 3,
+            }
+          )
+        );
+      }
+
+      void Promise.allSettled(postCreationTasks)
+        .then(results => {
+          const rejected = results.filter(result => result.status === 'rejected');
+          if (rejected.length > 0) {
+            void this.loggingService.log(
+              LogType.BUSINESS,
+              LogLevel.WARN,
+              'Invoice post-processing completed with failures',
+              'BillingService',
+              {
+                invoiceId: invoice.id,
+                invoiceNumber,
+                failedTasks: rejected.length,
+              }
+            );
+          }
+        })
+        .catch(() => {
+          // This should never fire (Promise.allSettled never rejects),
+          // but we guard it to prevent any unhandled rejection
+          void this.loggingService.log(
+            LogType.BUSINESS,
+            LogLevel.ERROR,
+            'Invoice post-processing promise chain failed',
+            'BillingService',
+            {
+              invoiceId: invoice.id,
+            }
+          );
+        });
+    });
+
+    return invoice;
   }
 
   private async createInvoiceRecordAtomically(data: CreateInvoiceDto, totalAmount: number) {
-    return this.databaseService.executeHealthcareWrite(
-      async client => {
-        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+    // ONE real transaction for lock + read of the highest number + insert: the advisory lock is
+    // transaction-scoped, so on the plain write client it was released right after the lock
+    // statement and two concurrent creates could read the same max and collide.
+    const invoice = await this.databaseService.executeInTransaction(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
 
-        // Allocate invoice number within transaction - uses advisory lock internally
-        // to serialize concurrent requests and prevent duplicate invoice numbers
-        const invoiceNumber = await this.allocateInvoiceNumberInTransaction(typedClient);
+      // Allocate invoice number within transaction - uses advisory lock internally
+      // to serialize concurrent requests and prevent duplicate invoice numbers
+      const invoiceNumber = await this.allocateInvoiceNumberInTransaction(typedClient);
 
-        return typedClient.invoice.create({
-          data: {
-            invoiceNumber,
-            userId: data.userId,
-            clinicId: data.clinicId,
-            amount: data.amount,
-            tax: data.tax || 0,
-            discount: data.discount || 0,
-            totalAmount,
-            status: data.status || InvoiceStatus.PENDING,
-            dueDate: new Date(data.dueDate),
-            billType: data.billType || 'OTHER',
-            ...(data.subscriptionId && { subscriptionId: data.subscriptionId }),
-            ...(data.description && { description: data.description }),
-            ...(data.lineItems && { lineItems: data.lineItems }),
-            ...(data.metadata && { metadata: data.metadata }),
-            ...(data.patientId && { patientId: data.patientId }),
-            ...(data.visitId && { visitId: data.visitId }),
-            ...(data.prescriptionId && { prescriptionId: data.prescriptionId }),
-            ...(data.appointmentId && { appointmentId: data.appointmentId }),
-            ...(data.paidAt && { paidAt: new Date(data.paidAt) }),
-          } as never,
-          include: {
-            subscription: true,
-            payments: true,
-          },
-        } as PrismaDelegateArgs);
-      },
-      {
-        userId: 'system',
-        userRole: 'system',
-        clinicId: data.clinicId,
-        operation: 'CREATE_INVOICE',
-        resourceType: 'INVOICE',
-        resourceId: 'pending',
-        timestamp: new Date(),
-      }
-    );
+      return typedClient.invoice.create({
+        data: {
+          invoiceNumber,
+          userId: data.userId,
+          clinicId: data.clinicId,
+          amount: data.amount,
+          tax: data.tax || 0,
+          discount: data.discount || 0,
+          totalAmount,
+          status: data.status || InvoiceStatus.PENDING,
+          dueDate: new Date(data.dueDate),
+          billType: data.billType || 'OTHER',
+          ...(data.subscriptionId && { subscriptionId: data.subscriptionId }),
+          ...(data.description && { description: data.description }),
+          ...(data.lineItems && { lineItems: data.lineItems }),
+          ...(data.metadata && { metadata: data.metadata }),
+          ...(data.patientId && { patientId: data.patientId }),
+          ...(data.visitId && { visitId: data.visitId }),
+          ...(data.prescriptionId && { prescriptionId: data.prescriptionId }),
+          ...(data.appointmentId && { appointmentId: data.appointmentId }),
+          ...(data.paidAt && { paidAt: new Date(data.paidAt) }),
+        } as never,
+        include: {
+          subscription: true,
+          payments: true,
+        },
+      } as PrismaDelegateArgs);
+    });
+    // Allocated under the lock and committed: the cached counter follows the stored number.
+    const usedSequence = invoice.invoiceNumber.match(/(\d+)$/)?.[1];
+    if (usedSequence) {
+      void this.cacheService.set('invoice:counter', String(Number(usedSequence)));
+    }
+    return invoice;
   }
 
   private async allocateInvoiceNumberInTransaction(
@@ -2045,7 +2205,7 @@ export class BillingService implements OnModuleInit {
     // This prevents race conditions when multiple invoices are created concurrently.
     // Using $executeRaw/$queryRaw template-tag form (not $unsafe variants) — the
     // SQL here contains no user-supplied values, but the safer form is the project standard.
-    await typedClient.$executeRaw`SELECT pg_advisory_xact_lock(${2026032901})`;
+    await typedClient.$executeRaw`SELECT pg_advisory_xact_lock(${INVOICE_NUMBER_LOCK_KEY})`;
 
     // Now safe to query - no other transaction can be allocating at the same time
     const rows = await typedClient.$queryRaw<Array<{ maxSequence: number | string | null }>>`
@@ -2057,14 +2217,7 @@ export class BillingService implements OnModuleInit {
       WHERE "invoiceNumber" ~ '^INV-[0-9]{4}-[0-9]+$'
     `;
 
-    const maxSequenceRaw = rows?.[0]?.maxSequence ?? 0;
-    const maxSequence = Number(maxSequenceRaw);
-    const nextSequence = Number.isNaN(maxSequence) ? 1 : maxSequence + 1;
-
-    // Update cache after commit (fire and forget, safe since lock guarantees uniqueness)
-    void this.cacheService.set('invoice:counter', nextSequence.toString());
-
-    return this.formatInvoiceNumber(nextSequence);
+    return this.formatInvoiceNumber(nextInvoiceSequence(rows?.[0]?.maxSequence));
   }
 
   private async getMaxInvoiceSequence(): Promise<number> {
@@ -2090,21 +2243,7 @@ export class BillingService implements OnModuleInit {
   }
 
   private formatInvoiceNumber(sequence: number): string {
-    const year = new Date().getFullYear();
-    return `INV-${year}-${sequence.toString().padStart(6, '0')}`;
-  }
-
-  private isInvoiceNumberUniqueConstraint(error: unknown): boolean {
-    if (!error || typeof error !== 'object') {
-      return false;
-    }
-
-    const code = 'code' in error && typeof error.code === 'string' ? error.code : undefined;
-    const message = 'message' in error && typeof error.message === 'string' ? error.message : '';
-
-    return (
-      code === 'P2002' && (message.includes('invoiceNumber') || message.includes('"invoiceNumber"'))
-    );
+    return formatInvoiceNumber(sequence, new Date().getFullYear());
   }
 
   private isPaymentAppointmentUniqueConstraint(error: unknown): boolean {
@@ -2157,7 +2296,24 @@ export class BillingService implements OnModuleInit {
         }
         // Exclude VOID invoices (cancelled/expired appointments)
         whereClause['status'] = { not: InvoiceStatus.VOID };
-        return await this.databaseService.findInvoicesSafe(whereClause);
+        const invoices = await this.databaseService.findInvoicesSafe(whereClause);
+        // `paymentExpiresAt`: when the open payment attempt of a PENDING invoice stops being
+        // payable (null when it has none), so clients never offer Pay on a lapsed checkout.
+        return invoices.map(invoice => ({
+          ...invoice,
+          // Desk-raised bills have no payment window (no countdown); online checkouts do.
+          paymentExpiresAt:
+            String(invoice.status) === String(InvoiceStatus.PENDING) &&
+            isOnlineCheckoutInvoice(invoice as unknown as CheckoutInvoiceShape)
+              ? (invoicePaymentExpiresAt(
+                  (
+                    invoice as {
+                      payments?: Array<{ status?: string; metadata?: unknown; createdAt: Date }>;
+                    }
+                  ).payments ?? []
+                )?.toISOString() ?? null)
+              : null,
+        }));
       },
       {
         ttl: 900,
@@ -2180,21 +2336,33 @@ export class BillingService implements OnModuleInit {
     return billType === 'PHARMACY' || Boolean(prescriptionId);
   }
 
-  async getClinicInvoices(clinicId: string, role?: string) {
+  /**
+   * Legacy `GET /billing/invoices/clinic` (no `page`): the newest LEGACY_CLINIC_INVOICE_LIMIT
+   * decorated rows, plus the total and whether the window was cut (response headers).
+   */
+  async getClinicInvoices(
+    clinicId: string,
+    role?: string
+  ): Promise<LegacyClinicInvoiceList<ClinicInvoiceView>> {
     const pharmacyOnly = role === 'PHARMACIST';
     const cacheKey = pharmacyOnly
-      ? `billing_invoices:clinic:${clinicId}:pharmacy`
-      : `billing_invoices:clinic:${clinicId}`;
+      ? `billing_invoices:clinic:${clinicId}:pharmacy:recent`
+      : `billing_invoices:clinic:${clinicId}:recent`;
 
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        const allInvoices = await this.databaseService.findInvoicesSafe({ clinicId });
-        const invoices = pharmacyOnly
-          ? allInvoices.filter(invoice => this.isPharmacyInvoice(invoice))
-          : allInvoices;
-        const contacts = await this.lookupUserContacts(invoices.map(invoice => invoice.userId));
-        return invoices.map(invoice => this.decorateClinicInvoice(invoice, contacts));
+        const where = this.clinicInvoiceWhere(clinicId, pharmacyOnly);
+        const fetched = await this.readClinicInvoiceRows(where, {
+          take: LEGACY_CLINIC_INVOICE_LIMIT + 1,
+        });
+        const window = sliceLegacyClinicInvoices(fetched);
+        const total = window.truncated ? await this.countClinicInvoices(where) : window.rows.length;
+        return {
+          data: await this.decorateClinicInvoices(window.rows),
+          total,
+          truncated: window.truncated,
+        };
       },
       {
         ttl: 900,
@@ -2202,6 +2370,150 @@ export class BillingService implements OnModuleInit {
         priority: 'normal',
       }
     );
+  }
+
+  /**
+   * `GET /billing/invoices/clinic?page=`: one page (newest first) filtered in the database, the
+   * matching total and the per-status counts of the same filters (the status chips).
+   */
+  async getClinicInvoicesPage(
+    clinicId: string,
+    role: string | undefined,
+    query: ClinicInvoicePageQuery
+  ): Promise<ClinicInvoicePage<ClinicInvoiceView>> {
+    const pharmacyOnly = role === 'PHARMACIST';
+    const cacheKey = `billing_invoices:clinic:${clinicId}:${pharmacyOnly ? 'pharmacy' : 'all'}:page:${JSON.stringify(
+      {
+        page: query.page,
+        limit: query.limit,
+        status: query.status ?? null,
+        q: query.q ?? null,
+        from: query.createdFrom?.toISOString() ?? null,
+        to: query.createdTo?.toISOString() ?? null,
+      }
+    )}`;
+
+    return this.cacheService.cache(
+      cacheKey,
+      async () => {
+        const scope = await this.clinicInvoiceFilterWhere(clinicId, pharmacyOnly, query);
+        const where = query.status ? { AND: [scope, { status: query.status }] } : scope;
+        const [rows, total, groups] = await Promise.all([
+          this.readClinicInvoiceRows(where, {
+            skip: (query.page - 1) * query.limit,
+            take: query.limit,
+          }),
+          this.countClinicInvoices(where),
+          this.countClinicInvoicesByStatus(scope),
+        ]);
+        return {
+          data: await this.decorateClinicInvoices(rows),
+          total,
+          page: query.page,
+          limit: query.limit,
+          counts: clinicInvoiceStatusCounts(groups),
+        };
+      },
+      {
+        ttl: 900,
+        tags: ['billing_invoices', `clinic:${clinicId}`],
+        priority: 'normal',
+      }
+    );
+  }
+
+  /** Clinic scope; PHARMACIST only ever sees pharmacy / prescription invoices (fail closed). */
+  private clinicInvoiceWhere(clinicId: string, pharmacyOnly: boolean): Record<string, unknown> {
+    return pharmacyOnly
+      ? { clinicId, OR: [{ billType: 'PHARMACY' }, { prescriptionId: { not: null } }] }
+      : { clinicId };
+  }
+
+  /** Scope + the page filters other than `status` (dates on createdAt, search). */
+  private async clinicInvoiceFilterWhere(
+    clinicId: string,
+    pharmacyOnly: boolean,
+    query: ClinicInvoicePageQuery
+  ): Promise<Record<string, unknown>> {
+    const parts: Array<Record<string, unknown>> = [this.clinicInvoiceWhere(clinicId, pharmacyOnly)];
+    if (query.createdFrom || query.createdTo) {
+      parts.push({
+        createdAt: {
+          ...(query.createdFrom ? { gte: query.createdFrom } : {}),
+          ...(query.createdTo ? { lte: query.createdTo } : {}),
+        },
+      });
+    }
+    if (query.q) {
+      const userIds = await this.findUserIdsMatching(query.q);
+      parts.push({
+        OR: [
+          { invoiceNumber: { contains: query.q, mode: 'insensitive' } },
+          ...(userIds.length > 0 ? [{ userId: { in: userIds } }] : []),
+        ],
+      });
+    }
+    return parts.length === 1 ? (parts[0] ?? {}) : { AND: parts };
+  }
+
+  /** Users whose name or phone matches the search (invoices carry a plain `userId`). */
+  private async findUserIdsMatching(term: string): Promise<string[]> {
+    const users = await this.databaseService.executeHealthcareRead(async client => {
+      const userClient = client as unknown as {
+        user: {
+          findMany: (args: unknown) => Promise<Array<{ id: string }>>;
+        };
+      };
+      return userClient.user.findMany({
+        where: {
+          OR: [{ name: { contains: term, mode: 'insensitive' } }, { phone: { contains: term } }],
+        },
+        select: { id: true },
+        take: CLINIC_INVOICE_SEARCH_USER_LIMIT,
+      });
+    });
+    return users.map(user => user.id);
+  }
+
+  private readClinicInvoiceRows(
+    where: Record<string, unknown>,
+    window: { skip?: number; take: number }
+  ): Promise<InvoiceWithRelations[]> {
+    return this.databaseService.executeHealthcareRead(async client =>
+      (client as unknown as ClinicInvoiceClient).invoice.findMany({
+        where,
+        include: { subscription: { include: { plan: true } }, payments: true },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        ...(window.skip ? { skip: window.skip } : {}),
+        take: window.take,
+      })
+    );
+  }
+
+  private countClinicInvoices(where: Record<string, unknown>): Promise<number> {
+    return this.databaseService.executeHealthcareRead(async client =>
+      (client as unknown as ClinicInvoiceClient).invoice.count({ where })
+    );
+  }
+
+  private async countClinicInvoicesByStatus(
+    where: Record<string, unknown>
+  ): Promise<Array<{ status: unknown; count: number }>> {
+    const groups = await this.databaseService.executeHealthcareRead(async client =>
+      (client as unknown as ClinicInvoiceClient).invoice.groupBy({
+        by: ['status'],
+        where,
+        _count: { _all: true },
+      })
+    );
+    return groups.map(group => ({ status: group.status, count: group._count?._all ?? 0 }));
+  }
+
+  private async decorateClinicInvoices(
+    invoices: InvoiceWithRelations[]
+  ): Promise<ClinicInvoiceView[]> {
+    const contacts = await this.lookupUserContacts(invoices.map(invoice => invoice.userId));
+    return invoices.map(invoice => this.decorateClinicInvoice(invoice, contacts));
   }
 
   async getInvoice(id: string, requester?: BillingAccessContext) {
@@ -2230,22 +2542,46 @@ export class BillingService implements OnModuleInit {
       throw new NotFoundException('Invoice PDF not found');
     }
     this.assertBillingEntityAccess(invoice, requester);
+    assertReceiptAvailable(invoice.status);
   }
 
   async updateInvoice(id: string, data: UpdateInvoiceDto, requester?: BillingAccessContext) {
     const existingInvoice = await this.getInvoice(id, requester);
-    const updateData: UpdateInvoiceDto & { totalAmount?: number } = { ...data };
+    // Settlement goes through record-payment / mark-paid (ledger + receipt); this generic edit
+    // only touches descriptive fields and amounts of a PENDING invoice.
+    const refusal = checkInvoiceEdit(
+      existingInvoice.status as string,
+      data as unknown as Record<string, unknown>
+    );
+    if (refusal) {
+      throw refusal.status === 409
+        ? new ConflictException(refusal.message)
+        : new BadRequestException(refusal.message);
+    }
+    const { status: _ignoredStatus, ...editable } = data;
+    const updateData: Omit<UpdateInvoiceDto, 'status'> & { totalAmount?: number } = {
+      ...editable,
+    };
 
     if (data.amount !== undefined || data.tax !== undefined || data.discount !== undefined) {
       const amount = data.amount ?? existingInvoice.amount;
       const tax = data.tax ?? existingInvoice.tax ?? 0;
       const discount = data.discount ?? existingInvoice.discount ?? 0;
-      updateData.totalAmount = amount + tax - discount;
+      // Same rule as on create: the discount never pushes the total below zero.
+      const amountCheck = checkInvoiceAmounts({ amount, tax, discount }, { allowZeroTotal: true });
+      if (!amountCheck.ok) {
+        throw new BadRequestException(amountCheck.message);
+      }
+      updateData.totalAmount = amountCheck.totalAmount;
+      await this.assertTotalCoversCollected(
+        existingInvoice.id,
+        existingInvoice.clinicId as string,
+        amountCheck.totalAmount
+      );
     }
 
     // Convert string dates to Date objects for InvoiceUpdateInput
     const invoiceUpdateData: InvoiceUpdateInput = {
-      ...(updateData.status && { status: updateData.status }),
       ...(updateData.amount !== undefined && { amount: updateData.amount }),
       ...(updateData.tax !== undefined && { tax: updateData.tax }),
       ...(updateData.discount !== undefined && { discount: updateData.discount }),
@@ -2267,7 +2603,15 @@ export class BillingService implements OnModuleInit {
         : {}),
     };
 
-    const invoice = await this.databaseService.updateInvoiceSafe(id, invoiceUpdateData);
+    // The PENDING check above is advisory; this write re-checks it atomically so an edit cannot
+    // land after a concurrent payment settled the invoice (409 when the guard misses).
+    const invoice = assertPendingEditApplied(
+      await this.databaseService.updatePendingInvoiceSafe(
+        id,
+        existingInvoice.clinicId as string,
+        invoiceUpdateData
+      )
+    );
 
     await this.loggingService.log(
       LogType.SYSTEM,
@@ -2281,6 +2625,145 @@ export class BillingService implements OnModuleInit {
     await this.invalidateUserInvoiceCaches(invoice.userId);
 
     return invoice;
+  }
+
+  /** A PENDING invoice may already carry partial payments: its total never drops below them. */
+  private async assertTotalCoversCollected(
+    invoiceId: string,
+    clinicId: string,
+    newTotal: number
+  ): Promise<void> {
+    const recorded = await this.paymentStore.listInvoicePayments(invoiceId, clinicId);
+    if (sumCompletedPaymentMinorUnits(recorded) > toMinorUnits(newTotal)) {
+      throw new BadRequestException(TOTAL_BELOW_COLLECTED_MESSAGE);
+    }
+  }
+
+  /**
+   * System-only void (expiry sweeps, appointment expiry/cancel listeners, superseded checkout
+   * invoices). Bypasses the public PUT guard on purpose but is still a conditional write: only a
+   * PENDING invoice moves to VOID, so a PAID invoice is never voided. Returns true when this call
+   * voided the invoice. Never exposed over HTTP.
+   */
+  async voidInvoiceInternal(
+    invoiceId: string,
+    clinicId: string,
+    reason: string,
+    extraMetadata: Record<string, unknown> = {}
+  ): Promise<boolean> {
+    const invoice = await this.paymentStore.readInvoice(invoiceId, clinicId);
+    if (!invoice || invoice.clinicId !== clinicId) {
+      return false;
+    }
+    if (String(invoice.status).toUpperCase() !== String(InvoiceStatus.PENDING)) {
+      return false;
+    }
+    // Money already collected (a partial payment on a PENDING bill) is never silently voided.
+    const payments = await this.paymentStore.listInvoicePayments(invoiceId, clinicId);
+    if (
+      payments.some(
+        payment => String(payment.status).toUpperCase() === String(PaymentStatus.COMPLETED)
+      )
+    ) {
+      return false;
+    }
+    const voided = await this.paymentStore.voidPendingInvoice({
+      invoice,
+      clinicId,
+      reason,
+      metadata: {
+        ...(this.asRecord(invoice.metadata) ?? {}),
+        ...extraMetadata,
+        voidReason: reason,
+        voidedAt: nowIso(),
+      },
+    });
+    if (!voided) {
+      return false;
+    }
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Invoice voided by system',
+      'BillingService',
+      { invoiceId, clinicId, reason }
+    );
+    await this.eventService.emit('billing.invoice.updated', {
+      invoiceId,
+      invoice: { ...invoice, status: InvoiceStatus.VOID },
+    });
+    await this.databaseService.invalidateEntityCache('invoice', invoiceId, clinicId).catch(() => {
+      // Best effort: entries age out via their TTL.
+    });
+    await this.invalidateUserInvoiceCaches(invoice.userId);
+    return true;
+  }
+
+  /**
+   * System-only descriptive sync (e.g. an appointment moved to a new slot): rewrites description,
+   * line-item descriptions and metadata of a PENDING or PAID invoice. Amounts, totals, status and
+   * settlement fields are never touched, so the public "only pending invoices can be edited"
+   * guard does not apply. A VOID invoice is left alone. Returns true when a row was written.
+   */
+  async syncInvoiceDescriptiveFieldsInternal(
+    invoiceId: string,
+    clinicId: string,
+    data: {
+      description?: string;
+      lineItems?: Record<string, unknown>;
+      metadata?: Record<string, unknown>;
+    }
+  ): Promise<boolean> {
+    const writable = {
+      ...(data.description !== undefined && { description: data.description }),
+      ...(data.lineItems !== undefined && { lineItems: data.lineItems }),
+      ...(data.metadata !== undefined && { metadata: data.metadata }),
+    };
+    if (Object.keys(writable).length === 0) {
+      return false;
+    }
+    const result = await this.databaseService.executeHealthcareWrite(
+      async client =>
+        (
+          client as unknown as {
+            invoice: {
+              updateMany: (args: {
+                where: Record<string, unknown>;
+                data: Record<string, unknown>;
+              }) => Promise<{ count: number }>;
+            };
+          }
+        ).invoice.updateMany({
+          where: {
+            id: invoiceId,
+            clinicId,
+            status: { in: [InvoiceStatus.PENDING, InvoiceStatus.PAID] },
+          },
+          data: writable,
+        }),
+      {
+        userId: 'system',
+        userRole: 'system',
+        clinicId,
+        resourceType: 'INVOICE',
+        resourceId: invoiceId,
+        operation: 'UPDATE',
+        timestamp: new Date(),
+        details: { reason: 'Descriptive sync (no amount/status change)' },
+      }
+    );
+    if (result.count === 0) {
+      return false;
+    }
+    await this.databaseService.invalidateEntityCache('invoice', invoiceId, clinicId).catch(() => {
+      // Best effort: entries age out via their TTL.
+    });
+    const invoice = await this.paymentStore.readInvoice(invoiceId, clinicId);
+    if (invoice) {
+      await this.eventService.emit('billing.invoice.updated', { invoiceId, invoice });
+      await this.invalidateUserInvoiceCaches(invoice.userId);
+    }
+    return true;
   }
 
   async markInvoiceAsPaid(
@@ -2665,6 +3148,8 @@ export class BillingService implements OnModuleInit {
       clinicId: string;
       patientId: string;
       visitId?: string | null;
+      date?: Date | string | null;
+      prescriptionNumber?: string | null;
       items?: Array<{
         id: string;
         quantity?: number | null;
@@ -2710,8 +3195,10 @@ export class BillingService implements OnModuleInit {
       amount,
       tax: 0,
       discount: 0,
-      dueDate: new Date().toISOString(),
-      description: `Pharmacy bill for prescription ${prescriptionId}`,
+      // A counter bill is due the same (IST) day; the 15-minute online window is carried
+      // separately by the payment attempt. Stamping "now" made every bill overdue on creation.
+      dueDate: (endOfIstDay(new Date()) ?? new Date()).toISOString(),
+      description: buildPharmacyInvoiceDescription(prescriptionReference(prescriptionRecord)),
       lineItems: lineItems as unknown as Record<string, unknown>,
       billType: 'PHARMACY',
       patientId: prescriptionRecord.patientId,
@@ -2793,6 +3280,7 @@ export class BillingService implements OnModuleInit {
       amount?: number;
       transactionId?: string;
       note?: string;
+      idempotencyKey?: string;
       actor?: { userId?: string; role?: string };
     }
   ): Promise<{ invoice: InvoiceRecord; payment: PaymentWithRelations }> {
@@ -2801,40 +3289,86 @@ export class BillingService implements OnModuleInit {
       throw new NotFoundException(`Invoice ${invoiceId} not found`);
     }
 
-    const paidSoFar = this.fromPaise(
-      (invoice.payments || [])
-        .filter(payment => String(payment.status).toUpperCase() === 'COMPLETED')
-        .reduce((sum, payment) => sum + this.toPaise(Number(payment.amount || 0)), 0)
-    );
-    const balance = this.fromPaise(
-      Math.max(0, this.toPaise(invoice.totalAmount) - this.toPaise(paidSoFar))
-    );
-    const amount =
-      typeof options.amount === 'number' && options.amount > 0 ? options.amount : balance;
+    const transactionId = options.transactionId?.trim() || undefined;
+    const idempotencyKey = options.idempotencyKey?.trim() || undefined;
 
-    if (amount <= 0) {
-      throw new BadRequestException('Invoice is already fully paid');
+    // Check + insert under a row lock on the invoice: two desk clicks (or a retried request)
+    // serialise here, so the second one sees the first payment and is refused / replayed
+    // instead of collecting the balance twice.
+    const outcome = await this.databaseService.executeInTransaction(async client => {
+      const tx = client as unknown as PrismaTransactionClientWithDelegates;
+      await tx.$queryRaw`SELECT "id" FROM "Invoice" WHERE "id" = ${invoiceId} FOR UPDATE`;
+      const locked = (await tx.invoice.findUnique({
+        where: { id: invoiceId } as PrismaDelegateArgs,
+        include: { payments: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as unknown as
+        (InvoiceRecord & { payments?: ManualPaymentRow[] }) | null;
+      if (!locked || locked.clinicId !== clinicId) {
+        return { kind: 'missing' as const };
+      }
+      const plan = planManualInvoicePayment({
+        invoiceStatus: locked.status,
+        totalAmount: Number(locked.totalAmount),
+        payments: locked.payments ?? [],
+        method: options.method,
+        requestedAmount: options.amount,
+        transactionId,
+        idempotencyKey,
+      });
+      if (plan.kind === 'reject') {
+        return { kind: 'reject' as const, plan };
+      }
+      if (plan.kind === 'replay') {
+        const existing = (await tx.payment.findUnique({
+          where: { id: plan.paymentId } as PrismaDelegateArgs,
+          include: { invoice: true } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs)) as unknown as PaymentWithRelations;
+        return { kind: 'replay' as const, payment: existing };
+      }
+      const created = (await tx.payment.create({
+        data: {
+          amount: plan.amount,
+          clinicId,
+          userId: locked.userId,
+          invoiceId,
+          status: PaymentStatus.COMPLETED,
+          method: options.method,
+          ...(transactionId && { transactionId }),
+          description: `Payment collected for invoice ${locked.invoiceNumber}`,
+          metadata: {
+            collectedBy: options.actor?.userId ?? null,
+            collectedByRole: options.actor?.role ?? null,
+            collectedAt: new Date().toISOString(),
+            paymentFor: locked.billType,
+            ...(locked.prescriptionId ? { prescriptionId: locked.prescriptionId } : {}),
+            ...(locked.visitId ? { visitId: locked.visitId } : {}),
+            ...(options.note ? { note: options.note } : {}),
+            ...(idempotencyKey ? { idempotencyKey } : {}),
+          },
+        } as never,
+        include: { invoice: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as unknown as PaymentWithRelations;
+      return { kind: 'create' as const, payment: created, settlesInvoice: plan.settlesInvoice };
+    });
+
+    if (outcome.kind === 'missing') {
+      throw new NotFoundException(`Invoice ${invoiceId} not found`);
+    }
+    if (outcome.kind === 'reject') {
+      const { reason, message } = outcome.plan;
+      if (reason === 'EXCEEDS_BALANCE' || reason === 'INVALID_AMOUNT') {
+        throw new BadRequestException(message);
+      }
+      throw new ConflictException(message);
+    }
+    if (outcome.kind === 'replay') {
+      // Nothing new was collected: hand back the payment already on file.
+      const current = (await this.getInvoiceRecord(invoiceId, clinicId)) ?? invoice;
+      return { invoice: current, payment: outcome.payment };
     }
 
-    const payment = await this.databaseService.createPaymentSafe({
-      amount: Number(amount.toFixed(2)),
-      clinicId,
-      userId: invoice.userId,
-      invoiceId,
-      status: PaymentStatus.COMPLETED,
-      method: options.method,
-      ...(options.transactionId && { transactionId: options.transactionId }),
-      description: `Payment collected for invoice ${invoice.invoiceNumber}`,
-      metadata: {
-        collectedBy: options.actor?.userId ?? null,
-        collectedByRole: options.actor?.role ?? null,
-        collectedAt: new Date().toISOString(),
-        paymentFor: invoice.billType,
-        ...(invoice.prescriptionId ? { prescriptionId: invoice.prescriptionId } : {}),
-        ...(invoice.visitId ? { visitId: invoice.visitId } : {}),
-        ...(options.note ? { note: options.note } : {}),
-      },
-    });
+    const payment = outcome.payment;
+    await this.invalidateCacheTagsSafely(['payments', `payment:${payment.id}`]);
 
     await this.emitBillingPaymentStateEvents({
       paymentId: payment.id,
@@ -2847,10 +3381,8 @@ export class BillingService implements OnModuleInit {
     }
 
     let updatedInvoice: InvoiceRecord = invoice;
-    const newPaidTotal = paidSoFar + amount;
-    // Small epsilon guards against float rounding leaving the invoice
-    // PENDING forever when paidSoFar + amount is e.g. 499.9999999999999.
-    if (newPaidTotal + 0.005 >= invoice.totalAmount) {
+    // The guard computed the balance in paise under the lock: a payment equal to it settles.
+    if (outcome.settlesInvoice) {
       const billingSettings = await this.getClinicBillingSettings(clinicId);
       await this.markInvoiceAsPaid(invoiceId, undefined, {
         skipWhatsApp: !billingSettings?.autoWhatsAppReceipts,
@@ -3233,46 +3765,69 @@ export class BillingService implements OnModuleInit {
     data: CreatePaymentDto
   ): Promise<Awaited<ReturnType<typeof this.databaseService.createPaymentSafe>> | null> {
     const advisoryLockKey = this.computeAppointmentLockKey(data.appointmentId!);
-    const existingPayment = await this.databaseService.executeHealthcareWrite(
-      async client => {
-        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-        await typedClient.$executeRaw`SELECT pg_advisory_xact_lock(${advisoryLockKey})`;
+    // Lock, read and write on ONE transaction: pg_advisory_xact_lock is released when its
+    // transaction ends, so taken on a plain (auto-commit) client it was released at the end of
+    // the SELECT itself and serialised nothing.
+    const recovery = await this.databaseService.executeInTransaction(async client => {
+      const tx = client as unknown as PrismaTransactionClientWithDelegates;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${advisoryLockKey})`;
 
-        const payments = await this.databaseService.findPaymentsSafe({
-          clinicId: data.clinicId,
-          ...(data.appointmentId && { appointmentId: data.appointmentId }),
-        });
-        const sorted = payments.sort(
-          (left, right) => right.createdAt.getTime() - left.createdAt.getTime()
-        );
-        return sorted[0] || null;
-      },
-      {
-        userId: data.userId || 'SYSTEM',
-        userRole: 'SYSTEM',
-        clinicId: data.clinicId,
-        operation: 'RECOVER_DUPLICATE_PAYMENT',
-        resourceType: 'PAYMENT',
-        resourceId: data.appointmentId!,
-        timestamp: new Date(),
+      const existing = await tx.payment.findFirst({
+        where: { clinicId: data.clinicId, appointmentId: data.appointmentId },
+        orderBy: { createdAt: 'desc' },
+      } as PrismaDelegateArgs);
+      if (!existing) {
+        return null;
       }
-    );
+      // A settled payment is never re-opened by a duplicate create (that would turn a paid
+      // booking back into PENDING); it is returned as it is.
+      const existingStatus = String(existing.status).toUpperCase();
+      if (
+        existingStatus === String(PaymentStatus.COMPLETED) ||
+        existingStatus === String(PaymentStatus.REFUNDED)
+      ) {
+        return { payment: existing, reopened: false };
+      }
+      const updated = await tx.payment.updateMany({
+        where: { id: existing.id, status: existing.status },
+        data: {
+          amount: data.amount,
+          status: PaymentStatus.PENDING,
+          ...(data.userId ? { userId: data.userId } : {}),
+          ...(data.invoiceId ? { invoiceId: data.invoiceId } : {}),
+          ...(data.subscriptionId ? { subscriptionId: data.subscriptionId } : {}),
+          ...(data.method ? { method: data.method } : {}),
+          ...(data.transactionId ? { transactionId: data.transactionId } : {}),
+          ...(data.description ? { description: data.description } : {}),
+          ...(data.metadata ? { metadata: data.metadata } : {}),
+        },
+      } as PrismaDelegateArgs);
+      const fresh = await tx.payment.findUnique({
+        where: { id: existing.id },
+        include: { invoice: true },
+      } as PrismaDelegateArgs);
+      return { payment: fresh ?? existing, reopened: updated.count === 1 };
+    });
 
-    if (!existingPayment) {
+    if (!recovery) {
       return null;
     }
-
-    const updatedPayment = await this.databaseService.updatePaymentSafe(existingPayment.id, {
-      amount: data.amount,
-      status: PaymentStatus.PENDING,
-      ...(data.userId ? { userId: data.userId } : {}),
-      ...(data.invoiceId ? { invoiceId: data.invoiceId } : {}),
-      ...(data.subscriptionId ? { subscriptionId: data.subscriptionId } : {}),
-      ...(data.method ? { method: data.method } : {}),
-      ...(data.transactionId ? { transactionId: data.transactionId } : {}),
-      ...(data.description ? { description: data.description } : {}),
-      ...(data.metadata ? { metadata: data.metadata } : {}),
-    });
+    const existingPayment = recovery.payment;
+    if (!recovery.reopened) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        'Duplicate appointment payment create: existing payment left unchanged',
+        'BillingService',
+        {
+          paymentId: existingPayment.id,
+          appointmentId: data.appointmentId,
+          status: existingPayment.status,
+        }
+      );
+      return existingPayment;
+    }
+    const updatedPayment = existingPayment;
 
     await this.loggingService.log(
       LogType.SYSTEM,
@@ -3304,6 +3859,50 @@ export class BillingService implements OnModuleInit {
     }
 
     return updatedPayment;
+  }
+
+  /**
+   * Re-opens an existing payment row for a new attempt, compare-and-set on the status it was
+   * read with (never COMPLETED / REFUNDED). Returns null when the row moved on in between (e.g.
+   * it was just paid); the caller must not treat it as open then.
+   */
+  private async reopenPaymentAttempt(
+    existing: { id: string; status: unknown },
+    data: Record<string, unknown>
+  ): Promise<PaymentWithRelations | null> {
+    const readStatus = String(existing.status);
+    if (
+      readStatus.toUpperCase() === String(PaymentStatus.COMPLETED) ||
+      readStatus.toUpperCase() === String(PaymentStatus.REFUNDED)
+    ) {
+      return null;
+    }
+    // Write and read back on the same (uncached) client: the cached read could be stale.
+    return this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typed = client as unknown as PrismaTransactionClientWithDelegates;
+        const result = await typed.payment.updateMany({
+          where: { id: existing.id, status: readStatus },
+          data,
+        } as PrismaDelegateArgs);
+        if (result.count !== 1) {
+          return null;
+        }
+        return typed.payment.findUnique({
+          where: { id: existing.id },
+          include: { invoice: true },
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId: 'system',
+        userRole: 'system',
+        clinicId: '',
+        operation: 'REOPEN_PAYMENT_ATTEMPT',
+        resourceType: 'PAYMENT',
+        resourceId: existing.id,
+        timestamp: new Date(),
+      }
+    );
   }
 
   private computeAppointmentLockKey(appointmentId: string): number {
@@ -3789,9 +4388,20 @@ export class BillingService implements OnModuleInit {
       return { allowed: false, reason: 'Subscription period has ended' };
     }
 
+    // Product rule: a plan covers in-person visits only. A video consultation is always paid per
+    // appointment, whatever the plan row's appointmentTypes says.
+    if (appointmentType && !isPlanCoverableAppointmentType(appointmentType)) {
+      return {
+        allowed: false,
+        requiresPayment: true,
+        paymentAmount: this.getDefaultAppointmentPrice(appointmentType),
+        reason: VIDEO_NOT_COVERED_REASON,
+      };
+    }
+
     // Check if specific appointment type is covered
     if (appointmentType && subscription.plan?.appointmentTypes) {
-      const appointmentTypes = subscription.plan.appointmentTypes;
+      const appointmentTypes = effectivePlanAppointmentTypes(subscription.plan.appointmentTypes);
       const isCovered = appointmentTypes[appointmentType] === true;
 
       if (!isCovered) {
@@ -3994,6 +4604,21 @@ export class BillingService implements OnModuleInit {
       throw new BadRequestException('Subscription plan not found');
     }
 
+    const now = new Date();
+    // A running plan can be renewed only near the end of its paid period (one paid period at a
+    // time; a second payment for the same period would have to be refunded).
+    if (!isRenewalOpen(subscription, now)) {
+      const opensAt = renewalOpensAt(subscription);
+      throw new ConflictException({
+        message: opensAt
+          ? `This plan is active. Renewal opens on ${formatDateInIST(opensAt)}.`
+          : 'This plan is active and does not need a renewal yet.',
+        code: 'SUBSCRIPTION_RENEWAL_NOT_OPEN',
+        subscriptionId: subscription.id,
+        ...(opensAt ? { renewalOpensAt: opensAt.toISOString() } : {}),
+      });
+    }
+
     const subscriptionAmount = this.roundToTwo(subscription.plan.amount);
     const subscriptionTax = this.calculateGstAmount(subscriptionAmount);
 
@@ -4007,6 +4632,24 @@ export class BillingService implements OnModuleInit {
       subscriptionId: subscription.id,
       status: InvoiceStatus.PENDING,
     });
+    // A pending invoice of this plan that already carries a payment attempt is resumed, never
+    // duplicated: a second invoice for the same period could be paid as well. The invoice path
+    // checks the open attempt with the gateway, reuses its order while it is live, and opens a
+    // fresh order on the SAME invoice once it lapsed.
+    const invoiceToResume =
+      pendingSubscriptionInvoices
+        .filter(
+          pending =>
+            pending.userId === subscription.userId &&
+            pending.clinicId === subscription.clinicId &&
+            this.invoiceHasLivePayment(pending)
+        )
+        .sort(
+          (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+        )[0] ?? null;
+    if (invoiceToResume) {
+      return this.processInvoicePayment(invoiceToResume.id, provider, requester);
+    }
     const reusableInvoice =
       pendingSubscriptionInvoices
         .filter(
@@ -4031,11 +4674,19 @@ export class BillingService implements OnModuleInit {
         tax: subscriptionTax,
         discount: 0,
         dueDate: new Date(subscription.currentPeriodEnd).toISOString(),
-        description: `Subscription renewal for ${subscription.plan.name}`,
+        description: buildPlanInvoiceDescription(
+          subscription.plan.name,
+          subscription.plan.interval,
+          subscription.plan.intervalCount
+        ),
         lineItems: {
           items: [
             {
-              description: subscription.plan.name,
+              description: buildPlanInvoiceDescription(
+                subscription.plan.name,
+                subscription.plan.interval,
+                subscription.plan.intervalCount
+              ),
               amount: subscriptionAmount,
               quantity: 1,
             },
@@ -4090,11 +4741,9 @@ export class BillingService implements OnModuleInit {
         totalAmount: subscriptionTotalAmount,
         gstRatePercent: this.getGstRatePercent(),
         baseUrl,
-        redirectUrl: this.buildPaymentCallbackUrl(
-          subscription.clinicId,
-          invoice.invoiceNumber,
-          provider
-        ),
+        // The exact gateway order id: the gateway returns the patient to this URL, and the
+        // callback verifies the order named in it (the bare invoice number is not an order).
+        redirectUrl: this.buildPaymentCallbackUrl(subscription.clinicId, gatewayOrderId, provider),
       },
     };
 
@@ -4146,30 +4795,33 @@ export class BillingService implements OnModuleInit {
       redirectUrl: handoff.callbackUrl,
     };
 
-    // Create payment record
-    const payment = await this.createPayment({
-      amount: subscriptionTotalAmount,
-      clinicId: subscription.clinicId,
-      userId: subscription.userId,
-      invoiceId: invoice.id,
-      subscriptionId: subscription.id,
-      ...(paymentId && { transactionId: paymentId }),
-      description: `Subscription payment for ${subscription.plan.name}`,
-      metadata: {
-        paymentIntentId: paymentId,
-        orderId,
-        provider: providerName,
-        revenueModel: 'SUBSCRIPTION',
-        serviceType: 'SUBSCRIPTION_PLAN',
-        subtotal: subscriptionAmount,
-        tax: subscriptionTax,
-        totalAmount: subscriptionTotalAmount,
-        gstRatePercent: this.getGstRatePercent(),
-        handoffToken: handoff.token,
-        handoffCallbackUrl: handoff.callbackUrl,
-        redirectUrl: handoff.callbackUrl,
+    // Create payment record (one open attempt per invoice order, see recordInvoicePaymentAttempt)
+    const payment = await this.recordInvoicePaymentAttempt(
+      {
+        amount: subscriptionTotalAmount,
+        clinicId: subscription.clinicId,
+        userId: subscription.userId,
+        invoiceId: invoice.id,
+        subscriptionId: subscription.id,
+        ...(paymentId && { transactionId: paymentId }),
+        description: `Subscription payment for ${subscription.plan.name}`,
+        metadata: {
+          paymentIntentId: paymentId,
+          orderId,
+          provider: providerName,
+          revenueModel: 'SUBSCRIPTION',
+          serviceType: 'SUBSCRIPTION_PLAN',
+          subtotal: subscriptionAmount,
+          tax: subscriptionTax,
+          totalAmount: subscriptionTotalAmount,
+          gstRatePercent: this.getGstRatePercent(),
+          handoffToken: handoff.token,
+          handoffCallbackUrl: handoff.callbackUrl,
+          redirectUrl: handoff.callbackUrl,
+        },
       },
-    });
+      orderId || gatewayOrderId
+    );
 
     void Promise.allSettled([
       this.loggingService.log(
@@ -4196,7 +4848,110 @@ export class BillingService implements OnModuleInit {
    * Process per-appointment payment (VIDEO_CALL only).
    * IN_PERSON appointments require subscription - use bookAppointmentWithSubscription.
    */
+  /**
+   * Runs a payment-intent request at most once per `Idempotency-Key` (see idempotency-key.util):
+   * a retry with the same key (same user, route and resource) gets the stored first response,
+   * a retry while the first one is still running gets 409. Without a key it just runs.
+   */
+  async runIdempotentPaymentIntent<T>(
+    args: {
+      userId?: string | undefined;
+      route: string;
+      resourceId: string;
+      idempotencyKey?: string | string[] | undefined;
+    },
+    run: () => Promise<T>
+  ): Promise<T> {
+    const parsed = parseIdempotencyKey(args.idempotencyKey);
+    if (parsed.kind === 'invalid') {
+      throw new BadRequestException(
+        'Invalid Idempotency-Key header: use 1-128 letters, digits, ".", "_", ":" or "-".'
+      );
+    }
+    if (parsed.kind === 'absent' || !args.userId) {
+      return run();
+    }
+    const cacheKey = idempotencyCacheKey({
+      userId: args.userId,
+      route: args.route,
+      resourceId: args.resourceId,
+      key: parsed.key,
+    });
+    const stored = readStoredResponse<T>(await this.cacheService.get(cacheKey));
+    if (stored !== null) {
+      return stored;
+    }
+    const lockKey = `${cacheKey}:in-flight`;
+    const locked = await this.acquireRequestLock(
+      lockKey,
+      IDEMPOTENCY_IN_FLIGHT_TTL_SECONDS,
+      'A request with this Idempotency-Key is still being processed. Please retry shortly.'
+    );
+    try {
+      const result = await run();
+      await this.cacheService.set(cacheKey, JSON.stringify(result), IDEMPOTENCY_TTL_SECONDS);
+      return result;
+    } finally {
+      if (locked) {
+        await this.cacheService.releaseLock(lockKey);
+      }
+    }
+  }
+
+  /**
+   * Takes a short request lock. Held by another request -> 409 with `busyMessage`. When the cache
+   * cannot be reached the request goes on unlocked (logged): the DB-level guards (per-invoice
+   * advisory lock, guarded status writes) still hold, and a cache outage must not block payments.
+   * Returns whether the lock was taken (to release it).
+   */
+  private async acquireRequestLock(
+    lockKey: string,
+    ttlSeconds: number,
+    busyMessage: string
+  ): Promise<boolean> {
+    if (await this.cacheService.acquireLock(lockKey, ttlSeconds)) {
+      return true;
+    }
+    if (await this.cacheService.exists(lockKey)) {
+      throw new ConflictException(busyMessage);
+    }
+    await this.loggingService.log(
+      LogType.PAYMENT,
+      LogLevel.WARN,
+      'Payment request lock unavailable (cache unreachable); continuing without it',
+      'BillingService',
+      { lockKey }
+    );
+    return false;
+  }
+
+  /**
+   * Opens (or re-opens) the gateway payment of a VIDEO_CALL booking. Serialised per appointment
+   * (`lock:pay:appt:<id>`): a double tap / concurrent retry gets 409 instead of opening a second
+   * gateway order and invoice in parallel.
+   */
   async processAppointmentPayment(
+    appointmentId: string,
+    appointmentType: 'VIDEO_CALL' | 'IN_PERSON' | 'HOME_VISIT',
+    provider?: PaymentProvider,
+    requester?: BillingAccessContext
+  ): Promise<{ invoice: unknown; paymentIntent: PaymentResult }> {
+    const lockKey = `lock:pay:appt:${appointmentId}`;
+    const locked = await this.acquireRequestLock(
+      lockKey,
+      APPOINTMENT_PAYMENT_LOCK_TTL_SECONDS,
+      'A payment for this appointment is already being opened. Please wait a moment.'
+    );
+    try {
+      return await this.openAppointmentPayment(appointmentId, appointmentType, provider, requester);
+    } finally {
+      if (locked) {
+        await this.cacheService.releaseLock(lockKey);
+      }
+    }
+  }
+
+  private async openAppointmentPayment(
     appointmentId: string,
     appointmentType: 'VIDEO_CALL' | 'IN_PERSON' | 'HOME_VISIT',
     provider?: PaymentProvider,
@@ -4219,7 +4974,7 @@ export class BillingService implements OnModuleInit {
         AppointmentStatus.COMPLETED,
       ].includes(appointment.status as AppointmentStatus)
     ) {
-      throw new BadRequestException(
+      throw new ConflictException(
         'This appointment is no longer payable. Please book a new appointment.'
       );
     }
@@ -4233,7 +4988,7 @@ export class BillingService implements OnModuleInit {
           ? new Date(paymentExpiresAt).getTime()
           : null;
     if (expiresAt && expiresAt <= Date.now()) {
-      throw new BadRequestException(
+      throw new ConflictException(
         'The payment window for this appointment has expired. Please book a new appointment.'
       );
     }
@@ -4337,6 +5092,14 @@ export class BillingService implements OnModuleInit {
       existingInvoiceStatus !== String(InvoiceStatus.VOID);
     const appointmentAmount = this.roundToTwo(amount);
     const appointmentTax = this.calculateGstAmount(appointmentAmount);
+    const appointmentInvoiceText = buildAppointmentInvoiceDescription({
+      appointmentType,
+      doctorName: (appointment as { doctor?: { user?: { name?: string | null } | null } | null })
+        .doctor?.user?.name,
+      date: appointment.date,
+      time: appointment.time,
+      treatmentLabel: serviceMetadata.label,
+    });
 
     const createAppointmentInvoice = async () =>
       this.createInvoice({
@@ -4348,11 +5111,11 @@ export class BillingService implements OnModuleInit {
         // Appointment invoices are paid immediately through the gateway, so a future due date
         // is misleading in payment history. Keep a due date for schema requirements, but make it immediate.
         dueDate: nowIso(),
-        description: `Payment for ${appointmentType} appointment`,
+        description: appointmentInvoiceText,
         lineItems: {
           items: [
             {
-              description: `${serviceMetadata.label} Appointment`,
+              description: appointmentInvoiceText,
               amount: appointmentAmount,
               quantity: 1,
             },
@@ -4494,7 +5257,9 @@ export class BillingService implements OnModuleInit {
 
     let payment: PaymentWithRelations;
     if (existingPayment) {
-      payment = await this.databaseService.updatePaymentSafe(existingPayment.id, {
+      // Guarded on the status read above: a retry must never move a payment that completed in
+      // the meantime (callback / webhook racing this request) back to PENDING.
+      const reopened = await this.reopenPaymentAttempt(existingPayment, {
         status: PaymentStatus.PENDING,
         invoiceId: invoice.id,
         ...(paymentId ? { transactionId: paymentId } : {}),
@@ -4502,16 +5267,22 @@ export class BillingService implements OnModuleInit {
         description: `Payment for ${serviceMetadata.label} appointment`,
         metadata: paymentMetadata,
       });
+      if (!reopened) {
+        throw new BadRequestException('Payment is already completed for this appointment');
+      }
+      payment = reopened;
 
       if (!canReuseExistingInvoice && supersededInvoiceId && supersededInvoiceId !== invoice.id) {
-        await this.updateInvoice(supersededInvoiceId, {
-          status: InvoiceStatus.VOID,
-          metadata: {
+        await this.voidInvoiceInternal(
+          supersededInvoiceId,
+          appointment.clinicId as string,
+          'SUPERSEDED_BY_NEW_CHECKOUT',
+          {
             supersededByInvoiceId: invoice.id,
             supersededAt: nowIso(),
             supersededByPaymentId: payment.id,
-          },
-        });
+          }
+        );
       }
 
       void Promise.allSettled([
@@ -4694,14 +5465,29 @@ export class BillingService implements OnModuleInit {
   ): Promise<{ invoice: unknown; paymentIntent: PaymentResult }> {
     const invoice = await this.getInvoice(invoiceId, requester);
 
-    const invoiceStatus = String(invoice.status);
-
-    if (invoiceStatus === 'PAID') {
-      throw new BadRequestException('Invoice is already paid');
+    // Decide on the fresh row (the detail read above may be cached) and on the linked visit: a
+    // bill whose appointment expired / was cancelled is dead even before its system void lands.
+    const freshInvoice = await this.paymentStore.readInvoice(invoice.id, invoice.clinicId);
+    const linkedAppointmentId = this.asSafeString(
+      this.asRecord(freshInvoice?.metadata ?? invoice.metadata)?.['appointmentId']
+    );
+    const linkedAppointment = linkedAppointmentId
+      ? await this.databaseService.findAppointmentByIdSafe(linkedAppointmentId)
+      : null;
+    const payRefusal = checkInvoicePayable(
+      String(freshInvoice?.status ?? invoice.status),
+      linkedAppointment ? String(linkedAppointment.status) : null
+    );
+    if (payRefusal) {
+      throw payRefusal.status === 409
+        ? new ConflictException(payRefusal.message)
+        : new BadRequestException(payRefusal.message);
     }
 
-    if (invoiceStatus === 'VOID') {
-      throw new BadRequestException('Void invoices cannot be paid');
+    // A patient who already paid at the gateway (but whose return never reached us) must not be
+    // sent to pay again: settle the open attempt from the gateway's own answer first.
+    if (await this.settleOpenInvoiceAttemptIfPaid(invoice.id, invoice.clinicId, provider)) {
+      throw new BadRequestException('Invoice is already paid');
     }
 
     const user = await this.databaseService.findUserByIdSafe(invoice.userId);
@@ -4715,10 +5501,23 @@ export class BillingService implements OnModuleInit {
       throw new Error('API URL is not configured in application config');
     }
 
+    // The open attempt still inside its window keeps its gateway order (the patient resumes it);
+    // otherwise a fresh order id, because a provider will not reopen an expired order.
+    const previousAttempts = await this.paymentStore.listInvoicePayments(
+      invoice.id,
+      invoice.clinicId
+    );
+    const now = new Date();
+    const gatewayOrderId = chooseInvoiceOrderId(
+      previousAttempts,
+      this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id),
+      row => !isPastPaymentWindow(row, now)
+    );
+
     const paymentIntentOptions: PaymentIntentOptions = {
       amount: invoiceAmount * 100,
       currency,
-      orderId: this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id),
+      orderId: gatewayOrderId,
       customerId: invoice.userId,
       ...(user?.email && { customerEmail: user.email }),
       ...(user?.phone && { customerPhone: user.phone }),
@@ -4729,11 +5528,7 @@ export class BillingService implements OnModuleInit {
         invoiceId: invoice.id,
         invoiceNumber: invoice.invoiceNumber,
         baseUrl,
-        redirectUrl: this.buildPaymentCallbackUrl(
-          invoice.clinicId,
-          this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id),
-          provider
-        ),
+        redirectUrl: this.buildPaymentCallbackUrl(invoice.clinicId, gatewayOrderId, provider),
       },
     };
 
@@ -4742,6 +5537,12 @@ export class BillingService implements OnModuleInit {
       paymentIntentOptions,
       provider
     );
+    if (!paymentIntentResult.success) {
+      // Never record an attempt for an order the gateway did not open.
+      throw new BadRequestException(
+        paymentIntentResult.error || 'The payment could not be started. Please try again.'
+      );
+    }
     const paymentId = paymentIntentResult.paymentId || '';
     const orderId = paymentIntentResult.orderId || '';
     const providerName = paymentIntentResult.provider || '';
@@ -4752,14 +5553,14 @@ export class BillingService implements OnModuleInit {
       this.asSafeString(providerResponse['redirect_url']);
     const redirectUrl = this.buildPaymentCallbackUrl(
       invoice.clinicId,
-      orderId || this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id),
+      orderId || gatewayOrderId,
       provider,
       undefined,
       paymentId || undefined
     );
     const handoff = await this.createPaymentHandoffDetails({
       clinicId: invoice.clinicId,
-      orderId: orderId || this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id),
+      orderId: orderId || gatewayOrderId,
       callbackUrl: redirectUrl,
       ...(paymentId ? { paymentId } : {}),
       ...(paymentIntentResult.provider
@@ -4783,26 +5584,31 @@ export class BillingService implements OnModuleInit {
       redirectUrl: handoff.callbackUrl,
     };
 
-    await this.createPayment({
-      amount: invoiceAmount,
-      clinicId: invoice.clinicId,
-      userId: invoice.userId,
-      invoiceId: invoice.id,
-      // A care-plan invoice paid from the invoice list must activate the plan in the callback.
-      ...(invoice.subscriptionId && { subscriptionId: invoice.subscriptionId }),
-      ...(paymentId && { transactionId: paymentId }),
-      description: `Payment for invoice ${invoice.invoiceNumber}`,
-      metadata: {
-        paymentIntentId: paymentId,
-        orderId,
-        provider: providerName,
-        revenueModel: 'OTHER',
-        serviceType: 'INVOICE',
-        handoffToken: handoff.token,
-        handoffCallbackUrl: handoff.callbackUrl,
-        redirectUrl: handoff.callbackUrl,
+    // The gateway order of an invoice is the same on every press of "Pay", so the open attempt
+    // for it is reused instead of inserting another PENDING row (no duplicate transactions).
+    await this.recordInvoicePaymentAttempt(
+      {
+        amount: invoiceAmount,
+        clinicId: invoice.clinicId,
+        userId: invoice.userId,
+        invoiceId: invoice.id,
+        // A care-plan invoice paid from the invoice list must activate the plan in the callback.
+        ...(invoice.subscriptionId && { subscriptionId: invoice.subscriptionId }),
+        ...(paymentId && { transactionId: paymentId }),
+        description: `Payment for invoice ${invoice.invoiceNumber}`,
+        metadata: {
+          paymentIntentId: paymentId,
+          orderId,
+          provider: providerName,
+          revenueModel: 'OTHER',
+          serviceType: 'INVOICE',
+          handoffToken: handoff.token,
+          handoffCallbackUrl: handoff.callbackUrl,
+          redirectUrl: handoff.callbackUrl,
+        },
       },
-    });
+      orderId || gatewayOrderId
+    );
 
     void Promise.allSettled([
       this.loggingService.log(
@@ -4822,6 +5628,228 @@ export class BillingService implements OnModuleInit {
       invoice,
       paymentIntent: paymentIntentWithHandoff,
     };
+  }
+
+  /**
+   * Records an invoice payment attempt: reuses the open row for the same gateway order, closes
+   * every other open row as superseded, and inserts a row only when none matches. Serialised per
+   * invoice in the store, so two concurrent presses of "Pay" produce one open attempt.
+   */
+  private async recordInvoicePaymentAttempt(
+    data: CreatePaymentDto & { invoiceId: string },
+    orderId: string
+  ): Promise<PaymentRow> {
+    const supersededAt = nowIso();
+    // Every (re)opened attempt gets its own payment window; the window sweep expires it after.
+    const metadata = {
+      ...(data.metadata ?? {}),
+      [PAYMENT_EXPIRES_AT_KEY]: paymentWindowEnd(new Date()).toISOString(),
+    };
+    const outcome = await this.paymentStore.recordInvoiceAttempt({
+      invoiceId: data.invoiceId,
+      orderId,
+      provider: this.asSafeString(this.asRecord(data.metadata)?.['provider']),
+      create: {
+        amount: data.amount,
+        clinicId: data.clinicId,
+        invoiceId: data.invoiceId,
+        ...(data.userId && { userId: data.userId }),
+        ...(data.subscriptionId && { subscriptionId: data.subscriptionId }),
+        ...(data.method && { method: data.method }),
+        ...(data.transactionId && { transactionId: data.transactionId }),
+        ...(data.description && { description: data.description }),
+        metadata,
+      },
+      refresh: {
+        amount: data.amount,
+        ...(data.transactionId && { transactionId: data.transactionId }),
+        ...(data.description && { description: data.description }),
+        metadata,
+      },
+      preserveMetadataKeys: [PAYMENT_EXPIRES_AT_KEY],
+      supersededMetadata: current => ({
+        ...current,
+        closedReason: SUPERSEDED_REASON,
+        closedAt: supersededAt,
+        supersededByOrderId: orderId,
+      }),
+    });
+    const { payment } = outcome;
+
+    await this.loggingService.log(
+      LogType.PAYMENT,
+      outcome.supersededIds.length > 0 ? LogLevel.WARN : LogLevel.INFO,
+      outcome.reused
+        ? 'Reused the open payment attempt for this invoice order'
+        : 'Invoice payment attempt recorded',
+      'BillingService',
+      {
+        paymentId: payment.id,
+        invoiceId: data.invoiceId,
+        orderId,
+        supersededPaymentIds: outcome.supersededIds,
+      }
+    );
+
+    if (!outcome.reused) {
+      await this.eventService.emit('billing.payment.created', {
+        paymentId: payment.id,
+        clinicId: payment.clinicId,
+        payment,
+      });
+      await this.eventService.emit('payment.pending', {
+        paymentId: payment.id,
+        clinicId: payment.clinicId,
+        payment,
+      });
+    }
+    if (data.userId) {
+      await this.invalidateUserPaymentCaches(data.userId);
+      // The invoice list carries the window end of its open attempt.
+      await this.invalidateUserInvoiceCaches(data.userId);
+    }
+    return payment;
+  }
+
+  /**
+   * Asks the gateway about the newest open attempt of an invoice and settles it when the gateway
+   * reports it paid (the normal callback path: verification, amount check, finaliser). Returns
+   * true when the invoice is PAID afterwards. A gateway error is logged and treated as "not
+   * paid", so a temporary outage never blocks a new attempt; nothing is ever marked paid here
+   * without the gateway saying so.
+   */
+  private async settleOpenInvoiceAttemptIfPaid(
+    invoiceId: string,
+    clinicId: string,
+    provider?: PaymentProvider
+  ): Promise<boolean> {
+    const rows = await this.paymentStore.listInvoicePayments(invoiceId, clinicId);
+    const open = pickCallbackPayment(rows.filter(isOpenAttempt));
+    if (!open || !attemptOrderId(open)) {
+      return false;
+    }
+    try {
+      await this.reconcilePaymentForClinic(clinicId, open.id, provider);
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        `Could not verify the open invoice payment attempt with the gateway: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        'BillingService',
+        { invoiceId, clinicId, paymentId: open.id }
+      );
+      return false;
+    }
+    const latest = await this.paymentStore.readInvoice(invoiceId, clinicId);
+    return String(latest?.status ?? '').toUpperCase() === String(InvoiceStatus.PAID);
+  }
+
+  /**
+   * Once a payment has paid an invoice, every other open attempt of that invoice is closed so it
+   * no longer shows as a pending transaction. Best effort: the invoice is already settled.
+   */
+  private async closeOtherOpenInvoiceAttempts(
+    payment: PaymentRow,
+    clinicId: string
+  ): Promise<void> {
+    if (!payment.invoiceId) {
+      return;
+    }
+    try {
+      const closedAt = nowIso();
+      const closed = await this.paymentStore.closeOpenInvoiceAttempts({
+        invoiceId: payment.invoiceId,
+        clinicId,
+        settledPaymentId: payment.id,
+        closedMetadata: current => ({
+          ...current,
+          closedReason: CLOSED_AFTER_SETTLEMENT_REASON,
+          closedAt,
+          settledByPaymentId: payment.id,
+        }),
+      });
+      if (closed.length > 0) {
+        await this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.INFO,
+          'Closed open payment attempts of a settled invoice',
+          'BillingService',
+          { invoiceId: payment.invoiceId, settledByPaymentId: payment.id, closedPaymentIds: closed }
+        );
+        if (payment.userId) {
+          await this.invalidateUserPaymentCaches(payment.userId);
+        }
+      }
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        `Failed to close open payment attempts of a settled invoice: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        'BillingService',
+        { invoiceId: payment.invoiceId, paymentId: payment.id }
+      );
+    }
+  }
+
+  /**
+   * Rejects a gateway-verified delivery that does not belong to the payment it names (callback
+   * replay, see callback-binding.util), and a completed delivery whose gateway reference already
+   * settled ANOTHER payment. Logged at WARN with the ids; the thrown message carries none.
+   */
+  private async assertCallbackBoundToPayment(args: {
+    payment: PaymentRow;
+    clinicId: string;
+    orderId: string;
+    paymentStatus: PaymentStatusResult;
+    provider: PaymentProvider;
+    incomingStatus: string;
+  }): Promise<void> {
+    const { payment, clinicId, orderId, paymentStatus, provider } = args;
+    const binding = checkCallbackBinding({
+      payment,
+      callbackOrderId: orderId,
+      gateway: { currency: paymentStatus.currency ?? null, metadata: paymentStatus.metadata },
+    });
+    let rejection: string | null = binding.ok ? null : binding.reason;
+
+    if (!rejection && args.incomingStatus.toLowerCase() === 'completed') {
+      const reference = this.asSafeString(paymentStatus.transactionId) || orderId;
+      const settledElsewhere = reference
+        ? (
+            await this.databaseService.findPaymentsSafe({ transactionId: reference, clinicId })
+          ).some(
+            other =>
+              other.id !== payment.id &&
+              String(other.status).toUpperCase() === String(PaymentStatus.COMPLETED)
+          )
+        : false;
+      rejection = settledElsewhere ? 'REFERENCE_SETTLED_ANOTHER_PAYMENT' : null;
+    }
+
+    if (!rejection) {
+      return;
+    }
+    await this.loggingService.log(
+      LogType.PAYMENT,
+      LogLevel.WARN,
+      `Payment callback rejected: ${rejection}`,
+      'BillingService.handlePaymentCallback',
+      {
+        clinicId,
+        paymentId: payment.id,
+        orderId,
+        provider,
+        gatewayTransactionId: paymentStatus.transactionId,
+        reason: rejection,
+      }
+    );
+    throw new BadRequestException(
+      'This payment confirmation does not match the payment it was sent for.'
+    );
   }
 
   /**
@@ -4850,21 +5878,30 @@ export class BillingService implements OnModuleInit {
           provider: normalizedProvider,
         }
       );
-      const normalizedIncomingStatus = this.normalizeGatewayPaymentStatus(paymentStatus.status);
+      // An order the gateway let run out (Cashfree order_status EXPIRED) timed out: EXPIRED, not
+      // FAILED (FAILED = the provider reports the payment itself failed).
+      const gatewayOrderExpired =
+        this.asSafeString(this.asRecord(paymentStatus.metadata)?.['order_status']).toUpperCase() ===
+        'EXPIRED';
+      const normalizedIncomingStatus = gatewayOrderExpired
+        ? PaymentStatus.EXPIRED
+        : this.normalizeGatewayPaymentStatus(paymentStatus.status);
 
       // Find payment record: by payment ID, gateway transaction ID, then order_id from metadata
       let payment = await this.databaseService.findPaymentByIdSafe(paymentId);
+      // Several rows may share a gateway reference (older duplicate attempts for one order):
+      // bind to the completed one, else the newest open one, never a closed duplicate first.
       if (!payment) {
         const byPaymentIdTx = await this.databaseService.findPaymentsSafe({
           transactionId: paymentId,
         });
-        payment = byPaymentIdTx[0] || null;
+        payment = pickCallbackPayment(byPaymentIdTx);
       }
       if (!payment) {
         const byOrderIdTx = await this.databaseService.findPaymentsSafe({
           appointmentId: orderId,
         });
-        payment = byOrderIdTx[0] || null;
+        payment = pickCallbackPayment(byOrderIdTx);
       }
 
       // Search by order_id stored in metadata across clinic payments (scoped to recent)
@@ -4874,10 +5911,11 @@ export class BillingService implements OnModuleInit {
             clinicId,
             createdAt: { gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString() },
           } as Parameters<typeof this.databaseService.findPaymentsSafe>[0]);
-          payment =
-            clinicPayments.find(
+          payment = pickCallbackPayment(
+            clinicPayments.filter(
               p => (this.asRecord(p.metadata)?.['orderId'] as string | undefined) === orderId
-            ) || null;
+            )
+          );
         } catch {
           // Non-fatal: proceed to creation path below
         }
@@ -4933,6 +5971,16 @@ export class BillingService implements OnModuleInit {
           `Payment record clinic ${paymentRecord.clinicId} does not match callback clinic ${clinicId}`
         );
       }
+      // The verified order must belong to THIS payment (never confirm payment X with order Y),
+      // and its gateway reference must not already have settled another payment.
+      await this.assertCallbackBoundToPayment({
+        payment: payment as unknown as PaymentRow,
+        clinicId,
+        orderId: orderId || paymentId,
+        paymentStatus,
+        provider: normalizedProvider,
+        incomingStatus: String(normalizedIncomingStatus),
+      });
       // The amount must match before a payment is claimed. A payment that is already settled /
       // released is never changed by a callback, so a mismatching amount there is the signature
       // of a second gateway order: it is flagged by the finaliser instead of being dropped here.
@@ -5097,10 +6145,11 @@ export class BillingService implements OnModuleInit {
     const settledBy = (row: InvoiceRow): string =>
       this.asSafeString(this.asRecord(row.metadata)?.['settledByPaymentId']);
     if (String(invoice.status).toUpperCase() === String(InvoiceStatus.PAID)) {
-      return {
-        state: settledBy(invoice) === payment.id ? 'already-settled' : 'duplicate',
-        invoice,
-      };
+      const state = settledBy(invoice) === payment.id ? 'already-settled' : 'duplicate';
+      if (state === 'already-settled') {
+        await this.closeOtherOpenInvoiceAttempts(payment, clinicId);
+      }
+      return { state, invoice };
     }
 
     const recorded = await this.paymentStore.listInvoicePayments(invoice.id, clinicId);
@@ -5124,13 +6173,15 @@ export class BillingService implements OnModuleInit {
       settledByPaymentId: payment.id,
     });
     if (transition.transitioned) {
+      await this.closeOtherOpenInvoiceAttempts(payment, clinicId);
       return { state: 'settled', invoice: transition.invoice as InvoiceRow };
     }
     const latest = await this.paymentStore.readInvoice(invoice.id, clinicId);
-    return {
-      state: latest && settledBy(latest) === payment.id ? 'already-settled' : 'duplicate',
-      invoice: latest ?? invoice,
-    };
+    const state = latest && settledBy(latest) === payment.id ? 'already-settled' : 'duplicate';
+    if (state === 'already-settled') {
+      await this.closeOtherOpenInvoiceAttempts(payment, clinicId);
+    }
+    return { state, invoice: latest ?? invoice };
   }
 
   /**
@@ -5231,6 +6282,45 @@ export class BillingService implements OnModuleInit {
    * Subscription payment without an invoice: the paid amount must reach the plan price. (With an
    * invoice the invoice total - plan price plus the tax the invoice defines - is the bar.)
    */
+  /** See PaymentFinaliserPorts.isDuplicatePlanPayment and isDuplicatePeriodPayment. */
+  private async isDuplicatePlanPayment(
+    subscriptionId: string,
+    payment: PaymentRow
+  ): Promise<boolean> {
+    const subscription = await this.subscriptionStore.readSubscription(
+      subscriptionId,
+      payment.clinicId
+    );
+    if (!subscription || !payment.invoiceId) {
+      return false;
+    }
+    const invoice = await this.paymentStore.readInvoice(payment.invoiceId, payment.clinicId);
+    const periodEnd = this.asSafeString(this.asRecord(invoice?.metadata)?.['periodEnd']) || null;
+    const renewed = this.asRecord(subscription.metadata)?.['renewedPaymentIds'];
+    const duplicate = isDuplicatePeriodPayment({
+      subscription: {
+        id: subscription.id,
+        status: subscription.status,
+        currentPeriodEnd: subscription.currentPeriodEnd,
+      },
+      invoicePeriodEnd: periodEnd,
+      alreadyRenewedBy: Array.isArray(renewed)
+        ? renewed.filter((id): id is string => typeof id === 'string')
+        : [],
+      paymentId: payment.id,
+    });
+    if (duplicate) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        'Second payment for an already paid plan period: flagged for a refund decision, plan not extended',
+        'BillingService',
+        { paymentId: payment.id, subscriptionId, invoiceId: payment.invoiceId, periodEnd }
+      );
+    }
+    return duplicate;
+  }
+
   private async isPlanAmountCovered(subscriptionId: string, payment: PaymentRow): Promise<boolean> {
     const subscription = await this.subscriptionStore.readSubscription(
       subscriptionId,
@@ -5243,15 +6333,21 @@ export class BillingService implements OnModuleInit {
   }
 
   /**
-   * Records an anomaly the system did not apply as a normal settlement. Late settlements only log
-   * and emit (no refunds for visits that never take place); duplicates and underpayments are also
-   * stored on `payment.metadata.settlementReview` as admin-visible data. Never throws, never
-   * refunds, never notifies.
+   * Records an anomaly the system did not apply as a normal settlement on
+   * `payment.metadata.settlementReview` (admin-visible), logs it and emits
+   * `billing.payment.<anomaly>` (broadcast to the clinic's admins). A late settlement on a
+   * released (EXPIRED / CANCELLED) payment is also recorded as COMPLETED - the gateway confirmed
+   * the money - without any booking / invoice / plan side effect, flagged REFUND_OR_REBOOK for the
+   * clinic. Never throws, never refunds.
    */
   async flagSettlement(flag: SettlementFlag): Promise<void> {
     try {
       let recorded = !isPersistedAnomaly(flag.reason);
-      if (isPersistedAnomaly(flag.reason)) {
+      const lateRecordedFrom =
+        flag.reason === 'LATE_SETTLEMENT' ? await this.recordLateSettlementPayment(flag) : null;
+      if (lateRecordedFrom) {
+        recorded = true;
+      } else if (isPersistedAnomaly(flag.reason)) {
         const reason = flag.reason;
         const result = await this.paymentStore.mutateMetadata(
           flag.paymentId,
@@ -5297,9 +6393,23 @@ export class BillingService implements OnModuleInit {
           : flag.reason === 'DUPLICATE_SETTLEMENT'
             ? 'billing.payment.duplicate_settlement'
             : 'billing.payment.underpaid';
+      if (lateRecordedFrom) {
+        if (flag.userId) {
+          await this.invalidateUserPaymentCaches(flag.userId);
+        }
+        await this.eventService.emit('billing.payment.updated', {
+          paymentId: flag.paymentId,
+          clinicId: flag.clinicId,
+          status: 'completed',
+          lateSettlement: true,
+        });
+      }
       await this.eventService.emit(eventName, {
         clinicId: flag.clinicId,
         paymentId: flag.paymentId,
+        ...(flag.reason === 'LATE_SETTLEMENT'
+          ? { requiredAction: LATE_SETTLEMENT_REQUIRED_ACTION }
+          : {}),
         ...(flag.invoiceId ? { invoiceId: flag.invoiceId } : {}),
         ...(flag.appointmentId ? { appointmentId: flag.appointmentId } : {}),
         ...(flag.orderId ? { orderId: flag.orderId } : {}),
@@ -5318,6 +6428,73 @@ export class BillingService implements OnModuleInit {
         { clinicId: flag.clinicId, paymentId: flag.paymentId, reason: flag.reason }
       );
     }
+  }
+
+  /**
+   * The payment is COMPLETED but its booking had already been released (the listener refused to
+   * revive it): persists the LATE_SETTLEMENT review (requiredAction REFUND_OR_REBOOK) on the
+   * payment so the clinic sees it. Metadata only - the caller logs and emits. Never throws.
+   */
+  async persistLateSettlementReview(flag: Omit<SettlementFlag, 'reason'>): Promise<void> {
+    try {
+      await this.paymentStore.mutateMetadata(
+        flag.paymentId,
+        flag.clinicId,
+        current =>
+          buildSettlementReviewMetadata(
+            current,
+            {
+              reason: 'LATE_SETTLEMENT',
+              appointmentId: flag.appointmentId,
+              invoiceId: flag.invoiceId,
+              orderId: flag.orderId,
+              transactionId: flag.transactionId,
+              amount: flag.amount,
+            },
+            new Date()
+          )?.next ?? null
+      );
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        `Failed to persist late settlement review: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        'BillingService',
+        { clinicId: flag.clinicId, paymentId: flag.paymentId }
+      );
+    }
+  }
+
+  /**
+   * A gateway-confirmed payment for a payment row this system had already released: recorded as
+   * COMPLETED (money received) with the late-settlement review and an already-applied
+   * finalisation marker, so nothing confirms the released booking or settles a void invoice.
+   * Returns the released status it was recorded from, or null (row not released / moved on).
+   */
+  private async recordLateSettlementPayment(flag: SettlementFlag): Promise<string | null> {
+    const now = new Date();
+    return this.paymentStore.recordLateSettlement({
+      paymentId: flag.paymentId,
+      clinicId: flag.clinicId,
+      releasedStatuses: [String(PaymentStatus.EXPIRED), String(PaymentStatus.CANCELLED)],
+      completedStatus: String(PaymentStatus.COMPLETED),
+      transactionId: flag.transactionId,
+      mutate: (current, releasedStatus) =>
+        buildLateSettlementMetadata(
+          current,
+          {
+            releasedStatus,
+            appointmentId: flag.appointmentId,
+            invoiceId: flag.invoiceId,
+            orderId: flag.orderId,
+            transactionId: flag.transactionId,
+            amount: flag.amount,
+          },
+          now
+        ),
+    });
   }
 
   /** Cron: repairs payments stuck between the claim and their side effects (crashed finalisation). */
@@ -5361,6 +6538,9 @@ export class BillingService implements OnModuleInit {
       });
       for (const row of rows) {
         if (!row.appointmentId) {
+          if (row.invoiceId && (await this.reconcileStaleInvoicePayment(row))) {
+            confirmed += 1;
+          }
           continue;
         }
         try {
@@ -5409,6 +6589,398 @@ export class BillingService implements OnModuleInit {
     // The lock is not released: it expires just before the next tick, so a replica whose cron
     // fires a moment later still sees it and skips.
     return confirmed;
+  }
+
+  /**
+   * One invoice / plan payment of the pending-payment sweep: verified with the gateway through
+   * the normal callback path (amount check, finaliser, invoice settled once). A paid order
+   * settles the invoice; an expired or failed one closes the attempt; an open one is left alone.
+   * Returns true when the payment is COMPLETED afterwards.
+   */
+  private async reconcileStaleInvoicePayment(row: PaymentRow): Promise<boolean> {
+    // Past its window the attempt belongs to the payment-window sweep, which verifies it AND
+    // closes the checkout (invoice void, plan expired) in one step.
+    if (isPastPaymentWindow(row, new Date())) {
+      return false;
+    }
+    try {
+      const outcome = await this.reconcilePaymentForClinic(row.clinicId, row.id);
+      const status = this.asSafeString(this.asRecord(outcome.payment)?.['status']).toUpperCase();
+      if (status !== String(PaymentStatus.COMPLETED)) {
+        return false;
+      }
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        'Paid invoice settled by the pending-payment sweep',
+        'BillingService.reconcileStalePendingPayments',
+        { paymentId: row.id, invoiceId: row.invoiceId, clinicId: row.clinicId }
+      );
+      return true;
+    } catch (error) {
+      if (!(error instanceof BadRequestException)) {
+        await this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.WARN,
+          `Pending-payment sweep failed for one invoice payment: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          'BillingService.reconcileStalePendingPayments',
+          { paymentId: row.id, invoiceId: row.invoiceId, clinicId: row.clinicId }
+        );
+      }
+      return false;
+    }
+  }
+
+  /**
+   * Cron: the payment window of every checkout. An invoice / plan payment attempt not completed
+   * within the window (same clock as VIDEO_CALL bookings) is first checked with the gateway:
+   * paid -> finalised normally (invoice PAID, plan ACTIVE), also covering a lost callback; not
+   * paid -> the attempt expires, a plan-purchase invoice is voided and the plan purchase waiting
+   * on it (INCOMPLETE) expires. Booking payments follow the booking's own window
+   * (VideoAppointmentSchedulerService.handleExpiredPaymentWindows). Every write is guarded on
+   * the state it expects, so a payment completing at the same moment always wins.
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async expireUnpaidCheckouts(): Promise<number> {
+    const acquired = await this.cacheService.acquireLock(
+      PAYMENT_WINDOW_LOCK_KEY,
+      PAYMENT_WINDOW_LOCK_TTL_SECONDS
+    );
+    if (!acquired) {
+      return 0;
+    }
+    let expired = 0;
+    try {
+      const now = new Date();
+      const windowMs = paymentWindowMs();
+      const rows = await this.paymentStore.listOpenCheckoutAttempts({
+        openedBefore: new Date(now.getTime() - windowMs),
+        limit: PAYMENT_WINDOW_BATCH_SIZE,
+      });
+      for (const row of rows) {
+        if (!isReadyToExpire(row, now, windowMs)) {
+          continue;
+        }
+        if (await this.closeLapsedCheckout(row, now, windowMs)) {
+          expired += 1;
+        }
+      }
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.ERROR,
+        `Payment-window sweep failed: ${error instanceof Error ? error.message : String(error)}`,
+        'BillingService.expireUnpaidCheckouts'
+      );
+    }
+    // The lock is not released: it expires just before the next tick, so a replica whose cron
+    // fires a moment later still sees it and skips.
+    return expired;
+  }
+
+  /** One lapsed attempt of the payment-window sweep. Returns true when the checkout expired. */
+  private async closeLapsedCheckout(
+    row: PaymentRow,
+    now: Date,
+    windowMs: number
+  ): Promise<boolean> {
+    const expiresAt = attemptExpiresAt(row, windowMs);
+    const { gatewayReachable } = await this.verifyLapsedAttemptWithGateway(
+      row,
+      'BillingService.expireUnpaidCheckouts'
+    );
+
+    const fresh = await this.paymentStore.readPayment(row.id, row.clinicId);
+    if (!fresh) {
+      return false;
+    }
+    const invoice = fresh.invoiceId
+      ? await this.paymentStore.readInvoice(fresh.invoiceId, fresh.clinicId)
+      : null;
+    if (String(invoice?.status ?? '').toUpperCase() === String(InvoiceStatus.PAID)) {
+      // Paid (by this attempt or another): the finaliser settled it and closed the rest.
+      return false;
+    }
+    const verdict = decideWindowVerdict({
+      verifiedStatus: String(fresh.status),
+      gatewayReachable,
+      expiresAt,
+      now,
+    });
+    if (verdict !== 'expire') {
+      return false;
+    }
+
+    const closedAt = nowIso();
+    const paymentExpired =
+      String(fresh.status).toUpperCase() === String(PaymentStatus.PENDING) &&
+      (await this.paymentStore.expireOpenAttempt({
+        payment: fresh,
+        metadata: {
+          ...(this.asRecord(fresh.metadata) ?? {}),
+          closedReason: 'PAYMENT_WINDOW_EXPIRED',
+          closedAt,
+          gatewayVerified: gatewayReachable,
+        },
+      }));
+    if (String(fresh.status).toUpperCase() === String(PaymentStatus.PENDING) && !paymentExpired) {
+      // The row moved on between the read and the write (e.g. it was just paid): leave it.
+      return false;
+    }
+
+    const invoiceVoided = invoice
+      ? await this.voidLapsedCheckoutInvoice(invoice, now, windowMs)
+      : false;
+    const subscriptionId = fresh.subscriptionId || invoice?.subscriptionId || null;
+    const subscriptionExpired = subscriptionId
+      ? await this.expireLapsedPlanPurchase(subscriptionId, fresh.clinicId, now, windowMs)
+      : false;
+
+    await this.announceLapsedCheckout({
+      payment: fresh,
+      paymentExpired,
+      invoice,
+      invoiceVoided,
+      subscriptionId,
+      subscriptionExpired,
+    });
+    return paymentExpired || invoiceVoided || subscriptionExpired;
+  }
+
+  /**
+   * Voids an invoice whose last payment attempt lapsed (product rule: every payment must be
+   * completed within the window, otherwise its invoice is void; a new bill is issued to pay
+   * again). Never while another attempt is still inside its window or a completed payment
+   * exists; the write itself is guarded on PENDING.
+   */
+  private async voidLapsedCheckoutInvoice(
+    invoice: InvoiceRow,
+    now: Date,
+    windowMs: number
+  ): Promise<boolean> {
+    if (String(invoice.status).toUpperCase() !== 'PENDING') {
+      return false;
+    }
+    // Only online checkouts (video payment, plan purchase / renewal) are voided by the window.
+    // A desk-raised bill stays payable; only its lapsed attempt row expired above.
+    if (!isOnlineCheckoutInvoice(invoice)) {
+      return false;
+    }
+    const payments = await this.paymentStore.listInvoicePayments(invoice.id, invoice.clinicId);
+    const stillPayable = payments.some(
+      payment =>
+        String(payment.status).toUpperCase() === String(PaymentStatus.COMPLETED) ||
+        (isOpenAttempt(payment) && !isReadyToExpire(payment, now, windowMs))
+    );
+    if (stillPayable) {
+      return false;
+    }
+    return this.paymentStore.voidPendingInvoice({
+      invoice,
+      clinicId: invoice.clinicId,
+      metadata: {
+        ...(this.asRecord(invoice.metadata) ?? {}),
+        voidReason: 'PAYMENT_WINDOW_EXPIRED',
+        voidedAt: nowIso(),
+      },
+    });
+  }
+
+  /**
+   * Expires a plan purchase still waiting for its first payment (INCOMPLETE only, never a paid
+   * plan), unless another of its payment attempts is completed or still inside its window (e.g.
+   * a second invoice the patient is paying right now).
+   */
+  private async expireLapsedPlanPurchase(
+    subscriptionId: string,
+    clinicId: string,
+    now: Date,
+    windowMs: number
+  ): Promise<boolean> {
+    const payments = await this.paymentStore.listSubscriptionPayments(subscriptionId, clinicId);
+    const stillPayable = payments.some(
+      payment =>
+        String(payment.status).toUpperCase() === String(PaymentStatus.COMPLETED) ||
+        (isOpenAttempt(payment) && !isReadyToExpire(payment, now, windowMs))
+    );
+    if (stillPayable) {
+      return false;
+    }
+    return this.paymentStore.expireIncompleteSubscription({ subscriptionId, clinicId });
+  }
+
+  /**
+   * Asks the gateway about a payment attempt whose window is over, through the normal
+   * verification path (the gateway's own answer, amount check, finaliser): a payment the gateway
+   * reports paid is finalised here (lost callback). Shared by the invoice / plan payment-window
+   * sweep and the VIDEO_CALL booking sweep. `gatewayReachable` is false only when the gateway
+   * could not be asked (outage); "no such order" is an answer (never paid).
+   *
+   * A provider whose order id cannot be verified (no usable id for its status API) answers
+   * "pending": the attempt is then treated as unpaid, which the sweeps only do once the window
+   * AND the provider buffer are over; it is logged so the gap is visible.
+   */
+  private async verifyLapsedAttemptWithGateway(
+    row: { id: string; clinicId: string; invoiceId?: string | null; metadata?: unknown },
+    context: string
+  ): Promise<{ gatewayReachable: boolean }> {
+    try {
+      await this.reconcilePaymentForClinic(row.clinicId, row.id);
+      return { gatewayReachable: true };
+    } catch (error) {
+      const gatewayReachable = this.isGatewayOrderNotFound(error);
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        `Payment-window sweep could not verify a payment with the gateway: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        context,
+        {
+          paymentId: row.id,
+          invoiceId: row.invoiceId ?? null,
+          clinicId: row.clinicId,
+          provider: this.asRecord(row.metadata)?.['provider'] ?? null,
+          treatedAs: gatewayReachable ? 'unpaid' : 'unreachable',
+        }
+      );
+      return { gatewayReachable };
+    }
+  }
+
+  /**
+   * VIDEO_CALL booking payment window (VideoAppointmentSchedulerService): before a PENDING
+   * booking whose window (+ provider buffer) is over is expired, its open payment is checked with
+   * the gateway the same way the invoice sweep does.
+   * - 'paid': the gateway confirmed the payment (lost callback, or a payment confirmed inside the
+   *   provider buffer after our window): it is finalised and the booking confirmed. Never marked
+   *   paid without the gateway's confirmation.
+   * - 'unpaid': no payment, or the gateway answered not paid -> expire the booking.
+   * - 'retry': the gateway could not be asked; retried next run, expired once far past the window.
+   */
+  async resolveLapsedAppointmentPayment(args: {
+    clinicId: string;
+    appointmentId: string;
+    paymentExpiresAt: Date;
+    now?: Date;
+  }): Promise<'paid' | 'unpaid' | 'retry'> {
+    const now = args.now ?? new Date();
+    const context = 'BillingService.resolveLapsedAppointmentPayment';
+    const forAppointment = async (): Promise<PaymentRow[]> =>
+      (
+        (await this.databaseService.findPaymentsSafe({
+          appointmentId: args.appointmentId,
+        })) as unknown as PaymentRow[]
+      ).filter(payment => String(payment.clinicId) === String(args.clinicId));
+    const isStatus = (payment: PaymentRow, status: PaymentStatus): boolean =>
+      String(payment.status).toUpperCase() === String(status);
+
+    let payments = await forAppointment();
+    let gatewayReachable = true;
+    if (!payments.some(payment => isStatus(payment, PaymentStatus.COMPLETED))) {
+      const open = payments
+        .filter(payment => isStatus(payment, PaymentStatus.PENDING))
+        .sort(
+          (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+        );
+      for (const payment of open) {
+        const verified = await this.verifyLapsedAttemptWithGateway(payment, context);
+        gatewayReachable = gatewayReachable && verified.gatewayReachable;
+      }
+      payments = open.length > 0 ? await forAppointment() : payments;
+    }
+
+    const paid = payments.find(payment => isStatus(payment, PaymentStatus.COMPLETED));
+    if (paid) {
+      // The payment was already gateway-verified and amount-checked; the booking was left
+      // PENDING only because the confirm step enforces our (shorter) window. Confirm it now.
+      const orderId =
+        this.asSafeString(this.asRecord(paid.metadata)?.['orderId']) ||
+        paid.transactionId ||
+        paid.id;
+      await this.finaliser.repairManually(paid, {
+        actorUserId: 'system-payment-window-sweep',
+        orderId,
+      });
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        'Gateway-confirmed payment found for a lapsed VIDEO_CALL booking: booking confirmed instead of expired',
+        context,
+        { clinicId: args.clinicId, appointmentId: args.appointmentId, paymentId: paid.id, orderId }
+      );
+      return 'paid';
+    }
+
+    const verdict = decideWindowVerdict({
+      verifiedStatus: null,
+      gatewayReachable,
+      expiresAt: args.paymentExpiresAt,
+      now,
+    });
+    return verdict === 'retry' ? 'retry' : 'unpaid';
+  }
+
+  /** The gateway answered that the order does not exist (HTTP 404): it was never paid. */
+  private isGatewayOrderNotFound(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /\b404\b|not\s*found/i.test(message);
+  }
+
+  private async announceLapsedCheckout(args: {
+    payment: PaymentRow;
+    paymentExpired: boolean;
+    invoice: InvoiceRow | null;
+    invoiceVoided: boolean;
+    subscriptionId: string | null;
+    subscriptionExpired: boolean;
+  }): Promise<void> {
+    const { payment } = args;
+    const userId = payment.userId || args.invoice?.userId || null;
+    if (args.paymentExpired) {
+      await this.eventService.emit('billing.payment.updated', {
+        paymentId: payment.id,
+        clinicId: payment.clinicId,
+        status: 'expired',
+        payment: { ...payment, status: PaymentStatus.EXPIRED },
+      });
+    }
+    if (args.invoiceVoided && args.invoice) {
+      await this.eventService.emit('billing.invoice.updated', {
+        invoiceId: args.invoice.id,
+        invoice: { ...args.invoice, status: InvoiceStatus.VOID },
+      });
+    }
+    if (args.subscriptionExpired && args.subscriptionId) {
+      await this.eventService.emit('billing.subscription.updated', {
+        subscriptionId: args.subscriptionId,
+        subscription: { id: args.subscriptionId, status: SubscriptionStatus.INCOMPLETE_EXPIRED },
+      });
+    }
+    if (userId) {
+      await this.invalidateUserPaymentCaches(userId);
+      await this.invalidateUserInvoiceCaches(userId);
+      if (args.subscriptionId) {
+        await this.invalidateSubscriptionCaches(userId, args.subscriptionId);
+      }
+    }
+    await this.loggingService.log(
+      LogType.PAYMENT,
+      LogLevel.WARN,
+      'Checkout expired: payment not completed within the payment window',
+      'BillingService.expireUnpaidCheckouts',
+      {
+        paymentId: payment.id,
+        clinicId: payment.clinicId,
+        invoiceId: args.invoice?.id,
+        subscriptionId: args.subscriptionId,
+        paymentExpired: args.paymentExpired,
+        invoiceVoided: args.invoiceVoided,
+        subscriptionExpired: args.subscriptionExpired,
+      }
+    );
   }
 
   /** The doctor's configured fixed fee for this visit type in this clinic, or null if none. */
@@ -7399,11 +8971,19 @@ export class BillingService implements OnModuleInit {
           amount: subscriptionPlan?.amount || 0,
           tax: (subscriptionPlan?.amount || 0) * 0.18, // 18% GST
           dueDate: subscription.currentPeriodEnd.toISOString(),
-          description: `Subscription: ${subscriptionPlan?.name || 'Unknown Plan'}`,
+          description: buildPlanInvoiceDescription(
+            subscriptionPlan?.name,
+            subscriptionPlan?.interval,
+            subscriptionPlan?.intervalCount
+          ),
           lineItems: {
             items: [
               {
-                description: subscriptionPlan?.name || 'Unknown Plan',
+                description: buildPlanInvoiceDescription(
+                  subscriptionPlan?.name,
+                  subscriptionPlan?.interval,
+                  subscriptionPlan?.intervalCount
+                ),
                 quantity: 1,
                 unitPrice: subscriptionPlan?.amount || 0,
                 amount: subscriptionPlan?.amount || 0,

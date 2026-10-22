@@ -172,6 +172,15 @@ export class ClinicLocationService {
           clinicId: boolean;
           name: boolean;
           address: boolean;
+          city: boolean;
+          state: boolean;
+          country: boolean;
+          zipCode: boolean;
+          phone: boolean;
+          email: boolean;
+          timezone: boolean;
+          latitude: boolean;
+          longitude: boolean;
           workingHours: boolean;
           isActive: boolean;
           createdAt: boolean;
@@ -205,6 +214,17 @@ export class ClinicLocationService {
           clinicId: true,
           name: true,
           address: true,
+          // The location edit form is filled from this list: without the contact fields it
+          // showed (and then saved back) an empty phone / city / PIN code.
+          city: true,
+          state: true,
+          country: true,
+          zipCode: true,
+          phone: true,
+          email: true,
+          timezone: true,
+          latitude: true,
+          longitude: true,
           workingHours: true,
           isActive: true,
           createdAt: true,

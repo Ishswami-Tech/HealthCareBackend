@@ -23,6 +23,7 @@ import {
 import type { ExecutionContext } from '@nestjs/common';
 import type { Reflector } from '@nestjs/core';
 
+import { scopeInvalidationTags } from '@infrastructure/cache/utils/tag-scope.util';
 import { HealthcareCacheInterceptor } from '@core/interceptors/healthcare-cache.interceptor';
 import { CACHE_KEY, CACHE_INVALIDATE_KEY } from '@core/decorators';
 import type { CacheService } from '@infrastructure/cache/cache.service';
@@ -94,6 +95,8 @@ function createHarness() {
     del: jest.fn().mockResolvedValue(1),
     ttl: jest.fn().mockResolvedValue(0),
     rPush: jest.fn().mockResolvedValue(1),
+    lTrim: jest.fn().mockResolvedValue('OK'),
+    expire: jest.fn().mockResolvedValue(1),
     invalidateCacheByTag: jest.fn().mockResolvedValue(0),
     invalidateCacheByPattern: jest.fn().mockResolvedValue(0),
     invalidatePatientCache: jest.fn().mockResolvedValue(0),
@@ -342,7 +345,8 @@ describe('HealthcareCacheInterceptor key isolation', () => {
       expect(keyForPatientP).toContain(`ehr:comprehensive:${PATIENT}:`);
       expect(keyForPatientV).toContain(`ehr:comprehensive:${VICTIM}:`);
       expect(keyForPatientP).not.toBe(keyForPatientV);
-      expect(keyForPatientP).not.toContain(DOCTOR);
+      // The caller is in the key too (staff entries are per user unless shareAcrossRole).
+      expect(keyForPatientP).toContain(`:u-${DOCTOR}:q-`);
     });
 
     it('route params win over a query value of the same name', async () => {
@@ -409,7 +413,7 @@ describe('HealthcareCacheInterceptor key isolation', () => {
       );
 
       expect(key).toBe(
-        `clinic:${CLINIC_A}:users:role:doctors:${CLINIC_A}:${HANDLER}:r-DOCTOR:q-${key.slice(-32)}`
+        `clinic:${CLINIC_A}:users:role:doctors:${CLINIC_A}:${HANDLER}:u-${DOCTOR}:q-${key.slice(-32)}`
       );
       expect(key).not.toContain('{');
     });
@@ -885,7 +889,8 @@ describe('HealthcareCacheInterceptor key isolation', () => {
         `clinic:${CLINIC_A}`,
         `patient:${PATIENT}:${PATIENT}`,
       ]);
-      expect(invalidated).toEqual(registered);
+      // Collection tags are invalidated per clinic (+ clinic-less entries), see tag-scope.util.
+      expect(invalidated).toEqual(scopeInvalidationTags(registered, CLINIC_A));
     });
 
     it('matches what services invalidate (user:<id>, clinic:<id>) for the PHI set() branch too', async () => {
@@ -917,7 +922,8 @@ describe('HealthcareCacheInterceptor key isolation', () => {
       for (const tag of [...registered, ...invalidated]) {
         expect(tag).not.toMatch(/q-[0-9a-f]{32}/);
       }
-      expect(invalidated).toEqual(registered);
+      // Collection tags are invalidated per clinic (+ clinic-less entries), see tag-scope.util.
+      expect(invalidated).toEqual(scopeInvalidationTags(registered, CLINIC_A));
     });
 
     it('uses the principal, not a spoofed query or body, on both paths', async () => {
@@ -940,7 +946,8 @@ describe('HealthcareCacheInterceptor key isolation', () => {
 
       expect(registered).toContain(`user:${PATIENT}`);
       expect(registered).toContain(`clinic:${CLINIC_A}`);
-      expect(invalidated).toEqual(registered);
+      // Collection tags are invalidated per clinic (+ clinic-less entries), see tag-scope.util.
+      expect(invalidated).toEqual(scopeInvalidationTags(registered, CLINIC_A));
       expect([...registered, ...invalidated].join()).not.toMatch(
         new RegExp(`${VICTIM}|${CLINIC_B}`)
       );
@@ -1167,8 +1174,10 @@ describe('HealthcareCacheInterceptor key isolation', () => {
       });
 
       expect(order).toEqual([
-        'tag:users',
-        'tag:user_lists',
+        `tag:clinic:${CLINIC_A}:users`,
+        'tag:noclinic:users',
+        `tag:clinic:${CLINIC_A}:user_lists`,
+        'tag:noclinic:user_lists',
         `pattern:clinic:${CLINIC_A}:users:all:*`,
       ]);
     });

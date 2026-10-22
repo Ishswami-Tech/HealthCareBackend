@@ -1187,6 +1187,8 @@ describe('PatientsService patient documents are private and served via presigned
 
     expect(h.staticAssetService.resolveSignedUrl).toHaveBeenCalledWith(OWN_BUCKET_URL, undefined, {
       boundTo: ['patient-self', 'user-self'],
+      // saved under the document's own name, never the storage key
+      fileName: 'Document',
     });
   });
 
@@ -1226,11 +1228,14 @@ describe('PatientsService patient documents are private and served via presigned
       ['d3', undefined],
     ]);
     expect(h.staticAssetService.resolveSignedUrl).toHaveBeenCalledTimes(2);
-    // the response shape clients rely on is unchanged
+    // the response shape clients rely on is kept (plus title / downloadFileName)
     expect(Object.keys(documents[0] ?? {}).sort()).toEqual(
       [
         'category',
+        'contentUrl',
         'description',
+        'downloadFileName',
+        'title',
         'fileName',
         'fileSize',
         'fileType',

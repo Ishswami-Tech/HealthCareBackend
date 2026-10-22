@@ -8,7 +8,7 @@
  * is raised only when the pharmacist asks for more than is on hand.
  */
 
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { PharmacyService } from '@services/pharmacy/services/pharmacy.service';
@@ -84,8 +84,17 @@ function createHarness(scenario: Scenario) {
       findUnique: jest.fn().mockResolvedValue(prescription),
       findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn(async ({ data }: { data: Row }) => ({ ...prescription, ...data })),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    prescriptionItem: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    prescriptionItem: {
+      // The guarded claim: applies the write to the in-memory line, like the row in the DB.
+      updateMany: jest.fn(async ({ data }: { data: Row }) => {
+        Object.assign(item, data);
+        return { count: 1 };
+      }),
+      update: jest.fn().mockResolvedValue(item),
+      findMany: jest.fn(async () => [item]),
+    },
     medicine: { findMany: jest.fn().mockResolvedValue([medicine]) },
     user: { findUnique: jest.fn().mockResolvedValue({ name: 'Pharma Cist' }) },
     patientVisit: { findMany: jest.fn().mockResolvedValue([]) },
@@ -97,6 +106,7 @@ function createHarness(scenario: Scenario) {
     executeHealthcareWrite: jest.fn(
       async (op: (c: unknown) => Promise<unknown>, _audit?: Record<string, unknown>) => op(client)
     ),
+    executeInTransaction: jest.fn(async (op: (c: unknown) => Promise<unknown>) => op(client)),
     findPaymentsSafe: jest.fn().mockResolvedValue([]),
   };
   const inventoryService = {
@@ -113,6 +123,7 @@ function createHarness(scenario: Scenario) {
           totalDispensed: line.quantity,
         }))
     ),
+    restoreDispense: jest.fn().mockResolvedValue([]),
   };
   const billing = {
     findPrescriptionInvoices: jest.fn().mockResolvedValue(new Map()),
@@ -145,7 +156,15 @@ function createHarness(scenario: Scenario) {
     (client.prescriptionItem.updateMany.mock.calls[0]?.[0] as { data: Row }).data;
   const statusWritten = (): unknown =>
     (client.prescription.update.mock.calls[0]?.[0] as { data: Row }).data['status'];
-  return { service, client, inventoryService, itemUpdateData, statusWritten };
+  return {
+    service,
+    client,
+    databaseService,
+    inventoryService,
+    item,
+    itemUpdateData,
+    statusWritten,
+  };
 }
 
 const request = (quantity: number) => ({
@@ -254,5 +273,106 @@ describe('PharmacyService.dispensePrescription partial dispensing', () => {
       h.service.dispensePrescription(RX, request(1), CLINIC, PHARMACIST)
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(h.client.prescriptionItem.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('PharmacyService dispense / reversal atomicity (concurrent double submit)', () => {
+  it('runs the dispense in one transaction and claims the line before any stock is decremented', async () => {
+    const h = createHarness({ prescribed: 10, stock: 10 });
+
+    await h.service.dispensePrescription(RX, request(10), CLINIC, PHARMACIST);
+
+    expect(h.databaseService.executeInTransaction).toHaveBeenCalledTimes(1);
+    const claimOrder = h.client.prescriptionItem.updateMany.mock.invocationCallOrder[0] ?? 0;
+    const fefoOrder = h.inventoryService.dispenseFefo.mock.invocationCallOrder[0] ?? 0;
+    expect(claimOrder).toBeGreaterThan(0);
+    expect(claimOrder).toBeLessThan(fefoOrder);
+    // The claim is guarded on the snapshot it was validated against.
+    expect(h.client.prescriptionItem.updateMany.mock.calls[0]?.[0]).toMatchObject({
+      where: { id: ITEM, dispensedQuantity: 0, dispensedAt: null },
+    });
+  });
+
+  it('the loser of a concurrent dispense gets a 409 and never touches stock', async () => {
+    const h = createHarness({ prescribed: 10, stock: 10 });
+    h.client.prescriptionItem.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    const attempt = h.service.dispensePrescription(RX, request(10), CLINIC, PHARMACIST);
+
+    await expect(attempt).rejects.toBeInstanceOf(ConflictException);
+    await expect(attempt).rejects.toThrow('dispensed concurrently');
+    expect(h.inventoryService.dispenseFefo).not.toHaveBeenCalled();
+    expect(h.client.prescription.update).not.toHaveBeenCalled();
+  });
+
+  it('derives the status from the lines re-read after the prescription row is locked', async () => {
+    const h = createHarness({ prescribed: 10, stock: 10 });
+
+    await h.service.dispensePrescription(RX, request(4), CLINIC, PHARMACIST);
+
+    const lockOrder = h.client.prescription.updateMany.mock.invocationCallOrder[0] ?? 0;
+    const fefoOrder = h.inventoryService.dispenseFefo.mock.invocationCallOrder[0] ?? 0;
+    const rereadOrder = h.client.prescriptionItem.findMany.mock.invocationCallOrder[0] ?? 0;
+    expect(fefoOrder).toBeLessThan(lockOrder);
+    expect(lockOrder).toBeLessThan(rereadOrder);
+    expect(h.statusWritten()).toBe('PARTIAL');
+  });
+
+  it('a concurrent second reversal is refused (409) before any stock is restored', async () => {
+    const h = createHarness({ prescribed: 5, dispensed: 5, stock: 0, status: 'FILLED' });
+    h.item['dispensedAt'] = new Date('2026-10-02T05:00:00Z');
+    h.item['dispenseEventHistory'] = [
+      {
+        quantity: 5,
+        medicineId: MED,
+        originalMedicineId: MED,
+        eventType: 'DISPENSE',
+        dispensedAt: '2026-10-02T05:00:00.000Z',
+      },
+    ];
+    h.client.prescriptionItem.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    const attempt = h.service.reversePrescriptionDispense(
+      RX,
+      { reason: 'double tap' },
+      CLINIC,
+      PHARMACIST
+    );
+
+    await expect(attempt).rejects.toBeInstanceOf(ConflictException);
+    expect(h.client.prescriptionItem.updateMany.mock.calls[0]?.[0]).toMatchObject({
+      where: { id: ITEM, dispensedQuantity: 5, dispensedAt: new Date('2026-10-02T05:00:00Z') },
+    });
+    expect(h.inventoryService.restoreDispense).not.toHaveBeenCalled();
+    expect(h.client.prescription.update).not.toHaveBeenCalled();
+  });
+
+  it('a reversal restores the stock once, after the line is claimed', async () => {
+    const h = createHarness({ prescribed: 5, dispensed: 5, stock: 0, status: 'FILLED' });
+    h.item['dispenseEventHistory'] = [
+      {
+        quantity: 5,
+        medicineId: MED,
+        originalMedicineId: MED,
+        eventType: 'DISPENSE',
+        dispensedAt: '2026-10-02T05:00:00.000Z',
+      },
+    ];
+
+    await h.service.reversePrescriptionDispense(
+      RX,
+      { reason: 'wrong patient' },
+      CLINIC,
+      PHARMACIST
+    );
+
+    expect(h.databaseService.executeInTransaction).toHaveBeenCalledTimes(1);
+    expect(h.inventoryService.restoreDispense).toHaveBeenCalledTimes(1);
+    expect(h.inventoryService.restoreDispense.mock.calls[0]?.[1]).toEqual([
+      { medicineId: MED, quantity: 5 },
+    ]);
+    const claimOrder = h.client.prescriptionItem.updateMany.mock.invocationCallOrder[0] ?? 0;
+    const restoreOrder = h.inventoryService.restoreDispense.mock.invocationCallOrder[0] ?? 0;
+    expect(claimOrder).toBeLessThan(restoreOrder);
   });
 });

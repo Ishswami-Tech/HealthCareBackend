@@ -1,671 +1,393 @@
 /**
- * Unit tests for AppointmentsService.
+ * Unit tests for the AppointmentsService entry points that wrap CoreAppointmentService:
+ * the single-doctor resolution, create / list / detail / cancel plumbing (RBAC gate, clinic
+ * context taken from the request, cache scoping) and the reception video-booking rule.
  *
- * AppointmentsService has ~20 constructor dependencies. These tests
- * provide plain mock objects for each dependency so the service can be
- * instantiated and its public methods tested in isolation.
+ * The deeper state rules (complete, reschedule, status guards, check-in) have their own
+ * suites (appointments-security, appointments-completion-rules, appointments-status-guards,
+ * appointments-reschedule-and-slots, appointments-checkin-recovery).
  */
-
+import { ForbiddenException, BadRequestException, HttpException } from '@nestjs/common';
 import { AppointmentsService } from '@services/appointments/appointments.service';
 import { Role } from '@core/types/enums.types';
+import type { CreateAppointmentDto, AppointmentFilterDto } from '@dtos/appointment.dto';
+import { createErrors } from './test-helpers';
+
+type Row = Record<string, unknown>;
+
+const CLINIC = 'clinic-1';
+const OTHER_CLINIC = 'clinic-2';
+
+function buildService() {
+  const client = {
+    doctorClinic: { findMany: jest.fn().mockResolvedValue([{ doctorId: 'doctor-1' }]) },
+    patient: { findFirst: jest.fn().mockResolvedValue({ id: 'patient-1', userId: 'user-p' }) },
+    appointment: { findFirst: jest.fn().mockResolvedValue(null) },
+  };
+  const db = {
+    executeHealthcareRead: jest.fn((fn: (c: typeof client) => Promise<unknown>) => fn(client)),
+    executeHealthcareWrite: jest.fn((fn: (c: typeof client) => Promise<unknown>) => fn(client)),
+    findAppointmentByIdSafe: jest.fn().mockResolvedValue(null),
+  };
+  const core = {
+    createAppointment: jest.fn().mockResolvedValue({
+      success: true,
+      data: { id: 'appt-1', status: 'PENDING', userId: 'user-p' },
+    }),
+    getAppointments: jest.fn().mockResolvedValue({ success: true, data: { appointments: [] } }),
+    cancelAppointment: jest.fn().mockResolvedValue({
+      success: true,
+      data: {
+        id: 'appt-1',
+        patientId: 'patient-1',
+        doctorId: 'doctor-1',
+        patient: { user: { firstName: 'Asha', lastName: 'Rao' } },
+        doctor: { user: { name: 'Dr. Mehta' } },
+      },
+    }),
+  };
+  const cache = {
+    cache: jest.fn((_key: string, loader: () => Promise<unknown>) => loader()),
+    getKeyFactory: jest.fn(() => ({
+      appointment: (id: string, scope: string) => `appointment:${id}:${scope}`,
+      fromTemplate: (template: string, values: Record<string, string>) =>
+        template.replace(/\{(\w+)\}/g, (_m, key: string) => values[key] ?? ''),
+    })),
+    invalidateAppointmentCache: jest.fn().mockResolvedValue(0),
+    invalidateCacheByTag: jest.fn().mockResolvedValue(0),
+    invalidateCollectionTags: jest.fn().mockResolvedValue(0),
+  };
+  const rbac = { checkPermission: jest.fn().mockResolvedValue({ hasPermission: true }) };
+  const events = { emit: jest.fn(), emitEnterprise: jest.fn().mockResolvedValue(undefined) };
+  const reminders = {
+    scheduleReminder: jest.fn().mockResolvedValue({ success: true, reminderId: 'r-1' }),
+    cancelAppointmentReminder: jest.fn().mockResolvedValue(undefined),
+  };
+  const queue = { getClinicQueue: jest.fn().mockResolvedValue([]) };
+  const logging = { log: jest.fn().mockResolvedValue(undefined) };
+  const config = { getEnv: jest.fn((_key: string, fallback: string) => fallback) };
+  const billing = { bookAppointmentWithSubscription: jest.fn() };
+
+  const noop = {} as never;
+  const service = new AppointmentsService(
+    core as never,
+    noop, // conflictResolutionService
+    noop, // workflowEngine
+    noop, // businessRules
+    noop, // pluginRegistry
+    noop, // pluginManager
+    noop, // clinicCheckInPlugin
+    noop, // checkInService
+    noop, // clinicNotificationPlugin
+    noop, // clinicConfirmationPlugin
+    noop, // clinicLocationPlugin
+    noop, // clinicFollowUpPlugin
+    reminders as never,
+    noop, // clinicVideoPlugin
+    logging as never,
+    cache as never,
+    noop, // queueService
+    queue as never,
+    events as never,
+    config as never,
+    db as never,
+    noop, // qrService
+    noop, // authService
+    noop, // whatsAppService
+    noop, // notificationPreferenceService
+    createErrors(),
+    rbac as never,
+    billing as never
+  );
+
+  return { service, client, db, core, cache, rbac, events, reminders };
+}
+
+async function httpRejection(promise: Promise<unknown>): Promise<HttpException> {
+  const error = await promise.then(
+    () => null,
+    (caught: unknown) => caught
+  );
+  expect(error).toBeInstanceOf(HttpException);
+  return error as HttpException;
+}
+
+function videoBooking(overrides: Partial<CreateAppointmentDto> = {}): CreateAppointmentDto {
+  return {
+    patientId: 'patient-1',
+    type: 'VIDEO_CALL',
+    appointmentDate: '2026-11-02',
+    time: '10:00',
+    duration: 30,
+    ...overrides,
+  } as unknown as CreateAppointmentDto;
+}
 
 describe('AppointmentsService', () => {
-  function createService(
-    overrides: {
-      coreAppointmentService?: Record<string, jest.Mock>;
-      conflictResolutionService?: Record<string, jest.Mock>;
-      workflowEngine?: Record<string, jest.Mock>;
-      businessRules?: Record<string, jest.Mock>;
-      pluginRegistry?: Record<string, jest.Mock>;
-      pluginManager?: Record<string, jest.Mock>;
-      clinicCheckInPlugin?: Record<string, jest.Mock>;
-      checkInService?: Record<string, jest.Mock>;
-      clinicNotificationPlugin?: Record<string, jest.Mock>;
-      clinicConfirmationPlugin?: Record<string, jest.Mock>;
-      clinicLocationPlugin?: Record<string, jest.Mock>;
-      clinicFollowUpPlugin?: Record<string, jest.Mock>;
-      appointmentReminderService?: Record<string, jest.Mock>;
-      clinicVideoPlugin?: Record<string, jest.Mock>;
-      loggingService?: Record<string, jest.Mock>;
-      cacheService?: Record<string, jest.Mock>;
-      queueService?: Record<string, jest.Mock>;
-      appointmentQueueService?: Record<string, jest.Mock>;
-      eventService?: Record<string, jest.Mock>;
-      configService?: Record<string, jest.Mock>;
-      databaseService?: Record<string, jest.Mock>;
-      qrService?: Record<string, jest.Mock>;
-      authService?: Record<string, jest.Mock>;
-      whatsAppService?: Record<string, jest.Mock>;
-      notificationPreferenceService?: Record<string, jest.Mock>;
-      errors?: Record<string, jest.Mock>;
-      rbacService?: Record<string, jest.Mock>;
-      billingService?: Record<string, jest.Mock>;
-    } = {}
-  ) {
-    const coreAppointmentService = overrides.coreAppointmentService || {
-      create: jest.fn(),
-      findById: jest.fn(),
-      update: jest.fn(),
-      updateStatus: jest.fn(),
-      cancel: jest.fn(),
-      reschedule: jest.fn(),
-    };
+  describe('resolveSingleDoctorId', () => {
+    it("returns the clinic's one active doctor", async () => {
+      const { service, client } = buildService();
 
-    const conflictResolutionService = overrides.conflictResolutionService || {
-      detectConflicts: jest.fn().mockResolvedValue([]),
-    };
+      await expect(service.resolveSingleDoctorId(CLINIC)).resolves.toBe('doctor-1');
+      expect(client.doctorClinic.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { clinicId: CLINIC, doctor: { user: { role: Role.DOCTOR, isActive: true } } },
+        })
+      );
+    });
 
-    const workflowEngine = overrides.workflowEngine || {
-      run: jest.fn(),
-    };
+    it('is a 400 when the clinic has no doctor', async () => {
+      const { service, client } = buildService();
+      client.doctorClinic.findMany.mockResolvedValue([]);
 
-    const businessRules = overrides.businessRules || {
-      validate: jest.fn().mockResolvedValue({ valid: true }),
-    };
+      await expect(service.resolveSingleDoctorId(CLINIC)).rejects.toBeInstanceOf(
+        BadRequestException
+      );
+    });
 
-    const pluginRegistry = overrides.pluginRegistry || {
-      getPlugin: jest.fn(),
-      register: jest.fn(),
-    };
+    it('is a 400 asking for a doctorId when the clinic has several doctors', async () => {
+      const { service, client } = buildService();
+      client.doctorClinic.findMany.mockResolvedValue([{ doctorId: 'd1' }, { doctorId: 'd2' }]);
 
-    const pluginManager = overrides.pluginManager || {
-      execute: jest.fn(),
-    };
-
-    const clinicCheckInPlugin = overrides.clinicCheckInPlugin || {
-      checkIn: jest.fn(),
-      undoCheckIn: jest.fn(),
-    };
-
-    const checkInService = overrides.checkInService || {
-      processCheckIn: jest.fn(),
-    };
-
-    const clinicNotificationPlugin = overrides.clinicNotificationPlugin || {
-      notify: jest.fn(),
-    };
-
-    const clinicConfirmationPlugin = overrides.clinicConfirmationPlugin || {
-      confirm: jest.fn(),
-    };
-
-    const clinicLocationPlugin = overrides.clinicLocationPlugin || {
-      getInfo: jest.fn(),
-    };
-
-    const clinicFollowUpPlugin = overrides.clinicFollowUpPlugin || {
-      createPlan: jest.fn(),
-    };
-
-    const appointmentReminderService = overrides.appointmentReminderService || {
-      scheduleReminder: jest.fn(),
-    };
-
-    const clinicVideoPlugin = overrides.clinicVideoPlugin || {
-      scheduleVideo: jest.fn(),
-    };
-
-    const loggingService = overrides.loggingService || {
-      log: jest.fn(),
-      logError: jest.fn(),
-      logSecurity: jest.fn(),
-    };
-
-    const cacheService = overrides.cacheService || {
-      cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-      get: jest.fn(),
-      set: jest.fn(),
-      del: jest.fn(),
-      getString: jest.fn(),
-      setString: jest.fn(),
-    };
-
-    const queueService = overrides.queueService || {
-      enqueue: jest.fn(),
-    };
-
-    const appointmentQueueService = overrides.appointmentQueueService || {
-      enqueue: jest.fn(),
-    };
-
-    const eventService = overrides.eventService || {
-      emit: jest.fn(),
-    };
-
-    const configService = overrides.configService || {
-      get: jest.fn(),
-    };
-
-    const databaseService = overrides.databaseService || {
-      executeHealthcareRead: jest.fn(),
-      executeHealthcareWrite: jest.fn(),
-      executeHealthcareWriteTransaction: jest.fn(),
-      findClinicByIdSafe: jest.fn(),
-    };
-
-    const qrService = overrides.qrService || {
-      generate: jest.fn(),
-    };
-
-    const authService = overrides.authService || {
-      getUserPermissions: jest.fn().mockResolvedValue([]),
-    };
-
-    const whatsAppService = overrides.whatsAppService || {
-      sendMessage: jest.fn(),
-    };
-
-    const notificationPreferenceService = overrides.notificationPreferenceService || {
-      getUserPreferences: jest.fn(),
-    };
-
-    const errors = overrides.errors || {
-      validationError: jest.fn(() => new Error('Validation error')),
-      clinicNotFound: jest.fn(() => new Error('Clinic not found')),
-      userNotFound: jest.fn(() => new Error('User not found')),
-      appointmentNotFound: jest.fn(() => new Error('Appointment not found')),
-    };
-
-    const rbacService = overrides.rbacService || {
-      checkPermission: jest.fn().mockResolvedValue(true),
-    };
-
-    const billingService = overrides.billingService || {
-      syncAppointmentBilling: jest.fn(),
-      triggerRefund: jest.fn(),
-    };
-
-    return new AppointmentsService(
-      coreAppointmentService as any,
-      conflictResolutionService as any,
-      workflowEngine as any,
-      businessRules as any,
-      pluginRegistry as any,
-      pluginManager as any,
-      clinicCheckInPlugin as any,
-      checkInService as any,
-      clinicNotificationPlugin as any,
-      clinicConfirmationPlugin as any,
-      clinicLocationPlugin as any,
-      clinicFollowUpPlugin as any,
-      appointmentReminderService as any,
-      clinicVideoPlugin as any,
-      loggingService as any,
-      cacheService as any,
-      queueService as any,
-      appointmentQueueService as any,
-      eventService as any,
-      configService as any,
-      databaseService as any,
-      qrService as any,
-      authService as any,
-      whatsAppService as any,
-      notificationPreferenceService as any,
-      errors as any,
-      rbacService as any,
-      billingService as any
-    );
-  }
-
-  describe('constructor', () => {
-    it('should accept all required dependencies', () => {
-      const service = createService();
-      expect(service).toBeDefined();
+      await expect(service.resolveSingleDoctorId(CLINIC)).rejects.toThrow('doctorId is required');
     });
   });
 
   describe('createAppointment', () => {
-    it('should create a new appointment', async () => {
-      const coreAppointmentService = {
-        create: jest.fn().mockResolvedValue({
-          id: 'apt-123',
-          patientUserId: 'patient-1',
-          doctorUserId: 'doctor-1',
-          clinicId: 'clinic-1',
-          appointmentType: 'IN_PERSON',
-          status: 'SCHEDULED',
-          startTime: new Date('2026-10-01T10:00:00Z'),
-          endTime: new Date('2026-10-01T11:00:00Z'),
-        }),
-        findById: jest.fn(),
-        update: jest.fn(),
-        updateStatus: jest.fn(),
-        cancel: jest.fn(),
-        reschedule: jest.fn(),
-      };
-      const clinicNotificationPlugin = {
-        notify: jest.fn().mockResolvedValue({ success: true }),
-      };
+    it('fills in the single doctor and books in the clinic of the request context', async () => {
+      const { service, core, events, reminders } = buildService();
 
-      const service = createService({ coreAppointmentService, clinicNotificationPlugin });
+      const result = await service.createAppointment(
+        videoBooking({ clinicId: OTHER_CLINIC } as Partial<CreateAppointmentDto>),
+        'user-admin',
+        CLINIC,
+        Role.CLINIC_ADMIN
+      );
 
-      const result = await (service as any).createAppointment({
-        patientUserId: 'patient-1',
-        doctorUserId: 'doctor-1',
-        clinicId: 'clinic-1',
-        appointmentType: 'IN_PERSON',
-        startTime: '2026-10-01T10:00:00Z',
-        endTime: '2026-10-01T11:00:00Z',
-        requestedByUserId: 'patient-1',
-      });
-
-      expect(result).toBeDefined();
-      expect(result.id).toBe('apt-123');
+      expect(result.success).toBe(true);
+      expect(core.createAppointment).toHaveBeenCalledWith(
+        expect.objectContaining({ doctorId: 'doctor-1', patientId: 'patient-1' }),
+        expect.objectContaining({ clinicId: CLINIC, userId: 'user-admin', doctorId: 'doctor-1' })
+      );
+      expect(reminders.scheduleReminder).toHaveBeenCalled();
+      expect(events.emitEnterprise).toHaveBeenCalledWith(
+        'appointment.created',
+        expect.objectContaining({ clinicId: CLINIC })
+      );
     });
 
-    it('should reject appointment creation with invalid data', async () => {
-      const businessRules = {
-        validate: jest.fn().mockResolvedValue({
-          valid: false,
-          errors: ['Invalid time range'],
-        }),
-      };
-      const errors = {
-        validationError: jest.fn(() => {
-          throw new Error('Invalid appointment data');
-        }),
-        clinicNotFound: jest.fn(() => new Error('Clinic not found')),
-        userNotFound: jest.fn(() => new Error('User not found')),
-        appointmentNotFound: jest.fn(() => new Error('Appointment not found')),
-      };
+    it('keeps an explicit doctorId without looking up the clinic doctor', async () => {
+      const { service, core, client } = buildService();
 
-      const service = createService({ businessRules, errors });
+      await service.createAppointment(
+        videoBooking({ doctorId: 'doctor-9' }),
+        'user-admin',
+        CLINIC,
+        Role.CLINIC_ADMIN
+      );
+
+      expect(client.doctorClinic.findMany).not.toHaveBeenCalled();
+      expect(core.createAppointment).toHaveBeenCalledWith(
+        expect.objectContaining({ doctorId: 'doctor-9' }),
+        expect.anything()
+      );
+    });
+
+    it('refuses with 403 when RBAC denies create, and books nothing', async () => {
+      const { service, core, rbac } = buildService();
+      rbac.checkPermission.mockResolvedValue({ hasPermission: false });
+
+      const error = await httpRejection(
+        service.createAppointment(videoBooking(), 'user-admin', CLINIC, Role.CLINIC_ADMIN)
+      );
+
+      expect(error.getStatus()).toBe(403);
+      expect(core.createAppointment).not.toHaveBeenCalled();
+    });
+
+    it('does not let the reception desk book a video visit', async () => {
+      const { service, core } = buildService();
 
       await expect(
-        (service as any).createAppointment({
-          patientUserId: 'patient-1',
-          doctorUserId: 'doctor-1',
-          clinicId: 'clinic-1',
-          appointmentType: 'IN_PERSON',
-          startTime: '2026-10-01T10:00:00Z',
-          endTime: '2026-10-01T09:00:00Z', // end before start
-          requestedByUserId: 'patient-1',
-        })
-      ).rejects.toThrow();
-    });
-  });
-
-  describe('getAppointmentById', () => {
-    it('should return appointment by id', async () => {
-      const coreAppointmentService = {
-        create: jest.fn(),
-        findById: jest.fn().mockResolvedValue({
-          id: 'apt-123',
-          patientUserId: 'patient-1',
-          doctorUserId: 'doctor-1',
-          clinicId: 'clinic-1',
-          status: 'SCHEDULED',
-        }),
-        update: jest.fn(),
-        updateStatus: jest.fn(),
-        cancel: jest.fn(),
-        reschedule: jest.fn(),
-      };
-
-      const service = createService({ coreAppointmentService });
-      const result = await (service as any).getAppointmentById('apt-123', 'clinic-1');
-
-      expect(result).toBeDefined();
-      expect(result.id).toBe('apt-123');
+        service.createAppointment(videoBooking(), 'user-desk', CLINIC, Role.RECEPTIONIST)
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(core.createAppointment).not.toHaveBeenCalled();
     });
 
-    it('should throw when appointment not found', async () => {
-      const coreAppointmentService = {
-        create: jest.fn(),
-        findById: jest.fn().mockResolvedValue(null),
-        update: jest.fn(),
-        updateStatus: jest.fn(),
-        cancel: jest.fn(),
-        reschedule: jest.fn(),
-      };
-      const errors = {
-        validationError: jest.fn(() => new Error('Validation error')),
-        clinicNotFound: jest.fn(() => new Error('Clinic not found')),
-        userNotFound: jest.fn(() => new Error('User not found')),
-        appointmentNotFound: jest.fn(() => {
-          throw new Error('Appointment not found');
-        }),
-      };
+    it('emits nothing when the core create fails', async () => {
+      const { service, core, events } = buildService();
+      core.createAppointment.mockResolvedValue({ success: false, error: 'slot taken' });
 
-      const service = createService({ coreAppointmentService, errors });
+      const result = await service.createAppointment(
+        videoBooking(),
+        'user-admin',
+        CLINIC,
+        Role.CLINIC_ADMIN
+      );
 
-      await expect(
-        (service as any).getAppointmentById('nonexistent', 'clinic-1')
-      ).rejects.toThrow();
+      expect(result.success).toBe(false);
+      expect(events.emitEnterprise).not.toHaveBeenCalled();
     });
   });
 
   describe('getAppointments', () => {
-    it('should return appointments with filters', async () => {
-      const coreAppointmentService = {
-        create: jest.fn(),
-        findById: jest.fn(),
-        update: jest.fn(),
-        updateStatus: jest.fn(),
-        cancel: jest.fn(),
-        reschedule: jest.fn(),
-      };
-      const cacheService = {
-        cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-        get: jest.fn(),
-        set: jest.fn(),
-        del: jest.fn(),
-        getString: jest.fn(),
-        setString: jest.fn(),
-      };
-      const databaseService = {
-        executeHealthcareRead: jest.fn().mockResolvedValue([
-          {
-            id: 'apt-1',
-            patientUserId: 'patient-1',
-            doctorUserId: 'doctor-1',
-            clinicId: 'clinic-1',
-            status: 'SCHEDULED',
-          },
-        ]),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
-        findClinicByIdSafe: jest.fn(),
-      };
+    const filters = {} as AppointmentFilterDto;
 
-      const service = createService({ coreAppointmentService, cacheService, databaseService });
-      const result = await (service as any).getAppointments({
-        userId: 'user-1',
-        clinicId: 'clinic-1',
-        role: Role.PATIENT,
-        page: 1,
-        limit: 10,
-      });
+    it('refuses with 403 when RBAC denies read', async () => {
+      const { service, rbac, core } = buildService();
+      rbac.checkPermission.mockResolvedValue({ hasPermission: false });
 
-      expect(result).toBeDefined();
-      expect(Array.isArray(result)).toBe(true);
+      const error = await httpRejection(
+        service.getAppointments(filters, 'user-p', CLINIC, Role.PATIENT)
+      );
+
+      expect(error.getStatus()).toBe(403);
+      expect(core.getAppointments).not.toHaveBeenCalled();
+    });
+
+    it('pins a patient to their own patient record, ignoring a patientId filter', async () => {
+      const { service, core } = buildService();
+
+      await service.getAppointments(
+        { patientId: 'someone-else' } as AppointmentFilterDto,
+        'user-p',
+        CLINIC,
+        Role.PATIENT
+      );
+
+      const context = core.getAppointments.mock.calls[0][1] as Row;
+      expect(context).toEqual(
+        expect.objectContaining({ clinicId: CLINIC, patientId: 'patient-1', role: Role.PATIENT })
+      );
+    });
+
+    it('lets staff filter by patient and caches the list under a clinic-scoped key', async () => {
+      const { service, core, cache } = buildService();
+
+      await service.getAppointments(
+        { patientId: 'patient-7' } as AppointmentFilterDto,
+        'user-admin',
+        CLINIC,
+        Role.CLINIC_ADMIN,
+        2,
+        10
+      );
+
+      expect(core.getAppointments).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ clinicId: CLINIC, patientId: 'patient-7' }),
+        2,
+        10
+      );
+      const [key, , options] = cache.cache.mock.calls[0] as unknown as [string, unknown, Row];
+      expect(key).toContain(`clinic:${CLINIC}:appointments:list:user-admin`);
+      expect(options['tags']).toEqual(expect.arrayContaining([`clinic:${CLINIC}`]));
+    });
+  });
+
+  describe('getAppointmentById', () => {
+    it('returns the appointment of the caller clinic', async () => {
+      const { service, db } = buildService();
+      db.findAppointmentByIdSafe.mockResolvedValue({ id: 'appt-1', clinicId: CLINIC });
+
+      const result = (await service.getAppointmentById('appt-1', CLINIC)) as Row;
+
+      expect(result['id']).toBe('appt-1');
+    });
+
+    it("is a 404 for another clinic's appointment", async () => {
+      const { service, db } = buildService();
+      db.findAppointmentByIdSafe.mockResolvedValue({ id: 'appt-1', clinicId: OTHER_CLINIC });
+
+      const error = await httpRejection(service.getAppointmentById('appt-1', CLINIC));
+
+      expect(error.getStatus()).toBe(404);
+    });
+
+    it('is a 404 when a cached entry belongs to another clinic', async () => {
+      const { service, cache } = buildService();
+      cache.cache.mockResolvedValue({ id: 'appt-1', clinicId: OTHER_CLINIC });
+
+      const error = await httpRejection(service.getAppointmentById('appt-1', CLINIC));
+
+      expect(error.getStatus()).toBe(404);
     });
   });
 
   describe('cancelAppointment', () => {
-    it('should cancel an appointment', async () => {
-      const coreAppointmentService = {
-        create: jest.fn(),
-        findById: jest.fn().mockResolvedValue({
-          id: 'apt-123',
-          status: 'SCHEDULED',
-        }),
-        update: jest.fn(),
-        updateStatus: jest.fn().mockResolvedValue({
-          id: 'apt-123',
-          status: 'CANCELLED',
-        }),
-        cancel: jest.fn().mockResolvedValue({ count: 1 }),
-        reschedule: jest.fn(),
-      };
-      const billingService = {
-        syncAppointmentBilling: jest.fn(),
-        triggerRefund: jest.fn(),
-      };
+    it('cancels through the core service, clears the reminder and broadcasts the names', async () => {
+      const { service, core, reminders, events, cache } = buildService();
 
-      const service = createService({ coreAppointmentService, billingService });
-      const result = await (service as any).cancelAppointment('apt-123', 'clinic-1', 'user-123');
-
-      expect(result).toBeDefined();
-      expect(billingService.triggerRefund).toHaveBeenCalled();
-    });
-
-    it('should throw when cancelling non-existent appointment', async () => {
-      const coreAppointmentService = {
-        create: jest.fn(),
-        findById: jest.fn().mockResolvedValue(null),
-        update: jest.fn(),
-        updateStatus: jest.fn(),
-        cancel: jest.fn(),
-        reschedule: jest.fn(),
-      };
-      const errors = {
-        validationError: jest.fn(() => new Error('Validation error')),
-        clinicNotFound: jest.fn(() => new Error('Clinic not found')),
-        userNotFound: jest.fn(() => new Error('User not found')),
-        appointmentNotFound: jest.fn(() => {
-          throw new Error('Appointment not found');
-        }),
-      };
-
-      const service = createService({ coreAppointmentService, errors });
-
-      await expect(
-        (service as any).cancelAppointment('nonexistent', 'clinic-1', 'user-123')
-      ).rejects.toThrow();
-    });
-  });
-
-  describe('processCheckIn', () => {
-    it('should process check-in for an appointment', async () => {
-      const checkInService = {
-        processCheckIn: jest.fn().mockResolvedValue({
-          appointmentId: 'apt-123',
-          checkedIn: true,
-          checkInTime: new Date(),
-        }),
-      };
-      const coreAppointmentService = {
-        create: jest.fn(),
-        findById: jest.fn().mockResolvedValue({
-          id: 'apt-123',
-          status: 'CONFIRMED',
-        }),
-        update: jest.fn(),
-        updateStatus: jest.fn(),
-        cancel: jest.fn(),
-        reschedule: jest.fn(),
-      };
-
-      const service = createService({ checkInService, coreAppointmentService });
-      const result = await (service as any).processCheckIn('apt-123', 'clinic-1', {
-        userId: 'patient-1',
-        role: Role.PATIENT,
-      });
-
-      expect(result).toBeDefined();
-      expect(result.checkedIn).toBe(true);
-    });
-  });
-
-  describe('completeAppointment', () => {
-    it('should mark appointment as completed', async () => {
-      const coreAppointmentService = {
-        create: jest.fn(),
-        findById: jest.fn().mockResolvedValue({
-          id: 'apt-123',
-          status: 'IN_PROGRESS',
-        }),
-        update: jest.fn().mockResolvedValue({
-          id: 'apt-123',
-          status: 'COMPLETED',
-        }),
-        updateStatus: jest.fn().mockResolvedValue({
-          id: 'apt-123',
-          status: 'COMPLETED',
-        }),
-        cancel: jest.fn(),
-        reschedule: jest.fn(),
-      };
-
-      const service = createService({ coreAppointmentService });
-      const result = await (service as any).completeAppointment('apt-123', 'clinic-1', {
-        userId: 'doctor-1',
-        role: Role.DOCTOR,
-      });
-
-      expect(result).toBeDefined();
-      expect(result.status).toBe('COMPLETED');
-    });
-  });
-
-  describe('rescheduleAppointment', () => {
-    it('should reschedule an appointment to a new time', async () => {
-      const coreAppointmentService = {
-        create: jest.fn(),
-        findById: jest.fn().mockResolvedValue({
-          id: 'apt-123',
-          status: 'SCHEDULED',
-        }),
-        update: jest.fn().mockResolvedValue({
-          id: 'apt-123',
-          startTime: new Date('2026-10-02T10:00:00Z'),
-          endTime: new Date('2026-10-02T11:00:00Z'),
-        }),
-        updateStatus: jest.fn(),
-        cancel: jest.fn(),
-        reschedule: jest.fn().mockResolvedValue({
-          id: 'apt-123',
-          rescheduled: true,
-        }),
-      };
-
-      const service = createService({ coreAppointmentService });
-      const result = await (service as any).rescheduleAppointment(
-        'apt-123',
-        'clinic-1',
-        {
-          startTime: '2026-10-02T10:00:00Z',
-          endTime: '2026-10-02T11:00:00Z',
-        },
-        { userId: 'patient-1', role: Role.PATIENT }
+      const result = await service.cancelAppointment(
+        'appt-1',
+        'patient asked',
+        'user-admin',
+        CLINIC,
+        Role.CLINIC_ADMIN
       );
 
-      expect(result).toBeDefined();
-    });
-  });
-
-  describe('reassignDoctor', () => {
-    it('should reassign appointment to a different doctor', async () => {
-      const coreAppointmentService = {
-        create: jest.fn(),
-        findById: jest.fn().mockResolvedValue({
-          id: 'apt-123',
-          doctorUserId: 'doctor-1',
-          clinicId: 'clinic-1',
-        }),
-        update: jest.fn().mockResolvedValue({
-          id: 'apt-123',
-          doctorUserId: 'doctor-2',
-        }),
-        updateStatus: jest.fn(),
-        cancel: jest.fn(),
-        reschedule: jest.fn(),
-      };
-      const clinicNotificationPlugin = {
-        notify: jest.fn().mockResolvedValue({ success: true }),
-      };
-
-      const service = createService({ coreAppointmentService, clinicNotificationPlugin });
-      const result = await (service as any).reassignDoctor('apt-123', 'doctor-2', 'clinic-1', {
-        userId: 'clinic-admin-1',
-        role: Role.CLINIC_ADMIN,
-      });
-
-      expect(result).toBeDefined();
-      expect(result.doctorUserId).toBe('doctor-2');
-    });
-  });
-
-  describe('clinic isolation', () => {
-    it('should filter appointments by clinic', async () => {
-      const coreAppointmentService = {
-        create: jest.fn(),
-        findById: jest.fn(),
-        update: jest.fn(),
-        updateStatus: jest.fn(),
-        cancel: jest.fn(),
-        reschedule: jest.fn(),
-      };
-      const cacheService = {
-        cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-        get: jest.fn(),
-        set: jest.fn(),
-        del: jest.fn(),
-        getString: jest.fn(),
-        setString: jest.fn(),
-      };
-      const databaseService = {
-        executeHealthcareRead: jest.fn().mockResolvedValue([]),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
-        findClinicByIdSafe: jest.fn(),
-      };
-
-      const service = createService({ coreAppointmentService, cacheService, databaseService });
-      await (service as any).getAppointments({
-        userId: 'user-1',
-        clinicId: 'clinic-1',
-        role: Role.PATIENT,
-      });
-
-      expect(databaseService.executeHealthcareRead).toHaveBeenCalledWith(
+      expect(result.success).toBe(true);
+      expect(core.cancelAppointment).toHaveBeenCalledWith(
+        'appt-1',
+        'patient asked',
+        expect.objectContaining({ clinicId: CLINIC, userId: 'user-admin' })
+      );
+      expect(cache.invalidateAppointmentCache).toHaveBeenCalledWith(
+        'appt-1',
+        'patient-1',
+        'doctor-1',
+        CLINIC
+      );
+      expect(reminders.cancelAppointmentReminder).toHaveBeenCalledWith(
+        'appt-1',
+        'appointment_reminder'
+      );
+      expect(events.emitEnterprise).toHaveBeenCalledWith(
+        'appointment.cancelled',
         expect.objectContaining({
-          where: expect.objectContaining({ clinicId: 'clinic-1' }),
+          payload: expect.objectContaining({
+            patientName: 'Asha Rao',
+            doctorName: 'Dr. Mehta',
+            reason: 'patient asked',
+          }),
         })
       );
     });
-  });
 
-  describe('role-based access', () => {
-    it('should allow clinic admin to view all appointments', async () => {
-      const rbacService = {
-        checkPermission: jest.fn().mockResolvedValue(true),
-      };
-      const coreAppointmentService = {
-        create: jest.fn(),
-        findById: jest.fn(),
-        update: jest.fn(),
-        updateStatus: jest.fn(),
-        cancel: jest.fn(),
-        reschedule: jest.fn(),
-      };
-      const cacheService = {
-        cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-        get: jest.fn(),
-        set: jest.fn(),
-        del: jest.fn(),
-        getString: jest.fn(),
-        setString: jest.fn(),
-      };
-      const databaseService = {
-        executeHealthcareRead: jest.fn().mockResolvedValue([]),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
-        findClinicByIdSafe: jest.fn(),
-      };
+    it('refuses with 403 when RBAC denies the update', async () => {
+      const { service, rbac, core } = buildService();
+      rbac.checkPermission.mockResolvedValue({ hasPermission: false });
 
-      const service = createService({
-        coreAppointmentService,
-        cacheService,
-        databaseService,
-        rbacService,
-      });
-      const result = await (service as any).getAppointments({
-        userId: 'admin-1',
-        clinicId: 'clinic-1',
-        role: Role.CLINIC_ADMIN,
-      });
+      const error = await httpRejection(
+        service.cancelAppointment('appt-1', 'x', 'user-p', CLINIC, Role.PATIENT)
+      );
 
-      expect(result).toBeDefined();
-      expect(Array.isArray(result)).toBe(true);
+      expect(error.getStatus()).toBe(403);
+      expect(core.cancelAppointment).not.toHaveBeenCalled();
     });
 
-    it('should restrict patient from viewing other patients appointments', async () => {
-      const rbacService = {
-        checkPermission: jest.fn().mockResolvedValue(false),
-      };
+    it('lets the SYSTEM role (schedulers) cancel without an RBAC check', async () => {
+      const { service, rbac, core } = buildService();
 
-      const service = createService({ rbacService });
+      await service.cancelAppointment('appt-1', 'no-show', 'system', CLINIC, 'SYSTEM');
 
-      await expect(
-        (service as any).getAppointments({
-          userId: 'patient-1',
-          clinicId: 'clinic-1',
-          role: Role.PATIENT,
-          targetUserId: 'patient-2',
-        })
-      ).rejects.toThrow();
+      expect(rbac.checkPermission).not.toHaveBeenCalled();
+      expect(core.cancelAppointment).toHaveBeenCalled();
+    });
+
+    it('still cancels when clearing the queued reminder fails', async () => {
+      const { service, reminders } = buildService();
+      reminders.cancelAppointmentReminder.mockRejectedValue(new Error('queue down'));
+
+      const result = await service.cancelAppointment(
+        'appt-1',
+        'x',
+        'user-admin',
+        CLINIC,
+        Role.CLINIC_ADMIN
+      );
+
+      expect(result.success).toBe(true);
     });
   });
 });

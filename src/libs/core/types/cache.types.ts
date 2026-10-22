@@ -129,6 +129,11 @@ export interface UnifiedCacheOptions {
   readonly complianceLevel?: 'standard' | 'sensitive' | 'restricted';
   /** Auto-invalidation patterns */
   readonly invalidateOn?: readonly string[];
+  /**
+   * Staff of the same role (and clinic) share one entry instead of one entry per user. Only for
+   * handlers whose response does NOT depend on `req.user` beyond role and clinic.
+   */
+  readonly shareAcrossRole?: boolean;
 }
 
 /**
@@ -177,6 +182,11 @@ export interface CacheOperationOptions {
   readonly enableSwr?: boolean;
   /** Cache tags for grouped invalidation */
   readonly tags?: readonly string[];
+  /**
+   * Clinic the entry belongs to, for clinic-scoped indexing of collection tags (see
+   * cache/utils/tag-scope.util.ts). Falls back to a `clinic:<id>` tag in `tags`.
+   */
+  readonly tagScopeClinicId?: string;
   /** Contains Protected Health Information */
   readonly containsPHI?: boolean;
   /** Compliance level */

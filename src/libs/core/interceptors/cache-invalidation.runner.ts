@@ -1,7 +1,8 @@
 /**
  * Runs the invalidation a successful write asked for (`@InvalidateCache`).
  *
- * Order matters: TAGS first (the deterministic path, one indexed delete per tag), awaited within a
+ * Order matters: TAGS first (the deterministic path, one indexed delete per tag; collection tags
+ * are scoped to the writer's clinic), awaited within a
  * time budget so a read right after the write sees fresh data; then the PATTERN deletes, which
  * scan the keyspace and therefore run behind the response, scoped to what the caller may touch
  * (see planInvalidationPatterns), one at a time per pattern.
@@ -14,6 +15,7 @@ import type { CacheService } from '@infrastructure/cache/cache.service';
 import type { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel, type CacheInvalidationOptions } from '@core/types';
 import { escapeGlobLiteral } from '@infrastructure/cache/utils/pattern-delete.util';
+import { scopeInvalidationTags } from '@infrastructure/cache/utils/tag-scope.util';
 import {
   asNonEmptyString,
   buildTemplateParams,
@@ -79,7 +81,7 @@ export class CacheInvalidationRunner {
     }
 
     const request = context.switchToHttp().getRequest<ScopedRequest>();
-    await this.invalidateTags(request, options.tags);
+    await this.invalidateTags(request, options.tags, this.resolveTenant(request).clinicId);
     this.schedulePatterns(context, request, options.patterns);
     this.scheduleEntityInvalidations(request, options);
   }
@@ -90,9 +92,12 @@ export class CacheInvalidationRunner {
    */
   private async invalidateTags(
     request: ScopedRequest,
-    tags: readonly string[] | undefined
+    tags: readonly string[] | undefined,
+    clinicId: string | undefined
   ): Promise<void> {
-    const resolved = [...new Set(resolveTagTemplates(tags, request, true))];
+    // Collection tags (`appointments`) are reduced to the writer's clinic plus clinic-less
+    // entries; without a clinic they stay global (tag-scope.util.ts).
+    const resolved = scopeInvalidationTags(resolveTagTemplates(tags, request, true), clinicId);
     if (resolved.length === 0) return;
 
     const work = Promise.all(resolved.map(tag => this.invalidateOneTag(tag))).then(

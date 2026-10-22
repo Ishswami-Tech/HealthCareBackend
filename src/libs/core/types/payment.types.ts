@@ -191,6 +191,11 @@ export interface PaymentProviderConfig {
   credentials: Record<string, string> | { encrypted: string }; // Encrypted or plain
   settings?: Record<string, unknown>;
   priority?: number; // Lower number = higher priority
+  /**
+   * Where the entry came from. 'environment' = enabled in the server env but not configured by
+   * the clinic: usable to verify / refund existing orders, never to open a new one.
+   */
+  source?: 'clinic' | 'environment';
 }
 
 /**

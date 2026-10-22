@@ -1238,8 +1238,11 @@ export class ClinicStatsResponseDto {
   @ApiProperty({ example: 1250 })
   totalEhrRecords!: number;
 
-  @ApiProperty({ example: 5 })
+  @ApiProperty({ example: 5, description: 'Active medicines with 0 < stock <= reorder level' })
   lowStockAlerts!: number;
+
+  @ApiProperty({ example: 2, description: 'Active medicines out of stock (stock <= 0)' })
+  outOfStockAlerts!: number;
 
   @ApiProperty({ example: 12 })
   todayAppointments!: number;

@@ -49,31 +49,6 @@ interface ServicePattern {
  * checked against the sources, so a new call site fails this suite until it is added here).
  */
 const SERVICE_PATTERNS: readonly ServicePattern[] = [
-  { file: 'services/users/users.service.ts', template: '*users:one:*${userId}*' },
-  { file: 'services/users/users.service.ts', template: '*${userId}*' },
-  { file: 'services/users/users.service.ts', template: '*availability*${userId}*' },
-  { file: 'services/users/users.service.ts', template: '*doctor*${userId}*availability*' },
-  { file: 'services/auth/auth.service.ts', template: '*user:${userId}:*' },
-  {
-    file: 'services/appointments/core/core-appointment.service.ts',
-    template: '*clinic:${clinicId}:appointments:*',
-  },
-  {
-    file: 'services/appointments/core/core-appointment.service.ts',
-    template: 'healthcare:appointment:*',
-  },
-  {
-    file: 'services/appointments/core/core-appointment.service.ts',
-    template: 'metrics:${clinicId}:*',
-  },
-  {
-    file: 'services/appointments/core/core-appointment.service.ts',
-    template: 'doctor:*:clinic:${clinicId}:*availability*',
-  },
-  {
-    file: 'services/appointments/core/core-appointment.service.ts',
-    template: 'availability:${clinicId}:*',
-  },
   {
     file: 'services/appointments/plugins/therapy/therapy-queue.service.ts',
     template: 'therapy-queues:clinic:${clinicId}*',
@@ -172,14 +147,12 @@ const SERVICE_PATTERNS: readonly ServicePattern[] = [
  * pattern appears), not because they are acceptable:
  *
  * - global by design: RBAC role/permission definitions are shared by all clinics.
- * - core-appointment.service.ts `healthcare:appointment:*`: flushes every clinic's appointment
- *   entries; use `healthcare:appointment:*` scoped by the appointment ids of the clinic instead.
+
  * - appointment-location.service.ts `locations:${domain}`, `location:*:${domain}`,
  *   `doctors:location:*:${domain}`, `stats:location:*:${domain}`: keyed by `domain` only, so one
  *   clinic's location change flushes every clinic; add the clinic id to the key and the pattern.
  */
 const KNOWN_BROAD_SERVICE_PATTERNS: ReadonlySet<string> = new Set([
-  'healthcare:appointment:*',
   'locations:${domain}',
   'location:*:${domain}',
   'doctors:location:*:${domain}',

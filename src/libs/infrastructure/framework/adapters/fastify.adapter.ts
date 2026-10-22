@@ -28,6 +28,7 @@ import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify
 import { INestApplication, Logger, LogLevel } from '@nestjs/common';
 import fastify, { type FastifyInstance } from 'fastify';
 import { getEnvBoolean, getEnvWithDefault } from '@config/environment/utils';
+import { dropEmptyJsonContentType } from '@infrastructure/framework/adapters/empty-json-body.util';
 import {
   IFrameworkAdapter,
   IFastifyFrameworkAdapter,
@@ -195,6 +196,12 @@ export class FastifyFrameworkAdapter implements IFastifyFrameworkAdapter {
         )
       ),
     ]);
+
+    // An empty body sent as application/json is "no body", not a 400 (see empty-json-body.util).
+    this.getHttpServer(app).addHook('onRequest', (request, _reply, done) => {
+      dropEmptyJsonContentType(request.headers);
+      done();
+    });
 
     return app;
   }

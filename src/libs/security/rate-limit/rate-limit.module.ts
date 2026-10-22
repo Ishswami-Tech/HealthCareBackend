@@ -1,10 +1,12 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 
 // Internal imports - Infrastructure
 // CacheModule is @Global() - no need to import it explicitly
 // LoggingModule is @Global() - no need to import it explicitly
 
 import { RateLimitService } from './rate-limit.service';
+import { RouteRateLimitGuard } from './route-rate-limit.guard';
 
 /**
  * Rate Limiting Module for Healthcare Applications
@@ -40,7 +42,14 @@ import { RateLimitService } from './rate-limit.service';
 @Module({
   // CacheModule and LoggingModule are @Global() - no need to import them
   // RateLimitService injects CacheService and LoggingService with forwardRef in constructor
-  providers: [RateLimitService],
-  exports: [RateLimitService],
+  // RouteRateLimitGuard is registered as a GLOBAL guard (APP_GUARD is global regardless of the
+  // module that declares it) so every @RateLimit*/@RateLimitAPI decorator is actually enforced,
+  // including on @Public() routes such as OTP request/verify.
+  providers: [
+    RateLimitService,
+    RouteRateLimitGuard,
+    { provide: APP_GUARD, useExisting: RouteRateLimitGuard },
+  ],
+  exports: [RateLimitService, RouteRateLimitGuard],
 })
 export class RateLimitModule {}

@@ -33,6 +33,7 @@ import type { CacheService } from '@infrastructure/cache/cache.service';
 import { CircuitBreakerService } from '@core/resilience/circuit-breaker.service';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
+import { isClientRefusal } from '@infrastructure/database/internal/client-refusal.util';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { getEnv } from '@config/environment/utils';
 
@@ -125,6 +126,7 @@ import {
   ClinicMethods,
 } from './methods';
 import { ClinicMetricsMethods } from './methods/clinic-metrics.methods';
+import type { AppointmentSlotGuard } from './methods';
 
 /**
  * Main database service - single entry point for all database operations
@@ -407,16 +409,11 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
       'page' in cacheParams ||
       'limit' in cacheParams;
 
-    // clinicId/userId alone were previously excluded here, so a call like
-    // `.clinicId(clinicId).useCache(true).build()` (no where/select/etc.) never
-    // got a cache key — caching silently never happened despite being requested.
-    // They're gated on an EXPLICIT useCache(true) (not just "not false") because
-    // clinicId/userId are also used throughout the codebase for row-level
-    // scoping/authorization, not always caching intent — this must not silently
-    // start caching calls that never asked for it.
-    const hasScopeParams = 'clinicId' in cacheParams || 'userId' in cacheParams;
-    const hasDiscriminatingParams =
-      hasEntityShapeParams || (hasScopeParams && queryOptions.useCache === true);
+    // Only cache when the options describe the query itself (where/select/include/orderBy/page/limit).
+    // The operation is a closure that is NOT part of the key, so clinicId/userId alone would make every
+    // `.clinicId(x).useCache(true)` read in that clinic share ONE key and return each other's results
+    // (patient search ignored, counts returned as arrays, dashboard figures swapped).
+    const hasDiscriminatingParams = hasEntityShapeParams;
 
     const cacheKey =
       queryOptions.useCache !== false && this.queryCache && hasDiscriminatingParams
@@ -581,7 +578,9 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
       if (!retryOutcome.success) {
         const originalError = retryOutcome.error;
         if (originalError) {
-          if (originalError instanceof HealthcareError) throw originalError;
+          if (originalError instanceof HealthcareError || isClientRefusal(originalError)) {
+            throw originalError;
+          }
           throw new HealthcareError(
             ErrorCode.DATABASE_QUERY_FAILED,
             `Read operation failed after ${retryOutcome.attempts} attempts: ${originalError.message}`,
@@ -650,6 +649,8 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
       return result;
     } catch (error) {
+      // A 4xx refusal from business code is not a database failure: rethrow it unchanged.
+      if (isClientRefusal(error)) throw error;
       const executionTime = Date.now() - startTime;
       const dbError = error instanceof Error ? error : new Error(String(error));
 
@@ -858,7 +859,9 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
           this.createAuditTrail(auditInfo, 'FAILURE', errorMessage);
 
         if (originalError) {
-          if (originalError instanceof HealthcareError) throw originalError;
+          if (originalError instanceof HealthcareError || isClientRefusal(originalError)) {
+            throw originalError;
+          }
           throw new HealthcareError(
             ErrorCode.DATABASE_QUERY_FAILED,
             errorMessage,
@@ -895,6 +898,8 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
       return result;
     } catch (error) {
+      // A 4xx refusal from business code is not a database failure: rethrow it unchanged.
+      if (isClientRefusal(error)) throw error;
       const executionTime = Date.now() - startTime;
       const dbError = error instanceof Error ? error : new Error(String(error));
 
@@ -997,6 +1002,8 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
       return finalResult;
     } catch (error) {
+      // A 4xx refusal from business code is not a database failure: rethrow it unchanged.
+      if (isClientRefusal(error)) throw error;
       const executionTime = Date.now() - startTime;
       const dbError = error instanceof Error ? error : new Error(String(error));
 
@@ -1087,6 +1094,8 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
       return result.data!;
     } catch (error) {
+      // A 4xx refusal from business code is not a database failure: rethrow it unchanged.
+      if (isClientRefusal(error)) throw error;
       const executionTime = Date.now() - startTime;
       const dbError = error instanceof Error ? error : new Error(String(error));
 
@@ -1167,6 +1176,8 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
       return results;
     } catch (error) {
+      // A 4xx refusal from business code is not a database failure: rethrow it unchanged.
+      if (isClientRefusal(error)) throw error;
       const executionTime = Date.now() - startTime;
       const dbError = error instanceof Error ? error : new Error(String(error));
 
@@ -1256,6 +1267,8 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
       return result;
     } catch (error) {
+      // A 4xx refusal from business code is not a database failure: rethrow it unchanged.
+      if (isClientRefusal(error)) throw error;
       const executionTime = Date.now() - startTime;
       const dbError = error instanceof Error ? error : new Error(String(error));
 
@@ -2104,6 +2117,15 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     return this.billingMethods.updateInvoiceSafe(id, data);
   }
 
+  /** Edit a PENDING invoice atomically; null when it is no longer PENDING (or not in the clinic). */
+  async updatePendingInvoiceSafe(
+    id: string,
+    clinicId: string,
+    data: InvoiceUpdateInput
+  ): Promise<InvoiceWithRelations | null> {
+    return this.billingMethods.updatePendingInvoiceSafe(id, clinicId, data);
+  }
+
   async findSubscriptionByIdSafe(id: string): Promise<SubscriptionWithRelations | null> {
     return this.billingMethods.findSubscriptionByIdSafe(id);
   }
@@ -2473,12 +2495,18 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     return this.appointmentMethods.findAppointmentsSafe(where, options);
   }
 
-  async countAppointmentsSafe(where: AppointmentWhereInput): Promise<number> {
-    return this.appointmentMethods.countAppointmentsSafe(where);
+  async countAppointmentsSafe(
+    where: AppointmentWhereInput,
+    options: { cap?: number } = {}
+  ): Promise<number> {
+    return this.appointmentMethods.countAppointmentsSafe(where, options);
   }
 
-  async createAppointmentSafe(data: AppointmentCreateInput): Promise<AppointmentWithRelations> {
-    return this.appointmentMethods.createAppointmentSafe(data);
+  async createAppointmentSafe(
+    data: AppointmentCreateInput,
+    slotGuard?: AppointmentSlotGuard
+  ): Promise<AppointmentWithRelations> {
+    return this.appointmentMethods.createAppointmentSafe(data, slotGuard);
   }
 
   async updateAppointmentSafe(

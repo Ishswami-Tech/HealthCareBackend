@@ -36,6 +36,11 @@ import {
 import { PaymentProviderFactory } from './adapters/factories/payment-provider.factory';
 import { PaymentConfigService } from '@config/payment-config.service';
 import { formatCurrencyFromMinorUnits } from '../utils/currency.util';
+import {
+  describeNoEligibleProvider,
+  hasUsableCredentials,
+  selectPaymentProviderCandidates,
+} from '@payment/provider-fallback.util';
 
 /**
  * Payment Service
@@ -123,14 +128,10 @@ export class PaymentService {
   }
 
   /**
-   * Get payment provider adapter for a clinic
-   */
-  /**
-   * Get payment provider adapter for a clinic.
-   *
-   * If the requested provider exists in clinic config but has no usable
-   * credentials, this falls back to the clinic's primary/default provider
-   * instead of returning a broken adapter.
+   * Get the payment provider adapter for a clinic: the requested provider (verification, refund,
+   * webhook of an order opened on it) or the clinic's primary. Never silently swaps a requested
+   * provider for another one - verifying a provider's order against a different gateway can only
+   * give a wrong answer.
    */
   private async getProviderAdapter(
     clinicId: string,
@@ -141,37 +142,36 @@ export class PaymentService {
       throw new Error(`No payment configuration found for clinic: ${clinicId}`);
     }
 
-    // Use specified provider or default from config
-    let providerConfig = provider
-      ? config.payment.fallback?.find(f => f.provider === provider) || config.payment.primary
+    const providerConfig = provider
+      ? [config.payment.primary, ...(config.payment.fallback || [])].find(
+          entry => entry?.provider === provider
+        )
       : config.payment.primary;
 
-    // Fall back to primary/default when the requested provider has empty
-    // credentials — avoids "keyId and keySecret are required" when only
-    // env vars exist for a different provider.
-    if (provider && !this.hasUsableCredentials(providerConfig)) {
-      providerConfig = config.payment.primary;
+    if (!providerConfig) {
+      throw new Error(`Payment provider ${provider} is not configured for clinic: ${clinicId}`);
     }
-
+    if (!hasUsableCredentials(providerConfig)) {
+      throw new Error(
+        `Payment provider ${providerConfig.provider} has no credentials for clinic: ${clinicId}`
+      );
+    }
     if (!providerConfig.enabled) {
       throw new Error(
         `Payment provider ${providerConfig.provider} is disabled for clinic: ${clinicId}`
       );
     }
 
-    // Create adapter with HttpService for PhonePe
-    const adapter = await this.paymentProviderFactory.createAdapterWithHttpService(
-      providerConfig,
-      this.httpService
-    );
-
-    return adapter;
+    return this.createAdapter(providerConfig);
   }
 
-  private hasUsableCredentials(config: PaymentProviderConfig): boolean {
-    const credentials = config.credentials || {};
-    return Object.values(credentials).some(
-      value => typeof value === 'string' && value.trim().length > 0
+  private async createAdapter(
+    providerConfig: PaymentProviderConfig
+  ): Promise<PaymentProviderAdapter> {
+    // Create adapter with HttpService for PhonePe
+    return this.paymentProviderFactory.createAdapterWithHttpService(
+      providerConfig,
+      this.httpService
     );
   }
 
@@ -244,36 +244,59 @@ export class PaymentService {
       return normalizedDemoResult;
     }
 
-    // Every configured provider (the clinic's primary, then its own explicit fallbacks)
-    // gets a fresh, live attempt on every request — no cross-request cooldown that could
-    // skip a provider that has already recovered, or that never actually failed this call.
-    const providersToTry: PaymentProvider[] = provider
-      ? [provider]
-      : Array.from(
-          new Set([
-            config.payment.primary.provider,
-            ...(config.payment.fallback?.map(f => f.provider) || []),
-          ])
-        );
+    // Only providers the CLINIC configured and enabled are tried (primary, then the clinic's own
+    // fallbacks); a provider merely enabled in the server env is never used to open an order the
+    // clinic has not set up (its settlement and callback order id would not belong to the
+    // clinic). A requested provider is strict: never swapped for another one.
+    const selection = selectPaymentProviderCandidates(config, provider);
+    const providersToTry = selection.candidates;
 
     if (providersToTry.length === 0) {
-      throw new Error(`No available payment providers for clinic: ${clinicId}`);
+      const message = describeNoEligibleProvider(selection, provider);
+      await this.loggingService.log(LogType.PAYMENT, LogLevel.WARN, message, 'PaymentService', {
+        clinicId,
+        requestedProvider: provider,
+        excluded: selection.excluded,
+      });
+      throw new HealthcareError(
+        ErrorCode.PAYMENT_SERVICE_FAILED,
+        message,
+        HttpStatus.BAD_REQUEST,
+        undefined,
+        'PaymentService.createPaymentIntent'
+      );
     }
 
     await this.loggingService.log(
       LogType.PAYMENT,
       LogLevel.INFO,
-      `Provider order for payment intent: ${providersToTry.join(' -> ')}`,
+      `Provider order for payment intent: ${providersToTry.map(entry => entry.provider).join(' -> ')}`,
       'PaymentService',
-      { clinicId, requestedProvider: provider, strictProvider: Boolean(provider) }
+      {
+        clinicId,
+        requestedProvider: provider,
+        strictProvider: Boolean(provider),
+        excluded: selection.excluded,
+      }
     );
 
     let lastError: Error | null = null;
     const skippedForMissingPhone: PaymentProvider[] = [];
 
-    for (const p of providersToTry) {
+    for (const [index, providerConfig] of providersToTry.entries()) {
+      const p = providerConfig.provider;
+      if (index > 0) {
+        // An explicit, logged fallback to another provider the clinic itself configured.
+        await this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.WARN,
+          `Falling back to clinic-configured payment provider ${p} after ${providersToTry[index - 1]?.provider} could not open the order`,
+          'PaymentService',
+          { clinicId, provider: p, previousProvider: providersToTry[index - 1]?.provider }
+        );
+      }
       try {
-        const adapter = await this.getProviderAdapter(clinicId, p);
+        const adapter = await this.createAdapter(providerConfig);
 
         // Some gateways (Cashfree) make customer_phone mandatory on order creation.
         // Without a phone the order can never be created, so skip rather than spend a
@@ -353,7 +376,7 @@ export class PaymentService {
         await this.loggingService.log(
           LogType.PAYMENT,
           LogLevel.WARN,
-          `Provider ${p} failed, trying next: ${lastError.message}`,
+          `Provider ${p} failed for clinic ${clinicId}: ${lastError.message}`,
           'PaymentService',
           { clinicId, provider: p }
         );

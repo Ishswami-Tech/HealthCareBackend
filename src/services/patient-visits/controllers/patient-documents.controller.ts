@@ -55,6 +55,7 @@ import type {
 import type { VisitActor } from '@services/patient-visits/patient-visits.service';
 import { PatientDocumentsService } from '@services/patient-visits/services/patient-documents.service';
 import type { PatientDocumentStream } from '@services/patient-visits/services/patient-documents.service';
+import { contentDispositionHeader } from '@services/patient-visits/utils/patient-document-stream.util';
 import {
   FastifyFile,
   readMultipartFields,
@@ -118,14 +119,6 @@ const UPLOAD_BODY_SCHEMA = {
     },
   },
 };
-
-function contentDispositionHeader(
-  disposition: PatientDocumentDisposition,
-  fileName: string
-): string {
-  const asciiName = fileName.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
-  return `${disposition}; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
-}
 
 function parseDisposition(value: string | undefined): PatientDocumentDisposition {
   if (value === undefined || value === '' || value === 'inline') return 'inline';

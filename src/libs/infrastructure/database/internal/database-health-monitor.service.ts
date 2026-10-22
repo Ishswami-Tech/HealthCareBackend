@@ -164,10 +164,11 @@ export class DatabaseHealthMonitorService implements OnModuleInit, OnModuleDestr
         errorRate: 0,
       };
 
-      // Log success periodically (every 5 minutes) to confirm database is connected
+      // Log the connected state once (on first success and on recovery), not periodically
       // Use DEBUG level for routine checks to reduce log noise
       const now = Date.now();
-      const shouldLogInfo = !this.lastSuccessLogTime || now - this.lastSuccessLogTime > 300000; // 5 minutes
+      // INFO only on the first success and after a failure (state change); routine checks DEBUG.
+      const shouldLogInfo = !this.lastSuccessLogTime;
 
       if (shouldLogInfo) {
         this.lastSuccessLogTime = now;
@@ -192,6 +193,7 @@ export class DatabaseHealthMonitorService implements OnModuleInit, OnModuleDestr
         );
       }
     } catch (error) {
+      this.lastSuccessLogTime = 0; // next success is a state change -> INFO
       const latency = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : String(error);
       const errorStack = error instanceof Error ? error.stack : undefined;

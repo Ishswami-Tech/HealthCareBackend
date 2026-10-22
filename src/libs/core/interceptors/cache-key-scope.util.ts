@@ -263,8 +263,12 @@ function isPatientActor(actor: ActorScope): boolean {
  *   would be noise). A `{userId}` taken from a route param naming someone else still gets the
  *   segment, so a patient asking for another user's resource can never read an entry a
  *   clinician (or that user) created.
- * - Staff roles: `r-<ROLE>`, so a receptionist's response is never served to a doctor. Staff of
- *   the same role and clinic still share an entry. Skipped when the template has `{userRole}`.
+ * - Staff: `u-<userId>` by default. Many staff handlers filter by `req.user` (a doctor's own
+ *   prescriptions, a receptionist's location), so a role-wide entry could replay one staff
+ *   member's view to a colleague. A route whose response is identical for every member of a
+ *   role opts in to sharing with `@Cache({ shareAcrossRole: true })`, which restores the
+ *   `r-<ROLE>` segment (skipped when the template has `{userRole}`). The same role logic applies
+ *   when the template's `{userId}` already names the caller, or the token has no user id.
  * - Unauthenticated requests: no segment (nothing to separate).
  *
  * @throws Error when the caller is a patient but the token carries no user id (the caller of
@@ -273,17 +277,24 @@ function isPatientActor(actor: ActorScope): boolean {
 export function resolveActorKeySegment(
   template: string,
   params: Readonly<Record<string, unknown>>,
-  actor: ActorScope
+  actor: ActorScope,
+  shareAcrossRole: boolean = false
 ): string | undefined {
+  const keyNamesCaller =
+    actor.userId !== undefined &&
+    template.includes(USER_ID_PLACEHOLDER) &&
+    asNonEmptyString(params['userId']) === actor.userId;
   if (isPatientActor(actor) || (!actor.userRole && actor.userId)) {
     if (!actor.userId) {
       throw new Error('Cannot build a patient cache key without an authenticated user id');
     }
-    const keyNamesCaller =
-      template.includes(USER_ID_PLACEHOLDER) && asNonEmptyString(params['userId']) === actor.userId;
     return keyNamesCaller ? undefined : `${USER_SEGMENT_PREFIX}${encodeKeyValue(actor.userId)}`;
   }
-  if (!actor.userRole || template.includes(USER_ROLE_PLACEHOLDER)) return undefined;
+  if (!actor.userRole) return undefined;
+  if (actor.userId && !shareAcrossRole && !keyNamesCaller) {
+    return `${USER_SEGMENT_PREFIX}${encodeKeyValue(actor.userId)}`;
+  }
+  if (template.includes(USER_ROLE_PLACEHOLDER)) return undefined;
   return `${ROLE_SEGMENT_PREFIX}${encodeKeyValue(actor.userRole)}`;
 }
 

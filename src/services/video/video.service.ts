@@ -1269,6 +1269,19 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  /** Whether the visit's join window (scheduled start minus early-join allowance) has opened. Fails closed. */
+  private hasJoinWindowOpened(appointment: {
+    date?: Date | string | null;
+    time?: string | null;
+  }): boolean {
+    const window = this.resolveAppointmentVideoWindow(appointment);
+    if (!window?.startTime) {
+      return false;
+    }
+    const opensAt = window.startTime.getTime() - VideoService.VIDEO_EARLY_JOIN_MINUTES * 60_000;
+    return Date.now() >= opensAt;
+  }
+
   private resolveAppointmentVideoWindow(appointment: {
     date?: Date | string | null;
     time?: string | null;
@@ -2132,6 +2145,14 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       if (
         appointmentStatus !== String(AppointmentStatus.IN_PROGRESS) &&
         appointmentStatus !== String(AppointmentStatus.CONFIRMED)
+      ) {
+        throw VideoService.consultationNotEndableError(appointmentStatus);
+      }
+      // A CONFIRMED visit can only be ended once its join window has opened (same rule as
+      // AppointmentsService.completeAppointment), so a later visit is never completed and billed early.
+      if (
+        appointmentStatus === String(AppointmentStatus.CONFIRMED) &&
+        !this.hasJoinWindowOpened(appointment)
       ) {
         throw VideoService.consultationNotEndableError(appointmentStatus);
       }

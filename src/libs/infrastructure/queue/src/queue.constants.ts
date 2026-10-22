@@ -26,6 +26,12 @@ export const QUEUE_DELAYS = {
   SCHEDULED: 0, // Use specific timestamp
 } as const;
 
+/** Plain-number retention, for callers whose option type only accepts a count. */
+export const JOB_RETENTION_COUNTS = {
+  removeOnComplete: 1000,
+  removeOnFail: 2000,
+} as const;
+
 // Healthcare queue configuration
 export const HEALTHCARE_QUEUE_CONFIG = {
   maxRetries: 3,
@@ -33,8 +39,8 @@ export const HEALTHCARE_QUEUE_CONFIG = {
     type: 'exponential' as const,
     delay: 2000,
   },
-  removeOnComplete: 100,
-  removeOnFail: 50,
+  removeOnComplete: JOB_RETENTION_COUNTS.removeOnComplete,
+  removeOnFail: JOB_RETENTION_COUNTS.removeOnFail,
   attempts: 3,
 } as const;
 
@@ -100,9 +106,57 @@ export const QUEUE_METRICS_CONFIG = {
  */
 export const DEAD_LETTER_QUEUE = 'healthcare-queue-dead-letter';
 
-export const DLQ_CONFIG = {
-  // Mirror main queue's "removeOnFail" behavior — keep failed jobs forever,
-  // not just the most-recent 500, so they don't disappear before ops sees them.
-  removeOnComplete: 0,
-  removeOnFail: 0,
+/**
+ * Retention of finished jobs in the main queue. BullMQ keeps every finished job hash (with its
+ * payload, which can hold PHI) until `removeOnComplete` / `removeOnFail` prunes it, and Dragonfly
+ * runs with `noeviction`, so an unbounded count eventually fills memory and breaks enqueues.
+ * Both a count and an age cap apply (whichever is reached first).
+ */
+export const JOB_RETENTION = {
+  removeOnComplete: { count: 1000, age: 24 * 60 * 60 }, // newest 1000, at most 24h
+  removeOnFail: { count: 2000, age: 7 * 24 * 60 * 60 }, // newest 2000, at most 7 days
 } as const;
+
+/**
+ * Queue notification jobs (POST /queue/notifications) are read back as the inbox, so they outlive
+ * the default retention, but bounded: newest 5000, at most 7 days (they used to be kept forever).
+ */
+export const NOTIFICATION_JOB_RETENTION = {
+  removeOnComplete: { count: 5000, age: 7 * 24 * 60 * 60 },
+  removeOnFail: { count: 5000, age: 7 * 24 * 60 * 60 },
+} as const;
+
+/**
+ * DLQ retention. DLQ entries have no consumer, so they sit in the `wait` list until they are
+ * retried or pruned. NOTE: `removeOnComplete/removeOnFail: 0` means "delete immediately" in
+ * BullMQ, not "keep forever"; the DLQ instead keeps at most `maxEntries` entries younger than
+ * `maxAgeMs`, pruned whenever a new entry is added.
+ */
+export const DLQ_CONFIG = {
+  removeOnComplete: { count: 1000, age: 30 * 24 * 60 * 60 },
+  removeOnFail: { count: 1000, age: 30 * 24 * 60 * 60 },
+  maxEntries: 5000,
+  maxAgeMs: 30 * 24 * 60 * 60 * 1000,
+  /** Prune at most once per this interval (pruning is a ZRANGE/LRANGE + deletes). */
+  pruneIntervalMs: 10 * 60 * 1000,
+} as const;
+
+/**
+ * Worker shutdown and health.
+ *
+ * On SIGTERM the worker stops fetching new jobs and waits up to `closeTimeoutMs` for in-flight
+ * jobs to finish before force-closing (a force-closed job is retried after the stall check). The
+ * container `stop_grace_period` must be larger than `shutdownTimeoutMs`.
+ */
+export const WORKER_LIFECYCLE = {
+  closeTimeoutMs: 25_000,
+  shutdownTimeoutMs: 35_000,
+  heartbeatIntervalMs: 15_000,
+  /** A heartbeat older than this means the worker process is hung or dead. */
+  heartbeatMaxAgeMs: 60_000,
+  /** Per-dependency ping timeout inside the heartbeat loop. */
+  pingTimeoutMs: 3_000,
+} as const;
+
+/** TTL of the "job already completed" marker that makes re-delivered jobs no-ops. */
+export const JOB_COMPLETION_MARKER_TTL_SECONDS = 24 * 60 * 60;

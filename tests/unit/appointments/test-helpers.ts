@@ -249,6 +249,7 @@ export function createCacheStub() {
     })),
     invalidateAppointmentCache: jest.fn(async (..._args: unknown[]) => 0),
     invalidateCacheByTag: jest.fn(async (..._args: unknown[]) => 0),
+    invalidateCollectionTags: jest.fn(async (..._args: unknown[]) => 0),
     get: jest.fn(async (..._args: unknown[]) => null),
     set: jest.fn(async (..._args: unknown[]) => undefined),
     acquireLock: jest.fn(async (key: string, _ttl: number) => {

@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import {
+  isCheckedInForReschedule,
   isRescheduleStatusAllowed,
   rescheduleStatusFilter,
   rescheduleStatusRefusal,
@@ -101,5 +102,21 @@ describe('reschedule policy', () => {
       expect(shouldDropFromQueueAfterMove({ type: 'IN_PERSON' })).toBe(true);
       expect(shouldDropFromQueueAfterMove({ type: 'VIDEO_CALL' })).toBe(false);
     });
+  });
+});
+
+describe('checked-in visits cannot be rescheduled', () => {
+  it('refuses an in-person visit with an arrival time', () => {
+    expect(isCheckedInForReschedule({ type: 'IN_PERSON', checkedInAt: new Date() })).toBe(true);
+    expect(
+      isCheckedInForReschedule({ type: 'IN_PERSON', checkedInAt: '2026-10-22T04:30:00.000Z' })
+    ).toBe(true);
+  });
+
+  it('allows an in-person visit that has not arrived, and ignores video visits', () => {
+    expect(isCheckedInForReschedule({ type: 'IN_PERSON', checkedInAt: null })).toBe(false);
+    expect(isCheckedInForReschedule({ type: 'IN_PERSON' })).toBe(false);
+    expect(isCheckedInForReschedule({ type: 'VIDEO_CALL', checkedInAt: new Date() })).toBe(false);
+    expect(isCheckedInForReschedule({ type: 'IN_PERSON', checkedInAt: 'not a date' })).toBe(false);
   });
 });

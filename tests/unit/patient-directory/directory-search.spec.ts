@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
   classifySearchTerm,
   escapeLike,
+  isPharmacySearchAllowed,
   isRealCalendarDate,
 } from '../../../src/services/patient-directory/utils/directory-search.util';
 
@@ -85,5 +86,21 @@ describe('isRealCalendarDate', () => {
     expect(isRealCalendarDate('2026-02-31')).toBe(false);
     expect(isRealCalendarDate('2027-02-29')).toBe(false);
     expect(isRealCalendarDate('2026-13-01')).toBe(false);
+  });
+});
+
+describe('isPharmacySearchAllowed (N4)', () => {
+  it('lets pharmacy staff search by UHID, phone or a name of 3+ letters', () => {
+    expect(isPharmacySearchAllowed(classifySearchTerm('CL0002-000000208'))).toBe(true);
+    expect(isPharmacySearchAllowed(classifySearchTerm('98765 43210'))).toBe(true);
+    expect(isPharmacySearchAllowed(classifySearchTerm('Asha'))).toBe(true);
+    expect(isPharmacySearchAllowed(classifySearchTerm('asha patil'))).toBe(true);
+  });
+
+  it('refuses short names, e-mails, register numbers and an empty search', () => {
+    expect(isPharmacySearchAllowed(classifySearchTerm('as'))).toBe(false);
+    expect(isPharmacySearchAllowed(classifySearchTerm('a@b.in'))).toBe(false);
+    expect(isPharmacySearchAllowed(classifySearchTerm('123456789012345678'))).toBe(false);
+    expect(isPharmacySearchAllowed(null)).toBe(false);
   });
 });

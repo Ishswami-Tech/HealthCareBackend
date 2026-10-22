@@ -84,19 +84,18 @@ describe('AppointmentsService.rescheduleAppointment under locks (finding 11)', (
     harness.service.rescheduleAppointment('appt-1', NEW_DATE, time, userId, CLINIC, role);
 
   describe('decides on the fresh row, not on the 30-minute cached detail', () => {
-    it('moves an in-person visit that checked in after the cached copy: back to SCHEDULED, out of the queue', async () => {
+    it('refuses an in-person visit that checked in after the cached copy (409, nothing written)', async () => {
       seed({ status: 'CONFIRMED', checkedInAt: new Date('2099-01-05T04:30:00.000Z') });
       harness.cache.cache.mockImplementation(async () =>
         appointmentRow({ status: 'SCHEDULED', checkedInAt: null, metadata: {} })
       );
 
-      const result = await reschedule();
+      const error = await rejection(reschedule());
 
-      expect(result.success).toBe(true);
-      expect(stored(harness)['time']).toBe('11:00');
-      expect(stored(harness)['status']).toBe('SCHEDULED');
-      expect(stored(harness)['checkedInAt']).toBeNull();
-      expect(harness.queue.removePatientFromQueue).toHaveBeenCalledTimes(1);
+      expect(error.getStatus()).toBe(409);
+      expect(error.message).toContain('checked in');
+      expect(appointmentUpdates(harness)).toHaveLength(0);
+      expect(stored(harness)['time']).toBe('10:00');
       expect(harness.cache.heldLocks.size).toBe(0);
     });
 
@@ -136,7 +135,7 @@ describe('AppointmentsService.rescheduleAppointment under locks (finding 11)', (
       const error = await rejection(reschedule());
 
       expect(error.getStatus()).toBe(400);
-      expect(error.message).toContain('already cancelled');
+      expect(error.message).toContain('cancelled');
     });
 
     it('refuses when the visit was handed to another doctor since: the slot lock was for the wrong one', async () => {
@@ -162,7 +161,11 @@ describe('AppointmentsService.rescheduleAppointment under locks (finding 11)', (
     function changeRowBeforeTheWrite(changes: Row): void {
       const original = harness.db.executeHealthcareWrite.getMockImplementation();
       harness.db.executeHealthcareWrite.mockImplementationOnce(async (operation, audit) => {
-        Object.assign(stored(harness), changes);
+        // Another writer commits a NEW row version: the copy the service already read stays as
+        // it was (a real database never mutates a row object handed out by an earlier read).
+        const rows = harness.db.rows('appointment');
+        const index = rows.findIndex(candidate => candidate['id'] === 'appt-1');
+        rows[index] = { ...rows[index], ...changes };
         return original ? original(operation, audit) : operation(harness.db.client);
       });
     }
@@ -565,6 +568,111 @@ describe('CoreAppointmentService.createAppointment: the doctor slot rule at book
   });
 });
 
+describe('CoreAppointmentService.createAppointment: clinic visit length and the DB guard', () => {
+  let harness: RealCoreHarness;
+
+  beforeEach(() => {
+    harness = buildRealCoreHarness();
+    harness.db.insert('patient', { id: 'patient-1', userId: 'user-patient' });
+    harness.db.insert('clinicLocation', { id: 'loc-1', locationId: 'loc-1' });
+  });
+
+  const dto = (type: 'VIDEO_CALL' | 'IN_PERSON', time = '10:00', duration?: number) =>
+    ({
+      patientId: 'patient-1',
+      doctorId: 'doctor-1',
+      appointmentDate: `${NEW_DATE}T${time}:00+05:30`,
+      ...(duration !== undefined ? { duration } : {}),
+      type,
+      ...(type === 'IN_PERSON' ? { locationId: 'loc-1' } : {}),
+    }) as unknown as CreateAppointmentDto;
+
+  const book = (body: CreateAppointmentDto) =>
+    harness.realCore.createAppointment(body, {
+      userId: 'user-patient',
+      role: Role.PATIENT,
+      clinicId: CLINIC,
+    });
+
+  const storedDuration = (): unknown =>
+    (harness.db.createAppointmentSafe.mock.calls[0]?.[0] as Row | undefined)?.['duration'];
+
+  it('in-person defaults to 3 minutes, whatever the patient sent', async () => {
+    const result = await book(dto('IN_PERSON', '10:00', 30));
+    expect(result.success).toBe(true);
+    expect(storedDuration()).toBe(3);
+  });
+
+  it('video defaults to 15 minutes', async () => {
+    await book(dto('VIDEO_CALL', '10:00', 45));
+    expect(storedDuration()).toBe(15);
+  });
+
+  it('uses the clinic settings (appointmentSettings.inPersonDurationMinutes / videoDurationMinutes)', async () => {
+    harness.db.clinicSettings = {
+      appointmentSettings: {
+        inPersonDurationMinutes: 5,
+        videoDurationMinutes: 20,
+      },
+    };
+    await book(dto('IN_PERSON'));
+    expect(storedDuration()).toBe(5);
+  });
+
+  it('a clinic in-person length of 5 makes 10:04 overlap a 10:00 visit without a duration', async () => {
+    harness.db.clinicSettings = {
+      appointmentSettings: { inPersonDurationMinutes: 5 },
+    };
+    harness.db.insert(
+      'appointment',
+      otherAppointment({ type: 'IN_PERSON', time: '10:00', duration: null })
+    );
+    const error = await rejection(book(dto('IN_PERSON', '10:04')));
+    expect(error.getStatus()).toBe(409);
+  });
+
+  it('inserts inside the advisory lock of the doctor day', async () => {
+    await book(dto('IN_PERSON'));
+    expect(harness.db.advisoryLocks).toEqual([`appointment-slot:doctor-1:${NEW_DATE}`]);
+  });
+
+  it('re-checks the slot inside the transaction: an overlapping booking committed meanwhile is a 409', async () => {
+    // Passes the early check, then a concurrent booking of an overlapping slot (10:02, not the
+    // same start time, so the per-start cache lock did not serialize them) commits first.
+    harness.db.beforeGuard = () => {
+      harness.db.insert(
+        'appointment',
+        otherAppointment({
+          id: 'appt-race',
+          type: 'IN_PERSON',
+          time: '10:02',
+          duration: 3,
+        })
+      );
+    };
+    const error = await rejection(book(dto('IN_PERSON', '10:00')));
+    expect(error.getStatus()).toBe(409);
+    expect(error.message).toBe(IN_CLINIC_MESSAGE);
+    expect(harness.db.rows('appointment').map(row => row['id'])).toEqual(['appt-race']);
+  });
+
+  it('video and in-person stay separate kinds inside the guard too', async () => {
+    harness.db.beforeGuard = () => {
+      harness.db.insert(
+        'appointment',
+        otherAppointment({
+          id: 'appt-video',
+          type: 'VIDEO_CALL',
+          time: '10:00',
+          duration: 15,
+        })
+      );
+    };
+    const result = await book(dto('IN_PERSON', '10:00'));
+    expect(result.success).toBe(true);
+  });
+});
+
 describe('CoreAppointmentService.getDoctorAvailability: the grid follows the same rule', () => {
   let harness: RealCoreHarness;
 
@@ -613,5 +721,42 @@ describe('CoreAppointmentService.getDoctorAvailability: the grid follows the sam
     harness.db.insert('appointment', otherAppointment({ type: 'IN_PERSON', status: 'CANCELLED' }));
 
     expect(await availability('IN_PERSON')).toContain('11:00');
+  });
+
+  it('in-person grid is the clinic in-person length (3 min default): an 11:06 visit blocks only 11:06', async () => {
+    harness.db.insert(
+      'appointment',
+      otherAppointment({ type: 'IN_PERSON', time: '11:06', duration: 3 })
+    );
+    const inClinic = await availability('IN_PERSON');
+    expect(inClinic).toContain('11:03');
+    expect(inClinic).not.toContain('11:06');
+    expect(inClinic).toContain('11:09');
+  });
+
+  it('follows the clinic settings for the grid step', async () => {
+    (harness.db.paged as Record<string, unknown>)['doctorClinic'] = {
+      findUnique: async () => null,
+    };
+    harness.db.clinicSettings = {
+      appointmentSettings: {
+        inPersonDurationMinutes: 5,
+        videoDurationMinutes: 20,
+      },
+    };
+    const inClinic = (await harness.realCore.getDoctorAvailability('doctor-1', NEW_DATE, {
+      userId: 'user-x',
+      role: 'USER',
+      clinicId: CLINIC,
+      appointmentType: 'IN_PERSON',
+    })) as { slotDuration: number; availableSlots: string[] };
+    expect(inClinic.slotDuration).toBe(5);
+    const video = (await harness.realCore.getDoctorAvailability('doctor-1', NEW_DATE, {
+      userId: 'user-x',
+      role: 'USER',
+      clinicId: CLINIC,
+      appointmentType: 'VIDEO_CALL',
+    })) as { slotDuration: number };
+    expect(video.slotDuration).toBe(20);
   });
 });

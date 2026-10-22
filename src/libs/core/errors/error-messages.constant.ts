@@ -1,4 +1,8 @@
 import { ErrorCode } from '@core/errors/error-codes.enum';
+import {
+  QR_WINDOW_CLOSES_AFTER_MINUTES,
+  QR_WINDOW_OPENS_BEFORE_MINUTES,
+} from '@utils/in-person-flow.util';
 
 /**
  * Centralized error messages for the healthcare application
@@ -92,8 +96,7 @@ export const ErrorMessages: Record<ErrorCode, string> = {
     'This appointment is scheduled for a different location. Please go to the correct location.',
   [ErrorCode.CHECKIN_APPOINTMENT_EXPIRED]:
     'This appointment has expired. Please contact the clinic to reschedule.',
-  [ErrorCode.CHECKIN_TIME_WINDOW_EXPIRED]:
-    'Check-in window has expired. Please check in within 30 minutes before or 3 hours after your appointment time.',
+  [ErrorCode.CHECKIN_TIME_WINDOW_EXPIRED]: `The check-in window has closed. Self check-in is open from ${QR_WINDOW_OPENS_BEFORE_MINUTES} minutes before until ${QR_WINDOW_CLOSES_AFTER_MINUTES} minutes after your appointment time. If you are at the clinic, show your booking or ask the reception desk to check you in.`,
   [ErrorCode.CHECKIN_INVALID_QR_CODE]:
     'Invalid QR code. Please scan the correct QR code for this location.',
 

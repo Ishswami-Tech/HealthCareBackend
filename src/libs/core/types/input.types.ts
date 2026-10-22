@@ -12,6 +12,8 @@
 export type UserCreateInput = {
   email?: string;
   password?: string;
+  /** Stamped when the holder chose the password (self registration); see hasUsablePassword. */
+  passwordChangedAt?: Date;
   userid: string;
   name: string;
   age?: number;

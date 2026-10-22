@@ -1,4 +1,13 @@
 import { nowIso } from '@utils/date-time.util';
+import { startOfIstDay } from '@utils/clock.util';
+import {
+  clinicInPersonMinutesCacheKey,
+  sanitizeVisitDurationSettings,
+} from '@utils/visit-duration.util';
+import { sanitizeBookableTreatmentTypesSetting } from '@utils/bookable-services.util';
+import { sanitizeWorkingDaysSetting } from '@utils/clinic-working-days.util';
+import { sanitizeWalkInPlanSettings } from '@utils/walk-in-plan-policy.util';
+import { summarizeStockLevels, type StockLevelSummary } from '@utils/stock-level.util';
 import {
   HttpStatus,
   Injectable,
@@ -80,7 +89,8 @@ const CLINIC_SETTINGS_FIELDS = ['operatingHours', 'status', 'type'] as const;
 /**
  * One-level deep merge of the stored clinic settings with the incoming patch: nested objects are
  * merged key by key (so a page that edits `paymentSettings` cannot wipe `opdControls`), arrays and
- * scalars are replaced, `null` deletes a key.
+ * scalars are replaced, `null` deletes a key (top level, or a nested key such as
+ * `appointmentSettings.bookableTreatmentTypes: null` to go back to the default list).
  */
 export function mergeClinicSettings(
   existing: unknown,
@@ -105,10 +115,14 @@ export function mergeClinicSettings(
       typeof current === 'object' &&
       !Array.isArray(current)
     ) {
-      base[key] = {
+      const nested: Record<string, unknown> = {
         ...(current as Record<string, unknown>),
         ...(value as Record<string, unknown>),
       };
+      for (const [nestedKey, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+        if (nestedValue === null) delete nested[nestedKey];
+      }
+      base[key] = nested;
     } else {
       base[key] = value;
     }
@@ -149,7 +163,14 @@ export class ClinicService {
 
     if (appointmentSettings) {
       delete appointmentSettings['assistantDoctorCoverage'];
-      sanitizedSettings['appointmentSettings'] = appointmentSettings;
+      // Visit lengths (in-person / video minutes) are stored as whole minutes in [1, 240].
+      // Patient-bookable services: a list of known, active catalog treatment types.
+      // Working days (weekend booking) and the plan-less walk-in rule: see their utils.
+      sanitizedSettings['appointmentSettings'] = sanitizeWalkInPlanSettings(
+        sanitizeWorkingDaysSetting(
+          sanitizeBookableTreatmentTypesSetting(sanitizeVisitDurationSettings(appointmentSettings))
+        )
+      );
     }
 
     return sanitizedSettings;
@@ -1065,8 +1086,14 @@ export class ClinicService {
           `clinic:${clinic.id}:all:anon:no-ctx`,
           `clinic:${clinic.id}:all:anon:anon`,
           `clinic:my:${clinic.id}`,
+          clinicInPersonMinutesCacheKey(clinic.id),
         ];
         await Promise.all(cacheKeys.map(key => this.cacheService!.delete(key)));
+        // Appointment settings (working days, hours, visit length) shape the slot grid: a cached
+        // grid would keep offering a day the clinic just closed.
+        if (settingsToMerge && 'appointmentSettings' in settingsToMerge) {
+          await this.cacheService.invalidateClinicAvailabilityCache(clinic.id).catch(() => 0);
+        }
       }
 
       // Emit clinic lifecycle event
@@ -1149,10 +1176,10 @@ export class ClinicService {
 
   private async fetchClinicStats(clinicId: string): Promise<ClinicStatsResponseDto> {
     try {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
+      // Appointment.date is the IST-midnight day key stored in UTC: the range must be the IST day,
+      // not the server (UTC) day, or "today" counts tomorrow's visits.
+      const today = startOfIstDay(new Date()) ?? new Date();
+      const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
 
       // Use executeHealthcareRead for parallel queries with optimization
       const [
@@ -1164,7 +1191,7 @@ export class ClinicService {
         revenue,
         activePatients,
         totalEhrRecords,
-        lowStockAlerts,
+        stockLevels,
       ] = await Promise.all([
         this.databaseService.executeHealthcareRead<number>(async client => {
           const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
@@ -1214,11 +1241,14 @@ export class ClinicService {
             where: { clinicId } as PrismaDelegateArgs,
           } as PrismaDelegateArgs);
         }),
-        this.databaseService.executeHealthcareRead<number>(async client => {
+        this.databaseService.executeHealthcareRead<StockLevelSummary>(async client => {
           const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-          return await typedClient.medicine.count({
-            where: { clinicId, stock: { lt: 10 } } as PrismaDelegateArgs,
+          // Same definition as the pharmacy screens: low = 0 < stock <= reorder level.
+          const medicines = await typedClient.medicine.findMany({
+            where: { clinicId, isActive: true } as PrismaDelegateArgs,
+            select: { stock: true, minStockThreshold: true } as PrismaDelegateArgs,
           } as PrismaDelegateArgs);
+          return summarizeStockLevels(medicines);
         }),
       ]);
 
@@ -1231,7 +1261,8 @@ export class ClinicService {
         revenue,
         activePatients,
         totalEhrRecords,
-        lowStockAlerts,
+        lowStockAlerts: stockLevels.lowStock,
+        outOfStockAlerts: stockLevels.outOfStock,
       };
     } catch (error) {
       void this.loggingService.log(
@@ -1670,9 +1701,11 @@ export class ClinicService {
           } as PrismaDelegateArgs);
         }
       );
-      if (!clinic) throw new Error('Clinic not found');
+      if (!clinic) throw new NotFoundException('Clinic not found');
       return clinic as ClinicResponseDto;
     } catch (error) {
+      // An unknown app name is a normal 404 (public lookup), not an error worth logging.
+      if (error instanceof NotFoundException) throw error;
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
@@ -2329,10 +2362,13 @@ export class ClinicService {
     }
   }
 
-  async associateUserWithClinic(data: {
+  async associateUserWithClinic(data: { userId: string; clinicId: string }): Promise<{
+    id: string;
     userId: string;
     clinicId: string;
-  }): Promise<{ id: string; userId: string; clinicId: string; createdAt: Date; updatedAt: Date }> {
+    createdAt: Date;
+    updatedAt: Date;
+  }> {
     try {
       // Use executeHealthcareWrite for create with audit logging
       // Note: User-clinic association is handled via UserRole in RBAC system

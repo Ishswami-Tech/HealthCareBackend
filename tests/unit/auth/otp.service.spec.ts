@@ -41,6 +41,15 @@ const createService = () => {
     exists: jest.fn(),
     ttl: jest.fn(),
     increment: jest.fn(),
+    // Raw pipeline used for the lockout / wrong-code counters: no lockout key (ttl -2), first
+    // failure counts 1, everything else acknowledges.
+    multi: jest.fn(async (commands: Array<{ command: string }>) =>
+      commands.map(({ command }) => {
+        if (command === 'ttl') return [null, -2];
+        if (command === 'incr') return [null, 1];
+        return [null, 'OK'];
+      })
+    ),
   };
   mockedCache.mockImplementation(() => mockCache as unknown as CacheService);
 
@@ -56,6 +65,7 @@ const createService = () => {
 
   const mockWhatsApp = {
     sendMessage: jest.fn().mockResolvedValue({ success: true }),
+    sendOTP: jest.fn().mockResolvedValue(true),
   };
   mockedWhatsApp.mockImplementation(() => mockWhatsApp as unknown as WhatsAppService);
 
@@ -151,25 +161,27 @@ describe('OtpService', () => {
     });
   });
 
-  describe('sendOtpSms', () => {
-    it('should send OTP via SMS', async () => {
+  describe('sendOtpPhone', () => {
+    it('should send OTP via WhatsApp', async () => {
       mockCache.get.mockResolvedValue(null);
       mockCache.set.mockResolvedValue(undefined);
       mockCache.exists.mockResolvedValue(false);
 
       const result = await (
         service as unknown as {
-          sendOtpSms: (phone: string, purpose?: string, clinicId?: string) => Promise<OtpResult>;
+          sendOtpPhone: (phone: string, purpose?: string, clinicId?: string) => Promise<OtpResult>;
         }
-      ).sendOtpSms('+919876543210', 'verification');
+      ).sendOtpPhone('+919876543210', 'verification');
 
       expect(result.success).toBe(true);
+      expect(mockCache.set).toHaveBeenCalled();
     });
   });
 
   describe('verifyOtp', () => {
     it('should verify correct OTP', async () => {
-      mockCache.get.mockResolvedValueOnce(null).mockResolvedValueOnce('123456');
+      // Reads the pending code first, then the just-verified replay entry.
+      mockCache.get.mockResolvedValueOnce('123456').mockResolvedValueOnce(null);
       mockCache.exists.mockResolvedValue(true);
 
       const result = await (

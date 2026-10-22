@@ -39,6 +39,26 @@ function resolveDsn(): string {
   return DEFAULT_SENTRY_DSN;
 }
 
+/**
+ * All PII/payload collection switched off. Declared as a standalone constant (not an inline
+ * literal) so it type-checks against every installed @sentry/core: `queues` exists in 11.x
+ * `DataCollection` but not in 10.x, and excess-property checks only apply to inline literals.
+ * A 10.x runtime simply ignores the extra key. Root cause of the container TS error: an older
+ * @sentry/* (10.75) in the container's node_modules volume vs 11.4.0 in yarn.lock.
+ */
+const SENTRY_DATA_COLLECTION = {
+  userInfo: false,
+  cookies: false,
+  httpHeaders: false,
+  httpBodies: [],
+  urlQueryParams: false,
+  graphQL: { document: false, variables: false },
+  genAI: { inputs: false, outputs: false },
+  databaseQueryData: false,
+  queues: false,
+  stackFrameVariables: false,
+};
+
 function parseRate(value: string | undefined, fallback: number): number {
   if (!value) {
     return fallback;
@@ -76,18 +96,7 @@ export function initSentry(): boolean {
     // `sendDefaultPii` with `dataCollection`, whose defaults collect most of
     // this, so every category is switched off explicitly. The exception filter
     // forwards a scrubbed context explicitly instead.
-    dataCollection: {
-      userInfo: false,
-      cookies: false,
-      httpHeaders: false,
-      httpBodies: [],
-      urlQueryParams: false,
-      graphQL: { document: false, variables: false },
-      genAI: { inputs: false, outputs: false },
-      databaseQueryData: false,
-      queues: false,
-      stackFrameVariables: false,
-    },
+    dataCollection: SENTRY_DATA_COLLECTION,
     maxBreadcrumbs: 50,
   });
 

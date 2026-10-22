@@ -47,6 +47,8 @@ function createHarness(overrides: Record<string, Record<string, jest.Mock>> = {}
   const client: Record<string, Record<string, jest.Mock>> = {
     medicine: {
       findUnique: jest.fn(),
+      // Duplicate-name / rename guards: no clashing medicine in the clinic.
+      findFirst: jest.fn().mockResolvedValue(null),
       findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn(async ({ data }: { data: Row }) => ({ id: 'med-1', ...data })),
       create: jest.fn(async ({ data }: { data: Row }) => ({ id: 'med-new', ...data })),
@@ -572,7 +574,7 @@ describe('PharmacyService.getPrescriptionPdf access', () => {
     const h = harness();
     const doctorPdf = await h.service.getPrescriptionPdf('rx-1', CLINIC, DOCTOR);
     expect(doctorPdf.buffer.subarray(0, 4).toString()).toBe('%PDF');
-    expect(doctorPdf.fileName).toBe('prescription-RX-20261005-AAAAAAAA.pdf');
+    expect(doctorPdf.fileName).toBe('RX-20261005-AAAAAAAA_Pat.pdf');
     const pharmacistPdf = await h.service.getPrescriptionPdf('rx-1', CLINIC, PHARMACIST);
     expect(pharmacistPdf.buffer.length).toBeGreaterThan(100);
   });

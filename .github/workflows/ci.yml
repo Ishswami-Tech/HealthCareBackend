@@ -400,8 +400,15 @@ jobs:
           IMAGE_FULL: ${{ needs.docker-build.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}
           INFRA_CHANGED: ${{ needs.detect-changes.outputs.infra-changed }}
           APP_CHANGED: ${{ needs.detect-changes.outputs.app-changed }}
+          # P0-3: deploy-time Prisma migrations, set per GitHub environment (production/preprod).
+          #   status (default) - run `prisma migrate status` only and print drift/pending (never blocks)
+          #   true             - status pre-check + `prisma migrate deploy` before the new release starts
+          #   false            - skip entirely
+          # Switch an environment to `true` only after docs/DEPLOY_MIGRATIONS.md was run on a prod copy.
+          RUN_DB_MIGRATIONS: ${{ vars.RUN_DB_MIGRATIONS || 'status' }}
         run: |
           echo "Deploying to: ${DEPLOY_ENV} (image: ${IMAGE_FULL})"
+          echo "RUN_DB_MIGRATIONS=${RUN_DB_MIGRATIONS}"
 
           # ── Gate: production deploys disabled until preprod is validated ────
           if [ "${DEPLOY_ENV}" = "production" ]; then
@@ -420,6 +427,7 @@ jobs:
             cd '${DEPLOY_PATH}'
             DEPLOY_ENV='${DEPLOY_ENV}' \
             IMAGE_FULL='${IMAGE_FULL}' \
+            RUN_DB_MIGRATIONS='${RUN_DB_MIGRATIONS}' \
             COOLIFY_APP_UUID='${COOLIFY_APP_UUID}' \
             COOLIFY_API_TOKEN='${{ secrets.COOLIFY_API_TOKEN }}' \
             bash devops/scripts/docker-infra/coolify-deploy.sh \

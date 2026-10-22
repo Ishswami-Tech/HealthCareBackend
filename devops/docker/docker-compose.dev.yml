@@ -8,8 +8,16 @@
 # - .env.local has highest priority (if exists, not in git)
 # - Variables can be overridden via environment or docker-compose environment section
 
+# Log rotation for every container (json-file, 3 x 20 MB): container logs cannot fill the disk.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "3"
+
 services:
   api:
+    logging: *default-logging
     build:
       context: ../..
       dockerfile: devops/docker/Dockerfile.dev
@@ -38,6 +46,9 @@ services:
       # DIRECT_URL: Clean connection string for Prisma Studio (without Prisma-specific parameters)
       # Prisma Studio needs this to connect properly without "unrecognized configuration parameter" errors
       DIRECT_URL: postgresql://postgres:postgres@postgres:5432/userdb
+      # Pool budget: overrides DB_POOL_SIZE=100 from ../../.env. API 20 (+2 health) + worker 10
+      # (+2) = 34 of the local max_connections=100, leaving room for psql / Prisma Studio / tests.
+      DB_POOL_SIZE: "20"
       PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
       
       # Cache Provider Configuration (Dragonfly is default)
@@ -178,6 +189,7 @@ services:
       "
 
   postgres:
+    logging: *default-logging
     # Volume healthcare_postgres_data is PG16; postgres:18 refuses that layout and crash-loops.
     image: postgres:16
     platform: linux/amd64
@@ -215,6 +227,16 @@ services:
       -c listen_addresses='*'
       -c log_connections=on
       -c log_disconnections=on
+      -c shared_preload_libraries=pg_stat_statements,auto_explain
+      -c pg_stat_statements.track=all
+      -c pg_stat_statements.max=10000
+      -c auto_explain.log_min_duration=500ms
+      -c auto_explain.log_nested_statements=on
+      -c log_min_duration_statement=250ms
+      -c log_autovacuum_min_duration=0
+    # Observability (docs/OBSERVABILITY.md): the shared_preload_libraries / pg_stat_statements /
+    # auto_explain flags only take effect when this container is RECREATED (restart alone keeps
+    # the old command). After that run once: CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -229,6 +251,7 @@ services:
     shm_size: 256mb
 
   dragonfly:
+    logging: *default-logging
     # Using official Dragonfly registry with specific version (more reliable than latest)
     # If network timeout persists, try: docker pull docker.dragonflydb.io/dragonflydb/dragonfly:v1.27.1 manually first
     image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.27.1
@@ -283,6 +306,7 @@ services:
   # Redis Commander - UI for Dragonfly (Redis-compatible)
   # Works with Dragonfly since it's Redis-compatible
   redis-commander:
+    logging: *default-logging
     image: rediscommander/redis-commander:latest
     container_name: healthcare-redis-ui
     ports:
@@ -309,6 +333,7 @@ services:
   # Access at: http://localhost:9000
   # Optimized for minimal disk usage: limited logs, no snapshots, strict resource limits
   portainer:
+    logging: *default-logging
     image: portainer/portainer-ce:latest
     container_name: healthcare-portainer
     ports:
@@ -345,6 +370,7 @@ services:
       start_period: 30s
 
   worker:
+    logging: *default-logging
     build:
       context: ../..
       dockerfile: devops/docker/Dockerfile.dev
@@ -364,6 +390,7 @@ services:
       # Database Configuration
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=50&pool_timeout=20
       PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
+      DB_POOL_SIZE: "10"
       
       # Cache Provider Configuration (Dragonfly is default)
       CACHE_ENABLED: "true"
@@ -397,6 +424,10 @@ services:
     networks:
       - healthcare-network
     restart: unless-stopped
+    # The worker runs through ts-node in SWC mode, NOT tsx: tsx (esbuild) never emits
+    # `design:paramtypes`, so Nest cannot see implicit constructor deps (crash on any class mixing
+    # @Inject with plain params, silently-undefined deps everywhere else). SWC honours
+    # emitDecoratorMetadata, matching the nest/swc build the API and production worker use.
     command: >
       sh -c "
         if [ ! -f /app/node_modules/.bin/ts-node ]; then
@@ -419,7 +450,7 @@ services:
         echo 'Fixing Prisma issues (sourcemaps, types, yarn)...' &&
         (node scripts/fix-prisma.js || echo '[WARN] Prisma fixes completed with warnings') &&
         echo 'Starting worker process...' &&
-        yarn run tsx --tsconfig tsconfig.json src/worker-bootstrap.ts
+        yarn run ts-node --swc -P tsconfig.json -r tsconfig-paths/register src/worker-bootstrap.ts
       "
 
   #   environment:

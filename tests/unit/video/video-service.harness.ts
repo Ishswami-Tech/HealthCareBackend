@@ -163,6 +163,8 @@ export function createHarness(): {
   const configService = {
     isVideoNoShowEnabled: jest.fn().mockReturnValue(false),
     getEnvBoolean: jest.fn().mockReturnValue(false),
+    // buildPatientJoinUrl reads FRONTEND_URL / NEXT_PUBLIC_APP_URL; unset in unit tests.
+    getEnv: jest.fn().mockReturnValue(undefined),
   };
   const providerFactory = {
     getProvidersInOrder: jest.fn().mockReturnValue([provider]),

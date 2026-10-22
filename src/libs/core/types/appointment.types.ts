@@ -87,6 +87,8 @@ export interface AppointmentContext {
   clinicId: string;
   locationId?: string;
   doctorId?: string;
+  /** ASSISTANT_DOCTOR list scope (Doctor.ids); takes precedence over doctorId when set. */
+  doctorIds?: string[];
   patientId?: string;
   appointmentType?: string;
 }
@@ -316,6 +318,9 @@ export interface CheckInLocation {
   isActive: boolean;
   qrCode?: string | null;
   qrCodeExpiry?: Date | null;
+  /** Bumped by the QR regenerate endpoint; the signed poster QR carries it. */
+  qrVersion?: number;
+  qrRotatedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -660,7 +665,7 @@ export interface CheckInAppointment {
   locationName?: string;
   patientName?: string;
   doctorName?: string;
-  checkInMethod?: 'MANUAL' | 'QR';
+  checkInMethod?: 'QR' | 'MANUAL' | 'WALK_IN' | 'STAFF' | 'DESK_CODE';
   paymentStatus?: string;
   notes?: string | null;
   domain?: string;
@@ -1374,13 +1379,20 @@ export interface QueueEntryData {
   checkedInAt?: string;
   estimatedWaitTime?: number;
   position?: number;
-  /** Stable per doctor/day/clinic ticket number assigned once at check-in (in-person only). */
+  /** Stable per location/day ticket number assigned once at check-in (in-person only). */
   tokenNumber?: number;
+  /** Display token with the location prefix ("K-014", "B-003"), stored at check-in. */
+  tokenLabel?: string;
+  /** Walk-in registered at the desk (tag; same token series and queue as booked patients). */
+  isWalkIn?: boolean;
   confirmedAt?: string;
   startedAt?: string;
   actualWaitTime?: number;
   locationId?: string;
   emergencyAt?: string;
+  /** SENIOR | PREGNANT | EMERGENCY when staff raised the priority (see POST /queue-ops/:id/priority). */
+  priorityLabel?: string;
+  priorityReason?: string;
   type?: string;
   notes?: string;
   queueCategory?: string;

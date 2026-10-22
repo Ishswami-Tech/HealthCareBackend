@@ -20,6 +20,11 @@ import {
 } from '@communication/channels/socket/socket.service';
 import { DatabaseService } from '@infrastructure/database';
 import { mergeAppointmentFacts } from './notification-template-facts';
+import {
+  APPOINTMENT_INBOX_LOCK_TTL_SECONDS,
+  appointmentInboxLockKey,
+  buildAppointmentInboxEntry,
+} from './appointment-inbox.util';
 import { EmailTemplate } from '@core/types';
 import { findTreatmentCatalogEntryOrUndefined } from '@core/types/treatment-catalog.types';
 import type {
@@ -172,6 +177,9 @@ export class AppointmentNotificationService {
       }
     }
 
+    // One in-app inbox row per appointment change (web bell / mobile notifications screen).
+    await this.recordInAppNotification(notificationData, notificationId);
+
     // Log the notification attempt
     await this.loggingService.log(
       LogType.NOTIFICATION,
@@ -194,6 +202,78 @@ export class AppointmentNotificationService {
       failedChannels,
       errors: errors.length > 0 ? errors : [],
     };
+  }
+
+  /**
+   * Persists the in-app inbox row (channel `socket`) for booking / confirmation / reschedule /
+   * cancellation / expiry, once per (appointment, type). Best effort: never fails the delivery.
+   */
+  private async recordInAppNotification(
+    notificationData: NotificationData,
+    notificationId: string
+  ): Promise<void> {
+    const { appointmentId, patientId, clinicId, type, templateData } = notificationData;
+    const entry = buildAppointmentInboxEntry(type, templateData);
+    if (!entry || !appointmentId || !patientId) {
+      return;
+    }
+    try {
+      const userId = await this.resolvePatientUserId(patientId, notificationId);
+      if (!userId) {
+        return;
+      }
+      const firstForEvent = await this.cacheService.acquireLock(
+        appointmentInboxLockKey(appointmentId, type),
+        APPOINTMENT_INBOX_LOCK_TTL_SECONDS
+      );
+      if (!firstForEvent) {
+        return;
+      }
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.notification.create({
+            data: {
+              userId,
+              type: 'PUSH_NOTIFICATION',
+              channel: 'socket',
+              title: entry.title,
+              message: entry.message,
+              category: 'APPOINTMENT',
+              status: 'SENT',
+              deliveryStatus: 'DELIVERED',
+              sentAt: new Date(),
+              deliveredAt: new Date(),
+              appointmentId,
+              clinicId: clinicId || null,
+              data: { appointmentId, type, route: `/appointments/${appointmentId}` },
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        },
+        {
+          userId: 'system',
+          userRole: 'system',
+          clinicId: clinicId || '',
+          operation: 'CREATE',
+          resourceType: 'NOTIFICATION',
+          resourceId: appointmentId,
+          timestamp: new Date(),
+        }
+      );
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.WARN,
+        'Failed to record in-app appointment notification',
+        'AppointmentNotificationService.recordInAppNotification',
+        {
+          notificationId,
+          appointmentId,
+          type,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+    }
   }
 
   /**

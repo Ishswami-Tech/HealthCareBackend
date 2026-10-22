@@ -101,6 +101,10 @@ export interface PatientDocumentFileInput {
 export interface PatientDocumentMetaInput {
   readonly category?: string | undefined;
   readonly description?: string | undefined;
+  /** Report name typed by the patient; the file name is used when it is missing. */
+  readonly title?: string | undefined;
+  /** Date of the report itself (YYYY-MM-DD), not the upload date. */
+  readonly reportDate?: string | undefined;
 }
 
 /** A file that passed size / type / signature validation. */
@@ -116,6 +120,75 @@ export interface ValidatedDocumentFile {
 export interface ValidatedPatientDocument extends ValidatedDocumentFile {
   readonly category: string;
   readonly description?: string;
+  /** YYYY-MM-DD, when the patient gave one. */
+  readonly reportDate?: string;
+}
+
+/** Prefix of the `content` line that carries the report date of an uploaded document. */
+export const REPORT_DATE_CONTENT_PREFIX = 'Report date: ';
+
+/**
+ * The report date of an upload: a real calendar date (YYYY-MM-DD) that is not in the future
+ * (one day of slack for time zones). 400 otherwise; undefined when none was sent.
+ */
+export function normaliseReportDate(
+  raw: string | undefined,
+  now: Date = new Date()
+): string | undefined {
+  const trimmed = (raw ?? '').trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed.slice(0, 10));
+  if (!match) {
+    throw new BadRequestException('Report date must be a date (YYYY-MM-DD)');
+  }
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    throw new BadRequestException('Report date must be a real calendar date');
+  }
+  if (parsed.getTime() > now.getTime() + 24 * 60 * 60 * 1000) {
+    throw new BadRequestException('Report date cannot be in the future');
+  }
+  return trimmed.slice(0, 10);
+}
+
+/** The report date stored in a document row's `content`, or undefined. */
+export function readReportDateFromContent(content: string | null | undefined): string | undefined {
+  if (!content || !content.startsWith(REPORT_DATE_CONTENT_PREFIX)) {
+    return undefined;
+  }
+  const value = content.slice(
+    REPORT_DATE_CONTENT_PREFIX.length,
+    REPORT_DATE_CONTENT_PREFIX.length + 10
+  );
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined;
+}
+
+/**
+ * A download name for a stored document: its display title (sanitised, no path or reserved
+ * characters) plus the extension of its stored type, e.g. "Blood test March.pdf".
+ */
+export function documentDownloadFileName(
+  title: string | null | undefined,
+  mimeType: string | null | undefined
+): string {
+  const base = sanitizeDocumentTitle(title ?? '')
+    .replace(/[:\\/]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const extension = EXTENSION_BY_MIME[String(mimeType ?? '').toLowerCase()] ?? '';
+  const withoutExtension =
+    extension && base.toLowerCase().endsWith(`.${extension}`)
+      ? base.slice(0, -(extension.length + 1))
+      : base.replace(/\.(pdf|jpe?g|png|webp|heic)$/i, '');
+  const stem = withoutExtension.trim() || DEFAULT_TITLE;
+  return extension ? `${stem}.${extension}` : stem;
 }
 
 function normaliseDeclaredMime(raw: string | undefined): string {
@@ -266,10 +339,15 @@ export function validatePatientDocumentUpload(
 ): ValidatedPatientDocument {
   const validatedFile = validateDocumentFile(file);
   const description = normaliseDescription(meta.description);
+  const reportDate = normaliseReportDate(meta.reportDate);
+  // A report name the patient typed wins over the file name (same sanitising rules).
+  const typedTitle = (meta.title ?? '').trim();
   return {
     ...validatedFile,
+    ...(typedTitle ? { title: sanitizeDocumentTitle(typedTitle) } : {}),
     category: normaliseCategory(meta.category),
     ...(description ? { description } : {}),
+    ...(reportDate ? { reportDate } : {}),
   };
 }
 
@@ -353,6 +431,47 @@ export function extractStoredFileRef(
 
   const key = [folder, ...rest].join('/');
   return isLocal ? `/storage/assets/${key}` : key;
+}
+
+/** Where the bytes of a stored patient document live (served by the `/content` route). */
+export type DocumentContentSource =
+  | { readonly provider: 'local'; readonly storageKey: string }
+  | { readonly provider: 's3'; readonly key: string };
+
+/**
+ * Resolves the stored `fileUrl` of a document row to a streamable source, or null.
+ *  - local disk (`/storage/assets/<documents|medical-records>/...`) -> local stream
+ *  - own-bucket object (resolved by `resolveOwnedKey`, which returns null when S3 is off
+ *    or the URL is a foreign host / other folder) -> S3 stream
+ * The object name must contain one of `boundTo` (Patient.id / User.id: the writers put
+ * them into the name), so a row whose URL points at another patient's file is never
+ * served. An empty `boundTo` never matches (fail closed).
+ */
+export function resolveDocumentContentSource(
+  fileUrl: string | null | undefined,
+  boundTo: ReadonlyArray<string | null | undefined>,
+  resolveOwnedKey: (storedUrl: string) => string | null
+): DocumentContentSource | null {
+  const markers = boundTo.filter(
+    (marker): marker is string => typeof marker === 'string' && marker.length > 0
+  );
+  const value = (fileUrl ?? '').trim();
+  if (markers.length === 0 || value.length === 0) {
+    return null;
+  }
+  const belongs = (ref: string): boolean => markers.some(marker => ref.includes(marker));
+
+  if (value.startsWith('/storage/assets/')) {
+    const storageKey = extractStoredFileRef(value, PHI_FILE_FOLDERS);
+    return storageKey && belongs(storageKey) ? { provider: 'local', storageKey } : null;
+  }
+  const key = resolveOwnedKey(value);
+  return key && belongs(key) ? { provider: 's3', key } : null;
+}
+
+/** API path (relative to the API base) that streams a patient document with auth. */
+export function patientDocumentContentPath(patientId: string, documentId: string): string {
+  return `/patients/${encodeURIComponent(patientId)}/documents/${encodeURIComponent(documentId)}/content`;
 }
 
 /** Storage file name for a validated upload (the store prefixes its own uuid). */

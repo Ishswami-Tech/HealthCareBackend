@@ -39,9 +39,20 @@ const PRESCRIPTION = {
   location: null,
 };
 
-function createHarness(options: { withInvoice: boolean }) {
+function createHarness(options: {
+  withInvoice: boolean;
+  payments?: Array<Record<string, unknown>>;
+  status?: string;
+  lockFree?: boolean;
+  gatewaySuccess?: boolean;
+}) {
   const client = {
-    prescription: { findUnique: jest.fn().mockResolvedValue(PRESCRIPTION) },
+    prescription: {
+      findUnique: jest
+        .fn()
+        .mockResolvedValue({ ...PRESCRIPTION, status: options.status ?? 'PENDING' }),
+    },
+    payment: { findMany: jest.fn().mockResolvedValue(options.payments ?? []) },
   };
   const databaseService = {
     executeHealthcareRead: jest.fn(async (operation: (c: unknown) => Promise<unknown>) =>
@@ -51,7 +62,16 @@ function createHarness(options: { withInvoice: boolean }) {
     createPaymentSafe: jest.fn().mockResolvedValue({ id: 'pay-1' }),
   };
   const paymentService = {
-    createPaymentIntent: jest.fn().mockResolvedValue({ orderId: 'order-1', metadata: {} }),
+    createPaymentIntent: jest.fn().mockResolvedValue({
+      success: options.gatewaySuccess ?? true,
+      orderId: 'order-1',
+      provider: 'cashfree',
+      amount: 100,
+      currency: 'INR',
+      status: 'pending',
+      metadata: { paymentSessionId: 'session-1' },
+      ...(options.gatewaySuccess === false ? { error: 'Gateway down' } : {}),
+    }),
   };
   const billing = {
     ensurePrescriptionInvoice: jest.fn().mockResolvedValue({
@@ -71,9 +91,14 @@ function createHarness(options: { withInvoice: boolean }) {
     {} as never,
     {} as never,
     moduleRef as never,
-    { invalidateCacheByTag: jest.fn(), del: jest.fn() } as never
+    {
+      invalidateCacheByTag: jest.fn(),
+      del: jest.fn(),
+      acquireLock: jest.fn().mockResolvedValue(options.lockFree ?? true),
+      releaseLock: jest.fn().mockResolvedValue(true),
+    } as never
   );
-  return { service };
+  return { service, databaseService, paymentService };
 }
 
 const PATIENT = { userId: 'user-1', role: 'PATIENT' };
@@ -105,5 +130,70 @@ describe('PharmacyService.createPrescriptionPaymentIntent response', () => {
 
     expect(result['clinicId']).toBe(CLINIC);
     expect(result).not.toHaveProperty('invoice');
+  });
+});
+
+describe('PharmacyService.createPrescriptionPaymentIntent idempotency (B13) and drafts (B5)', () => {
+  it('reuses the live open attempt instead of opening a second gateway order', async () => {
+    const h = createHarness({
+      withInvoice: true,
+      payments: [
+        {
+          id: 'pay-open',
+          status: 'PENDING',
+          amount: 100,
+          createdAt: new Date(),
+          metadata: {
+            paymentFor: 'PRESCRIPTION_DISPENSE',
+            prescriptionId: 'rx-1',
+            checkout: { orderId: 'order-0', provider: 'cashfree', metadata: { s: 'x' } },
+          },
+        },
+      ],
+    });
+
+    const result = (await h.service.createPrescriptionPaymentIntent(
+      'rx-1',
+      CLINIC,
+      PATIENT
+    )) as unknown as Record<string, unknown>;
+
+    expect(result['paymentId']).toBe('pay-open');
+    expect(result['reused']).toBe(true);
+    expect(h.paymentService.createPaymentIntent).not.toHaveBeenCalled();
+    expect(h.databaseService.createPaymentSafe).not.toHaveBeenCalled();
+  });
+
+  it('answers a concurrent second press with 409 and opens nothing', async () => {
+    const h = createHarness({ withInvoice: true, lockFree: false });
+
+    await expect(
+      h.service.createPrescriptionPaymentIntent('rx-1', CLINIC, PATIENT)
+    ).rejects.toMatchObject({ status: 409 });
+    expect(h.paymentService.createPaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it('records no attempt when the gateway did not open the order', async () => {
+    const h = createHarness({ withInvoice: true, gatewaySuccess: false });
+
+    await expect(
+      h.service.createPrescriptionPaymentIntent('rx-1', CLINIC, PATIENT)
+    ).rejects.toMatchObject({ status: 400 });
+    expect(h.databaseService.createPaymentSafe).not.toHaveBeenCalled();
+  });
+
+  it('hides a draft from the patient (404) and refuses it for staff (409)', async () => {
+    for (const status of ['DRAFT', 'RETURNED']) {
+      const h = createHarness({ withInvoice: true, status });
+      await expect(
+        h.service.createPrescriptionPaymentIntent('rx-1', CLINIC, PATIENT)
+      ).rejects.toMatchObject({ status: 404 });
+      await expect(
+        h.service.getPrescriptionPaymentSummary('rx-1', CLINIC, {
+          userId: 'rx-desk',
+          role: 'RECEPTIONIST',
+        })
+      ).rejects.toMatchObject({ status: 409 });
+    }
   });
 });

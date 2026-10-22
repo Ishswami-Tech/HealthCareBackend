@@ -1,8 +1,8 @@
 /**
  * Check-in timing. The live queue is keyed by today's IST date, so no caller may check in an
  * appointment that is not on today's IST date; a patient must also be inside the window
- * (30 min before .. 3 h after the appointment time). Staff may check in outside the window, on
- * the same IST day only.
+ * (20 min before .. 45 min after the slot start, whatever the visit length). Staff may check in
+ * outside the window, on the same IST day only.
  */
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 
@@ -52,11 +52,13 @@ describe('assessCheckInTiming', () => {
   const date = new Date('2026-10-05T00:00:00.000Z');
 
   it.each([
-    ['30 minutes before (boundary)', '2026-10-05T06:00:00.000Z', true],
-    ['31 minutes before', '2026-10-05T05:59:00.000Z', false],
+    ['20 minutes before (boundary)', '2026-10-05T06:10:00.000Z', true],
+    ['21 minutes before', '2026-10-05T06:09:00.000Z', false],
+    ['60 minutes before (the old window)', '2026-10-05T05:30:00.000Z', false],
     ['exactly at the time', '2026-10-05T06:30:00.000Z', true],
-    ['3 hours after (boundary)', '2026-10-05T09:30:00.000Z', true],
-    ['3 hours 1 minute after', '2026-10-05T09:31:00.000Z', false],
+    ['45 minutes after (boundary)', '2026-10-05T07:15:00.000Z', true],
+    ['46 minutes after', '2026-10-05T07:16:00.000Z', false],
+    ['3 hours after (the old window)', '2026-10-05T09:30:00.000Z', false],
   ])('%s: within window = %s', (_label, nowIso, expected) => {
     const timing = assessCheckInTiming(date, '12:00', at(nowIso));
 
@@ -124,6 +126,7 @@ describe('CheckInLocationService.processCheckIn timing gate', () => {
     expect(w.queue.checkIn).not.toHaveBeenCalled();
   }
 
+  /** Same code always; the message names the opening time (early) or closing time (late). */
   function expectWindowClosed(error: HttpException): void {
     expect(error).toBeInstanceOf(BadRequestException);
     expect(error.getStatus()).toBe(400);
@@ -131,7 +134,9 @@ describe('CheckInLocationService.processCheckIn timing gate', () => {
       statusCode: 400,
       error: 'Bad Request',
       code: CHECK_IN_WINDOW_CLOSED_CODE,
-      message: CHECK_IN_WINDOW_CLOSED_MESSAGE,
+      message: expect.stringMatching(
+        /^(Check-in opens at \d{1,2}:\d{2} [ap]m, 20 minutes before your \d{1,2}:\d{2} [ap]m appointment\. Please scan again then, or ask the reception desk to check you in\.|The check-in window closed at \d{1,2}:\d{2} [ap]m\. If you are at the clinic, show your booking or ask the reception desk to check you in\.)$/
+      ),
     });
   }
 
@@ -151,8 +156,9 @@ describe('CheckInLocationService.processCheckIn timing gate', () => {
 
     it.each([
       ['starting now', 0],
-      ['30 minutes from now (window opens)', 30],
-      ['3 hours ago (window closes)', -180],
+      ['20 minutes from now (window opens)', 20],
+      // V2: the patient window closes 45 min after the slot start (any visit length).
+      ['45 minutes ago (window closes)', -45],
     ])('an appointment %s is checked in: CONFIRMED + queued', async (_label, offset) => {
       w.db.insert('appointment', inPersonRow({ ...istSlot(offset) }));
 
@@ -164,13 +170,31 @@ describe('CheckInLocationService.processCheckIn timing gate', () => {
     });
 
     it.each([
-      ['31 minutes before it starts', 31],
-      ['3 hours 1 minute after it started', -181],
+      ['21 minutes before it starts', 21],
+      ['60 minutes before it starts (old window)', 60],
+      ['46 minutes after the start (window closed)', -46],
     ])('%s: 400 window closed, nothing recorded', async (_label, offset) => {
       w.db.insert('appointment', inPersonRow({ ...istSlot(offset) }));
 
       expectWindowClosed(await rejection(checkIn(patientForce, { coordinates: here })));
       expectNothingRecorded();
+    });
+
+    it('names the opening time when early and the closing time when late', async () => {
+      // Pinned now is 12:00 IST. A 12:21 slot opens at 12:01 pm; an 11:14 slot closed at 11:59 am.
+      w.db.insert('appointment', inPersonRow({ ...istSlot(21) }));
+      const early = await rejection(checkIn(patientForce, { coordinates: here }));
+      expect((early.getResponse() as { message: string }).message).toBe(
+        'Check-in opens at 12:01 pm, 20 minutes before your 12:21 pm appointment. Please scan again then, or ask the reception desk to check you in.'
+      );
+
+      w.db.rows('appointment').length = 0;
+      w.db.insert('appointment', inPersonRow({ ...istSlot(-46) }));
+      const late = await rejection(checkIn(patientForce, { coordinates: here }));
+      expect((late.getResponse() as { message: string }).message).toBe(
+        'The check-in window closed at 11:59 am. If you are at the clinic, show your booking or ask the reception desk to check you in.'
+      );
+      expect(CHECK_IN_WINDOW_CLOSED_MESSAGE).toContain('45 minutes after');
     });
 
     it('an appointment next week is refused even though the patient stands on the clinic', async () => {

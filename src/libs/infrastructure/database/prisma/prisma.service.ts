@@ -838,8 +838,11 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       this.loggingService = loggingService;
     }
 
-    // Initialize pool size using helper function
-    this.poolSize = getEnvNumber('DB_POOL_SIZE', 20);
+    // Explicit per-process pool budget (audit P1). Defaults: API 25, worker 10. Budget rule:
+    // api_replicas * (pool + 2 health) + worker * (pool + 2) + ~10 admin/backup/migrate must stay
+    // below Postgres max_connections (prod 120). Always set DB_POOL_SIZE explicitly per service.
+    const isWorkerProcess = (getEnv('APP_MODE') || '').toLowerCase() === 'worker';
+    this.poolSize = getEnvNumber('DB_POOL_SIZE', isWorkerProcess ? 10 : 25);
 
     // With REQUEST scope, NestJS creates a new instance per request
     // We still need to initialize prismaClient on each instance
@@ -920,15 +923,34 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       ? getEnvNumber('DB_CONNECTION_TIMEOUT', 10000)
       : getEnvNumber('DB_CONNECTION_TIMEOUT', 30000); // 30 seconds for dev
 
+    // Per-session OLTP timeouts (audit P1), sent as startup parameters on every pooled
+    // connection: one slow report or a blocked lock can no longer hold a pool slot for the
+    // server-wide 60s. Applies to app sessions only - migrations go through the Prisma CLI with
+    // the raw DATABASE_URL and keep the server defaults. 0 disables a timeout.
+    const statementTimeoutMs = getEnvNumber(
+      'DB_STATEMENT_TIMEOUT_MS',
+      isWorkerProcess ? 60000 : 15000
+    );
+    const lockTimeoutMs = getEnvNumber('DB_LOCK_TIMEOUT_MS', 5000);
+    const idleInTransactionTimeoutMs = getEnvNumber('DB_IDLE_IN_TRANSACTION_TIMEOUT_MS', 30000);
+
     const poolConfig: {
       connectionString: string;
       ssl?: boolean | { rejectUnauthorized: boolean };
       max?: number;
       connectionTimeoutMillis?: number;
+      statement_timeout?: number;
+      lock_timeout?: number;
+      idle_in_transaction_session_timeout?: number;
     } = {
       connectionString,
-      max: this.poolSize, // Configurable via DB_POOL_SIZE env var (default 20)
+      max: this.poolSize, // DB_POOL_SIZE (default: API 25, worker 10)
       connectionTimeoutMillis: connectionTimeout,
+      ...(statementTimeoutMs > 0 && { statement_timeout: statementTimeoutMs }),
+      ...(lockTimeoutMs > 0 && { lock_timeout: lockTimeoutMs }),
+      ...(idleInTransactionTimeoutMs > 0 && {
+        idle_in_transaction_session_timeout: idleInTransactionTimeoutMs,
+      }),
     };
 
     // For Supabase/cloud databases, always configure SSL

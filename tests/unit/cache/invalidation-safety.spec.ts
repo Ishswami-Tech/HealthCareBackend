@@ -25,6 +25,7 @@ import type { ExecutionContext } from '@nestjs/common';
 import {
   CACHE_INVALIDATE_KEY,
   InvalidateAppointmentCache,
+  InvalidateAppointmentCacheByTags,
   InvalidateCache,
   InvalidateClinicCache,
   InvalidatePatientCache,
@@ -73,6 +74,9 @@ const DECORATORS: Readonly<Record<string, DecoratorFactory>> = {
   InvalidateHealthcareCache: InvalidateCache as unknown as DecoratorFactory,
   InvalidateAppointmentCache: InvalidateAppointmentCache as unknown as DecoratorFactory,
   InvalidatePatientCache: InvalidatePatientCache as unknown as DecoratorFactory,
+  // Tags-only hot-path variant: the declaration passes a tag list, never patterns.
+  InvalidateAppointmentCacheByTags: ((options?: CacheInvalidationOptions) =>
+    InvalidateAppointmentCacheByTags(options?.tags ?? [])) as DecoratorFactory,
   InvalidateClinicCache: InvalidateClinicCache as unknown as DecoratorFactory,
 };
 
@@ -356,6 +360,20 @@ function metadataOfHelper(
     tags: options?.tags ?? [],
   });
 }
+
+describe('InvalidateAppointmentCacheByTags (check-in / walk-in hot path)', () => {
+  it('runs no keyspace pattern delete and always reaches the appointment tag sets', () => {
+    const options = metadataOfHelper('InvalidateAppointmentCacheByTags', {
+      patterns: [],
+      tags: ['check_in', 'my_appointments'],
+    });
+
+    expect(options.patterns).toEqual([]);
+    expect(options.tags).toEqual(
+      expect.arrayContaining(['check_in', 'my_appointments', 'appointments', 'appointment_data'])
+    );
+  });
+});
 
 describe('POST /auth/logout', () => {
   const logoutRequest: TestRequest = {

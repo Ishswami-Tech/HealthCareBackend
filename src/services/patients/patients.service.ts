@@ -34,6 +34,11 @@ import {
   resolveAttributionDoctorId,
   validatePatientDocumentUpload,
   validateProfilePhotoFile,
+  documentDownloadFileName,
+  patientDocumentContentPath,
+  resolveDocumentContentSource,
+  readReportDateFromContent,
+  REPORT_DATE_CONTENT_PREFIX,
 } from './patient-document.util';
 
 // Cross-module collaborators (used only by the dashboard summary path).
@@ -43,6 +48,12 @@ import { EHRService } from '@services/ehr/ehr.service';
 import { BillingService } from '@services/billing/billing.service';
 import { PharmacyService } from '@services/pharmacy/services/pharmacy.service';
 import type { PatientDashboardSummaryDto } from './dashboard-summary.dto';
+import {
+  streamLocalObject,
+  streamS3Object,
+  type PatientDocumentStream,
+  type StoredFileRef,
+} from '@services/patient-visits/utils/patient-document-stream.util';
 
 interface MulterFile {
   buffer: Buffer;
@@ -72,6 +83,7 @@ interface HealthRecordDocumentRow {
   title?: string | null;
   report?: string | null;
   notes?: string | null;
+  content?: string | null;
   fileUrl?: string | null;
   fileSize?: number | null;
   mimeType?: string | null;
@@ -871,18 +883,28 @@ export class PatientsService {
     }
     return {
       ...document,
+      // Authenticated stream (local disk AND S3): clients download through this path, a
+      // local /storage/... url is served by nothing.
+      contentUrl: patientDocumentContentPath(owner.id, document.id),
       url: await this.staticAssetService.resolveSignedUrl(document.url, undefined, {
         boundTo: [owner.id, owner.userId],
+        fileName: document.downloadFileName,
       }),
     };
   }
 
   private mapHealthRecordToDocument(r: HealthRecordDocumentRow) {
+    const reportDate = readReportDateFromContent(r.content);
     return {
       id: r.id,
       category: r.report || 'OTHER',
       description: r.notes || undefined,
+      // `fileName` stays the display name (older clients read it); `downloadFileName` is the
+      // friendly name to save the file under, never the storage key.
+      title: r.title || 'Document',
       fileName: r.title || 'Document',
+      downloadFileName: documentDownloadFileName(r.title, r.mimeType),
+      ...(reportDate ? { reportDate } : {}),
       fileSize: r.fileSize ?? undefined,
       fileType: r.mimeType || undefined,
       url: r.fileUrl || undefined,
@@ -1112,6 +1134,87 @@ export class PatientsService {
     return { success: true, id: documentId };
   }
 
+  /**
+   * Bytes of one patient document for `GET patients/:id/documents/:documentId/content`,
+   * from local disk or S3 (Range honoured). Same access rules as the listing: PATIENT
+   * own record / ACTIVE dependent (any clinic); staff a clinical role with
+   * `medical-records:read` and only documents of the request clinic. The stored object
+   * must be named after the patient (see `resolveDocumentContentSource`).
+   */
+  async getPatientDocumentContent(
+    patientId: string,
+    documentId: string,
+    auditInfo: AuditInfo,
+    rangeHeader?: string
+  ): Promise<PatientDocumentStream> {
+    const scopedPatient = await this.authorizeDocumentAccess(
+      patientId,
+      auditInfo,
+      'read',
+      'You can only view your own documents'
+    );
+    const isPatient = auditInfo.userRole === String(Role.PATIENT);
+
+    const record = (await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        healthRecord: { findFirst: (args: PrismaDelegateArgs) => Promise<unknown> };
+      };
+      return await typedClient.healthRecord.findFirst({
+        where: {
+          id: documentId,
+          patientId: scopedPatient.id,
+          ...(isPatient ? {} : { clinicId: auditInfo.clinicId }),
+          recordType: HealthRecordType.GENERAL_DOCUMENT,
+        } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    })) as HealthRecordDocumentRow | null;
+    if (!record?.fileUrl) {
+      throw new NotFoundException('Document not found');
+    }
+
+    const source = resolveDocumentContentSource(
+      record.fileUrl,
+      [scopedPatient.id, scopedPatient.userId],
+      storedUrl => this.staticAssetService.resolvePrivateObjectKey(storedUrl)
+    );
+    if (!source) {
+      void this.loggingService.log(
+        LogType.SECURITY,
+        LogLevel.WARN,
+        'Patient document content refused: stored file does not resolve to this patient',
+        'PatientsService.getPatientDocumentContent',
+        { documentId, patientId: scopedPatient.id }
+      );
+      throw new NotFoundException('File is missing from storage');
+    }
+
+    void this.loggingService.log(
+      LogType.AUDIT,
+      LogLevel.INFO,
+      'Patient document content accessed',
+      'PatientsService.getPatientDocumentContent',
+      {
+        documentId,
+        patientId: scopedPatient.id,
+        userId: auditInfo.userId,
+        role: auditInfo.userRole,
+        provider: source.provider,
+        ranged: Boolean(rangeHeader),
+      }
+    );
+
+    const document = this.mapHealthRecordToDocument(record);
+    const ref: StoredFileRef = {
+      storageKey: source.provider === 'local' ? source.storageKey : source.key,
+      mimeType: record.mimeType || 'application/octet-stream',
+      fileName: document.downloadFileName,
+      fileSize: record.fileSize ?? 0,
+    };
+    return source.provider === 'local'
+      ? await streamLocalObject(ref, rangeHeader)
+      : await streamS3Object(this.staticAssetService, ref, rangeHeader);
+  }
+
   /** Best-effort object removal: failures are logged, never thrown. */
   private async discardStoredFile(
     ref: string | null | undefined,
@@ -1157,7 +1260,7 @@ export class PatientsService {
     patientId: string,
     file: MulterFile,
     auditInfo: AuditInfo,
-    meta: { category?: string; description?: string } = {}
+    meta: { category?: string; description?: string; title?: string; reportDate?: string } = {}
   ) {
     // Unlike list / delete (reads and removals of the patient's OWN data, which are
     // clinic-independent for a PATIENT), an upload writes a new row INTO the request
@@ -1235,6 +1338,9 @@ export class PatientsService {
               mimeType: validated.mimeType,
               report: validated.category,
               ...(validated.description ? { notes: validated.description } : {}),
+              ...(validated.reportDate
+                ? { content: `${REPORT_DATE_CONTENT_PREFIX}${validated.reportDate}` }
+                : {}),
             } as PrismaDelegateArgs,
           } as PrismaDelegateArgs);
         },
@@ -1272,11 +1378,10 @@ export class PatientsService {
         insurance: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
       };
 
-      // Filter by clinicId if provided for multi-tenant isolation
+      // Insurance rows have no clinicId column: clinic isolation is enforced by the controller
+      // (patient must belong to the caller's clinic), so filter by the patient only.
+      void clinicId;
       const whereClause: Record<string, unknown> = { userId: patientId };
-      if (clinicId) {
-        whereClause['clinicId'] = clinicId;
-      }
 
       return await typedClient.insurance.findMany({
         where: whereClause as PrismaDelegateArgs,

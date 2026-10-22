@@ -32,6 +32,7 @@ import {
 import { CACHE_INVALIDATE_KEY } from '@core/decorators';
 import type { ForceCheckInDto, ProcessCheckInDto, ScanLocationQRDto } from '@dtos/appointment.dto';
 import { CLINIC, OTHER_CLINIC, buildHarness, rejection, type Row } from './appointments-harness';
+import { createInPersonCheckIn } from './in-person-check-in-world';
 import { FakeQueueCache } from './fake-queue-cache';
 import { createStubQueue, northOfClinic, CLINIC_LAT, CLINIC_LNG } from './check-in-service-world';
 import { istSlot, istSlotOnOtherDay, pinClock, unpinClock } from './check-in-time-helpers';
@@ -67,7 +68,11 @@ function videoAppointment(overrides: Row = {}): Row {
   });
 }
 
-function world() {
+/**
+ * `inPerson: false` leaves the shared InPersonCheckInService out, so POST :id/check-in runs its
+ * legacy CheckInLocationService path (the one these reception specs pin); scan-qr needs it.
+ */
+function world(options: { inPerson?: boolean } = {}) {
   const h = buildHarness();
   const cache = new FakeQueueCache();
   const { queue, queued } = createStubQueue();
@@ -85,8 +90,20 @@ function world() {
   );
 
   const events = { emit: jest.fn(async (..._args: unknown[]) => undefined) };
-  const locationQr = { verifyLocationQR: jest.fn((..._args: unknown[]) => true) };
+  const locationQr = {
+    verifyLocationQR: jest.fn((..._args: unknown[]) => true),
+    inspectLocationQR: jest.fn((..._args: unknown[]) => 'VALID'),
+  };
   const noop = {} as never;
+  // scan-qr is a thin delegate to the shared in-person check-in (same as POST /in-person/check-in).
+  const inPersonCheckIn = createInPersonCheckIn({
+    db: h.db,
+    checkInLocationService,
+    queue,
+    events,
+    logging: h.logging,
+    locationQr,
+  });
   const controller = new AppointmentsController(
     h.service as never,
     h.errors as never,
@@ -99,7 +116,9 @@ function world() {
     events as never,
     noop, // qrService
     locationQr as never,
-    noop // analyticsService
+    noop, // analyticsService
+    undefined, // checkInLog
+    options.inPerson === false ? undefined : inPersonCheckIn
   );
 
   h.db.insert('patient', { id: 'patient-1', userId: 'user-patient' });
@@ -122,7 +141,7 @@ function world() {
     currentPeriodEnd: new Date(Date.now() + 7 * 24 * 3600 * 1000),
   }));
 
-  return { ...h, controller, queue, queued, events, cache };
+  return { ...h, controller, queue, queued, events, cache, inPersonCheckIn };
 }
 
 type World = ReturnType<typeof world>;
@@ -137,8 +156,13 @@ function req(role: string, userId: string, clinicId = CLINIC) {
 
 const forceDto = (overrides: Partial<ForceCheckInDto> = {}): ForceCheckInDto =>
   ({ reason: 'Kiosk scan unavailable', ...overrides }) as ForceCheckInDto;
+/** A typed desk code needs the device position as presence proof: the patient is at the desk. */
 const scanDto = (overrides: Partial<ScanLocationQRDto> = {}): ScanLocationQRDto =>
-  ({ qrCode: 'CHK-MAIN-1234', ...overrides }) as ScanLocationQRDto;
+  ({
+    qrCode: 'CHK-MAIN-1234',
+    coordinates: { lat: CLINIC_LAT, lng: CLINIC_LNG },
+    ...overrides,
+  }) as ScanLocationQRDto;
 /** What the web action posts to POST :id/check-in. */
 const webCheckInDto = (overrides: Partial<ProcessCheckInDto> = {}): ProcessCheckInDto =>
   ({
@@ -300,6 +324,11 @@ describe('check-in handlers: a queue failure is a 503 and the retry repairs it',
   });
 
   describe('POST :id/check-in (the web receptionist action) is the same atomic check-in', () => {
+    beforeEach(() => {
+      w = world({ inPerson: false });
+      w.db.insert('appointment', inPersonAppointment());
+    });
+
     const checkIn = (
       role: string,
       userId: string,
@@ -561,20 +590,8 @@ describe('scan-qr time rules', () => {
     expectNothingRecorded(w);
   });
 
-  it('staff scanning outside the window on the same day is accepted', async () => {
+  it('staff cannot use the scan at all: QR is for patients (400 QR_NOT_FOR_STAFF), nothing recorded', async () => {
     w.db.insert('appointment', inPersonAppointment({ ...istSlot(-240) }));
-
-    const result = await w.controller.scanLocationQRAndCheckIn(
-      scanDto({ appointmentId: 'appt-1' }),
-      req('RECEPTIONIST', 'user-reception')
-    );
-
-    expect(result.success).toBe(true);
-    expectRecordedAndQueued(w);
-  });
-
-  it('staff cannot queue another day through the scan either (400 not today)', async () => {
-    w.db.insert('appointment', inPersonAppointment({ ...istSlotOnOtherDay(3) }));
 
     const error = await rejection(
       w.controller.scanLocationQRAndCheckIn(
@@ -583,43 +600,92 @@ describe('scan-qr time rules', () => {
       )
     );
 
-    expect(error.getResponse()).toMatchObject({ code: CHECK_IN_NOT_TODAY_CODE });
+    expect(error.getResponse()).toMatchObject({ code: 'QR_NOT_FOR_STAFF' });
+    expectNothingRecorded(w);
+  });
+});
+
+describe('scan-qr: the 20 / 45 window of a 2:00 pm slot (1:40 pm .. 2:45 pm)', () => {
+  // 2026-10-05, 14:00 IST = 08:30Z. Short (3-minute) visit: the window does not depend on it.
+  const twoPm = (): Row =>
+    inPersonAppointment({ date: new Date('2026-10-05T00:00:00.000Z'), time: '14:00', duration: 3 });
+  const scanAt = async (iso: string): Promise<{ w: World; outcome: Promise<unknown> }> => {
+    pinClock(new Date(iso));
+    const w = world();
+    w.db.insert('appointment', twoPm());
+    return {
+      w,
+      outcome: w.controller.scanLocationQRAndCheckIn(scanDto(), req('PATIENT', 'user-patient')),
+    };
+  };
+
+  afterEach(() => {
+    unpinClock();
+  });
+
+  it('1:39 pm: too early (400 TOO_EARLY with the opening time), nothing recorded', async () => {
+    const { w, outcome } = await scanAt('2026-10-05T08:09:00.000Z');
+
+    const error = await rejection(outcome);
+
+    expect(error.getStatus()).toBe(400);
+    expect(error.getResponse()).toMatchObject({
+      code: 'TOO_EARLY',
+      message:
+        'Check-in opens at 1:40 pm, 20 minutes before your 2:00 pm appointment. Please scan again then, or ask the reception desk to check you in.',
+    });
+    expectNothingRecorded(w);
+  });
+
+  it.each([
+    ['1:40 pm (opens)', '2026-10-05T08:10:00.000Z'],
+    ['2:45 pm (last minute)', '2026-10-05T09:15:00.000Z'],
+  ])('%s: checked in and queued', async (_label, iso) => {
+    const { w, outcome } = await scanAt(iso);
+
+    const result = (await outcome) as { success: boolean };
+
+    expect(result.success).toBe(true);
+    expectRecordedAndQueued(w);
+  });
+
+  it('2:46 pm: too late (400 EXPIRED, window closed at 2:45 pm, go to reception), nothing recorded', async () => {
+    const { w, outcome } = await scanAt('2026-10-05T09:16:00.000Z');
+
+    const error = await rejection(outcome);
+
+    expect(error.getStatus()).toBe(400);
+    expect(error.getResponse()).toMatchObject({
+      code: 'EXPIRED',
+      message:
+        'The check-in window closed at 2:45 pm. If you are at the clinic, show your booking or ask the reception desk to check you in.',
+    });
     expectNothingRecorded(w);
   });
 });
 
 describe('cache invalidation declared on the check-in handlers', () => {
-  const patternsOf = (method: unknown): string[] =>
-    (
-      Reflect.getMetadata(CACHE_INVALIDATE_KEY, method as object) as
-        { patterns?: string[] } | undefined
-    )?.patterns ?? [];
+  // Tags only: the reads a check-in changes (detail / my / upcoming / lists) are all registered
+  // in these tag sets, so a check-in never walks the keyspace with a pattern SCAN.
+  const metadataOf = (method: unknown): { patterns?: string[]; tags?: string[] } =>
+    (Reflect.getMetadata(CACHE_INVALIDATE_KEY, method as object) as
+      { patterns?: string[]; tags?: string[] } | undefined) ?? {};
 
   const proto = AppointmentsController.prototype;
+  const CHECK_IN_TAGS = [
+    'appointments',
+    'appointment_details',
+    'upcoming_appointments',
+    'my_appointments',
+    'check_in',
+  ];
 
-  it('force-check-in lists the same detail / my / upcoming patterns as scan-qr', () => {
-    const scan = patternsOf(proto.scanLocationQRAndCheckIn);
-    const force = patternsOf(proto.forceCheckInAppointment);
-
-    for (const pattern of [
-      'appointments:detail:*',
-      'appointments:upcoming:*',
-      'appointments:my:*',
-    ]) {
-      expect(scan).toContain(pattern);
-      expect(force).toContain(pattern);
+  it.each(['scanLocationQRAndCheckIn', 'forceCheckInAppointment', 'checkInAppointment'] as const)(
+    '%s invalidates the detail / my / upcoming tag sets without a pattern delete',
+    method => {
+      const options = metadataOf(proto[method]);
+      expect(options.patterns ?? []).toEqual([]);
+      expect(options.tags).toEqual(expect.arrayContaining(CHECK_IN_TAGS));
     }
-  });
-
-  it('so does the reception endpoint (POST :id/check-in)', () => {
-    const legacy = patternsOf(proto.checkInAppointment);
-
-    expect(legacy).toEqual(
-      expect.arrayContaining([
-        'appointments:detail:*',
-        'appointments:upcoming:*',
-        'appointments:my:*',
-      ])
-    );
-  });
+  );
 });

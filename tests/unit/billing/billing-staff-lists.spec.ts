@@ -28,6 +28,7 @@ jest.mock('@services/billing/invoice-pdf.service', () => ({ InvoicePDFService: c
 
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { createBillingService } from './billing-test-harness';
+import { clinicInvoiceDelegate } from './clinic-invoice-client.fake';
 import type { MockMap } from './billing-test-harness';
 import { BillingController } from '@services/billing/controllers/billing.controller';
 import { Role } from '@core/types/enums.types';
@@ -46,6 +47,7 @@ function databaseWith(rows: {
   subscriptions?: Array<Record<string, unknown>>;
 }): MockMap {
   const client = {
+    invoice: clinicInvoiceDelegate(rows.invoices ?? []),
     user: {
       findMany: jest.fn(async (args: { where: { id: { in: string[] } } }) =>
         USERS.filter(user => args.where.id.in.includes(user.id))
@@ -103,7 +105,7 @@ describe('getClinicInvoices enrichment', () => {
   it('adds patientName/phone, items[], paidAmount and balance to every row', async () => {
     const { service } = createBillingService({ databaseService: databaseWith({ invoices }) });
 
-    const rows = (await service.getClinicInvoices(CLINIC)) as unknown as Array<
+    const rows = (await service.getClinicInvoices(CLINIC)).data as unknown as Array<
       Record<string, unknown>
     >;
 
@@ -130,12 +132,43 @@ describe('getClinicInvoices enrichment', () => {
   it('keeps the PHARMACIST scope: only pharmacy invoices, still enriched', async () => {
     const { service } = createBillingService({ databaseService: databaseWith({ invoices }) });
 
-    const rows = (await service.getClinicInvoices(CLINIC, 'PHARMACIST')) as unknown as Array<
+    const rows = (await service.getClinicInvoices(CLINIC, 'PHARMACIST')).data as unknown as Array<
       Record<string, unknown>
     >;
 
     expect(rows.map(row => row['id'])).toEqual(['inv-2']);
     expect(rows[0]).toMatchObject({ patientName: 'Bala Iyer' });
+  });
+
+  it('legacy list is bounded: newest 200, with the real total and the truncated flag', async () => {
+    const many = Array.from({ length: 205 }, (_, index) => ({
+      ...invoices[2],
+      id: `inv-${index}`,
+    }));
+    const { service } = createBillingService({
+      databaseService: databaseWith({ invoices: many }),
+    });
+
+    const list = await service.getClinicInvoices(CLINIC);
+
+    expect(list.data).toHaveLength(200);
+    expect(list.total).toBe(205);
+    expect(list.truncated).toBe(true);
+  });
+
+  it('paged list: one decorated page, the total and per-status counts of the same scope', async () => {
+    const { service } = createBillingService({ databaseService: databaseWith({ invoices }) });
+
+    const page = await service.getClinicInvoicesPage(CLINIC, 'CLINIC_ADMIN', {
+      page: 1,
+      limit: 1,
+      status: 'PENDING',
+    });
+
+    expect(page).toMatchObject({ total: 2, page: 1, limit: 1 });
+    expect(page.data).toHaveLength(1);
+    expect(page.data[0]).toMatchObject({ id: 'inv-1', patientName: 'Asha Rao', balance: 390 });
+    expect(page.counts).toEqual({ all: 3, PENDING: 2, PAID: 1, VOID: 0 });
   });
 });
 
@@ -320,6 +353,21 @@ describe('POST billing/invoices clinic pinning', () => {
   }
   const body = { userId: 'user-a', amount: 100, dueDate: '2026-10-10' };
 
+  it('never creates a PAID invoice from the client: status forced PENDING, paidAt dropped', async () => {
+    const billingService = { createInvoice: jest.fn().mockResolvedValue({ id: 'inv' }) };
+    await controllerWith(billingService).createInvoice(
+      { ...body, status: 'PAID', paidAt: '2026-10-10T10:00:00Z' } as never,
+      {
+        user: { role: Role.RECEPTIONIST },
+        clinicContext: { clinicId: CLINIC },
+      } as never
+    );
+    expect(billingService['createInvoice']).toHaveBeenCalledWith(
+      { ...body, status: 'PENDING', clinicId: CLINIC },
+      { allowZeroTotal: false }
+    );
+  });
+
   it('uses the guard clinic when the body has none', async () => {
     const billingService = { createInvoice: jest.fn().mockResolvedValue({ id: 'inv' }) };
     await controllerWith(billingService).createInvoice(
@@ -329,7 +377,10 @@ describe('POST billing/invoices clinic pinning', () => {
         clinicContext: { clinicId: CLINIC },
       } as never
     );
-    expect(billingService['createInvoice']).toHaveBeenCalledWith({ ...body, clinicId: CLINIC });
+    expect(billingService['createInvoice']).toHaveBeenCalledWith(
+      { ...body, status: 'PENDING', clinicId: CLINIC },
+      { allowZeroTotal: false }
+    );
   });
 
   it('refuses a body clinic that is not the caller’s clinic', async () => {
@@ -355,7 +406,10 @@ describe('POST billing/invoices clinic pinning', () => {
         clinicContext: { clinicId: CLINIC },
       } as never
     );
-    expect(billingService['createInvoice']).toHaveBeenCalledWith({ ...body, clinicId: CLINIC });
+    expect(billingService['createInvoice']).toHaveBeenCalledWith(
+      { ...body, status: 'PENDING', clinicId: CLINIC },
+      { allowZeroTotal: false }
+    );
   });
 
   it('without a guard clinic only SUPER_ADMIN may name one; others get 400', async () => {
@@ -366,10 +420,10 @@ describe('POST billing/invoices clinic pinning', () => {
         user: { role: Role.SUPER_ADMIN },
       } as never
     );
-    expect(billingService['createInvoice']).toHaveBeenCalledWith({
-      ...body,
-      clinicId: OTHER_CLINIC,
-    });
+    expect(billingService['createInvoice']).toHaveBeenCalledWith(
+      { ...body, status: 'PENDING', clinicId: OTHER_CLINIC },
+      { allowZeroTotal: false }
+    );
 
     await expect(
       controllerWith(billingService).createInvoice(

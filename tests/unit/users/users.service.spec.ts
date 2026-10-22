@@ -1,400 +1,279 @@
 /**
- * Unit tests for UsersService.
+ * Unit tests for UsersService: list / read / delete paths.
+ *
+ * The profile read and update paths (emergency contact, profile fields, signed photo URL)
+ * are covered in users.service.profile-read.spec.ts.
  */
 
 import { UsersService } from '@services/users/users.service';
 import { Role } from '@core/types/enums.types';
-import type { UserResponseDto } from '@dtos/user.dto';
-import { CreateUserDto, UpdateUserDto } from '@dtos/user.dto';
 
-describe('UsersService', () => {
-  function createService(
-    overrides: {
-      db?: Record<string, jest.Mock>;
-      cache?: Record<string, jest.Mock>;
-      logging?: Record<string, jest.Mock>;
-      event?: Record<string, jest.Mock>;
-      patients?: Record<string, jest.Mock>;
-      rbac?: Record<string, jest.Mock>;
-      auth?: Record<string, jest.Mock>;
-      errors?: Record<string, jest.Mock>;
-    } = {}
-  ) {
-    const db = overrides.db || {
-      executeHealthcareRead: jest.fn(),
-      executeHealthcareWrite: jest.fn(),
-      executeHealthcareWriteTransaction: jest.fn(),
-      findUserByIdSafe: jest.fn(),
-    };
+type Deps = ConstructorParameters<typeof UsersService>;
 
-    const cache = overrides.cache || {
-      cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-      get: jest.fn(),
-      set: jest.fn(),
-      del: jest.fn(),
-    };
+const NOW = new Date('2026-03-01T00:00:00Z');
 
-    const logging = overrides.logging || { log: jest.fn() };
-    const event = overrides.event || { emit: jest.fn() };
-    const patients = overrides.patients || {
-      findById: jest.fn(),
-      createPatient: jest.fn(),
-    };
-    const rbac = overrides.rbac || {
-      checkPermission: jest.fn().mockResolvedValue(true),
-    };
-    const auth = overrides.auth || { register: jest.fn(), logout: jest.fn() };
-    const errors = overrides.errors || {
-      userNotFound: jest.fn((id: string) => new Error(`User ${id} not found`)),
-      validationError: jest.fn(() => new Error('Validation error')),
-      clinicNotFound: jest.fn(() => new Error('Clinic not found')),
-    };
-
-    return new UsersService(
-      db as any,
-      cache as any,
-      logging as any,
-      event as any,
-      patients as any,
-      rbac as any,
-      auth as any,
-      errors as any
-    );
-  }
-
-  const testUser: UserResponseDto = {
+function userRow(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
     id: 'user-123',
     email: 'test@healthcare.com',
+    password: '$2b$12$secret',
     firstName: 'Test',
     lastName: 'User',
     role: Role.PATIENT,
+    isVerified: true,
+    isProfileComplete: true,
     phone: '+919876543210',
     phoneVerified: true,
-    isActive: true,
-    createdAt: new Date('2026-01-01'),
-    updatedAt: new Date('2026-09-01'),
+    createdAt: NOW,
+    updatedAt: NOW,
+    dateOfBirth: null,
+    primaryClinicId: 'clinic-1',
+    patient: { id: 'patient-1' },
+    ...over,
+  };
+}
+
+function createHarness(
+  options: {
+    users?: Array<Record<string, unknown>>;
+    user?: Record<string, unknown> | null;
+    hasPermission?: boolean;
+  } = {}
+) {
+  const user = options.user === undefined ? userRow() : options.user;
+  const client = {
+    user: {
+      findMany: jest.fn().mockResolvedValue(options.users ?? [userRow()]),
+      findUnique: jest.fn().mockResolvedValue(user),
+    },
+    emergencyContact: { findFirst: jest.fn().mockResolvedValue(null) },
+    patient: {
+      findUnique: jest.fn().mockResolvedValue(null),
+      delete: jest.fn().mockResolvedValue({}),
+    },
+    doctor: { delete: jest.fn().mockResolvedValue({}) },
+  };
+  const databaseService = {
+    findUserByIdSafe: jest.fn().mockResolvedValue(user),
+    deleteUserSafe: jest.fn().mockResolvedValue(undefined),
+    executeHealthcareRead: jest.fn(async (op: (c: unknown) => Promise<unknown>) => op(client)),
+    executeHealthcareWrite: jest.fn(async (op: (c: unknown) => Promise<unknown>) => op(client)),
+  };
+  const cacheService = {
+    cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
+    invalidateCache: jest.fn().mockResolvedValue(undefined),
+    invalidateCacheByTag: jest.fn().mockResolvedValue(undefined),
+  };
+  const loggingService = { log: jest.fn().mockResolvedValue(undefined) };
+  const eventService = {
+    emit: jest.fn().mockResolvedValue(undefined),
+    emitAsync: jest.fn(),
+    emitEnterprise: jest.fn(),
+    on: jest.fn(),
+    onAny: jest.fn(),
+  };
+  const patientsService = {
+    resolveProfilePhotoUrl: jest.fn(async (_id: string, url: string) => url),
+    ensurePatientProfile: jest.fn().mockResolvedValue(undefined),
+  };
+  const rbacService = {
+    checkPermission: jest.fn().mockResolvedValue({ hasPermission: options.hasPermission ?? true }),
+  };
+  const errors = {
+    userNotFound: jest.fn((id: string) => new Error(`User ${id} not found`)),
+    insufficientPermissions: jest.fn(() => new Error('Insufficient permissions')),
   };
 
+  const service = new UsersService(
+    databaseService as unknown as Deps[0],
+    cacheService as unknown as Deps[1],
+    loggingService as unknown as Deps[2],
+    eventService as unknown as Deps[3],
+    patientsService as unknown as Deps[4],
+    rbacService as unknown as Deps[5],
+    {} as unknown as Deps[6],
+    errors as unknown as Deps[7]
+  );
+
+  return { service, client, databaseService, cacheService, eventService, rbacService, errors };
+}
+
+describe('UsersService', () => {
+  describe('constructor', () => {
+    it('refuses an invalid EventService', () => {
+      expect(
+        () =>
+          new UsersService(
+            {} as unknown as Deps[0],
+            {} as unknown as Deps[1],
+            {} as unknown as Deps[2],
+            { emit: jest.fn() } as unknown as Deps[3],
+            {} as unknown as Deps[4],
+            {} as unknown as Deps[5],
+            {} as unknown as Deps[6],
+            {} as unknown as Deps[7]
+          )
+      ).toThrow('EventService is not available or invalid');
+    });
+  });
+
   describe('findAll', () => {
-    it('should return users with optional role filter', async () => {
-      const db = {
-        executeHealthcareRead: jest.fn().mockResolvedValue([testUser]),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
-        findUserByIdSafe: jest.fn(),
-      };
-      const cache = {
-        cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-        get: jest.fn(),
-        set: jest.fn(),
-        del: jest.fn(),
-      };
+    it('maps users and never exposes the password', async () => {
+      const h = createHarness();
 
-      const service = createService({ db, cache });
-      const result = await (service as any).findAll(undefined, 'clinic-1');
+      const result = await h.service.findAll(undefined, 'clinic-1');
 
-      expect(result).toEqual([testUser]);
-      expect(db.executeHealthcareRead).toHaveBeenCalled();
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        id: 'user-123',
+        email: 'test@healthcare.com',
+        firstName: 'Test',
+        role: Role.PATIENT,
+        isVerified: true,
+        phoneVerified: true,
+      });
+      expect(result[0]).not.toHaveProperty('password');
     });
 
-    it('should filter by role when provided', async () => {
-      const db = {
-        executeHealthcareRead: jest.fn().mockResolvedValue([testUser]),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
-        findUserByIdSafe: jest.fn(),
-      };
-      const cache = {
-        cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-        get: jest.fn(),
-        set: jest.fn(),
-        del: jest.fn(),
-      };
+    it('filters by role and clinic', async () => {
+      const h = createHarness();
 
-      const service = createService({ db, cache });
-      await (service as any).findAll(Role.DOCTOR, 'clinic-1');
+      await h.service.findAll(Role.DOCTOR, 'clinic-1');
 
-      expect(db.executeHealthcareRead).toHaveBeenCalledWith(
+      expect(h.client.user.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ role: Role.DOCTOR }),
+          where: { role: Role.DOCTOR, clinics: { some: { id: 'clinic-1' } } },
+          include: expect.objectContaining({ doctor: true, patient: false }),
         })
       );
     });
 
-    it('should not filter by clinic when clinicId is not provided', async () => {
-      const db = {
-        executeHealthcareRead: jest.fn().mockResolvedValue([testUser]),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
-        findUserByIdSafe: jest.fn(),
-      };
-      const cache = {
-        cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-        get: jest.fn(),
-        set: jest.fn(),
-        del: jest.fn(),
-      };
+    it('does not filter by clinic when no clinicId is given', async () => {
+      const h = createHarness();
 
-      const service = createService({ db, cache });
-      await (service as any).findAll(Role.PATIENT);
+      await h.service.findAll(Role.PATIENT);
 
-      expect(db.executeHealthcareRead).toHaveBeenCalledWith(
+      expect(h.client.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { role: Role.PATIENT } })
+      );
+    });
+
+    it('scopes the cache key by role and clinic', async () => {
+      const h = createHarness();
+
+      await h.service.findAll(Role.DOCTOR, 'clinic-1');
+      await h.service.findAll();
+
+      expect(h.cacheService.cache).toHaveBeenCalledWith(
+        'users:all:DOCTOR:clinic-1',
+        expect.any(Function),
+        expect.objectContaining({ containsPHI: true })
+      );
+      expect(h.cacheService.cache).toHaveBeenCalledWith(
+        'users:all:all:global',
+        expect.any(Function),
+        expect.any(Object)
+      );
+    });
+
+    it('getDoctors lists doctors of the clinic', async () => {
+      const h = createHarness();
+
+      await h.service.getDoctors('clinic-1');
+
+      expect(h.client.user.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.not.objectContaining({ clinics: expect.anything() }),
+          where: { role: Role.DOCTOR, clinics: { some: { id: 'clinic-1' } } },
         })
       );
     });
   });
 
   describe('findOne', () => {
-    it('should return a user by id', async () => {
-      const db = {
-        executeHealthcareRead: jest.fn(),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
-        findUserByIdSafe: jest.fn().mockResolvedValue(testUser),
-      };
-      const cache = {
-        cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-        get: jest.fn(),
-        set: jest.fn(),
-        del: jest.fn(),
-      };
+    it('returns the user without the password', async () => {
+      const h = createHarness();
 
-      const service = createService({ db, cache });
-      const result = await (service as any).findOne('user-123', 'clinic-1');
+      const result = await h.service.findOne('user-123', 'clinic-1');
 
-      expect(result).toBeDefined();
-      expect(result.email).toBe('test@healthcare.com');
-    });
-
-    it('should throw when user not found', async () => {
-      const errors = {
-        userNotFound: jest.fn((id: string) => {
-          throw new Error(`User ${id} not found`);
-        }),
-        validationError: jest.fn(() => new Error('Validation error')),
-        clinicNotFound: jest.fn(() => new Error('Clinic not found')),
-      };
-      const db = {
-        executeHealthcareRead: jest.fn(),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
-        findUserByIdSafe: jest.fn().mockResolvedValue(null),
-      };
-      const cache = {
-        cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-        get: jest.fn(),
-        set: jest.fn(),
-        del: jest.fn(),
-      };
-
-      const service = createService({ db, cache, errors });
-
-      await expect((service as any).findOne('nonexistent', 'clinic-1')).rejects.toThrow();
-    });
-
-    it('should never expose password in response', async () => {
-      const userWithPassword = { ...testUser, password: '$2b$12$secret' };
-      const db = {
-        executeHealthcareRead: jest.fn(),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
-        findUserByIdSafe: jest.fn().mockResolvedValue(userWithPassword),
-      };
-      const cache = {
-        cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-        get: jest.fn(),
-        set: jest.fn(),
-        del: jest.fn(),
-      };
-
-      const service = createService({ db, cache });
-      const result = await (service as any).findOne('user-123', 'clinic-1');
-
+      expect(result).toMatchObject({
+        id: 'user-123',
+        email: 'test@healthcare.com',
+        patientId: 'patient-1',
+        // A patient's password only counts once they set it themselves (passwordChangedAt).
+        hasPassword: false,
+      });
       expect(result).not.toHaveProperty('password');
     });
-  });
 
-  describe('createUser', () => {
-    it('should create a new user', async () => {
-      const newUser = { ...testUser, id: 'user-new' };
-      const db = {
-        executeHealthcareRead: jest.fn().mockResolvedValue(newUser),
-        executeHealthcareWrite: jest.fn().mockResolvedValue(newUser),
-        executeHealthcareWriteTransaction: jest.fn(),
-        findUserByIdSafe: jest.fn(),
-      };
-      const cache = {
-        cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-        get: jest.fn(),
-        set: jest.fn(),
-        del: jest.fn(),
-      };
-      const auth = {
-        register: jest.fn().mockResolvedValue({ success: true, user: newUser }),
-        logout: jest.fn(),
-      };
+    it('throws userNotFound when the user does not exist', async () => {
+      const h = createHarness({ user: null });
 
-      const service = createService({ db, cache, auth });
-      const result = await (service as any).createUser({
-        email: 'new@example.com',
-        password: 'SecurePass123!',
-        firstName: 'New',
-        lastName: 'User',
-        role: Role.PATIENT,
-        clinicId: 'clinic-1',
-      } as CreateUserDto);
-
-      expect(result).toBeDefined();
-      expect(result.email).toBe('new@example.com');
-    });
-  });
-
-  describe('update', () => {
-    it('should update user fields', async () => {
-      const updatedUser = { ...testUser, firstName: 'Updated' };
-      const db = {
-        executeHealthcareRead: jest.fn().mockResolvedValue(updatedUser),
-        executeHealthcareWrite: jest.fn().mockResolvedValue(updatedUser),
-        executeHealthcareWriteTransaction: jest.fn(),
-        findUserByIdSafe: jest.fn(),
-      };
-      const cache = {
-        cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-        get: jest.fn(),
-        set: jest.fn(),
-        del: jest.fn(),
-      };
-
-      const service = createService({ db, cache });
-      const result = await (service as any).update(
-        'user-123',
-        { firstName: 'Updated' } as UpdateUserDto,
-        'user-123',
-        'clinic-1'
+      await expect(h.service.findOne('nonexistent', 'clinic-1')).rejects.toThrow(
+        'User nonexistent not found'
       );
+      expect(h.errors.userNotFound).toHaveBeenCalledWith('nonexistent', 'UsersService.findOne');
+    });
 
-      expect(result.firstName).toBe('Updated');
+    it('hides a user of another clinic (tenant isolation)', async () => {
+      const h = createHarness({ user: userRow({ primaryClinicId: 'clinic-2' }) });
+
+      await expect(h.service.findOne('user-123', 'clinic-1')).rejects.toThrow(
+        'User user-123 not found'
+      );
+    });
+
+    it('creates the patient profile when a PATIENT has none yet', async () => {
+      const h = createHarness({ user: userRow({ patient: null }) });
+      h.client.patient.findUnique.mockResolvedValue({ id: 'patient-new' });
+
+      const result = await h.service.findOne('user-123');
+
+      expect(result.patientId).toBe('patient-new');
     });
   });
 
   describe('remove', () => {
-    it('should delete a user', async () => {
-      const db = {
-        executeHealthcareRead: jest.fn(),
-        executeHealthcareWrite: jest.fn().mockResolvedValue({ count: 1 }),
-        executeHealthcareWriteTransaction: jest.fn(),
-        findUserByIdSafe: jest.fn().mockResolvedValue(null),
-      };
-      const cache = {
-        cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-        get: jest.fn(),
-        set: jest.fn(),
-        del: jest.fn(),
-      };
+    it('refuses without the delete permission', async () => {
+      const h = createHarness({ hasPermission: false });
 
-      const service = createService({ db, cache });
-      await expect(
-        (service as any).remove('user-123', 'admin-123', 'clinic-1')
-      ).resolves.toBeUndefined();
-
-      expect(db.executeHealthcareWrite).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: 'user-123' },
-        })
+      await expect(h.service.remove('user-123', 'admin-123', 'clinic-1')).rejects.toThrow(
+        'Insufficient permissions'
       );
+      expect(h.databaseService.deleteUserSafe).not.toHaveBeenCalled();
     });
 
-    it('should throw when deleting non-existent user', async () => {
-      const db = {
-        executeHealthcareRead: jest.fn(),
-        executeHealthcareWrite: jest.fn().mockResolvedValue({ count: 0 }),
-        executeHealthcareWriteTransaction: jest.fn(),
-        findUserByIdSafe: jest.fn().mockResolvedValue(null),
-      };
-      const cache = {
-        cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-        get: jest.fn(),
-        set: jest.fn(),
-        del: jest.fn(),
-      };
-      const errors = {
-        userNotFound: jest.fn((id: string) => {
-          throw new Error(`User ${id} not found`);
-        }),
-        validationError: jest.fn(() => new Error('Validation error')),
-        clinicNotFound: jest.fn(() => new Error('Clinic not found')),
-      };
+    it('throws when the user does not exist', async () => {
+      const h = createHarness({ user: null });
 
-      const service = createService({ db, cache, errors });
-
-      await expect(
-        (service as any).remove('nonexistent', 'admin-123', 'clinic-1')
-      ).rejects.toThrow();
-    });
-  });
-
-  describe('role-based access', () => {
-    it('should allow admin to get any user', async () => {
-      const db = {
-        executeHealthcareRead: jest.fn(),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
-        findUserByIdSafe: jest.fn().mockResolvedValue(testUser),
-      };
-      const cache = {
-        cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-        get: jest.fn(),
-        set: jest.fn(),
-        del: jest.fn(),
-      };
-      const rbac = {
-        checkPermission: jest.fn().mockResolvedValue(true),
-      };
-
-      const service = createService({ db, cache, rbac });
-      const result = await (service as any).findOne('user-123', 'clinic-1');
-
-      expect(result).toBeDefined();
-    });
-
-    it('should restrict non-admin from accessing other users', async () => {
-      const rbac = {
-        checkPermission: jest.fn().mockResolvedValue(false),
-      };
-
-      const service = createService({ rbac });
-
-      await expect(
-        (service as any).findOne('other-user', 'clinic-1', 'user-123')
-      ).rejects.toThrow();
-    });
-  });
-
-  describe('clinic isolation', () => {
-    it('should filter doctors by clinic', async () => {
-      const db = {
-        executeHealthcareRead: jest.fn().mockResolvedValue([testUser]),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
-        findUserByIdSafe: jest.fn(),
-      };
-      const cache = {
-        cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-        get: jest.fn(),
-        set: jest.fn(),
-        del: jest.fn(),
-      };
-
-      const service = createService({ db, cache });
-      await (service as any).findAll(Role.DOCTOR, 'clinic-1');
-
-      expect(db.executeHealthcareRead).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ role: Role.DOCTOR }),
-        })
+      await expect(h.service.remove('nonexistent', 'admin-123', 'clinic-1')).rejects.toThrow(
+        'User nonexistent not found'
       );
+      expect(h.databaseService.deleteUserSafe).not.toHaveBeenCalled();
+    });
+
+    it('deletes the patient record and the user, invalidates the cache and emits user.deleted', async () => {
+      const h = createHarness();
+
+      await expect(h.service.remove('user-123', 'admin-123', 'clinic-1')).resolves.toBeUndefined();
+
+      expect(h.rbacService.checkPermission).toHaveBeenCalledWith(
+        expect.objectContaining({ resource: 'users', action: 'delete', resourceId: 'user-123' })
+      );
+      expect(h.client.patient.delete).toHaveBeenCalledWith({ where: { userId: 'user-123' } });
+      expect(h.client.doctor.delete).not.toHaveBeenCalled();
+      expect(h.databaseService.deleteUserSafe).toHaveBeenCalledWith('user-123');
+      expect(h.cacheService.invalidateCacheByTag).toHaveBeenCalledWith('user:user-123');
+      expect(h.eventService.emit).toHaveBeenCalledWith('user.deleted', { userId: 'user-123' });
+    });
+
+    it('deletes the doctor record for a doctor', async () => {
+      const h = createHarness({ user: userRow({ role: Role.DOCTOR, doctor: { id: 'd-1' } }) });
+
+      await h.service.remove('user-123');
+
+      expect(h.client.doctor.delete).toHaveBeenCalledWith({ where: { userId: 'user-123' } });
+      expect(h.client.patient.delete).not.toHaveBeenCalled();
+      expect(h.rbacService.checkPermission).not.toHaveBeenCalled();
     });
   });
 });

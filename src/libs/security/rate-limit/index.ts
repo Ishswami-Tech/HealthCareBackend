@@ -7,4 +7,5 @@
 export { RateLimitService } from './rate-limit.service';
 export { RateLimitModule } from './rate-limit.module';
 export { RateLimit } from './rate-limit.decorator';
+export { RouteRateLimitGuard } from './route-rate-limit.guard';
 export type { RateLimitOptions, RateLimitResult } from './rate-limit.service';

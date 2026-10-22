@@ -1,20 +1,33 @@
-import { Injectable, Inject, forwardRef, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Inject, Optional, forwardRef, OnModuleDestroy } from '@nestjs/common';
 import { Server } from 'socket.io';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
+// Type-only + alias token (like EventService): avoids SWC TDZ import cycles.
+import type { CacheService } from '@infrastructure/cache/cache.service';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
+import { randomUUID } from 'crypto';
+import {
+  SOCKET_RELAY_CHANNEL,
+  SOCKET_RELAY_PING_EVENT,
+  parseSocketRelayMessage,
+  type SocketEventData,
+  type SocketRelayMessage,
+} from '@communication/channels/socket/socket-relay.util';
 
-/**
- * Socket event data interface
- * @interface SocketEventData
- */
-export type SocketEventPrimitive = string | number | boolean | null;
-export type SocketEventData = Record<
-  string,
-  SocketEventPrimitive | SocketEventPrimitive[] | Record<string, SocketEventPrimitive>
->;
+const RELAY_SUBSCRIBE_MAX_ATTEMPTS = 30;
+const RELAY_SUBSCRIBE_RETRY_MS = 2000;
+const RELAY_SUBSCRIBE_RETRY_MAX_MS = 30000;
+const RELAY_SEEN_IDS_MAX = 2000;
+
+export {
+  SOCKET_RELAY_CHANNEL,
+  parseSocketRelayMessage,
+  type SocketEventData,
+  type SocketEventPrimitive,
+  type SocketRelayMessage,
+} from '@communication/channels/socket/socket-relay.util';
 
 /**
  * Socket service for managing WebSocket connections and broadcasting
@@ -25,10 +38,16 @@ export type SocketEventData = Record<
 export class SocketService implements OnModuleDestroy {
   constructor(
     @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    @Optional()
+    @Inject('CACHE_SERVICE')
+    private readonly cacheService?: CacheService
   ) {}
   private server!: Server;
   private isServerInitialized = false;
+  private relayConfirmed = false;
+  private pendingRelayPingId: string | null = null;
+  private readonly seenRelayIds = new Set<string>();
   private healthCheckInterval!: NodeJS.Timeout;
   private readonly HEALTH_CHECK_INTERVAL = 30000; // 30 seconds
 
@@ -76,6 +95,7 @@ export class SocketService implements OnModuleDestroy {
 
       // Start health check
       this.startHealthCheck();
+      void this.subscribeToRelay();
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
@@ -195,37 +215,180 @@ export class SocketService implements OnModuleDestroy {
    * @param data - Event data
    */
   sendToRoom(room: string, event: string, data: SocketEventData): void {
+    if (!room || !event) {
+      throw new HealthcareError(
+        ErrorCode.VALIDATION_REQUIRED_FIELD,
+        'Room and event must be provided',
+        undefined,
+        { room, event },
+        'SocketService.sendToRoom'
+      );
+    }
+    this.sendToRooms([room], event, data);
+  }
+
+  /**
+   * Send one event to the UNION of rooms in a single emit, so a socket that is in several of
+   * them (staff in `clinic:x` and `user:y`) receives it once.
+   *
+   * A process without a Socket.IO server (the worker) relays the emit over pub/sub to the API
+   * processes instead of throwing, so worker-originated events still reach clients.
+   */
+  sendToRooms(rooms: readonly string[], event: string, data: SocketEventData): void {
+    const targets = Array.from(new Set(rooms.filter(room => typeof room === 'string' && room)));
+    if (targets.length === 0 || !event) {
+      return;
+    }
+
+    if (!this.isServerInitialized || !this.server) {
+      this.relay({ rooms: targets, event, data });
+      return;
+    }
+
     try {
-      this.ensureInitialized();
-
-      if (!room || !event) {
-        throw new HealthcareError(
-          ErrorCode.VALIDATION_REQUIRED_FIELD,
-          'Room and event must be provided',
-          undefined,
-          { room, event },
-          'SocketService.sendToRoom'
-        );
-      }
-
-      this.server.to(room).emit(event, data);
+      this.server.to(targets).emit(event, data);
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.DEBUG,
-        `Event ${event} sent to room ${room}`,
+        `Event ${event} sent to ${targets.length} room(s)`,
         'SocketService',
-        { room, event }
+        { rooms: targets, event }
       );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
-        `Error sending event to room: ${errorMessage}`,
+        `Error sending event to rooms: ${errorMessage}`,
         'SocketService',
-        { stack: (error as Error)?.stack, room, event }
+        { stack: (error as Error)?.stack, rooms: targets, event }
       );
       throw error; // Re-throw to let the caller handle it
+    }
+  }
+
+  /** Publish an emit for the API processes (used where no Socket.IO server exists). */
+  private relay(message: SocketRelayMessage): void {
+    if (!this.cacheService) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Socket server and relay unavailable, dropped ${message.event}`,
+        'SocketService',
+        { event: message.event }
+      );
+      return;
+    }
+    const withId: SocketRelayMessage = { ...message, id: message.id ?? randomUUID() };
+    this.cacheService.publish(SOCKET_RELAY_CHANNEL, JSON.stringify(withId)).catch(error => {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Failed to relay socket event ${message.event}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'SocketService',
+        { event: message.event }
+      );
+    });
+  }
+
+  /**
+   * API side of the relay. Every API process receives each message, so each emits to its LOCAL
+   * sockets only (`server.local`); emitting through the cluster adapter would duplicate it.
+   *
+   * The cache client's subscribe() silently does nothing while its connection is not ready yet
+   * (setServer runs early in bootstrap), so the subscription is confirmed with a self-addressed
+   * ping and retried until the ping round-trips. Messages carry ids and are deduped, so a retry
+   * that leaves a second subscriber cannot double-deliver.
+   */
+  private async subscribeToRelay(attempt = 1): Promise<void> {
+    if (this.relayConfirmed || !this.cacheService) {
+      return;
+    }
+    try {
+      await this.cacheService.subscribe(SOCKET_RELAY_CHANNEL, raw => {
+        this.deliverRelayedMessage(raw);
+      });
+      const pingId = randomUUID();
+      this.pendingRelayPingId = pingId;
+      await this.cacheService.publish(
+        SOCKET_RELAY_CHANNEL,
+        JSON.stringify({ id: pingId, rooms: null, event: SOCKET_RELAY_PING_EVENT, data: {} })
+      );
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Socket relay subscribe attempt ${attempt} failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'SocketService'
+      );
+    }
+
+    const retry = setTimeout(
+      () => {
+        if (this.relayConfirmed) return;
+        if (attempt >= RELAY_SUBSCRIBE_MAX_ATTEMPTS) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.ERROR,
+            'Socket relay not confirmed: worker-originated socket events will not reach clients',
+            'SocketService',
+            { attempts: attempt }
+          );
+          return;
+        }
+        void this.subscribeToRelay(attempt + 1);
+      },
+      Math.min(RELAY_SUBSCRIBE_RETRY_MS * attempt, RELAY_SUBSCRIBE_RETRY_MAX_MS)
+    );
+    retry.unref?.();
+  }
+
+  /** True the first time an id is seen; remembers a bounded window of ids. */
+  private markRelayIdSeen(id: string | undefined): boolean {
+    if (!id) return true;
+    if (this.seenRelayIds.has(id)) return false;
+    this.seenRelayIds.add(id);
+    if (this.seenRelayIds.size > RELAY_SEEN_IDS_MAX) {
+      const oldest = this.seenRelayIds.values().next().value;
+      if (oldest !== undefined) this.seenRelayIds.delete(oldest);
+    }
+    return true;
+  }
+
+  private deliverRelayedMessage(raw: string): void {
+    const message = parseSocketRelayMessage(raw);
+    if (!message || !this.markRelayIdSeen(message.id)) {
+      return;
+    }
+    if (message.event === SOCKET_RELAY_PING_EVENT) {
+      if (message.id && message.id === this.pendingRelayPingId && !this.relayConfirmed) {
+        this.relayConfirmed = true;
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'Socket relay subscription confirmed',
+          'SocketService'
+        );
+      }
+      return;
+    }
+    if (!this.isServerInitialized || !this.server) {
+      return;
+    }
+    try {
+      if (message.rooms === null) {
+        this.server.local.emit(message.event, message.data);
+      } else {
+        this.server.local.to(message.rooms).emit(message.event, message.data);
+      }
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Failed to deliver relayed socket event: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'SocketService',
+        { event: message.event }
+      );
     }
   }
 
@@ -335,7 +498,10 @@ export class SocketService implements OnModuleDestroy {
    */
   broadcast(event: string, data: SocketEventData): void {
     try {
-      this.ensureInitialized();
+      if (event && (!this.isServerInitialized || !this.server)) {
+        this.relay({ rooms: null, event, data });
+        return;
+      }
 
       if (!event) {
         throw new HealthcareError(

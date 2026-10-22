@@ -322,9 +322,11 @@ export class PaymentConfigService implements OnModuleInit {
           };
 
     // Build fallback providers from remaining env-enabled providers
+    // Tagged 'environment': the clinic never chose them, so they may verify existing orders
+    // but never open a new one (see provider-fallback.util).
     const fallback: PaymentProviderConfig[] = envProviderEntries
       .slice(1)
-      .map(entry => ({ ...entry.config }));
+      .map(entry => ({ ...entry.config, source: 'environment' as const }));
 
     return {
       clinicId,
@@ -389,7 +391,7 @@ export class PaymentConfigService implements OnModuleInit {
         return [];
       }
       configuredProviders.add(entry.provider);
-      return [{ ...entry }];
+      return [{ ...entry, source: 'environment' as const }];
     });
 
     return {

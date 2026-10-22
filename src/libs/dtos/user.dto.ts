@@ -759,6 +759,14 @@ export class UserResponseDto extends OmitType(CreateUserDto, ['password'] as con
   isProfileComplete?: boolean;
 
   @ApiPropertyOptional({
+    example: true,
+    description: 'Whether the account has a password set (the hash is never returned)',
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Has password must be a boolean' })
+  hasPassword?: boolean;
+
+  @ApiPropertyOptional({
     example: false,
     description: 'Whether the user requires profile completion',
   })
@@ -773,6 +781,13 @@ export class UserResponseDto extends OmitType(CreateUserDto, ['password'] as con
   @IsOptional()
   @IsUUID('4', { message: 'Patient ID must be a valid UUID' })
   patientId?: string;
+
+  // `locationId` (inherited) is the staff member's allotted clinic location (staff profile);
+  // absent for patients and unassigned staff.
+  @ApiPropertyOptional({ description: 'Name of the allotted location (staff)', nullable: true })
+  @IsOptional()
+  @IsString()
+  locationName?: string | null;
 }
 
 /**

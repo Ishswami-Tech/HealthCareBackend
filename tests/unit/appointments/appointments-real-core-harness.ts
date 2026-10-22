@@ -86,11 +86,19 @@ function compare(left: Row, right: Row, orderBy: Row[]): number {
 export class PagedFakeDb extends FakeDb {
   /** Every findMany issued on the appointment table, to assert how the scan paged. */
   appointmentQueries: Row[] = [];
+  /** `Clinic.settings` the booking / grid read (visit lengths live in appointmentSettings). */
+  clinicSettings: Row = {};
+  /** Advisory-lock keys taken by guarded inserts (the DB-level double-booking guard). */
+  advisoryLocks: string[] = [];
+  /** Runs inside the guarded insert before the re-check (simulates a concurrent commit). */
+  beforeGuard?: () => void;
+  /** The client the booking reads through (tests may add delegates, e.g. doctorClinic). */
+  readonly paged: Record<string, unknown>;
 
   constructor() {
     super();
     const base = this.client;
-    const paged = {
+    const paged: Record<string, unknown> = {
       ...base,
       appointment: {
         ...base['appointment'],
@@ -108,9 +116,10 @@ export class PagedFakeDb extends FakeDb {
         findFirst: async () => ({ id: 'doctor-1', userId: 'user-doctor' }),
       },
       clinic: {
-        findUnique: async () => ({ settings: {} }),
+        findUnique: async () => ({ settings: this.clinicSettings }),
       },
     };
+    this.paged = paged;
     this.executeHealthcareRead = jest.fn(async (operation: (client: unknown) => Promise<unknown>) =>
       operation(paged)
     );
@@ -123,9 +132,22 @@ export class PagedFakeDb extends FakeDb {
     this.rows('appointment').filter(row => matches(row, where))
   );
 
-  createAppointmentSafe = jest.fn(async (data: Row): Promise<Row> => {
-    return this.insert('appointment', { id: 'appt-new', ...data });
-  });
+  createAppointmentSafe = jest.fn(
+    async (
+      data: Row,
+      slotGuard?: {
+        lockKey: string;
+        assertFree: (tx: Record<string, unknown>) => Promise<void>;
+      }
+    ): Promise<Row> => {
+      if (slotGuard) {
+        this.advisoryLocks.push(slotGuard.lockKey);
+        this.beforeGuard?.();
+        await slotGuard.assertFree(this.paged);
+      }
+      return this.insert('appointment', { id: 'appt-new', ...data });
+    }
+  );
 }
 
 export function buildRealCoreHarness() {

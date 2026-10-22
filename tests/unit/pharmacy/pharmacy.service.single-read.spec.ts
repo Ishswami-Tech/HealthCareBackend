@@ -196,13 +196,21 @@ describe('PharmacyService list reads', () => {
   it('the clinic-wide list (complete set) still prunes stale queue entries', async () => {
     const h = createHarness({ prescriptions: [prescription('rx-1')] });
 
-    await h.service.findAllPrescriptions(CLINIC);
+    await h.service.findRecentPrescriptions(CLINIC);
 
     const removed = h.appointmentQueueService.removeOperationalQueueItem.mock.calls.map(
       call => call[0]
     );
     expect(removed.sort()).toEqual(['rx-other-1', 'rx-other-2']);
-    expect(h.databaseService.findPaymentsSafe).toHaveBeenCalledWith({ clinicId: CLINIC });
-    expect(h.client.payment.findMany).not.toHaveBeenCalled();
+    // Only the clinic's prescription-dispense payments are loaded, never every payment.
+    expect(h.databaseService.findPaymentsSafe).not.toHaveBeenCalled();
+    expect(h.client.payment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          clinicId: CLINIC,
+          metadata: { path: ['paymentFor'], equals: 'PRESCRIPTION_DISPENSE' },
+        },
+      })
+    );
   });
 });

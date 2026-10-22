@@ -4,10 +4,19 @@ import {
   ConflictException,
   NotFoundException,
   ForbiddenException,
+  HttpException,
   forwardRef,
   Inject,
 } from '@nestjs/common';
 import { AppointmentQueueService } from '@infrastructure/queue';
+import { supportsRawSql } from '@infrastructure/queue/src/services/location-token.allocator';
+import {
+  DOCTOR_BUSY_CODE,
+  DOCTOR_BUSY_MESSAGE,
+  VISIT_NOT_STARTABLE_MESSAGE,
+  startVisitAtomically,
+  type VisitStartOutcome,
+} from '@infrastructure/queue/src/services/doctor-visit-start.util';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
@@ -33,6 +42,12 @@ import type {
   QueueEntryData,
 } from '@core/types/appointment.types';
 import { formatDateKeyInIST, nowIso } from '../../../../libs/utils/date-time.util';
+import {
+  latestAttemptByAppointment,
+  readCachedJson,
+  resolveCheckInMethod,
+  type CheckInAttemptMethodRow,
+} from '@services/appointments/plugins/checkin/check-in-history.util';
 type Appointment = AppointmentBase;
 type Patient = PatientBase;
 
@@ -79,8 +94,11 @@ interface CheckInVerificationRecord {
 
 @Injectable()
 export class CheckInService {
-  private readonly CHECKIN_CACHE_TTL = 1800; // 30 minutes
   private readonly QUEUE_CACHE_TTL = 300; // 5 minutes
+  /** The history must show a check-in made a moment ago, so it is cached only briefly. */
+  private readonly CHECKIN_HISTORY_CACHE_TTL = 30; // seconds
+  /** Most recent check-ins returned by the history list. */
+  private static readonly CHECKIN_HISTORY_MAX_ROWS = 500;
 
   constructor(
     @Inject(forwardRef(() => CacheService))
@@ -101,9 +119,11 @@ export class CheckInService {
 
     try {
       // Try to get from cache first
-      const cached = await this.cacheService.get(cacheKey);
+      const cached = readCachedJson<CheckedInAppointmentsResponse>(
+        await this.cacheService.get<string | CheckedInAppointmentsResponse>(cacheKey)
+      );
       if (cached) {
-        return JSON.parse(cached as string) as CheckedInAppointmentsResponse;
+        return cached;
       }
 
       const appointments = await this.fetchCheckedInAppointments(clinicId);
@@ -116,7 +136,7 @@ export class CheckInService {
       };
 
       // Cache the result
-      await this.cacheService.set(cacheKey, JSON.stringify(result), this.CHECKIN_CACHE_TTL);
+      await this.cacheService.set(cacheKey, JSON.stringify(result), this.CHECKIN_HISTORY_CACHE_TTL);
 
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -219,9 +239,11 @@ export class CheckInService {
 
       return result;
     } catch (error) {
+      // Expected refusals (already checked in, too far, too early) are 4xx: warn, not error.
+      const isRefusal = error instanceof HttpException && error.getStatus() < 500;
       void this.loggingService.log(
         LogType.SYSTEM,
-        LogLevel.ERROR,
+        isRefusal ? LogLevel.WARN : LogLevel.ERROR,
         `Check-in failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'CheckInService.processCheckIn',
         {
@@ -240,9 +262,9 @@ export class CheckInService {
 
     try {
       // Try to get from cache first
-      const cached = await this.cacheService.get(cacheKey);
+      const cached = readCachedJson<object>(await this.cacheService.get<string | object>(cacheKey));
       if (cached) {
-        return JSON.parse(cached as string);
+        return cached;
       }
 
       // Resolve the queue position from the active queue cache
@@ -294,7 +316,6 @@ export class CheckInService {
 
   async startConsultation(appointmentId: string, clinicId: string): Promise<unknown> {
     const startTime = Date.now();
-    const now = new Date();
 
     try {
       const appointment = await this.validateAppointmentForClinic(appointmentId, clinicId);
@@ -302,66 +323,56 @@ export class CheckInService {
         throw new BadRequestException('Appointment is missing doctor assignment');
       }
 
-      const appointmentRecord = await this.databaseService.findAppointmentByIdSafe(appointmentId);
-      const currentStatus = String(
-        appointmentRecord?.status || appointment.status || ''
-      ).toUpperCase();
-      const isArrivalConfirmed = Boolean(appointmentRecord?.checkedInAt);
-      if (currentStatus !== String(AppointmentStatus.CONFIRMED) || !isArrivalConfirmed) {
-        throw new BadRequestException(
-          'Appointment must be checked in before starting consultation'
-        );
-      }
-
-      // Conditional on the state that was just checked: a reschedule (or cancellation) that commits
-      // between the check and this write moves the visit out of CONFIRMED/checked-in, and must
-      // not be turned into an IN_PROGRESS consultation.
-      const started = await this.databaseService.executeHealthcareWrite(
-        async client => {
-          const appointmentDelegate = client['appointment'] as unknown as {
-            updateMany: (args: { where: unknown; data: unknown }) => Promise<{ count: number }>;
-          };
-          return await appointmentDelegate.updateMany({
-            where: {
-              id: appointmentId,
-              clinicId,
-              status: AppointmentStatus.CONFIRMED,
-              checkedInAt: { not: null },
-            },
-            data: {
-              status: 'IN_PROGRESS',
-              startedAt: now,
-              updatedAt: new Date(),
-            },
-          });
-        },
-        {
-          userId: appointment.doctorId,
-          clinicId,
-          resourceType: 'APPOINTMENT',
-          operation: 'UPDATE',
-          resourceId: appointmentId,
-          userRole: 'doctor',
-          details: { status: 'IN_PROGRESS' },
+      // One atomic start (H2): a repeated start is idempotent (M5), a doctor who already has a
+      // consultation IN_PROGRESS today is refused with 409, and only a checked-in CONFIRMED visit
+      // is started. Conditional on that state, so a reschedule / cancellation committing
+      // meanwhile is never turned into an IN_PROGRESS consultation.
+      const outcome = await this.databaseService.executeInTransaction(async client => {
+        if (!supportsRawSql(client)) {
+          throw new Error('Consultation start needs a SQL-capable transaction client');
         }
-      );
-      if (!started || started.count === 0) {
-        throw new ConflictException(
-          'The appointment changed while the consultation was starting. Reload and try again.'
+        return await startVisitAtomically(client, { appointmentId, clinicId });
+      });
+      const startedAt = this.assertVisitStarted(outcome, appointmentId);
+
+      if (outcome.kind === 'started') {
+        void this.loggingService.log(
+          LogType.AUDIT,
+          LogLevel.INFO,
+          'Consultation started (appointment IN_PROGRESS)',
+          'CheckInService',
+          { appointmentId, clinicId, doctorId: appointment.doctorId }
         );
       }
 
-      await this.appointmentQueueService.startConsultation(
-        appointmentId,
-        appointment.doctorId,
-        clinicId,
-        'clinic'
-      );
+      // The live queue entry follows the database. A repeated start re-syncs it (no error when the
+      // entry is already IN_PROGRESS or missing: the database is the source of truth).
+      try {
+        await this.appointmentQueueService.startConsultation(
+          appointmentId,
+          appointment.doctorId,
+          clinicId,
+          'clinic'
+        );
+      } catch (queueError) {
+        if (outcome.kind === 'started' && !(queueError instanceof NotFoundException)) {
+          throw queueError;
+        }
+        void this.loggingService.log(
+          LogType.APPOINTMENT,
+          LogLevel.WARN,
+          `Queue entry not updated on consultation start: ${queueError instanceof Error ? queueError.message : String(queueError)}`,
+          'CheckInService',
+          { appointmentId, clinicId }
+        );
+      }
 
       void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        'Consultation started successfully',
+        outcome.kind === 'started'
+          ? 'Consultation started successfully'
+          : 'Consultation start repeated (already in progress)',
         'CheckInService',
         { appointmentId, clinicId, responseTime: Date.now() - startTime }
       );
@@ -370,13 +381,18 @@ export class CheckInService {
         success: true,
         appointmentId,
         clinicId,
-        consultationStartedAt: nowIso(),
-        message: 'Consultation started',
+        consultationStartedAt: startedAt,
+        alreadyStarted: outcome.kind === 'already-started',
+        message:
+          outcome.kind === 'started' ? 'Consultation started' : 'Consultation already in progress',
       };
     } catch (_error) {
+      // A refusal (409 doctor busy, 400 not checked in, 404) is an expected answer: WARN.
       void this.loggingService.log(
         LogType.ERROR,
-        LogLevel.ERROR,
+        _error instanceof HttpException && _error.getStatus() < 500
+          ? LogLevel.WARN
+          : LogLevel.ERROR,
         `Failed to start consultation: ${_error instanceof Error ? _error.message : String(_error)}`,
         'CheckInService',
         {
@@ -389,15 +405,36 @@ export class CheckInService {
     }
   }
 
+  /** The start time of a started / already started visit; every refusal as its HTTP error. */
+  private assertVisitStarted(outcome: VisitStartOutcome, appointmentId: string): string {
+    switch (outcome.kind) {
+      case 'started':
+        return outcome.startedAt.toISOString();
+      case 'already-started':
+        return (outcome.startedAt ?? new Date()).toISOString();
+      case 'doctor-busy':
+        throw new ConflictException({
+          statusCode: 409,
+          code: DOCTOR_BUSY_CODE,
+          message: DOCTOR_BUSY_MESSAGE,
+          inProgressAppointmentId: outcome.inProgressAppointmentId,
+        });
+      case 'not-found':
+        throw new NotFoundException(`Appointment ${appointmentId} not found`);
+      default:
+        throw new BadRequestException(VISIT_NOT_STARTABLE_MESSAGE);
+    }
+  }
+
   async getDoctorActiveQueue(doctorId: string, clinicId: string): Promise<unknown> {
     const startTime = Date.now();
     const cacheKey = `queue:doctor:${doctorId}:${clinicId}`;
 
     try {
       // Try to get from cache first
-      const cached = await this.cacheService.get(cacheKey);
+      const cached = readCachedJson<object>(await this.cacheService.get<string | object>(cacheKey));
       if (cached) {
-        return JSON.parse(cached as string);
+        return cached;
       }
 
       // Resolve the active queue from the queue cache
@@ -492,9 +529,11 @@ export class CheckInService {
 
     try {
       // Try to get from cache first
-      const cached = await this.cacheService.get(cacheKey);
+      const cached = readCachedJson<LocationQueueResponse>(
+        await this.cacheService.get<string | LocationQueueResponse>(cacheKey)
+      );
       if (cached) {
-        return JSON.parse(cached as string) as LocationQueueResponse;
+        return cached;
       }
 
       // Get location queue from database
@@ -680,6 +719,7 @@ export class CheckInService {
               };
             };
             orderBy: { checkedInAt: 'desc' };
+            take: number;
           }) => Promise<
             Array<{
               id: string;
@@ -691,6 +731,8 @@ export class CheckInService {
               isVerified: boolean;
               verifiedBy: string | null;
               notes: string | null;
+              coordinates?: object | null;
+              deviceInfo?: object | null;
               location?: { locationName?: string | null } | null;
               appointment: {
                 id: string;
@@ -739,8 +781,15 @@ export class CheckInService {
           },
         },
         orderBy: { checkedInAt: 'desc' },
+        // Newest first, bounded: the clinic's whole check-in history is never loaded at once.
+        take: CheckInService.CHECKIN_HISTORY_MAX_ROWS,
       });
     });
+
+    const methodByAppointment = await this.fetchCheckInAttemptMethods(
+      clinicId,
+      appointments.map(checkIn => checkIn.appointmentId)
+    );
 
     return appointments.map(checkIn => ({
       id: checkIn.appointmentId,
@@ -756,10 +805,54 @@ export class CheckInService {
       locationName: checkIn.location?.locationName || 'Unknown location',
       patientName: checkIn.appointment.patient?.user?.name || 'Unknown',
       doctorName: checkIn.appointment.doctor?.user?.name || 'Unknown',
-      checkInMethod: /qr check-in/i.test(checkIn.notes || '') ? 'QR' : 'MANUAL',
+      checkInMethod: resolveCheckInMethod({
+        attemptMethod: methodByAppointment.get(checkIn.appointmentId)?.method ?? null,
+        actorRole: methodByAppointment.get(checkIn.appointmentId)?.actorRole ?? null,
+        notes: checkIn.notes,
+        hasDeviceContext: Boolean(checkIn.coordinates || checkIn.deviceInfo),
+      }),
       paymentStatus: checkIn.appointment.payment?.status || 'N_A',
       notes: checkIn.notes,
     }));
+  }
+
+  /**
+   * How each visit was checked in: the latest successful `check_in_attempts` row per appointment
+   * (the in-person flow logs QR / MANUAL / WALK_IN with the actor's role there). A failed lookup
+   * only loses the method labels, never the history.
+   */
+  private async fetchCheckInAttemptMethods(
+    clinicId: string,
+    appointmentIds: string[]
+  ): Promise<Map<string, CheckInAttemptMethodRow>> {
+    const ids = [...new Set(appointmentIds.filter(Boolean))];
+    if (ids.length === 0) return new Map();
+    try {
+      const rows = await this.databaseService.executeHealthcareRead(async client => {
+        const typedClient = client as unknown as {
+          checkInAttempt: {
+            findMany: (args: {
+              where: { clinicId: string; outcome: string; appointmentId: { in: string[] } };
+              select: { appointmentId: true; method: true; actorRole: true; createdAt: true };
+            }) => Promise<CheckInAttemptMethodRow[]>;
+          };
+        };
+        return await typedClient.checkInAttempt.findMany({
+          where: { clinicId, outcome: 'SUCCESS', appointmentId: { in: ids } },
+          select: { appointmentId: true, method: true, actorRole: true, createdAt: true },
+        });
+      });
+      return latestAttemptByAppointment(rows);
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Check-in methods could not be read: ${error instanceof Error ? error.message : String(error)}`,
+        'CheckInService',
+        { clinicId, count: ids.length }
+      );
+      return new Map();
+    }
   }
 
   private async fetchQueuePosition(

@@ -86,6 +86,7 @@ import {
   BulkEHRImportDto,
   PATIENT_MEDICAL_RECORD_TYPES,
 } from '@dtos/ehr.dto';
+import { publishedPrescriptionStatusFilter } from '@dtos/pharmacy.dto';
 import type {
   MedicalHistoryResponse,
   LabReportResponse,
@@ -466,10 +467,15 @@ export class EHRService {
           return [];
         }
 
+        // The comprehensive record is patient-readable and cached per patient (not per
+        // caller role), so unapproved assistant drafts (DRAFT / RETURNED) are always left
+        // out here; prescribers review drafts through the clinic-ops Rx-draft endpoints.
         const prescriptions = await typedClient.prescription.findMany({
-          where: (clinicId
-            ? { patientId: patient.id, clinicId }
-            : { patientId: patient.id }) as PrismaDelegateArgs,
+          where: {
+            patientId: patient.id,
+            ...(clinicId ? { clinicId } : {}),
+            status: publishedPrescriptionStatusFilter(),
+          } as PrismaDelegateArgs,
           orderBy: { date: 'desc' } as PrismaDelegateArgs,
           include: {
             doctor: { include: { user: { select: { name: true } } } },
