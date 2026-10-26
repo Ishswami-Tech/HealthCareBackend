@@ -332,6 +332,22 @@ export class EmailService implements OnModuleInit {
    * @returns Promise resolving to true if email was sent successfully
    */
   async sendEmail(options: EmailOptions): Promise<boolean> {
+    // ZEPTOMAIL_ENABLED is the master kill switch for this environment (e.g. local/test): no
+    // clinic has its own enable/disable toggle, only credential fallback (same reasoning as
+    // WhatsAppService.sendTemplateMessage), so this must gate every send path unconditionally,
+    // before the clinic-adapter and legacy/global branches below. Defaults to true so existing
+    // deployments that never set the var keep sending.
+    if (!this.configService.getEnvBoolean('ZEPTOMAIL_ENABLED', true)) {
+      void this.loggingService.log(
+        LogType.EMAIL,
+        LogLevel.INFO,
+        'Email service is disabled (ZEPTOMAIL_ENABLED=false). Simulating successful send.',
+        'EmailService',
+        { to: options.to, subject: options.subject }
+      );
+      return true;
+    }
+
     // If clinicId is provided, use multi-tenant system (sendSimpleEmail)
     const providedClinicId = options.clinicId;
     if (providedClinicId) {
@@ -413,6 +429,20 @@ export class EmailService implements OnModuleInit {
     },
     clinicId?: string
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    // Same unconditional kill switch as sendEmail() above - this is a public entry point other
+    // code can call directly, bypassing sendEmail() entirely, so it needs its own check rather
+    // than relying on the caller's.
+    if (!this.configService.getEnvBoolean('ZEPTOMAIL_ENABLED', true)) {
+      void this.loggingService.log(
+        LogType.EMAIL,
+        LogLevel.INFO,
+        'Email service is disabled (ZEPTOMAIL_ENABLED=false). Simulating successful send.',
+        'EmailService',
+        { to: options.to, subject: options.subject, clinicId: clinicId || null }
+      );
+      return { success: true, messageId: `simulated:${Date.now()}` };
+    }
+
     try {
       const toAddresses = Array.isArray(options.to) ? options.to : [options.to];
 
