@@ -1449,6 +1449,14 @@ export class BillingController {
         undefined,
         this.buildBillingAccessContext(req)
       );
+      if (result.alreadyPaid) {
+        return {
+          success: true,
+          invoice: result.invoice,
+          alreadyPaid: true,
+          message: 'This plan is free - no payment needed.',
+        };
+      }
       return {
         success: true,
         invoice: result.invoice,

@@ -4597,7 +4597,7 @@ export class BillingService implements OnModuleInit {
     subscriptionId: string,
     provider?: PaymentProvider,
     requester?: BillingAccessContext
-  ): Promise<{ invoice: unknown; paymentIntent: PaymentResult }> {
+  ): Promise<{ invoice: unknown; paymentIntent?: PaymentResult; alreadyPaid?: boolean }> {
     const subscription = await this.getSubscription(subscriptionId, requester);
 
     if (!subscription.plan) {
@@ -4700,6 +4700,25 @@ export class BillingService implements OnModuleInit {
           periodEnd: subscription.currentPeriodEnd.toISOString(),
         },
       }));
+
+    const subscriptionTotalAmount = this.getInvoiceTotalAmount(invoice, subscriptionAmount);
+    // A free plan (amount 0, e.g. a promotional or load-test plan) has nothing to charge - every
+    // payment gateway rejects a zero-amount order, so settle the invoice directly instead of
+    // opening one. Matches the convention already used for a fully-covered prescription invoice
+    // (see PharmacyService.createPrescriptionPaymentIntent's `alreadyPaid` short-circuit).
+    if (subscriptionTotalAmount <= 0) {
+      const paidInvoice = await this.markInvoiceAsPaid(invoice.id, requester);
+      // markInvoiceAsPaid only settles the invoice - a real payment additionally activates/
+      // renews the subscription itself (see the finaliser's own real-time claim path, which
+      // calls this same method with the same activationOnly: false). There is no payment record
+      // to attach here (nothing was charged), so this skips the ledger stamp a real payment gets.
+      await this.renewSubscriptionAfterPayment(subscription.id, {
+        activationOnly: false,
+        clinicId: subscription.clinicId,
+      });
+      return { invoice: paidInvoice, alreadyPaid: true };
+    }
+
     // Every attempt still opens its own gateway order, as before: a reused invoice gets a
     // new order id because some gateways reject a repeated order id.
     const gatewayOrderId = this.buildGatewayOrderId(
@@ -4716,7 +4735,6 @@ export class BillingService implements OnModuleInit {
     if (!baseUrl) {
       throw new Error('API URL is not configured in application config');
     }
-    const subscriptionTotalAmount = this.getInvoiceTotalAmount(invoice, subscriptionAmount);
     const paymentIntentOptions: PaymentIntentOptions = {
       amount: Math.round(subscriptionTotalAmount * 100),
       currency: subscription.plan.currency || 'INR',
