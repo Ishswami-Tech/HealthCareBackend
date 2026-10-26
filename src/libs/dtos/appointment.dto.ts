@@ -1834,6 +1834,25 @@ export class CompleteAppointmentDto {
   followUpPriority?: FollowUpPriorityLevel;
 
   @ApiPropertyOptional({
+    description:
+      "Type of the auto-scheduled follow-up visit (defaults to this visit's own type when omitted)",
+    enum: AppointmentType,
+    required: false,
+  })
+  @IsOptional()
+  @IsEnum(AppointmentType, { message: 'Follow-up appointment type must be a valid type' })
+  followUpAppointmentType?: AppointmentType;
+
+  @ApiPropertyOptional({
+    description:
+      "HH:mm time of day for the auto-scheduled follow-up visit (defaults to this visit's own time when omitted)",
+    required: false,
+  })
+  @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'followUpTime must be HH:mm' })
+  followUpTime?: string;
+
+  @ApiPropertyOptional({
     description: 'Tests recommended',
     type: [String],
     required: false,

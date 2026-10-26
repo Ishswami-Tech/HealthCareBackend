@@ -1669,6 +1669,9 @@ model BillingPlan {
   appointmentsIncluded    Int?
   isUnlimitedAppointments Boolean         @default(false)
   appointmentTypes        Json?
+  /// Per-clinic, admin-set: whether a subscriber on this plan can book in-person visits for a
+  /// family member (not just themselves). False keeps today's self-only behavior.
+  allowFamilyBooking      Boolean         @default(false)
   createdAt               DateTime        @default(now())
   updatedAt               DateTime        @updatedAt
   subscriptions           Subscription[]

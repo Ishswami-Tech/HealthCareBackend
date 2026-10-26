@@ -2457,6 +2457,7 @@ export class AppointmentsController {
       date?: string;
       time?: string;
       newAppointmentDate?: string;
+      reason?: string;
     },
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<ServiceResponse<AppointmentResponseDto>> {
@@ -2505,7 +2506,8 @@ export class AppointmentsController {
         newTime,
         userId,
         clinicId,
-        req.user?.role
+        req.user?.role,
+        payload.reason
       );
 
       return {

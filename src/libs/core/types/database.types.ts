@@ -668,6 +668,7 @@ export interface BillingPlanBase {
   appointmentsIncluded?: number | null;
   isUnlimitedAppointments: boolean;
   appointmentTypes?: Record<string, never> | null;
+  allowFamilyBooking: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

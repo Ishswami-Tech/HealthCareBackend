@@ -1038,6 +1038,39 @@ export class NotificationEventListener implements OnModuleInit {
       },
       shouldNotify: () => true,
     },
+    // Overdue-invoice reminder (billing-ops.service.ts sendReminder): staff picks WhatsApp or
+    // SMS in the DTO, but SMS has no working adapter — send on WhatsApp, the only live channel.
+    {
+      eventPattern: /^billing\.invoice\.reminder\.requested$/,
+      category: CommunicationCategory.BILLING,
+      channels: ['whatsapp'],
+      priority: CommunicationPriority.NORMAL,
+      template: 'invoice_reminder',
+      recipients: payload => {
+        if (payload.userId) {
+          return [{ userId: payload.userId }];
+        }
+        return [];
+      },
+      shouldNotify: () => true,
+    },
+    // Staff moves a home lab booking to CONFIRMED / SAMPLE_COLLECTED / COMPLETED / CANCELLED
+    // (patient-ops.service.ts setLabBookingStatus) — the patient otherwise only finds out by
+    // pulling to refresh app/lab-booking.tsx.
+    {
+      eventPattern: /^clinic-ops\.lab-booking\.status-changed$/,
+      category: CommunicationCategory.APPOINTMENT,
+      channels: ['push', 'whatsapp', 'socket'],
+      priority: CommunicationPriority.NORMAL,
+      template: 'lab_booking_status',
+      recipients: payload => {
+        if (payload.userId) {
+          return [{ userId: payload.userId }];
+        }
+        return [];
+      },
+      shouldNotify: () => true,
+    },
   ];
 
   private typedEventService?: IEventService;
@@ -1643,6 +1676,31 @@ export class NotificationEventListener implements OnModuleInit {
         title = 'Appointment rescheduled';
         body = `Your appointment has been rescheduled at ${displayName}.`;
       }
+    } else if (eventType === 'billing.invoice.reminder.requested') {
+      // billing-ops.service.ts already composed the full, localized reminder text
+      // (sendReminder's DEFAULT_MESSAGES or the staff's own custom message) — use it verbatim
+      // rather than re-deriving generic copy.
+      const nested = asRecord((payload as unknown as Record<string, unknown>)['payload']);
+      title = 'Payment reminder';
+      body = resolveText(
+        nested?.['message'],
+        'You have an unpaid invoice. Please complete your payment.'
+      );
+    } else if (eventType === 'clinic-ops.lab-booking.status-changed') {
+      const nested = asRecord((payload as unknown as Record<string, unknown>)['payload']);
+      const packageName = resolveText(nested?.['packageName'], 'Your lab test');
+      const status = resolveText(nested?.['status'], '').toUpperCase();
+      title = 'Lab booking update';
+      body =
+        status === 'CONFIRMED'
+          ? `${packageName} is confirmed. The phlebotomist will call before arriving.`
+          : status === 'SAMPLE_COLLECTED'
+            ? `${packageName}: your sample has been collected.`
+            : status === 'COMPLETED'
+              ? `${packageName}: your results are ready. Check the app for your report.`
+              : status === 'CANCELLED'
+                ? `${packageName} was cancelled by the clinic.`
+                : `${packageName} status: ${status || 'updated'}.`;
     } else if (eventType.startsWith('diet.plan.')) {
       const goal = resolveText(
         payload.metadata?.['goal'] || (payload as unknown as Record<string, unknown>)['goal'],

@@ -84,6 +84,10 @@ export class CreateBillingPlanDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  allowFamilyBooking?: boolean;
 }
 
 export class UpdateBillingPlanDto {
@@ -124,6 +128,10 @@ export class UpdateBillingPlanDto {
   @IsOptional()
   @IsObject()
   appointmentTypes?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsBoolean()
+  allowFamilyBooking?: boolean;
 }
 
 export class CreateSubscriptionDto {

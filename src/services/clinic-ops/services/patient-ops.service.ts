@@ -15,6 +15,7 @@ import {
   QR_WINDOW_CLOSES_AFTER_MINUTES,
   QR_WINDOW_OPENS_BEFORE_MINUTES,
 } from '@utils/in-person-flow.util';
+import { EventService } from '@infrastructure/events/event.service';
 import { OpsDbService, type OpsActor } from './ops-db.service';
 import { resolvePackageTests } from './ops-integrity.util';
 import {
@@ -137,7 +138,10 @@ const GENERIC_REPLY =
 
 @Injectable()
 export class PatientOpsService {
-  constructor(private readonly ops: OpsDbService) {}
+  constructor(
+    private readonly ops: OpsDbService,
+    private readonly eventService: EventService
+  ) {}
 
   // ------------------------------------------------------------------ lab booking
 
@@ -255,6 +259,16 @@ export class PatientOpsService {
         }),
       { actor, clinicId, resourceType: 'LAB_BOOKING', operation: 'SET_STATUS', resourceId: id }
     );
+    // Staff-driven transition the patient has no other way to learn about (they only ever pull-to-
+    // refresh app/lab-booking.tsx otherwise) — unlike create/cancel, which the patient themselves
+    // just did and already saw confirmed in the app.
+    await this.eventService.emit('clinic-ops.lab-booking.status-changed', {
+      userId: row.userId,
+      clinicId,
+      bookingId: id,
+      packageName: row.packageName,
+      status: dto.status,
+    });
     return this.toLab(updated);
   }
 

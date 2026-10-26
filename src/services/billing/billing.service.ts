@@ -1242,6 +1242,9 @@ export class BillingService implements OnModuleInit {
         ...(data.appointmentTypes && {
           appointmentTypes: effectivePlanAppointmentTypes(data.appointmentTypes),
         }),
+        ...(data.allowFamilyBooking !== undefined && {
+          allowFamilyBooking: data.allowFamilyBooking,
+        }),
       });
 
       await this.loggingService.log(

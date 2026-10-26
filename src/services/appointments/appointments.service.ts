@@ -2329,7 +2329,8 @@ export class AppointmentsService {
 
   private async resolveEligibleInPersonSubscription(
     patientId: string,
-    clinicId: string
+    clinicId: string,
+    familyMemberId?: string
   ): Promise<{ subscriptionId: string; patientUserId: string } | null> {
     const patient = await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as Prisma.TransactionClient;
@@ -2355,7 +2356,10 @@ export class AppointmentsService {
         subscription =>
           (String(subscription.status) === 'ACTIVE' ||
             String(subscription.status) === 'TRIALING') &&
-          subscription.currentPeriodEnd > new Date()
+          subscription.currentPeriodEnd > new Date() &&
+          // A family-member booking only draws on a plan whose clinic admin has turned family
+          // booking on for it; a plan limited to the subscriber themselves never covers one.
+          (!familyMemberId || subscription.plan?.allowFamilyBooking === true)
       )
       .sort((left, right) => {
         const leftUnlimited = left.plan?.isUnlimitedAppointments ? 1 : 0;
@@ -2566,12 +2570,20 @@ export class AppointmentsService {
     if (shouldResolveInPersonCoverageBeforeCreate) {
       resolvedInPersonCoverage = await this.resolveEligibleInPersonSubscription(
         createDto.patientId,
-        clinicId
+        clinicId,
+        createDto.familyMemberId
       );
 
       if (!resolvedInPersonCoverage && !isAdministrativeRole) {
+        // Distinguish "no plan at all" from "has a plan, but it's self-only" — the fix is
+        // different (buy a plan vs. upgrade to one that covers family bookings).
+        const coversSelfOnly =
+          createDto.familyMemberId &&
+          (await this.resolveEligibleInPersonSubscription(createDto.patientId, clinicId));
         throw this.errors.businessRuleViolation(
-          'An active plan is required before creating this in-person appointment',
+          coversSelfOnly
+            ? "Your plan doesn't cover booking for family members. Upgrade your plan to book this visit for them."
+            : 'An active plan is required before creating this in-person appointment',
           'AppointmentsService.createAppointment'
         );
       }
@@ -3686,8 +3698,10 @@ export class AppointmentsService {
     userId: string;
     role: string;
     clinicId: string;
+    reason?: string;
   }): Promise<void> {
-    const { row, newDate, newTime, rescheduleCount, userId, role, clinicId } = params;
+    const { row, newDate, newTime, rescheduleCount, userId, role, clinicId, reason } = params;
+    const trimmedReason = reason?.trim() || undefined;
     const isVideo = String(row.type) === 'VIDEO_CALL';
     const metadata =
       row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
@@ -3727,6 +3741,7 @@ export class AppointmentsService {
         ...metadata,
         rescheduleCount: rescheduleCount + 1,
         lastRescheduledAt: movedAt,
+        ...(trimmedReason ? { lastRescheduleReason: trimmedReason } : {}),
       },
       updatedAt: movedAt,
     };
@@ -3754,7 +3769,13 @@ export class AppointmentsService {
         resourceType: 'APPOINTMENT',
         resourceId: row.id,
         timestamp: movedAt,
-        details: { action: 'RESCHEDULE', previousStatus: row.status, newDate, newTime },
+        details: {
+          action: 'RESCHEDULE',
+          previousStatus: row.status,
+          newDate,
+          newTime,
+          ...(trimmedReason ? { reason: trimmedReason } : {}),
+        },
       }
     );
 
@@ -3880,8 +3901,9 @@ export class AppointmentsService {
     role: string;
     clinicId: string;
     cachedDoctorId: string;
+    reason?: string;
   }): Promise<{ before: RescheduleAppointmentRow; rescheduleCount: number }> {
-    const { appointmentId, newDate, newTime, userId, role, clinicId } = params;
+    const { appointmentId, newDate, newTime, userId, role, clinicId, reason } = params;
     const context = 'AppointmentsService.rescheduleAppointment';
 
     const before = await this.loadAppointmentForReschedule(appointmentId, clinicId);
@@ -3952,6 +3974,7 @@ export class AppointmentsService {
       userId,
       role,
       clinicId,
+      ...(reason ? { reason } : {}),
     });
 
     return { before, rescheduleCount };
@@ -3966,7 +3989,8 @@ export class AppointmentsService {
     newTime: string,
     userId: string,
     clinicId: string,
-    role?: string
+    role?: string,
+    reason?: string
   ): Promise<AppointmentResult> {
     const permissionCheck = await this.rbacService.checkPermission({
       userId,
@@ -4059,6 +4083,7 @@ export class AppointmentsService {
           role: String(role ?? ''),
           clinicId,
           cachedDoctorId: appointment.doctorId,
+          ...(reason ? { reason } : {}),
         });
       } finally {
         await this.cacheService.releaseLock(appointmentLockKey);
@@ -4166,6 +4191,7 @@ export class AppointmentsService {
       newTime,
       appointment: updated,
       context: { userId },
+      ...(reason?.trim() ? { reason: reason.trim() } : {}),
     });
 
     return {
@@ -6027,9 +6053,11 @@ export class AppointmentsService {
 
                   if (followUpPlanId) {
                     // Auto-create follow-up appointment
-                    // Convert date and time to appointmentDate format
+                    // Convert date and time to appointmentDate format. The doctor's chosen
+                    // follow-up time/type (mobile's follow-up slot picker) take priority over the
+                    // original visit's own time/type, which were only ever an incidental default.
                     const followUpDate = new Date(completeDto.followUpDate);
-                    const appointmentTime = appointment.time || '10:00';
+                    const appointmentTime = completeDto.followUpTime || appointment.time || '10:00';
                     const [hours, minutes] = appointmentTime.split(':');
                     followUpDate.setHours(
                       parseInt(hours || '10', 10),
@@ -6038,6 +6066,10 @@ export class AppointmentsService {
                       0
                     );
 
+                    const followUpType: AppointmentType =
+                      completeDto.followUpAppointmentType ||
+                      (appointment.type as AppointmentType) ||
+                      AppointmentType.IN_PERSON;
                     const followUpAppointment = await this.createAppointment(
                       {
                         patientId: appointment.patientId,
@@ -6045,11 +6077,15 @@ export class AppointmentsService {
                         clinicId,
                         appointmentDate: followUpDate.toISOString(),
                         duration: appointment.duration || 30,
-                        type: appointment.type || AppointmentType.IN_PERSON,
+                        type: followUpType,
                         treatmentType: TreatmentType.FOLLOW_UP,
                         priority: completeDto.followUpPriority || AppointmentPriority.NORMAL,
                         notes: followUpInstructions,
-                        ...(appointment.locationId && { locationId: appointment.locationId }),
+                        // A video follow-up needs no physical location, even when the original
+                        // (in-person) visit had one.
+                        ...(followUpType === AppointmentType.IN_PERSON && appointment.locationId
+                          ? { locationId: appointment.locationId }
+                          : {}),
                       } as CreateAppointmentDto,
                       userId,
                       clinicId,
