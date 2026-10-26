@@ -607,6 +607,21 @@ export class WhatsAppService {
     clinicId?: string
   ): Promise<unknown> {
     try {
+      // WHATSAPP_ENABLED is the master kill switch for this environment (e.g. local/test):
+      // no clinic has its own enable/disable toggle (provider.factory's adapter resolution is
+      // credential fallback only), so this must gate every send path, including the clinic
+      // adapter below - checking it only in the global-fallback branch let a clinicId bypass it
+      // entirely and reach the real provider.
+      if (!this.whatsAppConfig.enabled) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'WhatsApp service is disabled. Simulating successful template message.',
+          'WhatsAppService'
+        );
+        return { success: true, simulated: true };
+      }
+
       // If clinicId is provided, use multi-tenant provider adapter
       if (clinicId) {
         try {
@@ -652,17 +667,8 @@ export class WhatsAppService {
         }
       }
 
-      // Fallback to global provider (existing behavior)
-      if (!this.whatsAppConfig.enabled) {
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.INFO,
-          'WhatsApp service is disabled. Simulating successful template message.',
-          'WhatsAppService'
-        );
-        return { success: true, simulated: true };
-      }
-
+      // Fallback to global provider (existing behavior). this.whatsAppConfig.enabled is already
+      // known true here - checked unconditionally above.
       const response = await this.httpService.post(
         `${this.whatsAppConfig.apiUrl}/${this.whatsAppConfig.phoneNumberId}/messages`,
         {
@@ -886,7 +892,9 @@ export class WhatsAppService {
     totalCount: string,
     clinicId?: string
   ): Promise<boolean> {
-    // Allow clinic adapter to bypass the global WHATSAPP_ENABLED gate (same as OTP pattern).
+    // Early-exit shortcut for the no-clinicId case; the real, unconditional WHATSAPP_ENABLED
+    // gate (including for a clinicId whose "own" provider turns out to be the global one, via
+    // CommunicationConfigService.getDefaultConfig()) lives in sendTemplateMessage().
     if (!this.whatsAppConfig.enabled && !clinicId) {
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -1029,7 +1037,9 @@ export class WhatsAppService {
     dateLabel: string,
     clinicId?: string
   ): Promise<boolean> {
-    // Allow clinic adapter to bypass the global WHATSAPP_ENABLED gate (same as OTP pattern).
+    // Early-exit shortcut for the no-clinicId case; the real, unconditional WHATSAPP_ENABLED
+    // gate (including for a clinicId whose "own" provider turns out to be the global one, via
+    // CommunicationConfigService.getDefaultConfig()) lives in sendTemplateMessage().
     if (!this.whatsAppConfig.enabled && !clinicId) {
       void this.loggingService.log(
         LogType.SYSTEM,
