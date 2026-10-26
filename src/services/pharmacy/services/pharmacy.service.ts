@@ -3820,12 +3820,17 @@ export class PharmacyService {
     const resolvedClinicId = clinicId || String(hydratedPrescription.clinicId || '');
 
     if (resolvedClinicId) {
+      // A full reverse-dispense goes back to PENDING (see getPrescriptionDispenseStatus) —
+      // that's neither DISPENSED nor still-partial, so label it a plain queue update.
+      const reversedStatus = String(reversalSummary.status || '').toUpperCase();
       await this.emitMedicineDeskQueueUpdated(
         resolvedClinicId,
         prescriptionId,
-        String(reversalSummary.status || '').toUpperCase() === 'FILLED'
+        reversedStatus === 'FILLED'
           ? 'DISPENSED'
-          : 'PARTIALLY_DISPENSED'
+          : reversedStatus === 'PARTIAL'
+            ? 'PARTIALLY_DISPENSED'
+            : 'UPDATED'
       );
       await this.eventService.emit('pharmacy.medicine_desk.updated', {
         clinicId: resolvedClinicId,

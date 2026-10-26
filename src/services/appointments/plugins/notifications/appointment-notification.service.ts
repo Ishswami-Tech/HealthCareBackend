@@ -19,6 +19,7 @@ import {
   type SocketEventPrimitive,
 } from '@communication/channels/socket/socket.service';
 import { DatabaseService } from '@infrastructure/database';
+import { NotificationPreferenceService } from '@services/notification/notification-preference.service';
 import { mergeAppointmentFacts } from './notification-template-facts';
 import {
   APPOINTMENT_INBOX_LOCK_TTL_SECONDS,
@@ -123,8 +124,56 @@ export class AppointmentNotificationService {
     private readonly socketService: SocketService,
     private readonly configService: ConfigService,
     private readonly deviceTokenService: DeviceTokenService,
-    private readonly databaseService: DatabaseService
+    private readonly databaseService: DatabaseService,
+    private readonly notificationPreferenceService: NotificationPreferenceService
   ) {}
+
+  /**
+   * Drops channels the patient has turned off (per-channel toggle or the `appointmentEnabled`
+   * category toggle) before `sendNotification` fans out. Previously this service called
+   * Email/WhatsApp/Push directly and never consulted preferences at all — unlike
+   * `CommunicationService.send()`'s `filterChannelsByPreferences`, which every OTHER
+   * notification path in the app already goes through.
+   */
+  private async filterChannelsByPatientPreference(
+    channels: NotificationData['channels'],
+    patientId: string,
+    notificationId: string
+  ): Promise<NotificationData['channels']> {
+    if (channels.length === 0) return channels;
+    const userId = await this.resolvePatientUserId(patientId, notificationId);
+    if (!userId) return channels; // Can't resolve the recipient — fail open, same as before this fix.
+
+    try {
+      const prefs = await this.notificationPreferenceService.getPreferences(userId);
+      if (prefs.appointmentEnabled === false) return [];
+      return channels.filter(channel => {
+        switch (channel) {
+          case 'email':
+            return prefs.emailEnabled !== false;
+          case 'whatsapp':
+            return prefs.whatsappEnabled !== false;
+          case 'sms':
+            return prefs.smsEnabled !== false;
+          case 'push':
+            return prefs.pushEnabled !== false;
+          case 'socket':
+            return prefs.socketEnabled !== false;
+          default:
+            return true;
+        }
+      });
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        'Failed to load notification preferences; sending to all requested channels',
+        'AppointmentNotificationService.filterChannelsByPatientPreference',
+        { notificationId, patientId, error: error instanceof Error ? error.message : String(error) }
+      );
+      return channels;
+    }
+  }
 
   /**
    * Send appointment notification through multiple channels
@@ -148,8 +197,15 @@ export class AppointmentNotificationService {
       }
     );
 
-    // Process each notification channel
-    for (const channel of notificationData.channels) {
+    const allowedChannels = await this.filterChannelsByPatientPreference(
+      notificationData.channels,
+      notificationData.patientId,
+      notificationId
+    );
+
+    // Process each allowed notification channel (channels the patient opted out of are skipped,
+    // not attempted — see filterChannelsByPatientPreference)
+    for (const channel of allowedChannels) {
       try {
         await this.sendViaChannel(channel, notificationData, notificationId);
         sentChannels.push(channel);
