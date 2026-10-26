@@ -531,7 +531,9 @@ export class AuthService {
       const hashedPassword = await bcrypt.hash(registerDto.password, 12);
       // Age handling for registration (profile completion happens after login)
       // - If DOB is provided during registration, calculate age and validate
-      // - If DOB is not provided, use safe default (will be updated during profile completion)
+      // - If DOB is not provided, leave age unset: a fabricated number here (the previous
+      //   code wrote a flat 12) gets persisted and displayed as this person's real age
+      //   everywhere in the app, not just a backend placeholder.
       const age = registerDto.dateOfBirth
         ? (() => {
             const calculatedAge = Math.floor(
@@ -548,7 +550,7 @@ export class AuthService {
             }
             return calculatedAge;
           })()
-        : 12; // Safe default - will be updated during profile completion with actual DOB
+        : undefined;
 
       const requestedRole = (registerDto.role as Role) ?? Role.PATIENT;
       if (requestedRole !== Role.PATIENT && !allowPrivilegedRoleAssignment) {
@@ -568,7 +570,7 @@ export class AuthService {
         passwordChangedAt: new Date(),
         userid,
         name: `${registerDto.firstName} ${registerDto.lastName}`,
-        age,
+        ...(age !== undefined && { age }),
         firstName: registerDto.firstName,
         lastName: registerDto.lastName,
         ...(registerDto.phone && { phone: normalizeAuthPhoneNumber(registerDto.phone) }),

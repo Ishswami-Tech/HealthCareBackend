@@ -477,7 +477,7 @@ export class UsersController {
   @Get('role/doctors')
   @RequireResourcePermission('users', 'read')
   @PatientCache({
-    keyTemplate: 'users:role:doctors:{clinicId}',
+    keyTemplate: 'users:role:doctors:{clinicId}:{locationId}',
     ttl: 1800, // 30 minutes
     tags: ['users', 'user_lists', 'doctors'],
     priority: 'normal',
@@ -499,8 +499,11 @@ export class UsersController {
     status: 401,
     description: 'Unauthorized - Invalid or missing token',
   })
-  async getDoctors(@OptionalClinicId() clinicId?: string): Promise<UserResponseDto[]> {
-    return this.usersService.getDoctors(clinicId);
+  async getDoctors(
+    @OptionalClinicId() clinicId?: string,
+    @Query('locationId') locationId?: string
+  ): Promise<UserResponseDto[]> {
+    return this.usersService.getDoctors(clinicId, locationId);
   }
 
   @Get('role/receptionists')

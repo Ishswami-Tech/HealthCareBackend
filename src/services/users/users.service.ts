@@ -148,8 +148,8 @@ export class UsersService {
     this.authService = authService as UsersAuthServiceLike;
   }
 
-  async findAll(role?: Role, clinicId?: string): Promise<UserResponseDto[]> {
-    const cacheKey = `users:all:${role || 'all'}:${clinicId || 'global'}`;
+  async findAll(role?: Role, clinicId?: string, locationId?: string): Promise<UserResponseDto[]> {
+    const cacheKey = `users:all:${role || 'all'}:${clinicId || 'global'}:${locationId || 'any-location'}`;
 
     return this.cacheService.cache(
       cacheKey,
@@ -172,6 +172,19 @@ export class UsersService {
           // 🔒 TENANT ISOLATION: Filter by clinic when clinicId is provided
           if (clinicId) {
             where['clinics'] = { some: { id: clinicId } };
+          }
+          // Scope doctors to one clinic location (e.g. patient booking at a
+          // specific branch): only doctors with a DoctorClinic row at that
+          // location, not every doctor in the whole multi-branch clinic.
+          if (locationId && (role === Role.DOCTOR || role === Role.ASSISTANT_DOCTOR)) {
+            where['doctor'] = {
+              clinics: {
+                some: {
+                  locationId,
+                  ...(clinicId ? { clinicId } : {}),
+                },
+              },
+            };
           }
           const result = await typedClient.user.findMany({
             where: where as PrismaDelegateArgs,
@@ -1458,8 +1471,8 @@ export class UsersService {
   }
 
   // Role-specific methods
-  async getDoctors(clinicId?: string): Promise<UserResponseDto[]> {
-    return this.findAll(Role.DOCTOR, clinicId);
+  async getDoctors(clinicId?: string, locationId?: string): Promise<UserResponseDto[]> {
+    return this.findAll(Role.DOCTOR, clinicId, locationId);
   }
 
   async getPatients(clinicId?: string): Promise<UserResponseDto[]> {

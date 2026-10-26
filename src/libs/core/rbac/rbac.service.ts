@@ -88,9 +88,14 @@ export class RbacService {
         this.checkRolePermission(role.roleName, context.resource, context.action)
       );
 
-      // Fallback: If no RBAC roles found, check user's role field from User table
+      // The account's own `role` field is always checked too, not only when there are no
+      // RBAC role assignments. UserRole rows are meant to grant *additional* roles on top
+      // of it, never to replace it - so a stray or mismatched UserRole row (hand-edited
+      // seed/demo data, or a future "change role" feature that doesn't finish syncing the
+      // assignment table) can only add access, never take away what the account's real
+      // role already grants.
       let userRoleName: string | undefined;
-      if (!hasRolePermission && userRoles.length === 0) {
+      if (!hasRolePermission) {
         const user = await this.databaseService.findUserByIdSafe(context.userId);
         if (user && user.role) {
           userRoleName = user.role;
@@ -103,9 +108,11 @@ export class RbacService {
 
       const hasPermission = hasDirectPermission || hasRolePermission || hasOwnershipAccess;
 
-      // Build roles array - include RBAC roles or fallback to user's role
-      const rolesArray =
-        userRoles.length > 0 ? userRoles.map(r => r.roleName) : userRoleName ? [userRoleName] : [];
+      // Build roles array: RBAC role assignments plus the account's own role field,
+      // whichever of those were actually consulted above (deduplicated).
+      const rolesArray = Array.from(
+        new Set([...userRoles.map(r => r.roleName), ...(userRoleName ? [userRoleName] : [])])
+      );
 
       const result: PermissionCheck = {
         hasPermission,
