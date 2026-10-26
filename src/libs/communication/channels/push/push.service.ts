@@ -251,9 +251,9 @@ export class PushNotificationService implements OnModuleInit {
         },
         data,
         android: {
+          priority: 'high' as const,
           notification: {
             channelId: 'default',
-            priority: 'high' as const,
           },
         },
         apns: {
@@ -485,9 +485,9 @@ export class PushNotificationService implements OnModuleInit {
         },
         data,
         android: {
+          priority: 'high' as const,
           notification: {
             channelId: 'default',
-            priority: 'high' as const,
           },
         },
         apns: {
