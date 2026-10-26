@@ -5769,10 +5769,10 @@ fast-string-width@^3.0.2:
   dependencies:
     fast-string-truncated-width "^3.0.2"
 
-fast-uri@4.2.1, fast-uri@^3.0.0, fast-uri@^3.0.1, fast-uri@^4.0.0:
-  version "4.2.1"
-  resolved "https://registry.yarnpkg.com/fast-uri/-/fast-uri-4.2.1.tgz#816fb0fd61f511adcc35aadbbc1bcbf656d9e72a"
-  integrity sha512-TmHQgewjHtMq1E5QKA0tOE0yeYGQs25KZC/ziJpubRtWI15W92e6vPFydWOeZBVROSHBYw/QhD9d5OefdD6LDg==
+fast-uri@4.2.3, fast-uri@^3.0.0, fast-uri@^3.0.1, fast-uri@^4.0.0:
+  version "4.2.3"
+  resolved "https://registry.yarnpkg.com/fast-uri/-/fast-uri-4.2.3.tgz#4f0f696864eab654e1bd0aa2557bd68f61b3a0e0"
+  integrity sha512-I1PXwP5eAhlNlcdpjt9CgB59op2ZvZfxw+BkqGFVIUOgNpCVTcTqp3HhTX7brxj5vsip+nSY4nTvff+eIA76hg==
 
 fast-wrap-ansi@^0.2.0:
   version "0.2.2"
@@ -6557,10 +6557,10 @@ ioredis@^6.0.0:
     redis-errors "1.2.0"
     standard-as-callback "2.1.0"
 
-ip-address@10.7.3, ip-address@^10.2.0:
-  version "10.7.3"
-  resolved "https://registry.yarnpkg.com/ip-address/-/ip-address-10.7.3.tgz#4cb77d274a4e2484a3ea438cfe98dbe0c502e8c5"
-  integrity sha512-A1kdq/tSb5QjvKvAMgIoEvDBIgL7qaqVP/jkvSwYYRZ9iEzvPpopxp2wQfu3SuZRHtpHNxMn8Fs0bS+gf5Xmwg==
+ip-address@10.7.5, ip-address@^10.2.0:
+  version "10.7.5"
+  resolved "https://registry.yarnpkg.com/ip-address/-/ip-address-10.7.5.tgz#4c4c423f6477d0b0b5c2ea59ac77e93eff49003e"
+  integrity sha512-t2v0rkILYv9WXmSL7TpAaU3HXgaFYOPUcH3QHgwQ++gpJuH3bqyMy4Fvt/DJCTKwzH3Cf+bAp5W/mFL39KPLzA==
 
 ipaddr.js@^2.1.0:
   version "2.4.0"
@@ -7825,10 +7825,10 @@ node-source-walk@^7.0.1, node-source-walk@^7.0.2:
   dependencies:
     "@babel/parser" "^7.29.0"
 
-nodemailer@^10.0.14:
-  version "10.0.14"
-  resolved "https://registry.yarnpkg.com/nodemailer/-/nodemailer-10.0.14.tgz#4c761aa1249592267c38c8d5ff06d948d59428b5"
-  integrity sha512-eJoLFKg55fesSlzUekmfOv/SBXh4KUYT8oiQc2RLP0tfG0rbNMJBK7wgHJwXTJwqyKlSJMz9UzDZ4v+aHEvo8g==
+nodemailer@^10.2.1:
+  version "10.2.1"
+  resolved "https://registry.yarnpkg.com/nodemailer/-/nodemailer-10.2.1.tgz#255f4220fc401ff76ae28ef3b7e67349ea293c88"
+  integrity sha512-ZrDNsPFoDMwefNs7sJwrYiEJ/CG4ClJWDZv05iNJsEBWa8GRDry1QJHTJxsuTAY9eDDKjX4k+q3SxslXJOao7w==
 
 normalize-path@^3.0.0, normalize-path@~3.0.0:
   version "3.0.0"
