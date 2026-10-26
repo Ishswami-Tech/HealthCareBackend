@@ -1626,22 +1626,22 @@ export class NotificationEventListener implements OnModuleInit {
           payload.metadata?.['clinicName'] ||
           payload.metadata?.['appName'],
         'Healthcare App'
-      ).toUpperCase();
+      );
       if (eventType.includes('.created')) {
-        title = 'APPOINTMENT SCHEDULED';
-        body = `YOUR APPOINTMENT HAS BEEN SUCCESSFULLY SCHEDULED AT ${displayName}.`;
+        title = 'Appointment scheduled';
+        body = `Your appointment has been successfully scheduled at ${displayName}.`;
       } else if (eventType.includes('.confirmed')) {
-        title = 'APPOINTMENT CONFIRMED';
-        body = `YOUR APPOINTMENT HAS BEEN CONFIRMED AT ${displayName}.`;
+        title = 'Appointment confirmed';
+        body = `Your appointment has been confirmed at ${displayName}.`;
       } else if (eventType.includes('.cancelled')) {
-        title = 'APPOINTMENT CANCELLED';
-        body = `YOUR APPOINTMENT HAS BEEN CANCELLED AT ${displayName}.`;
+        title = 'Appointment cancelled';
+        body = `Your appointment has been cancelled at ${displayName}.`;
       } else if (eventType.includes('.expired')) {
-        title = 'APPOINTMENT EXPIRED';
-        body = `YOUR APPOINTMENT HAS EXPIRED AT ${displayName}.`;
+        title = 'Appointment expired';
+        body = `Your appointment has expired at ${displayName}.`;
       } else if (eventType.includes('.rescheduled')) {
-        title = 'APPOINTMENT RESCHEDULED';
-        body = `YOUR APPOINTMENT HAS BEEN RESCHEDULED AT ${displayName}.`;
+        title = 'Appointment rescheduled';
+        body = `Your appointment has been rescheduled at ${displayName}.`;
       }
     } else if (eventType.startsWith('diet.plan.')) {
       const goal = resolveText(
@@ -1746,7 +1746,7 @@ export class NotificationEventListener implements OnModuleInit {
             payload.metadata?.['appName'],
           'Healthcare App'
         );
-        const displayName = resolveText(clinicName || appName, 'Healthcare App').toUpperCase();
+        const displayName = resolveText(clinicName || appName, 'Healthcare App');
         const isFirstLogin =
           Boolean((payload as unknown as Record<string, unknown>)['isFirstLogin']) ||
           Boolean(payload.metadata?.['isFirstLogin']);
@@ -1757,11 +1757,11 @@ export class NotificationEventListener implements OnModuleInit {
             : 'account';
         const loginTime = formatTimeInIST(payload.timestamp);
         if (isFirstLogin) {
-          title = `WELCOME TO ${displayName}`;
-          body = `YOUR ACCOUNT IS NEW AND YOU HAVE NOW LOGGED IN SUCCESSFULLY TO ${displayName} VIA ${loginMethod.replace(
+          title = `Welcome to ${displayName}`;
+          body = `Your account is new and you have now logged in successfully to ${displayName} via ${loginMethod.replace(
             /_/g,
             ' '
-          )} AT ${loginTime}. IF THIS WAS NOT YOU, PLEASE CHANGE YOUR PASSWORD IMMEDIATELY.`;
+          )} at ${loginTime}. If this was not you, please change your password immediately.`;
         } else {
           title = `${displayName} Login Alert`;
           body = `You have been logged in to ${displayName} via ${loginMethod.replace(
@@ -1775,12 +1775,12 @@ export class NotificationEventListener implements OnModuleInit {
             payload.metadata?.['clinicName'] ||
             payload.metadata?.['appName'],
           'Healthcare App'
-        ).toUpperCase();
-        title = `ACCOUNT CREATED AT ${displayName}`;
-        body = `YOUR ACCOUNT HAS BEEN CREATED SUCCESSFULLY FOR ${displayName}.`;
+        );
+        title = `Account created at ${displayName}`;
+        body = `Your account has been created successfully for ${displayName}.`;
       } else if (eventType.includes('.updated')) {
-        title = 'ACCOUNT UPDATED';
-        body = 'YOUR ACCOUNT INFORMATION HAS BEEN UPDATED';
+        title = 'Account updated';
+        body = 'Your account information has been updated.';
       }
     } else if (eventType.startsWith('billing.')) {
       title = 'Billing Update';
