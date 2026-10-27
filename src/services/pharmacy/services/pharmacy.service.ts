@@ -84,7 +84,10 @@ import {
   PAST_EXPIRY_MESSAGE,
   isFutureExpiry,
 } from '@services/pharmacy/services/medicine-expiry.util';
-import { loadPrescriptionPdfContext } from '@services/pharmacy/services/prescription-pdf-context.util';
+import {
+  loadPrescriptionPdfContext,
+  loadAllergySummary,
+} from '@services/pharmacy/services/prescription-pdf-context.util';
 import {
   EMPTY_HANDOVER_STATE,
   latestHandoverByPrescription,
@@ -2626,6 +2629,38 @@ export class PharmacyService {
         await this.cacheService.releaseLock(lockKey);
       }
     }
+  }
+
+  /**
+   * Known allergies for a patient (structured records + the visit's free-text drug/food allergy
+   * notes), for a warning banner on the prescribing screen before any medicine is picked. Not a
+   * hard block: this is doctor-entered free text with real noise, so a false-positive block would
+   * be worse than an occasional missed warning.
+   */
+  async getAllergySummaryForPrescribing(
+    patientId: string,
+    clinicId: string,
+    visitId?: string
+  ): Promise<{ allergies: string[] }> {
+    const patient = await this.databaseService.executeHealthcareRead<{ userId: string } | null>(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return await typedClient.patient.findUnique({
+          where: { id: patientId } as PrismaDelegateArgs,
+          select: { userId: true } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      }
+    );
+    if (!patient?.userId) {
+      return { allergies: [] };
+    }
+    const allergies = await loadAllergySummary(this.databaseService, this.loggingService, {
+      clinicId,
+      patientId,
+      patientUserId: patient.userId,
+      ...(visitId ? { visitId } : {}),
+    });
+    return { allergies: [...allergies] };
   }
 
   private async createPrescriptionUnprotected(

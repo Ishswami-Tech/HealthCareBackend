@@ -95,7 +95,13 @@ async function loadClinic(
   };
 }
 
-async function loadAllergies(
+/**
+ * Known allergies for a patient: structured `Allergy` rows (clinic-scoped or clinic-less) merged
+ * with the visit's free-text drug/food allergy notes, deduped and with common "none" noise
+ * filtered out. Originally only read at PDF-print time (after the prescription is already
+ * saved); also used at prescribing time to warn the doctor before they pick a medicine.
+ */
+export async function loadAllergies(
   client: PdfContextClient,
   input: PrescriptionPdfContextInput
 ): Promise<string[]> {
@@ -267,4 +273,18 @@ export async function loadPrescriptionPdfContext(
     soft(read, logging, 'drafter', null, client => loadDrafterName(client, input.draftedByUserId)),
   ]);
   return { clinic, allergies, weight, investigations, followUp, draftedByName };
+}
+
+/**
+ * Just the allergy summary (see {@link loadAllergies}), for callers that only need it — e.g. a
+ * warning banner on the prescribing screen, before a prescription (and its PDF) exist yet.
+ */
+export async function loadAllergySummary(
+  database: DatabaseService,
+  logging: LoggingService,
+  input: PrescriptionPdfContextInput
+): Promise<readonly string[]> {
+  const read: PdfReader = run =>
+    database.executeHealthcareRead(raw => run(raw as unknown as PdfContextClient));
+  return soft(read, logging, 'allergies', [] as string[], client => loadAllergies(client, input));
 }

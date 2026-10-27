@@ -393,6 +393,28 @@ export class PharmacyController {
   }
 
   /**
+   * @endpoint GET /pharmacy/patients/:patientId/allergy-summary
+   * @access DOCTOR, ASSISTANT_DOCTOR
+   * @description Known allergies for a warning banner on the prescribing screen, before any
+   * medicine is picked (structured Allergy records + the visit's free-text allergy notes).
+   */
+  @Get('patients/:patientId/allergy-summary')
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR)
+  @RequireResourcePermission('prescriptions', 'create')
+  @ApiOperation({
+    summary: "Known allergies for a patient, for the prescribing screen's warning banner",
+  })
+  async getAllergySummaryForPrescribing(
+    @Param('patientId') patientId: string,
+    @Request() req: ClinicAuthenticatedRequest,
+    @Query('visitId') visitId?: string
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new ForbiddenException('Clinic context required');
+    return this.pharmacyService.getAllergySummaryForPrescribing(patientId, clinicId, visitId);
+  }
+
+  /**
    * @endpoint POST /pharmacy/prescriptions
    * @access DOCTOR, ASSISTANT_DOCTOR
    * @frontend pharmacy.server.ts
