@@ -62,9 +62,11 @@
     "**/prisma.config.js",
     "src/libs/infrastructure/database/prisma/generated",
     "src/libs/infrastructure/database/prisma/seed.ts",
-    "src/libs/infrastructure/database/prisma/seed-volume-test.ts"
+    "src/libs/infrastructure/database/prisma/seed-volume-test.ts",
+    "src/libs/infrastructure/database/prisma/seed-staff-roles-test.ts"
     // Prisma generated: excluded from compilation (pre-generated JS); paths["@prisma/client"] still resolves for types
     // seed.ts: excluded, used only for dev/testing
     // seed-volume-test.ts: same as seed.ts — manual dev-only load-test data generator, same generated-client typing friction
+    // seed-staff-roles-test.ts: same as seed-volume-test.ts — manual dev-only test-account generator, same typing friction
   ]
 }
