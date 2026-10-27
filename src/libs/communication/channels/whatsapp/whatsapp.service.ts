@@ -1149,7 +1149,9 @@ export class WhatsAppService {
    * Returns null if not configured, so callers can skip the secondary send.
    */
   private getAdditionalNotificationPhone(): string | null {
-    return '917218378311';
+    return (
+      this.configService.getEnv('WHATSAPP_ADDITIONAL_NOTIFICATION_PHONE', '917218378311') ?? null
+    );
   }
 
   /**
