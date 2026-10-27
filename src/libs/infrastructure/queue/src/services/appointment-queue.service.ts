@@ -1115,78 +1115,87 @@ export class AppointmentQueueService {
     const cacheKey = `queue:${domain}:${clinicId}:${doctorId}:${date}`;
 
     try {
-      // A list lost with the cache is rebuilt first, so this arrival never becomes the only
-      // entry of a list that should hold the whole morning.
-      await this.ensureLiveQueueHydrated(clinicId, domain, date);
-      // Check if already in queue
-      const existingEntries = await this.cacheService.lRange(cacheKey, 0, -1);
-      const exists = existingEntries.some(entry => {
-        const data = JSON.parse(entry) as QueueEntryData;
-        return data.appointmentId === appointmentId;
-      });
+      // The existing-entry check and the push below are a read-modify-write on the same list a
+      // double-tap, a QR double-scan, or a retried request can race: both calls read the list
+      // before either has pushed, both see `exists=false`, and both push — the same patient ends
+      // up as two separate queue entries. Serialized with the same per-doctor-list lock every
+      // other read-modify-write on this cache key already uses (see withQueueLock).
+      const { existingLength } = await this.withQueueLock(cacheKey, async () => {
+        // A list lost with the cache is rebuilt first, so this arrival never becomes the only
+        // entry of a list that should hold the whole morning.
+        await this.ensureLiveQueueHydrated(clinicId, domain, date);
+        // Check if already in queue
+        const entries = await this.cacheService.lRange(cacheKey, 0, -1);
+        const alreadyIn = entries.some(entry => {
+          const data = JSON.parse(entry) as QueueEntryData;
+          return data.appointmentId === appointmentId;
+        });
 
-      if (exists) {
-        throw new Error(ALREADY_CHECKED_IN_MESSAGE);
-      }
+        if (alreadyIn) {
+          throw new Error(ALREADY_CHECKED_IN_MESSAGE);
+        }
 
-      const { tokenNumber, tokenLabel } = await this.resolveCheckInToken({
-        appointmentId,
-        clinicId,
-        doctorId,
-        date,
-        locationId,
-        tokenNumber: checkInData.tokenNumber,
-        tokenLabel: checkInData.tokenLabel,
-        tokenPrefix: checkInData.tokenPrefix,
-      });
+        const { tokenNumber, tokenLabel } = await this.resolveCheckInToken({
+          appointmentId,
+          clinicId,
+          doctorId,
+          date,
+          locationId,
+          tokenNumber: checkInData.tokenNumber,
+          tokenLabel: checkInData.tokenLabel,
+          tokenPrefix: checkInData.tokenPrefix,
+        });
 
-      const queueEntry: QueueEntryData = {
-        appointmentId,
-        patientId,
-        doctorId,
-        clinicId,
-        status: 'WAITING',
-        checkedInAt: checkInData.checkedInAt || nowIso(),
-        tokenNumber,
-        ...(tokenLabel ? { tokenLabel } : {}),
-        ...(checkInData.isWalkIn ? { isWalkIn: true } : {}),
-        // One scale for every arrival (M3 / B6): NORMAL / MEDIUM (staff DTO default) are 0.
-        priority: queuePriorityWeight(checkInData.priority),
-      };
+        const queueEntry: QueueEntryData = {
+          appointmentId,
+          patientId,
+          doctorId,
+          clinicId,
+          status: 'WAITING',
+          checkedInAt: checkInData.checkedInAt || nowIso(),
+          tokenNumber,
+          ...(tokenLabel ? { tokenLabel } : {}),
+          ...(checkInData.isWalkIn ? { isWalkIn: true } : {}),
+          // One scale for every arrival (M3 / B6): NORMAL / MEDIUM (staff DTO default) are 0.
+          priority: queuePriorityWeight(checkInData.priority),
+        };
 
-      if (appointmentType) {
-        queueEntry.type = appointmentType;
-        queueEntry.displayLabel = this.resolveDisplayLabel(
-          AppointmentQueueCategory.DOCTOR_CONSULTATION,
-          appointmentType
-        );
-      }
-      if (!queueEntry.displayLabel) {
-        queueEntry.displayLabel = this.resolveDisplayLabel(
-          AppointmentQueueCategory.DOCTOR_CONSULTATION,
-          appointmentType
-        );
-      }
-      if (notes) queueEntry.notes = notes;
-      if (locationId) queueEntry.locationId = locationId;
-      if (checkInData.priorityLabel) queueEntry.priorityLabel = checkInData.priorityLabel;
-      if (checkInData.priorityReason) queueEntry.priorityReason = checkInData.priorityReason;
+        if (appointmentType) {
+          queueEntry.type = appointmentType;
+          queueEntry.displayLabel = this.resolveDisplayLabel(
+            AppointmentQueueCategory.DOCTOR_CONSULTATION,
+            appointmentType
+          );
+        }
+        if (!queueEntry.displayLabel) {
+          queueEntry.displayLabel = this.resolveDisplayLabel(
+            AppointmentQueueCategory.DOCTOR_CONSULTATION,
+            appointmentType
+          );
+        }
+        if (notes) queueEntry.notes = notes;
+        if (locationId) queueEntry.locationId = locationId;
+        if (checkInData.priorityLabel) queueEntry.priorityLabel = checkInData.priorityLabel;
+        if (checkInData.priorityReason) queueEntry.priorityReason = checkInData.priorityReason;
 
-      // The cache client answers 0 instead of throwing on a failed write: never report
-      // "Checked in" without a queue entry (the caller maps this to a retryable 503).
-      const pushedLength = await this.cacheService.rPush(cacheKey, JSON.stringify(queueEntry));
-      if (!Number.isInteger(pushedLength) || pushedLength < 1) {
-        throw new Error(`Queue write failed, please retry: ${cacheKey}`);
-      }
-      await this.cacheService.expire(cacheKey, this.LIVE_QUEUE_LIST_TTL);
-      await this.trackLiveQueueList(cacheKey);
-      await this.invalidateQueueReadCaches({
-        clinicId,
-        domain,
-        doctorId,
-        date,
-        appointmentId,
-        locationId,
+        // The cache client answers 0 instead of throwing on a failed write: never report
+        // "Checked in" without a queue entry (the caller maps this to a retryable 503).
+        const pushedLength = await this.cacheService.rPush(cacheKey, JSON.stringify(queueEntry));
+        if (!Number.isInteger(pushedLength) || pushedLength < 1) {
+          throw new Error(`Queue write failed, please retry: ${cacheKey}`);
+        }
+        await this.cacheService.expire(cacheKey, this.LIVE_QUEUE_LIST_TTL);
+        await this.trackLiveQueueList(cacheKey);
+        await this.invalidateQueueReadCaches({
+          clinicId,
+          domain,
+          doctorId,
+          date,
+          appointmentId,
+          locationId,
+        });
+
+        return { existingLength: entries.length };
       });
 
       // Emit WebSocket event
@@ -1216,7 +1225,7 @@ export class AppointmentQueueService {
         {
           appointmentId,
           doctorId,
-          queueLength: exists ? existingEntries.length : existingEntries.length + 1,
+          queueLength: existingLength + 1,
         }
       );
 
