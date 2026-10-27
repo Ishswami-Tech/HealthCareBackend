@@ -1051,27 +1051,18 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
             }
           }
 
-          // Add query timeout in production
-          if (isProduction()) {
-            const productionQueryArgs: Record<string, unknown> =
-              PrismaService.stampConfirmationExpiryIfNeeded(operationArgs);
-            const productionQueryResultPromise = productionQueryFn(productionQueryArgs);
-            const productionQueryResult: Promise<Record<string, never>> =
-              productionQueryResultPromise;
-            return Promise.race([
-              productionQueryResult,
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('Query timeout')), PrismaService.QUERY_TIMEOUT)
-              ),
-            ]);
-          }
-
-          const nonProductionQueryArgs: Record<string, unknown> =
+          // Query timeout applies in every environment, not just production: a dev/test run
+          // with no timeout at all is how a genuinely unbounded hang (e.g. a saturated
+          // connection pool, or a stuck query) goes completely unnoticed until production.
+          const queryArgs: Record<string, unknown> =
             PrismaService.stampConfirmationExpiryIfNeeded(operationArgs);
-          const nonProductionQueryResultPromise = productionQueryFn(nonProductionQueryArgs);
-          const nonProductionQueryResult: Promise<Record<string, never>> =
-            nonProductionQueryResultPromise;
-          return nonProductionQueryResult;
+          const queryResultPromise: Promise<Record<string, never>> = productionQueryFn(queryArgs);
+          return Promise.race([
+            queryResultPromise,
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('Query timeout')), PrismaService.QUERY_TIMEOUT)
+            ),
+          ]);
         },
       },
     };
