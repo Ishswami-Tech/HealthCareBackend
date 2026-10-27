@@ -2296,7 +2296,7 @@ export class EHRService {
 
   // ============ Vitals ============
 
-  async createVital(data: CreateVitalDto): Promise<VitalResponse> {
+  async createVital(data: CreateVitalDto & { clinicId?: string }): Promise<VitalResponse> {
     // Use executeHealthcareWrite for create with audit logging
     const vital = await this.databaseService.executeHealthcareWrite(
       async client => {
@@ -2306,15 +2306,18 @@ export class EHRService {
         return await typedClient.vital.create({
           data: {
             userId: data.userId,
+            clinicId: data.clinicId || '',
             type: data.type,
             value: data.value,
+            unit: data.unit,
+            notes: data.notes,
             recordedAt: new Date(data.recordedAt),
           } as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
       },
       {
         userId: data.userId || 'system',
-        clinicId: '',
+        clinicId: data.clinicId || '',
         resourceType: 'VITAL',
         operation: 'CREATE',
         resourceId: '',
