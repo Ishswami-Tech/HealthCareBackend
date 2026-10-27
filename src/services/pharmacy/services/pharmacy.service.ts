@@ -3203,13 +3203,6 @@ export class PharmacyService {
             payments
           );
 
-          if (!paymentState.canDispense) {
-            // State conflict (not a malformed request): collect the balance, then dispense.
-            throw new ConflictException(
-              `Prescription payment is pending. Remaining amount: INR ${Number(paymentState.pendingAmount).toFixed(2)}`
-            );
-          }
-
           const requestItems = this.normalizeDispenseRequestItems(dto.items);
           const effectiveRequestItems =
             requestItems.length > 0
@@ -3236,6 +3229,41 @@ export class PharmacyService {
             currentItems.push(item);
             existingByMedicineId.set(key, currentItems);
           }
+
+          if (!paymentState.canDispense) {
+            // A partial payment unlocks dispensing up to what has already been paid for,
+            // instead of refusing the whole request until the prescription is paid in full:
+            // what this call would bring the dispensed value to is checked against what's been
+            // collected, not the prescription's full total (paymentState.paidAmount already
+            // equals collectedAmount here, since canDispense is false).
+            const alreadyDispensedValue = existingItems.reduce((sum, item) => {
+              const dispensedQty = Number(item.dispensedQuantity || 0);
+              const unitPrice = Number(item.medicine?.price || 0);
+              return sum + dispensedQty * unitPrice;
+            }, 0);
+            const unlockedBudget = Math.max(
+              0,
+              Number(paymentState.paidAmount) - alreadyDispensedValue
+            );
+
+            const requestedValue = effectiveRequestItems.reduce((sum, requestItem) => {
+              const prescriptionItem = requestItem.prescriptionItemId
+                ? existingByItemId.get(requestItem.prescriptionItemId)
+                : (existingByMedicineId.get(requestItem.medicineId) || []).find(
+                    item => this.getPrescriptionItemRemainingQuantity(item) > 0
+                  );
+              const unitPrice = Number(prescriptionItem?.medicine?.price || 0);
+              return sum + Number(requestItem.quantity || 0) * unitPrice;
+            }, 0);
+
+            // Half a paisa of slack absorbs floating-point rounding across the two sums.
+            if (requestedValue > unlockedBudget + 0.005) {
+              throw new ConflictException(
+                `Payment collected so far covers INR ${unlockedBudget.toFixed(2)} of dispensing; this request needs INR ${requestedValue.toFixed(2)}. Collect the remaining balance, or request fewer or smaller quantities.`
+              );
+            }
+          }
+
           const inventoryMedicineIds = Array.from(
             new Set(
               effectiveRequestItems.flatMap(item =>
