@@ -1928,7 +1928,10 @@ export class AppointmentsService {
         appointmentDate: newDate,
         appointmentTime: newTime,
         rescheduledAt: nowIso(),
-        previousAppointmentDate: appointment.date.toISOString(),
+        // appointment.date is a Date on a fresh Prisma read but can arrive as an ISO string when
+        // this appointment came through a JSON-serialized cache path instead — new Date(...)
+        // normalizes either case rather than assuming a Date and crashing the whole reschedule.
+        previousAppointmentDate: new Date(appointment.date).toISOString(),
         previousAppointmentTime: appointment.time,
         billingSyncUpdatedBy: userId,
       },
@@ -1951,7 +1954,7 @@ export class AppointmentsService {
             appointmentType: appointment.type,
             appointmentDate: newDate,
             appointmentTime: newTime,
-            previousAppointmentDate: appointment.date.toISOString(),
+            previousAppointmentDate: new Date(appointment.date).toISOString(),
             previousAppointmentTime: appointment.time,
             previousSchedule,
             rescheduledSchedule,
@@ -2647,6 +2650,33 @@ export class AppointmentsService {
           // A staff booking does not depend on the plan: it stays booked and check-in links the
           // plan as a safety net. A patient booking still fails without it.
           if (!isAdministrativeRole) {
+            // The coverage check above was read-only (TOCTOU): a concurrent booking (e.g. two
+            // family members on one plan) can consume the last quota slot in between, so this
+            // link throws — but the appointment itself was already created. Release the slot
+            // rather than leave a phantom, unbilled appointment the patient never sees and
+            // nothing else cleans up.
+            try {
+              await this.cancelAppointment(
+                createdAppointmentId,
+                'Plan quota exhausted before the booking could be confirmed',
+                userId,
+                clinicId,
+                'SYSTEM'
+              );
+            } catch (rollbackError) {
+              void this.loggingService.log(
+                LogType.ERROR,
+                LogLevel.ERROR,
+                'Failed to roll back an appointment created without its required plan link',
+                'AppointmentsService.createAppointment',
+                {
+                  appointmentId: createdAppointmentId,
+                  subscriptionId: resolvedInPersonCoverage.subscriptionId,
+                  error:
+                    rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+                }
+              );
+            }
             throw linkError;
           }
           void this.loggingService.log(
@@ -5359,6 +5389,35 @@ export class AppointmentsService {
           appointment: result.data,
         },
       });
+
+      // Unlike NO_SHOW / reschedule / reassign-doctor, cancellation never cleaned up the live
+      // queue: a visit cancelled while CHECKED_IN/WAITING/ON_HOLD stayed on the doctor's queue
+      // screen and the desk board until the ~5-min reconciliation cron caught it.
+      const cancelledDoctorId = (result.data as Record<string, unknown>)?.['doctorId'] as
+        string | undefined;
+      if (cancelledDoctorId) {
+        try {
+          await this.appointmentQueueService.removePatientFromQueue(
+            appointmentId,
+            cancelledDoctorId,
+            clinicId,
+            'clinic'
+          );
+        } catch (queueError) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Queue cleanup after cancellation failed: ${queueError instanceof Error ? queueError.message : String(queueError)}`,
+            'AppointmentsService.cancelAppointment',
+            {
+              appointmentId,
+              doctorId: cancelledDoctorId,
+              clinicId,
+              error: queueError instanceof Error ? queueError.stack : undefined,
+            }
+          );
+        }
+      }
     }
 
     return result;
