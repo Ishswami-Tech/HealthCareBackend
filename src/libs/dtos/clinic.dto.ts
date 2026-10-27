@@ -749,6 +749,31 @@ export class UpdateClinicDto {
   email?: string;
 
   @ApiPropertyOptional({
+    example: '+1987654321',
+    description:
+      'Clinic-set technical/app support phone, shown on the patient Help page (an empty string clears it)',
+  })
+  @IsOptional()
+  @Transform(blankToUndefined)
+  @IsString({ message: 'Support phone must be a string' })
+  @MaxLength(20, { message: 'Support phone cannot exceed 20 characters' })
+  supportPhone?: string;
+
+  @ApiPropertyOptional({
+    example: 'support@clinic.com',
+    description:
+      'Clinic-set technical/app support email, shown on the patient Help page (an empty string clears it)',
+  })
+  @IsOptional()
+  @Transform(({ value }): unknown => {
+    const blanked = blankToUndefined({ value });
+    return typeof blanked === 'string' ? blanked.toLowerCase() : blanked;
+  })
+  @IsString({ message: 'Support email must be a string' })
+  @MaxLength(254, { message: 'Support email cannot exceed 254 characters' })
+  supportEmail?: string;
+
+  @ApiPropertyOptional({
     example: 'https://www.newclinic.com',
     description: 'New clinic website URL (an empty string is treated as not sent)',
   })
@@ -991,6 +1016,22 @@ export class ClinicResponseDto {
   @IsOptional()
   @IsString({ message: 'Website must be a string' })
   website?: string;
+
+  @ApiPropertyOptional({
+    example: '+1987654321',
+    description: 'Clinic-set technical/app support phone, shown on the patient Help page',
+  })
+  @IsOptional()
+  @IsString({ message: 'Support phone must be a string' })
+  supportPhone?: string;
+
+  @ApiPropertyOptional({
+    example: 'support@clinic.com',
+    description: 'Clinic-set technical/app support email, shown on the patient Help page',
+  })
+  @IsOptional()
+  @IsString({ message: 'Support email must be a string' })
+  supportEmail?: string;
 
   @ApiPropertyOptional({
     example: 'Mon-Fri 8AM-6PM, Sat 9AM-2PM',

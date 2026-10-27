@@ -148,6 +148,8 @@ model Clinic {
   email                        String                              @unique
   app_name                     String                              @unique
   whatsappName                 String? // Short name for WhatsApp templates (max 15 chars)
+  supportPhone                 String? // Clinic-set technical/app support phone, shown on the patient Help page
+  supportEmail                 String? // Clinic-set technical/app support email, shown on the patient Help page
   abdmHipId                    String? // ABDM Health Information Provider (HIP) id for this clinic
   db_connection_string         String
   databaseName                 String?
