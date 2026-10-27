@@ -262,6 +262,8 @@ export class AppointmentConfirmationService {
     domain: string,
     clinicalData?: {
       diagnosis?: string | undefined;
+      /** Free-text consultation notes, e.g. from "Complete without medicine". */
+      notes?: string | undefined;
       treatmentPlan?: TreatmentPlanDto | undefined;
       medications?: ClinicalMedicationInput[] | undefined;
       clinicId?: string | undefined;
@@ -705,6 +707,8 @@ export class AppointmentConfirmationService {
     domain: string,
     clinicalData?: {
       diagnosis?: string | undefined;
+      /** Free-text consultation notes, e.g. from "Complete without medicine". */
+      notes?: string | undefined;
       treatmentPlan?: TreatmentPlanDto | undefined;
       medications?: ClinicalMedicationInput[] | undefined;
       clinicId?: string | undefined;
@@ -760,9 +764,10 @@ export class AppointmentConfirmationService {
     } else if (
       clinicalData &&
       clinicalData.userId &&
-      // Nothing written (no medicine, diagnosis or plan): no empty prescription / EHR note.
+      // Nothing written (no medicine, diagnosis, notes or plan): no empty prescription / EHR note.
       ((normalizedMedications?.length ?? 0) > 0 ||
         Boolean(clinicalData.diagnosis?.trim()) ||
+        Boolean(clinicalData.notes?.trim()) ||
         this.summarizeTreatmentPlan(clinicalData.treatmentPlan).trim().length > 0)
     ) {
       void this.ehrService
@@ -784,7 +789,8 @@ export class AppointmentConfirmationService {
                 ? { instructions: medication.instructions }
                 : {}),
             })),
-            notes: this.summarizeTreatmentPlan(clinicalData.treatmentPlan),
+            notes:
+              clinicalData.notes?.trim() || this.summarizeTreatmentPlan(clinicalData.treatmentPlan),
           },
           clinicalData.caller
         )
