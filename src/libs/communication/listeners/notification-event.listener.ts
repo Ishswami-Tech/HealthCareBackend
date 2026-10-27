@@ -1794,7 +1794,12 @@ export class NotificationEventListener implements OnModuleInit {
         body = 'You have a new Ayurveda-related notification.';
       }
     } else if (eventType.startsWith('user.')) {
-      if (eventType.includes('.logged_in')) {
+      // Matches the same three event names the rule above is registered for (user.logged_in,
+      // user.otp_logged_in, user.google_oauth_logged_in) — `.includes('.logged_in')` missed the
+      // otp/google_oauth variants (no literal dot before "logged_in" in those), so every OTP
+      // login — the only login method this app uses — fell through to the generic
+      // "You have a new notification" instead of the real login-alert copy below.
+      if (eventType.endsWith('logged_in')) {
         const clinicName = resolveText(
           (payload as unknown as Record<string, unknown>)['clinicName'] ||
             payload.metadata?.['clinicName']
