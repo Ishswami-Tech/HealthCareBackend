@@ -46,7 +46,7 @@ import {
   AppNameInlineDto,
 } from '@dtos/clinic.dto';
 import { Public } from '@core/decorators/public.decorator';
-import { Cache } from '@core/decorators';
+import { Cache, InvalidateCache } from '@core/decorators';
 import type { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { ClinicStatsResponseDto, ClinicOperatingHoursResponseDto } from '@dtos/clinic.dto';
@@ -658,6 +658,11 @@ export class ClinicController {
   @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @RequireResourcePermission('clinics', 'update', { requireOwnership: true })
+  // GET /my-clinic caches under 'clinic:my:{userId}' (tag 'user_clinic') for 30 min with no
+  // invalidation here before this fix — a policy change (e.g. appointmentSettings.walkInWithoutPlan)
+  // could take up to 30 min to reach every staff member's "my clinic" view. Tag-based: the cache
+  // key is namespaced by caller userId, not clinicId, so a clinicId-scoped pattern can't reach it.
+  @InvalidateCache({ patterns: [], tags: ['user_clinic'] })
   @ApiOperation({
     summary: 'Update a clinic',
     description:

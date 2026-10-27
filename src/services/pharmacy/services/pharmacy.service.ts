@@ -3512,11 +3512,27 @@ export class PharmacyService {
             0
           );
 
+          // Append the pharmacist's note rather than overwrite it, same as reverseDispense's
+          // notes handling above: a flat overwrite erased the doctor's clinical advice. Re-read
+          // fresh (not existing.notes from the top of this transaction) so two dispense calls on
+          // the same prescription can't both append onto the same stale value and lose one.
+          const currentForNotes = dto.notes
+            ? ((await typedClient.prescription.findUnique({
+                where: { id: prescriptionId } as PrismaDelegateArgs,
+                select: { notes: true } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs)) as unknown as { notes?: string | null } | null)
+            : null;
+
           await typedClient.prescription.update({
             where: { id: prescriptionId } as PrismaDelegateArgs,
             data: {
               status: nextStatus,
-              ...(dto.notes ? { notes: dto.notes } : {}),
+              ...(dto.notes
+                ? {
+                    notes:
+                      `${currentForNotes?.notes ? `${currentForNotes.notes}\n` : ''}Pharmacist: ${dto.notes}`.trim(),
+                  }
+                : {}),
             } as PrismaDelegateArgs,
           } as PrismaDelegateArgs);
 
