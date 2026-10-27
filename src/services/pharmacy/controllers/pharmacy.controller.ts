@@ -409,7 +409,12 @@ export class PharmacyController {
   ) {
     // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
     const clinicId = req.clinicContext?.clinicId;
-    return this.pharmacyService.createPrescription(dto, clinicId, this.actorOf(req));
+    // A retried request (flaky connection, double tap) with the same Idempotency-Key header
+    // returns the first response instead of creating a second, independently dispensable
+    // prescription (see idempotency-key.util).
+    return this.pharmacyService.createPrescription(dto, clinicId, this.actorOf(req), {
+      idempotencyKey: req.headers?.['idempotency-key'],
+    });
   }
 
   /**

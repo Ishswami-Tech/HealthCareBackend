@@ -70,6 +70,13 @@ import {
 } from '@services/pharmacy/services/prescription-payment.util';
 import { PAYMENT_EXPIRES_AT_KEY, paymentWindowEnd } from '@services/billing/payment-window.util';
 import {
+  IDEMPOTENCY_IN_FLIGHT_TTL_SECONDS,
+  IDEMPOTENCY_TTL_SECONDS,
+  idempotencyCacheKey,
+  parseIdempotencyKey,
+  readStoredResponse,
+} from '@services/billing/idempotency-key.util';
+import {
   buildPharmacyInvoiceDescription,
   prescriptionReference,
 } from '@services/billing/invoice-description.util';
@@ -2552,6 +2559,76 @@ export class PharmacyService {
   }
 
   async createPrescription(
+    dto: CreatePharmacyPrescriptionDto,
+    clinicId?: string,
+    actor?: PharmacyActor,
+    options?: { idempotencyKey?: string | string[] | undefined }
+  ) {
+    return this.runIdempotentPrescriptionCreate(
+      {
+        userId: actor?.userId,
+        // The most specific "parent" the prescription is scoped to: a retry of the same visit's
+        // prescription must dedupe even if the client's key happens to collide across visits.
+        resourceId: dto.visitId || dto.appointmentId || dto.patientId,
+        idempotencyKey: options?.idempotencyKey,
+      },
+      () => this.createPrescriptionUnprotected(dto, clinicId, actor)
+    );
+  }
+
+  /**
+   * Runs a prescription-create at most once per `Idempotency-Key` (see idempotency-key.util,
+   * same pattern as `BillingService.runIdempotentPaymentIntent`): a retry with the same key gets
+   * the first created prescription back instead of creating a second, independently dispensable
+   * one. A retry that arrives while the first one is still being created gets 409. Without a key
+   * it just runs — the header is optional, this is a safety net for clients that send it.
+   */
+  private async runIdempotentPrescriptionCreate<T>(
+    args: {
+      userId?: string | undefined;
+      resourceId: string;
+      idempotencyKey?: string | string[] | undefined;
+    },
+    run: () => Promise<T>
+  ): Promise<T> {
+    const parsed = parseIdempotencyKey(args.idempotencyKey);
+    if (parsed.kind === 'invalid') {
+      throw new BadRequestException(
+        'Invalid Idempotency-Key header: use 1-128 letters, digits, ".", "_", ":" or "-".'
+      );
+    }
+    if (parsed.kind === 'absent' || !args.userId) {
+      return run();
+    }
+    const cacheKey = idempotencyCacheKey({
+      userId: args.userId,
+      route: 'pharmacy/prescriptions',
+      resourceId: args.resourceId,
+      key: parsed.key,
+    });
+    const stored = readStoredResponse<T>(await this.cacheService.get(cacheKey));
+    if (stored !== null) {
+      return stored;
+    }
+    const lockKey = `${cacheKey}:in-flight`;
+    const locked = await this.cacheService.acquireLock(lockKey, IDEMPOTENCY_IN_FLIGHT_TTL_SECONDS);
+    if (!locked && (await this.cacheService.exists(lockKey))) {
+      throw new ConflictException(
+        'A prescription is already being created with this Idempotency-Key. Please retry shortly.'
+      );
+    }
+    try {
+      const result = await run();
+      await this.cacheService.set(cacheKey, JSON.stringify(result), IDEMPOTENCY_TTL_SECONDS);
+      return result;
+    } finally {
+      if (locked) {
+        await this.cacheService.releaseLock(lockKey);
+      }
+    }
+  }
+
+  private async createPrescriptionUnprotected(
     dto: CreatePharmacyPrescriptionDto,
     clinicId?: string,
     actor?: PharmacyActor
