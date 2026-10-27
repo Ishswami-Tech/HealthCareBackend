@@ -663,6 +663,17 @@ export class UsersService {
 
       // Get the created user from database using findUserByEmailSafe
       const userRaw = await this.databaseService.findUserByEmailSafe(data.email);
+
+      // AuthService.register only creates a role-specific profile row for PATIENT
+      // (ensurePatientRecordForAuth). Every other role created through this admin path got a
+      // working login with no Doctor/Receptionist/Pharmacist/... row at all - invisible to the
+      // rest of the app (not bookable as a doctor, "allot to location" silently matching zero
+      // rows, etc.). Create it here, once, before building the response below.
+      if (userRaw && targetRole !== Role.PATIENT) {
+        const { resolveClinicUUID } = await import('@utils/clinic.utils');
+        const targetClinicUUID = await resolveClinicUUID(this.databaseService, userClinicId);
+        await this.ensureStaffProfileRecord(userRaw.id, targetClinicUUID, targetRole, data, userId);
+      }
       // If we need relations, use executeHealthcareRead
       const user = userRaw
         ? await this.databaseService.executeHealthcareRead<{
@@ -862,6 +873,205 @@ export class UsersService {
         }
       );
       throw error;
+    }
+  }
+
+  /** Top-level Prisma delegate name for each "simple" staff profile shape ({userId, clinicId?, locationId?}). */
+  private static readonly SIMPLE_STAFF_DELEGATE: Readonly<Partial<Record<Role, string>>> = {
+    [Role.RECEPTIONIST]: 'receptionist',
+    [Role.PHARMACIST]: 'pharmacist',
+    [Role.NURSE]: 'nurse',
+    [Role.THERAPIST]: 'therapist',
+    [Role.LAB_TECHNICIAN]: 'labTechnician',
+    [Role.FINANCE_BILLING]: 'financeBilling',
+    [Role.SUPPORT_STAFF]: 'supportStaff',
+    [Role.COUNSELOR]: 'counselor',
+  };
+
+  /**
+   * Creates the role-specific profile row a staff account needs to actually function (bookable
+   * as a doctor, matched by "allot to location", etc.) — see the call site in createUser() for
+   * why this exists. Idempotent and fail-soft, same pattern as
+   * AuthService.ensurePatientRecordForAuth: a user account must never fail to create because of
+   * a problem building its (fixable later) staff profile.
+   */
+  private async ensureStaffProfileRecord(
+    userId: string,
+    clinicId: string,
+    role: Role,
+    data: CreateUserDto,
+    createdByUserId?: string
+  ): Promise<void> {
+    try {
+      const simpleDelegate = UsersService.SIMPLE_STAFF_DELEGATE[role];
+      if (simpleDelegate) {
+        await this.databaseService.executeHealthcareWrite(
+          async client => {
+            const delegate = (
+              client as unknown as Record<
+                string,
+                {
+                  findUnique: (args: PrismaDelegateArgs) => Promise<{ id: string } | null>;
+                  create: (args: PrismaDelegateArgs) => Promise<{ id: string }>;
+                }
+              >
+            )[simpleDelegate]!;
+            const existing = await delegate.findUnique({
+              where: { userId } as PrismaDelegateArgs,
+              select: { id: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+            if (existing) return existing;
+            return delegate.create({
+              data: {
+                userId,
+                clinicId,
+                ...(data.locationId ? { locationId: data.locationId } : {}),
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          },
+          {
+            userId,
+            clinicId,
+            resourceType: role,
+            operation: 'CREATE',
+            resourceId: userId,
+            userRole: role,
+            details: { source: 'UsersService.createUser', action: 'ensure_staff_profile' },
+          }
+        );
+        return;
+      }
+
+      if (role === Role.DOCTOR || role === Role.ASSISTANT_DOCTOR) {
+        await this.databaseService.executeHealthcareWrite(
+          async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+            let doctor = await typedClient.doctor.findUnique({
+              where: { userId } as PrismaDelegateArgs,
+              select: { id: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+            if (!doctor) {
+              doctor = await typedClient.doctor.create({
+                data: {
+                  userId,
+                  // Required columns with no safe default: a blank/placeholder value here is
+                  // visible to patients, but creating no Doctor row at all was strictly worse
+                  // (the account couldn't be booked at all). The admin can edit these after.
+                  specialization: data.specialization?.trim() || 'General Medicine',
+                  experience: data.experience ?? 0,
+                } as PrismaDelegateArgs,
+                select: { id: true } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs);
+            }
+            const existingLink = await typedClient.doctorClinic.findFirst({
+              where: { doctorId: doctor.id, clinicId } as PrismaDelegateArgs,
+              select: { doctorId: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+            if (!existingLink) {
+              await typedClient.doctorClinic.create({
+                data: {
+                  doctorId: doctor.id,
+                  clinicId,
+                  ...(data.locationId ? { locationId: data.locationId } : {}),
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs);
+            }
+          },
+          {
+            userId,
+            clinicId,
+            resourceType: role,
+            operation: 'CREATE',
+            resourceId: userId,
+            userRole: role,
+            details: { source: 'UsersService.createUser', action: 'ensure_staff_profile' },
+          }
+        );
+        return;
+      }
+
+      if (role === Role.CLINIC_LOCATION_HEAD) {
+        await this.databaseService.executeHealthcareWrite(
+          async client => {
+            const typedClient = client as unknown as {
+              locationHead: {
+                findFirst: (args: PrismaDelegateArgs) => Promise<{ id: string } | null>;
+                create: (args: PrismaDelegateArgs) => Promise<{ id: string }>;
+              };
+            };
+            const existing = await typedClient.locationHead.findFirst({
+              where: { userId, clinicId } as PrismaDelegateArgs,
+              select: { id: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+            if (existing) return existing;
+            return typedClient.locationHead.create({
+              data: {
+                userId,
+                clinicId,
+                ...(data.locationId ? { locationId: data.locationId } : {}),
+                assignedBy: createdByUserId || 'SYSTEM',
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          },
+          {
+            userId,
+            clinicId,
+            resourceType: role,
+            operation: 'CREATE',
+            resourceId: userId,
+            userRole: role,
+            details: { source: 'UsersService.createUser', action: 'ensure_staff_profile' },
+          }
+        );
+        return;
+      }
+
+      if (role === Role.CLINIC_ADMIN) {
+        await this.databaseService.executeHealthcareWrite(
+          async client => {
+            const typedClient = client as unknown as {
+              clinicAdmin: {
+                findUnique: (args: PrismaDelegateArgs) => Promise<{ id: string } | null>;
+                create: (args: PrismaDelegateArgs) => Promise<{ id: string }>;
+              };
+            };
+            const existing = await typedClient.clinicAdmin.findUnique({
+              where: { userId } as PrismaDelegateArgs,
+              select: { id: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+            if (existing) return existing;
+            return typedClient.clinicAdmin.create({
+              data: {
+                userId,
+                clinicId,
+                ...(data.locationId ? { locationId: data.locationId } : {}),
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          },
+          {
+            userId,
+            clinicId,
+            resourceType: role,
+            operation: 'CREATE',
+            resourceId: userId,
+            userRole: role,
+            details: { source: 'UsersService.createUser', action: 'ensure_staff_profile' },
+          }
+        );
+      }
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Failed to ensure staff profile record for role ${role}`,
+        'UsersService.ensureStaffProfileRecord',
+        {
+          userId,
+          clinicId,
+          role,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
     }
   }
 
