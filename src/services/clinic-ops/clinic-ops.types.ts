@@ -414,7 +414,13 @@ export type OpsClient = {
       _count: { _all: number };
     }>;
   };
-  clinic: OpsDelegate<{ id: string; name: string; address: string; phone: string }>;
+  clinic: OpsDelegate<{
+    id: string;
+    name: string;
+    address: string;
+    phone: string;
+    settings?: unknown;
+  }>;
   directDispenseItem: OpsDelegate<DirectDispenseItemRow>;
   dispenseHandover: OpsDelegate<DispenseHandoverRow>;
   clinicAuditEvent: OpsDelegate<ClinicAuditEventRow>;

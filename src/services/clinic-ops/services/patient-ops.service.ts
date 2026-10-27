@@ -149,11 +149,38 @@ export class PatientOpsService {
     return { packages: LAB_PACKAGES, slotWindows: LAB_SLOT_WINDOWS };
   }
 
+  /**
+   * Clinic-wide "Lab Reports Enabled" toggle (appointmentSettings.opdControls.labBookingEnabled,
+   * set from the clinic-admin settings page, same pattern as generalConsultationEnabled /
+   * videoConsultationEnabled). Lab bookings have no doctorId (home sample collection, not tied
+   * to a specific doctor), so unlike video/in-person this has no per-doctor override.
+   */
+  private async isLabBookingEnabled(clinicId: string): Promise<boolean> {
+    const clinic = await this.ops.read(client =>
+      client.clinic.findFirst({ where: { id: clinicId }, select: { settings: true } })
+    );
+    const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+      typeof value === 'object' && value !== null && !Array.isArray(value);
+    const settings = isPlainRecord(clinic?.settings) ? clinic.settings : {};
+    const appointmentSettings = isPlainRecord(settings['appointmentSettings'])
+      ? settings['appointmentSettings']
+      : {};
+    const opdControls = isPlainRecord(appointmentSettings['opdControls'])
+      ? appointmentSettings['opdControls']
+      : {};
+    return Boolean(opdControls['labBookingEnabled'] ?? true);
+  }
+
   async createLabBooking(
     dto: CreateLabBookingDto,
     clinicId: string,
     actor: OpsActor
   ): Promise<LabBookingResponse> {
+    if (!(await this.isLabBookingEnabled(clinicId))) {
+      throw new BadRequestException(
+        'Lab report / home sample booking is currently unavailable at this clinic'
+      );
+    }
     const patient = await this.patientOf(actor.userId);
     const pkg = LAB_PACKAGES.find(p => p.code === dto.packageCode);
     if (!pkg) throw new BadRequestException('Unknown package');

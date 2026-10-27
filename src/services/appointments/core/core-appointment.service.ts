@@ -470,6 +470,29 @@ export class CoreAppointmentService {
         };
       }
 
+      // The clinic-admin settings page's "General/Video Consultation Enabled" toggles (clinic-wide,
+      // with a per-doctor override) previously only hid slots from the booking calendar — nothing
+      // stopped a direct POST here while a toggle was off. Enforce it at creation too.
+      if (
+        (isVideoCallAppointmentType(createDto.type) || isInPersonAppointmentType(createDto.type)) &&
+        !(await this.isConsultationTypeEnabled(
+          context.clinicId,
+          resolvedIds.doctorId,
+          createDto.type
+        ))
+      ) {
+        return {
+          success: false,
+          error: 'VALIDATION_ERROR',
+          message: isVideoCallAppointmentType(createDto.type)
+            ? 'Video consultations are currently disabled for this doctor or clinic'
+            : 'In-person consultations are currently disabled for this doctor or clinic',
+          metadata: {
+            processingTime: Date.now() - startTime,
+          },
+        };
+      }
+
       // 3a. Holidays / closures / approved doctor leave (clinic_holidays): the same days the
       // availability grid shows as closed can never be booked.
       const bookingDayKey = formatDateKeyInIST(this.resolveAppointmentDateTime(createDto));
@@ -1005,6 +1028,60 @@ export class CoreAppointmentService {
         metadata: { processingTime },
       };
     }
+  }
+
+  /**
+   * Whether `type` (only VIDEO_CALL / IN_PERSON are gated; any other type is always allowed) may
+   * be booked right now: a per-doctor override in
+   * appointmentSettings.doctorConsultationControls[doctorId], falling back to the clinic-wide
+   * appointmentSettings.opdControls default, both defaulting to enabled when unset. Same
+   * resolution the calendar/availability read already uses to decide which slots to show.
+   */
+  private async isConsultationTypeEnabled(
+    clinicId: string,
+    doctorId: string,
+    type: string
+  ): Promise<boolean> {
+    if (!isVideoCallAppointmentType(type) && !isInPersonAppointmentType(type)) {
+      return true;
+    }
+    const key = isVideoCallAppointmentType(type)
+      ? 'videoConsultationEnabled'
+      : 'generalConsultationEnabled';
+
+    const clinic = await this.databaseService.executeHealthcareRead<{
+      settings: unknown;
+    } | null>(async client => {
+      const typedClient = client as unknown as {
+        clinic: {
+          findUnique: (args: PrismaDelegateArgs) => Promise<{ settings: unknown } | null>;
+        };
+      };
+      return await typedClient.clinic.findUnique({
+        where: { id: clinicId } as PrismaDelegateArgs,
+        select: { settings: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+
+    const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+      typeof value === 'object' && value !== null && !Array.isArray(value);
+    const settings = isPlainRecord(clinic?.settings) ? clinic.settings : {};
+    const appointmentSettings = isPlainRecord(settings['appointmentSettings'])
+      ? settings['appointmentSettings']
+      : {};
+    const opdControls = isPlainRecord(appointmentSettings['opdControls'])
+      ? appointmentSettings['opdControls']
+      : isPlainRecord(appointmentSettings['opdControl'])
+        ? appointmentSettings['opdControl']
+        : {};
+    const doctorControlMap = isPlainRecord(appointmentSettings['doctorConsultationControls'])
+      ? appointmentSettings['doctorConsultationControls']
+      : {};
+    const doctorControl = isPlainRecord(doctorControlMap[doctorId])
+      ? doctorControlMap[doctorId]
+      : {};
+
+    return Boolean(doctorControl[key] ?? opdControls[key] ?? true);
   }
 
   /**
