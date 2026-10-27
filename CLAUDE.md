@@ -632,7 +632,11 @@ When adding new features:
 1. **Fastify, not Express**: All HTTP configuration must be Fastify-specific
 2. **Plugin Architecture**: Appointments use plugin architecture for
    extensibility
-3. **Connection Pooling**: Optimized for 1M+ users (500 max connections)
+3. **Connection Pooling**: Prisma's pool is `connection_limit=50` (DATABASE_URL
+   in `.env.development`/`.env.example`), against Postgres's own default
+   `max_connections=100` in the dev docker-compose stack. The "500 max
+   connections" figure elsewhere in this doc does not match either config —
+   verify and load-test before relying on it for a production sizing decision.
 4. **Caching Strategy**: Multi-level caching (memory + Dragonfly) with SWR
 5. **Circuit Breakers**: Resilience patterns for external services
 6. **Read Replicas**: Support for read scaling (configured via env vars)
@@ -705,7 +709,9 @@ export function mapDomainUserToDb(domain: User): DbUser {
 
 - **Horizontal scaling**: Stateless services, session in Redis with 16
   partitions
-- **Connection pooling**: 500 max DB connections, auto-scaling based on load
+- **Connection pooling**: dev is `connection_limit=50` against Postgres's
+  default `max_connections=100` — see the note under Important Notes above; this
+  is not yet verified or sized for the scale this section describes
 - **Caching**: Multi-level (memory + Dragonfly, Redis-compatible) with SWR
   pattern
 - **Read replicas**: Database read/write splitting for heavy reads
