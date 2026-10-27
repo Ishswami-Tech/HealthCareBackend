@@ -300,6 +300,13 @@ export class UsersService {
             specialization?: string | null;
             experience?: number | null;
             workingHours?: Record<string, unknown> | null;
+            licenseNumber?: string | null;
+            qualification?: string | null;
+            education?: string | null;
+            certifications?: string[] | null;
+            languages?: string[] | null;
+            localizedProfile?: unknown;
+            abdmHprId?: string | null;
           } | null;
         };
         const userResponse: UserResponseDto = {
@@ -405,6 +412,27 @@ export class UsersService {
             (
               userResponse as UserResponseDto & { availability?: Record<string, unknown> }
             ).availability = userRecord.doctor.workingHours as Record<string, unknown>;
+          }
+          if (userRecord.doctor.licenseNumber) {
+            userResponse.licenseNumber = userRecord.doctor.licenseNumber;
+          }
+          if (userRecord.doctor.qualification) {
+            userResponse.qualification = userRecord.doctor.qualification;
+          }
+          if (userRecord.doctor.education) {
+            userResponse.education = userRecord.doctor.education;
+          }
+          if (userRecord.doctor.certifications?.length) {
+            userResponse.certifications = userRecord.doctor.certifications;
+          }
+          if (userRecord.doctor.languages?.length) {
+            userResponse.languages = userRecord.doctor.languages;
+          }
+          if (userRecord.doctor.localizedProfile) {
+            userResponse.localizedProfile = userRecord.doctor.localizedProfile;
+          }
+          if (userRecord.doctor.abdmHprId) {
+            userResponse.abdmHprId = userRecord.doctor.abdmHprId;
           }
         }
 

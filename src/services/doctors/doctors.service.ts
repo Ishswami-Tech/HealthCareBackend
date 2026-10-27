@@ -211,6 +211,15 @@ export class DoctorsService {
       // invalidated by anything (invalidateClinicCache below only fires when
       // clinicId is provided, and only busts clinic-scoped tags).
       await this.cacheService.invalidateCacheByTag(`doctor:${userId}`);
+      // GET /user/profile (UsersService.findOne) independently caches this same doctor record
+      // under its own tags — license/qualification/certifications/languages/abdmHprId etc. live
+      // there too (the profile screen's Professional tab reads them from there), and nothing
+      // else invalidates it on a doctor-record save. Without this, a save looked like it silently
+      // didn't persist: the UI showed the new value from local state until the next hard reload,
+      // which then served the stale cached response for up to its 300s TTL.
+      await this.cacheService.invalidateCacheByTag(`user:${userId}`);
+      await this.cacheService.invalidateCacheByTag('user_profiles');
+      await this.cacheService.invalidateCacheByTag('user_details');
       if (!data.clinicId) await this.invalidateDoctorClinicLists(userId);
     }
 

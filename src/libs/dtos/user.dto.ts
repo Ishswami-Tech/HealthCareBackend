@@ -788,6 +788,55 @@ export class UserResponseDto extends OmitType(CreateUserDto, ['password'] as con
   @IsOptional()
   @IsString()
   locationName?: string | null;
+
+  // Doctor-record professional fields (for a DOCTOR-role user). `specialization`/`experience`
+  // are inherited from CreateUserDto above; these were missing from this response entirely, not
+  // just from a mapper — the profile screen's Professional tab reads them from here and they
+  // never persisted across a reload for lack of anywhere in the response to carry them.
+  @ApiPropertyOptional({
+    description: 'Medical license / registration number (doctors)',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString()
+  licenseNumber?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Primary qualification, e.g. "MBBS, MD" (doctors)',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString()
+  qualification?: string | null;
+
+  @ApiPropertyOptional({ description: 'Free-text education history (doctors)', nullable: true })
+  @IsOptional()
+  @IsString()
+  education?: string | null;
+
+  @ApiPropertyOptional({ description: 'Certifications (doctors)', type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  certifications?: string[];
+
+  @ApiPropertyOptional({ description: 'Languages spoken (doctors)', type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  languages?: string[];
+
+  @ApiPropertyOptional({ description: 'Localized public profile text, by locale (doctors)' })
+  @IsOptional()
+  localizedProfile?: unknown;
+
+  @ApiPropertyOptional({
+    description: 'ABDM Health Professional Registry (HPR) id (doctors)',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString()
+  abdmHprId?: string | null;
 }
 
 /**
