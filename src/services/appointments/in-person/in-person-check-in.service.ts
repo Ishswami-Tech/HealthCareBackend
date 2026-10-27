@@ -20,6 +20,8 @@ import {
   Optional,
   forwardRef,
 } from '@nestjs/common';
+import { DatabaseService } from '@infrastructure/database';
+import type { PrismaDelegateArgs } from '@core/types/prisma.types';
 import { EventService } from '@infrastructure/events/event.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogLevel, LogType } from '@core/types';
@@ -67,6 +69,7 @@ export type InPersonCheckInFailureCode =
   | 'INVALID_QR'
   | 'EXPIRED_QR'
   | 'LOCATION_INACTIVE'
+  | 'QR_CHECK_IN_DISABLED'
   | 'QR_REQUIRED'
   | 'QR_NOT_FOR_STAFF'
   | 'APPOINTMENT_REQUIRED'
@@ -77,6 +80,10 @@ const FAILURE_MESSAGES: Record<Exclude<InPersonCheckInFailureCode, ScanFailureRe
   INVALID_QR: 'This QR code is not a check-in code of this clinic.',
   EXPIRED_QR: 'This QR code was replaced. Please scan the new poster at the clinic.',
   LOCATION_INACTIVE: 'Check-in is switched off at this location. Please go to the reception desk.',
+  // This clinic has chosen queue + reception check-in over self-service QR (smaller clinics
+  // don't need it; higher-volume ones turn it on) — see appointmentSettings.opdControls.
+  QR_CHECK_IN_DISABLED:
+    'QR check-in is turned off at this clinic. Please wait in the queue; reception will check you in.',
   QR_REQUIRED: 'Scan the QR code at the clinic entrance to check in.',
   QR_NOT_FOR_STAFF:
     'Reception checks patients in with one click; QR scanning is only for patients.',
@@ -96,6 +103,7 @@ const LOG_REASON: Record<InPersonCheckInFailureCode, CheckInFailureReason> = {
   INVALID_QR: 'INVALID_QR',
   EXPIRED_QR: 'EXPIRED_QR',
   LOCATION_INACTIVE: 'LOCATION_INACTIVE',
+  QR_CHECK_IN_DISABLED: 'OTHER',
   QR_REQUIRED: 'INVALID_QR',
   QR_NOT_FOR_STAFF: 'OTHER',
   APPOINTMENT_REQUIRED: 'OTHER',
@@ -152,6 +160,7 @@ export class InPersonCheckInService {
     private readonly events: EventService,
     @Inject(forwardRef(() => LoggingService))
     private readonly logging: LoggingService,
+    private readonly databaseService: DatabaseService,
     @Optional() private readonly checkInLog?: CheckInLogService
   ) {}
 
@@ -228,6 +237,38 @@ export class InPersonCheckInService {
     });
   }
 
+  /**
+   * Clinic-wide "QR Check-in Enabled" toggle (appointmentSettings.opdControls.qrCheckInEnabled,
+   * set from the clinic-admin settings page): a small/low-volume clinic can turn self-service
+   * QR scanning off and rely on the queue + reception's one-click check-in instead, while a
+   * high-volume clinic turns it on. Defaults to enabled when unset.
+   */
+  private async isQrCheckInEnabled(clinicId: string): Promise<boolean> {
+    const clinic = await this.databaseService.executeHealthcareRead<{
+      settings: unknown;
+    } | null>(async client => {
+      const typedClient = client as unknown as {
+        clinic: {
+          findUnique: (args: PrismaDelegateArgs) => Promise<{ settings: unknown } | null>;
+        };
+      };
+      return await typedClient.clinic.findUnique({
+        where: { id: clinicId } as PrismaDelegateArgs,
+        select: { settings: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+    const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+      typeof value === 'object' && value !== null && !Array.isArray(value);
+    const settings = isPlainRecord(clinic?.settings) ? clinic.settings : {};
+    const appointmentSettings = isPlainRecord(settings['appointmentSettings'])
+      ? settings['appointmentSettings']
+      : {};
+    const opdControls = isPlainRecord(appointmentSettings['opdControls'])
+      ? appointmentSettings['opdControls']
+      : {};
+    return Boolean(opdControls['qrCheckInEnabled'] ?? true);
+  }
+
   /** Patient scans the poster of the location they booked. */
   async checkInByQr(
     dto: InPersonCheckInDto,
@@ -241,6 +282,9 @@ export class InPersonCheckInService {
       locationId: null,
       appointment: null,
     };
+    if (!(await this.isQrCheckInEnabled(clinicId))) {
+      return this.refuse(context, 'QR_CHECK_IN_DISABLED');
+    }
     if (!dto.qrCode || !dto.qrCode.trim()) return this.refuse(context, 'QR_REQUIRED');
 
     const { location, isTypedDeskCode } = await this.resolveScannedLocation(
