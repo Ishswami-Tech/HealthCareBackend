@@ -140,6 +140,7 @@ import {
   findPurchaseBlock,
   isDuplicatePeriodPayment,
   isRenewalOpen,
+  isRunning,
   renewalOpensAt,
 } from '@services/billing/subscription-purchase-guard.util';
 import { applyRefundToSplit, computePayoutSplit } from '@services/billing/payout-split.util';
@@ -1860,6 +1861,9 @@ export class BillingService implements OnModuleInit {
     if (existingSubscription.planId === newPlanId) {
       throw new BadRequestException('You are already on this plan.');
     }
+    if (!existingSubscription.plan) {
+      throw new BadRequestException('Subscription plan not found');
+    }
 
     const newPlan = await this.getBillingPlan(newPlanId);
     assertPlanMatchesClinic(newPlan, existingSubscription.clinicId);
@@ -1931,6 +1935,29 @@ export class BillingService implements OnModuleInit {
       ? null
       : newPlan.appointmentsIncluded || null;
 
+    // Credit the unused portion of the plan being switched away from against the new plan's
+    // price — upgrading charges just the difference, downgrading charges a reduced (possibly
+    // zero) amount. Only a subscription actually running (ACTIVE/TRIALING, period not yet ended)
+    // carries unused value; switching off an unpaid/lapsed one charges the new plan in full.
+    const oldPlanAmount = this.roundToTwo(existingSubscription.plan.amount);
+    const newPlanAmount = this.roundToTwo(newPlan.amount);
+    let unusedCredit = 0;
+    if (isRunning(existingSubscription, now)) {
+      const oldPeriodStart = new Date(existingSubscription.currentPeriodStart).getTime();
+      const oldPeriodEnd = new Date(existingSubscription.currentPeriodEnd).getTime();
+      const periodTotalMs = oldPeriodEnd - oldPeriodStart;
+      const remainingMs = Math.max(0, oldPeriodEnd - now.getTime());
+      if (periodTotalMs > 0) {
+        // Never credit more than the new plan actually costs — a downgrade's leftover value is
+        // not carried forward or refunded, it simply makes this switch free.
+        unusedCredit = Math.min(
+          newPlanAmount,
+          this.roundToTwo(oldPlanAmount * (remainingMs / periodTotalMs))
+        );
+      }
+    }
+    const proratedAmountDue = this.roundToTwo(Math.max(0, newPlanAmount - unusedCredit));
+
     const created = await this.databaseService.executeInTransaction(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
 
@@ -1955,6 +1982,16 @@ export class BillingService implements OnModuleInit {
           appointmentsUsed: 0,
           ...(appointmentsRemaining !== null &&
             appointmentsRemaining !== undefined && { appointmentsRemaining }),
+          metadata: {
+            switchedFromSubscriptionId: id,
+            switchedFromPlanId: existingSubscription.planId,
+            proration: {
+              oldPlanAmount,
+              newPlanAmount,
+              unusedCredit,
+              amountDue: proratedAmountDue,
+            },
+          },
         } as PrismaDelegateArgs,
       } as PrismaDelegateArgs);
     });
@@ -4730,6 +4767,28 @@ export class BillingService implements OnModuleInit {
   // ============ Payment Processing ============
 
   /**
+   * What a subscription's own payment should charge: the plan's full price, unless this is the
+   * first (INCOMPLETE) payment of a subscription created by switchSubscription, which carries a
+   * prorated `metadata.proration.amountDue` crediting the unused value of the plan it replaced.
+   * A later renewal of the same subscription (status ACTIVE by then) always charges full price.
+   */
+  private resolveSubscriptionChargeAmount(subscription: {
+    status: unknown;
+    plan?: { amount: number } | null;
+    metadata?: unknown;
+  }): number {
+    const fullAmount = this.roundToTwo(subscription.plan?.amount ?? 0);
+    if (String(subscription.status) !== String(SubscriptionStatus.INCOMPLETE)) {
+      return fullAmount;
+    }
+    const proration = this.asRecord(subscription.metadata)?.['proration'];
+    const amountDue = this.asRecord(proration)?.['amountDue'];
+    return typeof amountDue === 'number' && Number.isFinite(amountDue) && amountDue >= 0
+      ? this.roundToTwo(amountDue)
+      : fullAmount;
+  }
+
+  /**
    * Process subscription payment (monthly for in-person appointments)
    * Creates invoice and payment intent for subscription renewal
    */
@@ -4759,7 +4818,7 @@ export class BillingService implements OnModuleInit {
       });
     }
 
-    const subscriptionAmount = this.roundToTwo(subscription.plan.amount);
+    const subscriptionAmount = this.resolveSubscriptionChargeAmount(subscription);
     const subscriptionTax = this.calculateGstAmount(subscriptionAmount);
 
     // A checkout that never produced a payment attempt leaves an unpaid invoice behind. Reuse it
@@ -4803,6 +4862,18 @@ export class BillingService implements OnModuleInit {
           (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
         )[0] ?? null;
 
+    // The amount actually due may be less than the plan's own price (a prorated switch); say so
+    // on the invoice so the patient sees why the line total doesn't match the plan's list price.
+    const planDescription = buildPlanInvoiceDescription(
+      subscription.plan.name,
+      subscription.plan.interval,
+      subscription.plan.intervalCount
+    );
+    const invoiceDescription =
+      subscriptionAmount < this.roundToTwo(subscription.plan.amount)
+        ? `${planDescription} (prorated switch)`
+        : planDescription;
+
     // Create invoice for subscription renewal
     const invoice =
       reusableInvoice ??
@@ -4814,19 +4885,11 @@ export class BillingService implements OnModuleInit {
         tax: subscriptionTax,
         discount: 0,
         dueDate: new Date(subscription.currentPeriodEnd).toISOString(),
-        description: buildPlanInvoiceDescription(
-          subscription.plan.name,
-          subscription.plan.interval,
-          subscription.plan.intervalCount
-        ),
+        description: invoiceDescription,
         lineItems: {
           items: [
             {
-              description: buildPlanInvoiceDescription(
-                subscription.plan.name,
-                subscription.plan.interval,
-                subscription.plan.intervalCount
-              ),
+              description: invoiceDescription,
               amount: subscriptionAmount,
               quantity: 1,
             },
@@ -6433,7 +6496,9 @@ export class BillingService implements OnModuleInit {
       if (String(subscription.status) === String(SubscriptionStatus.CANCELLED)) {
         throw notOpen;
       }
-      const price = this.roundToTwo(subscription.plan.amount);
+      // Same price a real payment attempt would charge — the plan's full price, unless this is
+      // the first payment of a prorated plan switch (see resolveSubscriptionChargeAmount).
+      const price = this.resolveSubscriptionChargeAmount(subscription);
       dueMinor = toMinorUnits(this.roundToTwo(price + this.calculateGstAmount(price)));
     }
 
