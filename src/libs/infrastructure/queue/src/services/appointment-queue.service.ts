@@ -603,6 +603,12 @@ export class AppointmentQueueService {
     }
   ): Promise<void> {
     if (!this.typedEventService) {
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.WARN,
+        `emitAppointmentQueueEvent(${eventType}) skipped: no typedEventService (eventService present=${!!this.eventService})`,
+        'AppointmentQueueService'
+      );
       return;
     }
 
@@ -2101,13 +2107,32 @@ export class AppointmentQueueService {
       });
 
       if (touched) {
+        const doctorId = touched.doctorId || touched.queueOwnerId;
         await this.invalidateQueueReadCaches({
           clinicId,
           domain,
-          doctorId: touched.doctorId || touched.queueOwnerId,
+          doctorId,
           date: key.split(':')[4] || this.getQueueDate(),
           locationId: touched.locationId,
           appointmentId,
+        });
+        // Emit WebSocket event — a priority change reorders who staff/doctor see as next, so it
+        // needs the same live push as check-in/call-next/reorder (was previously silent: the
+        // cache updated but connected clients only saw it on their next poll).
+        await this.emitAppointmentQueueEvent('appointment.queue.updated', {
+          eventId: `queue-priority-${appointmentId}-${Date.now()}`,
+          priority: EventPriority.NORMAL,
+          appointmentId,
+          payload: {
+            doctorId,
+            domain,
+            action: 'PRIORITY_CHANGED',
+            appointmentId,
+            clinicId,
+            queueOwnerId: doctorId,
+            locationId: touched.locationId,
+            queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
+          },
         });
         return { updated: true, queueKey: key };
       }

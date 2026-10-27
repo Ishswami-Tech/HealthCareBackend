@@ -18,6 +18,7 @@ import { QueueProcessor } from './queue.processor';
 import { QueueStatusGateway } from './sockets/queue-status.gateway';
 import { QueueMonitoringModule } from './monitoring/queue-monitoring.module';
 import { LoggingModule } from '@infrastructure/logging';
+import { EventsModule } from '@infrastructure/events';
 import { ResilienceModule } from '@core/resilience/resilience.module';
 import { QueueHealthMonitorService } from './queue-health-monitor.service';
 import {
@@ -113,6 +114,12 @@ export class QueueModule {
         StorageModule,
         forwardRef(() => CacheModule),
         forwardRef(() => ResilienceModule), // Provides CircuitBreakerService for QueueHealthMonitorService
+        // EventsModule is NOT @Global() — without importing it here, AppointmentQueueService's
+        // and QueueStatusGateway's `@Optional() @Inject(forwardRef(() => EventService))` silently
+        // resolve to undefined (Optional swallows the DI miss), so every queue domain event
+        // (check-in, call-next, reorder, priority) emits nothing and no staff client, on any
+        // process, ever gets a live push — only the `STAFF_LIVE_MS` poll ever refreshed them.
+        forwardRef(() => EventsModule),
         QueueMonitoringModule,
         InvoicePDFModule,
         BullModule.forRootAsync({
@@ -236,8 +243,13 @@ export class QueueModule {
         // QueueService via `import type` — avoids a static circular import
         // between the queue and cache modules while DI still resolves correctly.
         { provide: 'QUEUE_SERVICE', useExisting: QueueService },
-        // QueueStatusGateway depends on QueueService and LoggingService (via LoggingModule import)
-        ...(serviceName === 'worker' ? [QueueStatusGateway] : []),
+        // QueueStatusGateway depends on QueueService and LoggingService (via LoggingModule import).
+        // Unconditional, like the app's other client-facing gateways (AppGateway,
+        // RealtimeHealthGateway): staff clients (mobile/web) connect to the API service's
+        // published port, never to the worker's (no published port, background-jobs only), so
+        // gating this to `serviceName === 'worker'` made the namespace unreachable — the client
+        // got "Invalid namespace" since no gateway ever bound it on the process it could reach.
+        QueueStatusGateway,
         // Enhanced worker configuration for 1M users
         ...(serviceName === 'worker'
           ? [
@@ -394,7 +406,7 @@ export class QueueModule {
         // Export health monitor for HealthService
         QueueHealthMonitorService,
 
-        ...(serviceName === 'worker' ? [QueueStatusGateway] : []),
+        QueueStatusGateway,
       ],
     };
   }

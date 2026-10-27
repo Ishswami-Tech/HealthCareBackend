@@ -123,7 +123,12 @@ export class QueueStatusGateway
       if (!this.queueSubscriptions) this.queueSubscriptions = new Map();
       if (!this.tenantSubscriptions) this.tenantSubscriptions = new Map();
 
-      // Subscribe to Events
+      // Subscribe to Events. `eventService` is `@Optional()` — a DI miss here (EventsModule not
+      // imported into whatever module provides this gateway) resolves it to `undefined` with no
+      // error, so this subscription is silently skipped and every queue event (check-in,
+      // call-next, reorder, priority) stops reaching any client: staff only ever see the
+      // `STAFF_LIVE_MS` poll, never the live push. That exact regression shipped silently once
+      // already — the WARN below is the only signal that would have caught it immediately.
       if (this.eventService && isEventService(this.eventService)) {
         this.eventService.on('appointment.queue.updated', (event: unknown) =>
           this.handleQueueUpdate(event as EnterpriseEventPayload)
@@ -133,6 +138,16 @@ export class QueueStatusGateway
         );
         this.eventService.on('queue.metrics.updated', (event: unknown) =>
           this.handleQueueMetricsUpdate(event as EnterpriseEventPayload)
+        );
+      } else {
+        safeLog(
+          this.loggingService,
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'QueueStatusGateway.onModuleInit: eventService unavailable — live queue push is ' +
+            'disabled, staff clients will only see the poll fallback. Check that EventsModule is ' +
+            'imported wherever this gateway is provided.',
+          'QueueStatusGateway'
         );
       }
 
