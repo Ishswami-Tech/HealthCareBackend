@@ -377,7 +377,7 @@ export class InventoryService {
 
         const medicine = await client.medicine.findFirst({
           where: { id: item.medicineId, clinicId },
-          select: { stock: true, name: true },
+          select: { stock: true, name: true, expiryDate: true },
         });
         const stockBeforeDispense = (medicine?.stock ?? 0) + item.quantity;
 
@@ -387,7 +387,15 @@ export class InventoryService {
         });
         const now = Date.now();
         const trackedQuantity = batches.reduce((sum, b) => sum + (b.quantityOnHand ?? 0), 0);
-        const unbatchedAvailable = Math.max(0, stockBeforeDispense - trackedQuantity);
+        // Stock not tracked by a StockBatch row has no per-lot expiry to check against FEFO, so
+        // fall back to the medicine's own expiryDate: already-expired untracked stock must not be
+        // treated as available, the same way an expired StockBatch is skipped above.
+        const medicineExpired = Boolean(
+          medicine?.expiryDate && medicine.expiryDate.getTime() <= now
+        );
+        const unbatchedAvailable = medicineExpired
+          ? 0
+          : Math.max(0, stockBeforeDispense - trackedQuantity);
 
         const consumedBatches: FefoDispenseResult['consumedBatches'] = [];
         let remaining = item.quantity;
