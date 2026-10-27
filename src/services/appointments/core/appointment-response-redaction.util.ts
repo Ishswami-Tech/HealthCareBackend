@@ -9,10 +9,17 @@
  *   - every appointment / in-person HTTP answer passes `redactAppointmentResponse`, which drops
  *     credential keys at any depth for every role, and the clinical keys for the reception desk
  *     (contract 18.8: reception never reads clinical data).
+ *
+ * GET /appointments/:id's fallback read (`clinic: true`) embeds the full Clinic row, not just the
+ * safe columns the list endpoint selects — `redactAppointmentResponse` also drops the same
+ * infrastructure/secret keys `toSafeClinicResponse` (clinic-response.util.ts) blocks, so the
+ * clinic's db_connection_string etc. never leaves this controller either, whichever read path
+ * answered.
  * Pure helpers: no Nest imports, so the spec runs without the framework.
  */
 import { stripKeysDeep } from '@core/interceptors/billing-redaction.util';
 import { isClinicalBlindRole, isClinicalKey } from '@core/interceptors/clinical-redaction.util';
+import { isSensitiveClinicKey } from '@services/clinic/clinic-response.util';
 
 /** The only user columns an appointment read selects for the patient / doctor. */
 export const SAFE_APPOINTMENT_USER_SELECT = {
@@ -62,18 +69,23 @@ export function isCredentialKey(key: string): boolean {
   return CREDENTIAL_KEYS.has(normalizeKey(key));
 }
 
-/** Deep copy of `value` without any credential key (every role, every depth). */
+/** A credential key, or one of the clinic's infrastructure/secret keys (db_connection_string, ...). */
+function isUnsafeAppointmentKey(key: string): boolean {
+  return isCredentialKey(key) || isSensitiveClinicKey(key);
+}
+
+/** Deep copy of `value` without any credential or clinic-infrastructure key (every role, every depth). */
 export function stripCredentialFields<T>(value: T): T {
-  return stripKeysDeep(value, isCredentialKey);
+  return stripKeysDeep(value, isUnsafeAppointmentKey);
 }
 
 /**
- * The HTTP answer of an appointment / in-person route for `role`: credentials never, clinical
- * keys not for the reception desk.
+ * The HTTP answer of an appointment / in-person route for `role`: credentials and clinic
+ * infrastructure secrets never, clinical keys not for the reception desk.
  */
 export function redactAppointmentResponse<T>(value: T, role: unknown): T {
   if (isClinicalBlindRole(role)) {
-    return stripKeysDeep(value, key => isCredentialKey(key) || isClinicalKey(key));
+    return stripKeysDeep(value, key => isUnsafeAppointmentKey(key) || isClinicalKey(key));
   }
   return stripCredentialFields(value);
 }
