@@ -59,6 +59,7 @@ import type { AuthenticatedRequest } from '@core/types';
 import { PaymentProvider } from '@core/types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { AppointmentType } from '@dtos/appointment.dto';
+import { redactAppointmentResponse } from '@services/appointments/core/appointment-response-redaction.util';
 import { billingScopedCacheKey } from '@services/billing/billing-cache-key.util';
 import {
   CLINIC_INVOICE_QUERY_KEYS,
@@ -1201,7 +1202,7 @@ export class BillingController {
       });
       return {
         success: true,
-        appointment: result.data,
+        appointment: redactAppointmentResponse(result.data, role),
         message: 'In-person appointment booked and linked to subscription',
       };
     } catch (linkError) {
