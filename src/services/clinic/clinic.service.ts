@@ -1720,19 +1720,30 @@ export class ClinicService {
   async getClinicDoctors(
     id: string,
     _userId: string
-  ): Promise<Array<{ doctor: Doctor & { user: { id: string; name: string; email: string } } }>> {
+  ): Promise<
+    Array<{
+      doctor: Doctor & { user: { id: string; name: string; email: string } } & {
+        locationId: string | null;
+      };
+    }>
+  > {
     try {
       // Query the clinic-doctor join table directly so we always return the
       // clinic's actual configured doctors, regardless of role data drift.
       const doctors = await this.databaseService.executeHealthcareRead<
-        Array<{ doctor: Doctor & { user: { id: string; name: string; email: string } } }>
+        Array<{
+          doctor: Doctor & { user: { id: string; name: string; email: string } } & {
+            locationId: string | null;
+          };
+        }>
       >(async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
           doctorClinic: {
-            findMany: (
-              args: PrismaDelegateArgs
-            ) => Promise<
-              Array<{ doctor: Doctor & { user: { id: string; name: string; email: string } } }>
+            findMany: (args: PrismaDelegateArgs) => Promise<
+              Array<{
+                locationId: string | null;
+                doctor: Doctor & { user: { id: string; name: string; email: string } };
+              }>
             >;
           };
         };
@@ -1740,6 +1751,11 @@ export class ClinicService {
         const doctorClinics = (await typedClient.doctorClinic.findMany({
           where: { clinicId: id } as PrismaDelegateArgs,
           select: {
+            // The clinic location this doctor practices at (DoctorClinic.locationId, one per
+            // doctor per clinic) — without it, a booking screen can only show the clinic's full
+            // location list and let the patient pick one the doctor never actually works at,
+            // which then shows "no slots available" with no explanation why.
+            locationId: true,
             doctor: {
               select: {
                 id: true,
@@ -1759,6 +1775,7 @@ export class ClinicService {
             },
           } as PrismaDelegateArgs,
         } as PrismaDelegateArgs)) as unknown as Array<{
+          locationId: string | null;
           doctor: Doctor & { user: { id: string; name: string; email: string } };
         }>;
 
@@ -1774,7 +1791,7 @@ export class ClinicService {
         );
 
         return doctorClinics.map(entry => ({
-          doctor: entry.doctor,
+          doctor: { ...entry.doctor, locationId: entry.locationId },
         }));
       });
 
@@ -1841,7 +1858,11 @@ export class ClinicService {
               doctorCount: fallbackDoctors.length,
             }
           );
-          return fallbackDoctors;
+          // No DoctorClinic row to read a location from on this degraded path — unknown, not
+          // guessed; callers fall back to showing every clinic location for this doctor.
+          return fallbackDoctors.map(entry => ({
+            doctor: { ...entry.doctor, locationId: null },
+          }));
         }
       }
 
