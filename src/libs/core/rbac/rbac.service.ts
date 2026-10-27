@@ -761,6 +761,13 @@ export class RbacService {
         'profile:read',
         'profile:update',
         'analytics:read',
+        // POST /vitals and PUT /vitals/:id already @Roles-allow RECEPTIONIST (front desk
+        // records height/weight/BP at check-in) — these were missing here, so
+        // RequireResourcePermission('vitals', ...) 403'd every one of those calls despite the
+        // route decorator saying yes. No 'vitals:read': GET /vitals/:userId does not list
+        // RECEPTIONIST in its own @Roles either, so this only grants what the routes already do.
+        'vitals:create',
+        'vitals:update',
       ],
       PATIENT: [
         // Consent ledger and own identifiers: the routes verify the record is the caller's own
