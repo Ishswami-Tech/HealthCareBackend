@@ -1848,6 +1848,140 @@ export class BillingService implements OnModuleInit {
   }
 
   /**
+   * Switches a patient off their current plan and onto a different one in one atomic step:
+   * the old subscription is cancelled immediately (not at period end) and the new one is
+   * created in the same transaction, so a mid-way failure never leaves the patient with no
+   * active plan or with two running at once. The returned subscription is INCOMPLETE until
+   * paid, same as `createSubscription` — the caller takes it straight to the payment gateway.
+   */
+  async switchSubscription(id: string, newPlanId: string, requester?: BillingAccessContext) {
+    const existingSubscription = await this.getSubscription(id, requester);
+
+    if (existingSubscription.planId === newPlanId) {
+      throw new BadRequestException('You are already on this plan.');
+    }
+
+    const newPlan = await this.getBillingPlan(newPlanId);
+    assertPlanMatchesClinic(newPlan, existingSubscription.clinicId);
+
+    const now = new Date();
+    // Same one-plan-per-patient rule as a fresh subscribe, but the subscription being replaced
+    // is excluded — only a conflicting THIRD subscription (another running plan, or another
+    // plan's payment still pending) blocks the switch.
+    const otherSubscriptions = (
+      await this.databaseService.findSubscriptionsSafe({
+        userId: existingSubscription.userId,
+        clinicId: existingSubscription.clinicId,
+      })
+    ).filter(subscription => subscription.id !== id);
+    const livePendingInvoice = new Map<string, string | null>();
+    for (const subscription of otherSubscriptions) {
+      if (String(subscription.status) !== String(SubscriptionStatus.INCOMPLETE)) {
+        continue;
+      }
+      const payments = await this.paymentStore.listSubscriptionPayments(
+        subscription.id,
+        existingSubscription.clinicId
+      );
+      const live = payments.find(
+        payment => isOpenAttempt(payment) && !isPastPaymentWindow(payment, now)
+      );
+      if (live) {
+        livePendingInvoice.set(subscription.id, live.invoiceId);
+      }
+    }
+    const block = findPurchaseBlock({
+      subscriptions: otherSubscriptions.map(subscription => ({
+        id: subscription.id,
+        status: String(subscription.status),
+        planId: subscription.planId,
+        currentPeriodEnd: subscription.currentPeriodEnd,
+        endDate: subscription.endDate ?? null,
+      })),
+      planId: newPlanId,
+      now,
+      hasLivePayment: subscriptionId => livePendingInvoice.has(subscriptionId),
+    });
+    if (block) {
+      if (block.kind === 'running-plan') {
+        throw new ConflictException({
+          message:
+            'You have another active plan besides the one you are switching from. Resolve it before switching.',
+          code: 'SUBSCRIPTION_ALREADY_ACTIVE',
+          subscriptionId: block.subscription.id,
+        });
+      }
+      throw new ConflictException({
+        message:
+          'A payment for another plan is still pending. Complete or let that payment expire before switching.',
+        code: 'SUBSCRIPTION_PAYMENT_PENDING',
+        subscriptionId: block.subscription.id,
+        pendingInvoiceId: livePendingInvoice.get(block.subscription.id) ?? null,
+      });
+    }
+
+    const startDate = now;
+    const currentPeriodStart = new Date(startDate);
+    const currentPeriodEnd = this.calculatePeriodEnd(
+      currentPeriodStart,
+      newPlan.interval,
+      newPlan.intervalCount
+    );
+    const appointmentsRemaining = newPlan.isUnlimitedAppointments
+      ? null
+      : newPlan.appointmentsIncluded || null;
+
+    const created = await this.databaseService.executeInTransaction(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+
+      await typedClient.subscription.update({
+        where: { id },
+        data: {
+          status: SubscriptionStatus.CANCELLED,
+          cancelledAt: now,
+          endDate: now,
+        },
+      } as PrismaDelegateArgs);
+
+      return typedClient.subscription.create({
+        data: {
+          userId: existingSubscription.userId,
+          planId: newPlanId,
+          clinicId: existingSubscription.clinicId,
+          status: SubscriptionStatus.INCOMPLETE,
+          startDate,
+          currentPeriodStart,
+          currentPeriodEnd,
+          appointmentsUsed: 0,
+          ...(appointmentsRemaining !== null &&
+            appointmentsRemaining !== undefined && { appointmentsRemaining }),
+        } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Subscription switched to a new plan',
+      'BillingService',
+      { fromSubscriptionId: id, toSubscriptionId: created.id, userId: existingSubscription.userId }
+    );
+
+    await this.eventService.emit('billing.subscription.switched', {
+      fromSubscriptionId: id,
+      toSubscriptionId: created.id,
+      userId: existingSubscription.userId,
+      subscription: created,
+    });
+
+    await this.invalidateSubscriptionCaches(existingSubscription.userId, id);
+    await this.invalidateSubscriptionCaches(existingSubscription.userId, created.id);
+    await this.invalidateUserSubscriptionCaches(existingSubscription.userId);
+
+    return created;
+  }
+
+  /**
    * Automated cron job to mark expired active subscriptions as PAST_DUE
    */
   @Cron(CronExpression.EVERY_HOUR)
@@ -2170,7 +2304,10 @@ export class BillingService implements OnModuleInit {
           invoiceNumber,
           userId: data.userId,
           clinicId: data.clinicId,
-          amount: data.amount,
+          // Rounded to paise, same basis checkInvoiceAmounts used to compute totalAmount — stored
+          // unrounded before, so a report summing .amount instead of .totalAmount could drift by
+          // sub-paisa amounts against the figure patients and the gateway actually see.
+          amount: Math.round(data.amount * 100) / 100,
           tax: data.tax || 0,
           discount: data.discount || 0,
           totalAmount,
@@ -4889,7 +5026,20 @@ export class BillingService implements OnModuleInit {
         'Invalid Idempotency-Key header: use 1-128 letters, digits, ".", "_", ":" or "-".'
       );
     }
-    if (parsed.kind === 'absent' || !args.userId) {
+    if (parsed.kind === 'absent') {
+      return run();
+    }
+    if (!args.userId) {
+      // A valid key was sent but there's no caller id to scope it to (should not happen on an
+      // authenticated route) — run unprotected rather than silently dropping the dedupe guarantee
+      // with no trace of why.
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'Idempotency-Key present but no userId on the request; running without dedupe protection',
+        'BillingService.runIdempotentPaymentIntent',
+        { route: args.route, resourceId: args.resourceId }
+      );
       return run();
     }
     const cacheKey = idempotencyCacheKey({

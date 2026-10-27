@@ -30,6 +30,7 @@ import {
   UpdateBillingPlanDto,
   CreateSubscriptionDto,
   UpdateSubscriptionDto,
+  SwitchSubscriptionDto,
   CreatePaymentDto,
   UpdatePaymentDto,
   CreateInvoiceDto,
@@ -398,6 +399,21 @@ export class BillingController {
     return this.billingService.cancelSubscription(
       id,
       immediate === 'true',
+      this.buildBillingAccessContext(req)
+    );
+  }
+
+  @Post('subscriptions/:id/switch')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.RECEPTIONIST, Role.PATIENT)
+  @RequireResourcePermission('subscriptions', 'update')
+  async switchSubscription(
+    @Param('id') id: string,
+    @Body() switchSubscriptionDto: SwitchSubscriptionDto,
+    @Request() req?: ClinicAuthenticatedRequest
+  ) {
+    return this.billingService.switchSubscription(
+      id,
+      switchSubscriptionDto.newPlanId,
       this.buildBillingAccessContext(req)
     );
   }

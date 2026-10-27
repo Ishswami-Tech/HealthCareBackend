@@ -184,6 +184,11 @@ export class UpdateSubscriptionDto {
   metadata?: Record<string, unknown>;
 }
 
+export class SwitchSubscriptionDto {
+  @IsUUID('4', { message: 'New plan ID must be a valid UUID' })
+  newPlanId!: string;
+}
+
 export class CreatePaymentDto {
   @IsNumber()
   @IsPositive()
