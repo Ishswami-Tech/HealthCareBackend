@@ -15,6 +15,7 @@ import { EventService } from '@infrastructure/events/event.service';
 import { PrismaDelegateArgs, PrismaTransactionClientWithDelegates } from '@core/types/prisma.types';
 import { LogType, LogLevel } from '@core/types/logging.types';
 import type { LocalizedProfile } from '@services/doctors/localized-profile.util';
+import { DOCTOR_PROFILE_USER_SELECT } from '@services/doctors/doctor-response.util';
 
 /** Optional professional-profile fields that are copied verbatim when defined. */
 export interface DoctorProfileFieldsInput {
@@ -33,6 +34,8 @@ export interface DoctorProfileFieldsInput {
   certifications?: string[];
   /** Already validated by normalizeLocalizedProfile; null clears the column. */
   localizedProfile?: LocalizedProfile | null;
+  /** ABDM Health Professional Registry (HPR) id. Scaffolding only; not yet verified against ABDM. */
+  abdmHprId?: string;
 }
 
 /** Fixed fees (rupees) a doctor earns per visit type in a clinic; admin-only, rest is convenience fee. */
@@ -95,6 +98,7 @@ const PASS_THROUGH_FIELDS = [
   'languages',
   'education',
   'certifications',
+  'abdmHprId',
 ] as const;
 
 /** Builds the Doctor update payload; undefined values are never written. */
@@ -457,15 +461,7 @@ export class DoctorsService {
           };
           const user = (await typedClient.user.findUnique({
             where: { id: userId } as PrismaDelegateArgs,
-            include: {
-              doctor: {
-                include: {
-                  clinics: {
-                    include: { clinic: true },
-                  },
-                },
-              },
-            } as PrismaDelegateArgs,
+            select: DOCTOR_PROFILE_USER_SELECT as PrismaDelegateArgs,
           } as PrismaDelegateArgs)) as { doctor?: { id: string } | null } | null;
           if (!user?.doctor) return user;
           const stats = await (client as unknown as Prisma.TransactionClient).review.aggregate({
@@ -560,9 +556,7 @@ export class DoctorsService {
 
         return await typedClient.user.findMany({
           where: where as PrismaDelegateArgs,
-          include: {
-            doctor: true,
-          } as PrismaDelegateArgs,
+          select: DOCTOR_PROFILE_USER_SELECT as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
       });
     };

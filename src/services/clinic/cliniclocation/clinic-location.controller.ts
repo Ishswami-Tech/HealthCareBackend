@@ -35,6 +35,7 @@ import { ClinicIdPipe } from '@core/pipes/clinic-id.pipe';
 import { CreateClinicLocationDto, UpdateClinicLocationDto } from '@dtos/clinic.dto';
 import { Cache as CacheDecorator, InvalidateClinicCache } from '@core/decorators';
 import { CacheService } from '@infrastructure/cache/cache.service';
+import { toSafeClinicResponse } from '@services/clinic/clinic-response.util';
 import { parseWorkingHours } from './working-hours.util';
 import type {
   ClinicLocationUpdateInput,
@@ -99,7 +100,7 @@ export class ClinicLocationController {
     @Request() req: { user?: { id?: string; sub?: string } }
   ): Promise<ClinicLocationResponseDto> {
     const userId = req.user?.id || req.user?.sub || 'system';
-    return await this.locationService.createClinicLocation(
+    const created = await this.locationService.createClinicLocation(
       {
         ...createLocationDto,
         // Optional on the DTO, required (possibly empty) strings on the create input.
@@ -115,6 +116,7 @@ export class ClinicLocationController {
       },
       userId
     );
+    return toSafeClinicResponse(created);
   }
 
   @Get()
@@ -155,7 +157,8 @@ export class ClinicLocationController {
     @Query('includeInactive') includeInactive?: string
   ): Promise<ClinicLocationResponseDto[]> {
     const includeInactiveFlag = includeInactive === 'true';
-    return await this.locationService.getLocations(clinicId, false, includeInactiveFlag);
+    const locations = await this.locationService.getLocations(clinicId, false, includeInactiveFlag);
+    return toSafeClinicResponse(locations);
   }
 
   @Get(':id')
@@ -191,7 +194,7 @@ export class ClinicLocationController {
     if (!location) {
       throw new NotFoundException(`Location with ID ${id} not found`);
     }
-    return location;
+    return toSafeClinicResponse(location);
   }
 
   @Put(':id')
@@ -234,6 +237,9 @@ export class ClinicLocationController {
       ...(updateLocationDto.latitude !== undefined && { latitude: updateLocationDto.latitude }),
       ...(updateLocationDto.longitude !== undefined && { longitude: updateLocationDto.longitude }),
       ...(updateLocationDto.settings !== undefined && { settings: updateLocationDto.settings }),
+      ...(updateLocationDto.abdmHfrId !== undefined && {
+        abdmHfrId: updateLocationDto.abdmHfrId,
+      }),
       ...(updateLocationDto.workingHours !== undefined && {
         workingHours: this.storedWorkingHours(updateLocationDto.workingHours),
       }),
@@ -241,7 +247,7 @@ export class ClinicLocationController {
 
     const updated = await this.locationService.updateLocation(id, updateData, userId);
     if (updateData.workingHours !== undefined) await this.clearAvailabilityCache(clinicId);
-    return updated;
+    return toSafeClinicResponse(updated);
   }
 
   /** PATCH alias of PUT :id (the web sends PATCH); same body, roles, permission and cache busting. */
@@ -310,7 +316,7 @@ export class ClinicLocationController {
 
     const updated = await this.locationService.updateLocation(id, updateData, userId);
     await this.clearAvailabilityCache(clinicId);
-    return updated;
+    return toSafeClinicResponse(updated);
   }
 
   @Delete(':id')

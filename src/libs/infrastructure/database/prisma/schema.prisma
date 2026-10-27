@@ -148,6 +148,7 @@ model Clinic {
   email                        String                              @unique
   app_name                     String                              @unique
   whatsappName                 String? // Short name for WhatsApp templates (max 15 chars)
+  abdmHipId                    String? // ABDM Health Information Provider (HIP) id for this clinic
   db_connection_string         String
   databaseName                 String?
   databaseStatus               DatabaseStatus                      @default(CREATING)
@@ -247,6 +248,7 @@ model ClinicLocation {
   timezone           String?             @default("UTC")
   workingHours       Json?
   settings           Json?
+  abdmHfrId          String? // ABDM Health Facility Registry (HFR) id for this location
   appointments       Appointment[]
   doctorClinic       DoctorClinic[]
   clinicAdmins       ClinicAdmin[]
@@ -721,6 +723,7 @@ model Doctor {
   education                    String?
   certifications               String[]                            @default([])
   localizedProfile             Json?
+  abdmHprId                    String? // ABDM Health Professional Registry (HPR) id for this doctor
   createdAt                    DateTime                            @default(now())
   appointments                 Appointment[]
   appointmentTemplates         AppointmentTemplate[]

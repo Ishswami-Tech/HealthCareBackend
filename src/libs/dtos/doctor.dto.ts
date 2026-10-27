@@ -137,6 +137,12 @@ export class DoctorProfileFieldsDto {
   @Transform(normalizeLocalizedProfileValue)
   @IsObject()
   localizedProfile?: LocalizedProfile | null;
+
+  @ApiPropertyOptional({ description: 'ABDM Health Professional Registry (HPR) id' })
+  @IsOptional()
+  @Transform(trimString)
+  @IsString()
+  abdmHprId?: string;
 }
 
 /**

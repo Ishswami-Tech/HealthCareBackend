@@ -1,6 +1,7 @@
 import { Module, Global } from '@nestjs/common';
 import { ConfigService } from './config.service';
 import { PaymentConfigService } from './payment-config.service';
+import { AbdmConfigService } from './abdm-config.service';
 
 /**
  * Enhanced Configuration Module for the Healthcare Application
@@ -10,8 +11,8 @@ import { PaymentConfigService } from './payment-config.service';
  */
 @Global()
 @Module({
-  providers: [ConfigService, PaymentConfigService],
-  exports: [ConfigService, PaymentConfigService],
+  providers: [ConfigService, PaymentConfigService, AbdmConfigService],
+  exports: [ConfigService, PaymentConfigService, AbdmConfigService],
 })
 export class ConfigModule {
   static forRoot(): typeof ConfigModule {

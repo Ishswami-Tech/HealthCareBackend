@@ -185,6 +185,7 @@ export class ClinicLocationService {
           isActive: boolean;
           createdAt: boolean;
           updatedAt: boolean;
+          abdmHfrId: boolean;
           doctorClinic?: {
             select: {
               id: boolean;
@@ -229,6 +230,7 @@ export class ClinicLocationService {
           isActive: true,
           createdAt: true,
           updatedAt: true,
+          abdmHfrId: true,
         },
       };
 

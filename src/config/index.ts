@@ -48,6 +48,7 @@ export { ConfigModule } from './config.module';
 // Direct import: import { ConfigService } from '@config/config.service';
 export { ConfigService } from './config.service';
 export { PaymentConfigService } from './payment-config.service';
+export { AbdmConfigService } from './abdm-config.service';
 export * from './constants';
 export { isCacheEnabled, getCacheProvider, CacheConfigUtils } from './cache.config';
 export { isVideoEnabled, getVideoProvider, VideoConfigUtils } from './video.config';

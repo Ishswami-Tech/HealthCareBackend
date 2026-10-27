@@ -267,6 +267,12 @@ export class UpdateClinicLocationDto {
   @IsOptional()
   @IsObject({ message: 'Settings must be an object' })
   settings?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ description: 'ABDM Health Facility Registry (HFR) id for this location' })
+  @IsOptional()
+  @IsString({ message: 'ABDM HFR id must be a string' })
+  @Transform(trimString)
+  abdmHfrId?: string;
 }
 
 /**
@@ -885,6 +891,12 @@ export class UpdateClinicDto {
       defaultNumber?: string;
     };
   };
+
+  @ApiPropertyOptional({ description: 'ABDM Health Information Provider (HIP) id for this clinic' })
+  @IsOptional()
+  @IsString({ message: 'ABDM HIP id must be a string' })
+  @Transform(trimString)
+  abdmHipId?: string;
 }
 
 /**
@@ -1018,6 +1030,11 @@ export class ClinicResponseDto {
   @IsOptional()
   @IsString({ message: 'App domain must be a string' })
   appDomain?: string;
+
+  @ApiPropertyOptional({ description: 'ABDM Health Information Provider (HIP) id for this clinic' })
+  @IsOptional()
+  @IsString({ message: 'ABDM HIP id must be a string' })
+  abdmHipId?: string;
 }
 
 /**
