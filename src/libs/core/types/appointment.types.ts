@@ -799,6 +799,7 @@ export interface AppointmentFilters {
   clinicId: string;
   page: number;
   limit: number;
+  isFollowUp?: boolean;
 }
 
 /**

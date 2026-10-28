@@ -1684,6 +1684,7 @@ export class CoreAppointmentService {
     }
     if (filters.type) where['type'] = filters.type;
     if (filters.priority) where['priority'] = filters.priority;
+    if (filters.isFollowUp !== undefined) where['isFollowUp'] = filters.isFollowUp;
     if (filters.patientId) {
       if (context.role === 'PATIENT' && context.userId) {
         if (context.patientId && filters.patientId !== context.patientId) {

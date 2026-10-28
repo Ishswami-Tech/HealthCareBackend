@@ -2106,6 +2106,14 @@ export class AppointmentFilterDto {
   @IsOptional()
   @IsNumber({}, { message: 'Limit must be a number' })
   limit?: number;
+
+  @ApiPropertyOptional({
+    description: 'Only follow-up appointments (true) or only non-follow-up ones (false)',
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'isFollowUp must be a boolean' })
+  isFollowUp?: boolean;
 }
 
 // =============================================

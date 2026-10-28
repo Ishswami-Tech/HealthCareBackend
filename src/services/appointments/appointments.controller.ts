@@ -1194,6 +1194,12 @@ export class AppointmentsController {
     description: `Number of items per page (default 20, max ${APPOINTMENT_LIST_MAX_LIMIT}; larger values are clamped)`,
     type: Number,
   })
+  @ApiQuery({
+    name: 'isFollowUp',
+    required: false,
+    description: 'Only follow-up appointments ("true") or only non-follow-up ones ("false")',
+    type: Boolean,
+  })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Return all appointments',
@@ -1221,7 +1227,8 @@ export class AppointmentsController {
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
     @Query('patientId') patientId?: string,
-    @Query('type') type?: string
+    @Query('type') type?: string,
+    @Query('isFollowUp') isFollowUp?: string
   ): Promise<ServiceResponse<AppointmentListResponseDto>> {
     const context = 'AppointmentsController.getAppointments';
     // startDate/endDate are the names the dashboards send; dateFrom/dateTo stay supported.
@@ -1236,6 +1243,8 @@ export class AppointmentsController {
       }
     }
     const typeFilter = parseAppointmentTypeFilter(type);
+    const isFollowUpFilter =
+      isFollowUp === 'true' ? true : isFollowUp === 'false' ? false : undefined;
 
     try {
       const clinicId = req.clinicContext?.clinicId;
@@ -1274,6 +1283,7 @@ export class AppointmentsController {
         locationId: locationId || undefined,
         page: Math.max(1, page),
         limit: resolveAppointmentPageSize(limit),
+        isFollowUp: isFollowUpFilter,
       };
 
       // Log the operation with proper structure
@@ -1310,6 +1320,7 @@ export class AppointmentsController {
         ...(!date && rangeStart && { startDate: rangeStart }),
         ...(!date && rangeEnd && { endDate: rangeEnd }),
         ...(effectiveLocationId && { locationId: effectiveLocationId }),
+        ...(isFollowUpFilter !== undefined && { isFollowUp: isFollowUpFilter }),
         clinicId,
         page: Math.max(1, page),
         limit: resolveAppointmentPageSize(limit),
