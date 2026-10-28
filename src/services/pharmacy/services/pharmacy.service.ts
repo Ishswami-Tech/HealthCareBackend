@@ -620,6 +620,12 @@ export class PharmacyService {
       const current: PrescriptionDispenseRequestItem = aggregated.get(requestKey) || {
         medicineId: item.medicineId,
         ...(item.prescriptionItemId ? { prescriptionItemId: item.prescriptionItemId } : {}),
+        // Dropped here (never copied from `item`) meant every substitute-dispense request lost
+        // its substituteMedicineId by the time the stock-validation loop ran, which then fell
+        // back to validating the ORIGINAL (often out-of-stock) medicine instead of the chosen
+        // substitute — "Insufficient stock for X" even when X's substitute had plenty.
+        ...(item.substituteMedicineId ? { substituteMedicineId: item.substituteMedicineId } : {}),
+        ...(item.substitutionReason ? { substitutionReason: item.substitutionReason } : {}),
         quantity: 0,
         lots: [],
       };
