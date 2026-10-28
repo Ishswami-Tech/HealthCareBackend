@@ -414,6 +414,8 @@ export class SecurityConfigService {
         'X-Cache-Bust',
         'baggage',
         'sentry-trace',
+        'Idempotency-Key',
+        'idempotency-key',
       ],
       // Content-Disposition: the web app saves invoice / receipt / report files under the name
       // the server chose instead of a blob <uuid>.
