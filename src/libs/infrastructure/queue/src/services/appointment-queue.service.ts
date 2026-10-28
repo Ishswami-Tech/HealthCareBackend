@@ -354,9 +354,17 @@ export class AppointmentQueueService {
           type: { not: 'VIDEO_CALL' },
           status: { in: [...LIVE_QUEUE_DB_STATUSES] },
           // The slot day is within a day of the arrival (cross-midnight window), which lets the
-          // (clinicId, date, status) index drive the query; checkedInAt picks today's arrivals.
+          // (clinicId, date, status) index drive the query. checkedInAt is widened the same way:
+          // a patient checked in late yesterday (or whose visit simply ran past midnight before
+          // the doctor saw them) is still CONFIRMED/IN_PROGRESS, not COMPLETED, so the status
+          // filter is what actually bounds this query — restricting checkedInAt to today's IST
+          // day alone dropped their position/ETA from the live queue the moment the calendar day
+          // rolled over, even though they were still genuinely waiting (found 2026-10-27).
           date: { gte: new Date(from.getTime() - DAY_MS), lte: new Date(to.getTime() + DAY_MS) },
-          checkedInAt: { gte: from, lte: to },
+          checkedInAt: {
+            gte: new Date(from.getTime() - DAY_MS),
+            lte: new Date(to.getTime() + DAY_MS),
+          },
         },
         select: {
           id: true,

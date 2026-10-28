@@ -355,7 +355,20 @@ export class InPersonVisitService {
         take: 40,
       })
     );
-    return rows.filter(row => isBookingInCheckInScope(row, now)).slice(0, 20);
+    // A patient already checked in (and not yet completed/cancelled) stays on their own "today"
+    // list regardless of calendar day: isBookingInCheckInScope is tuned for "should I prompt this
+    // patient to check in," and correctly drops a booking once its check-in window has closed —
+    // but that same window closing at midnight was also dropping an ALREADY-ACTIVE visit from the
+    // patient's live-queue view, mid-visit, the moment the calendar day rolled over (found
+    // 2026-10-27 night: a checked-in patient's /patient/queue page said "not in a queue" right
+    // next to a dashboard card confirming they were). A late-running real clinic has exactly this
+    // shape, not just a test that happened to straddle midnight.
+    const isActiveVisit = (row: InPersonAppointmentRow): boolean =>
+      Boolean(row.checkedInAt) &&
+      !row.completedAt &&
+      row.status !== 'CANCELLED' &&
+      row.status !== 'NO_SHOW';
+    return rows.filter(row => isActiveVisit(row) || isBookingInCheckInScope(row, now)).slice(0, 20);
   }
 
   /** Every in-person appointment of one location on one IST day (reception desk). */
