@@ -444,14 +444,24 @@ export class InventoryService {
         }
 
         if (remaining > unbatchedAvailable) {
+          // Not necessarily a true shortage: `Medicine.stock` is a maintained count that doesn't
+          // auto-zero when the medicine's own expiryDate passes, so "short by N" can fire with
+          // real units "on hand" that are just expired and correctly refused — found live
+          // 2026-10-28, a medicine with stock=1 and zero tracked batches threw "short by 1" for a
+          // 1-unit request purely because its expiryDate was 10 days in the past. Say that
+          // plainly instead of implying the pharmacy is simply out of stock.
+          const message = medicineExpired
+            ? `${medicineLabel(medicine?.name)} has expired (on ${medicine?.expiryDate?.toISOString().slice(0, 10)}) and cannot be dispensed — update the stock record or receive a new batch.`
+            : `Insufficient stock for ${medicineLabel(medicine?.name)}: short by ${remaining - unbatchedAvailable} units`;
           throw new HealthcareError(
             ErrorCode.PHARMACY_STOCK_INSUFFICIENT,
-            `Insufficient stock for ${medicineLabel(medicine?.name)}: short by ${remaining - unbatchedAvailable} units`,
+            message,
             HttpStatus.CONFLICT,
             {
               medicineId: item.medicineId,
               shortage: remaining - unbatchedAvailable,
               requested: item.quantity,
+              expired: medicineExpired,
             }
           );
         }
