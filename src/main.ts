@@ -41,6 +41,7 @@ import {
   parseTrustedProxyHops,
 } from '@security/rate-limit/rate-limit-keys.util';
 import { BillingRedactionInterceptor } from '@core/interceptors/billing-redaction.interceptor';
+import { CredentialLeakGuardInterceptor } from '@core/interceptors/credential-leak-guard.interceptor';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import type { Server, ServerOptions } from 'socket.io';
 import cluster from 'cluster';
@@ -993,6 +994,12 @@ async function bootstrap() {
     // `loggingService` guard so it always exists. It is a `useGlobalInterceptors` entry, so it wraps
     // the APP_INTERCEPTOR cache interceptor and also redacts replayed cache hits.
     middlewareManager.configureInterceptors(app, [{ interceptor: BillingRedactionInterceptor }]);
+
+    // Global backstop against the "raw Prisma include leaks a password hash / db_connection_string"
+    // bug class (5 independent incidents in one day — see
+    // project_healthcarebackend_db_connection_string_leak.md). Per-controller `select` allowlists
+    // remain the real fix at the source; this catches the next one before it ships.
+    middlewareManager.configureInterceptors(app, [{ interceptor: CredentialLeakGuardInterceptor }]);
 
     logger.log('Global pipes, filters, and interceptors configured');
 
