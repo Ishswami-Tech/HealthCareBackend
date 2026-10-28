@@ -1764,22 +1764,11 @@ export class CoreAppointmentService {
           attempts: 2,
         }
       );
-
-      // Queue appointment processing job using canonical JobType
-      await this.queueService.addJob(
-        JobType.APPOINTMENT,
-        'APPOINTMENT_PROCESSING',
-        {
-          appointmentId: appointment.id,
-          operation,
-          context: _context,
-        },
-        {
-          priority: (QueueService.PRIORITIES as { HIGH: number }).HIGH,
-          delay: 0,
-          attempts: 3,
-        }
-      );
+      // No longer queues APPOINTMENT_PROCESSING here: it was a stub (logged and returned
+      // {success:true} without reading operation/appointmentId at all) enqueued at HIGH priority
+      // on every single appointment create/update — pure queue throughput waste, nothing ever
+      // depended on its result. Removed rather than inventing unspecified "processing" logic for
+      // it; add it back with real behavior if a concrete need shows up.
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       void this.loggingService.log(

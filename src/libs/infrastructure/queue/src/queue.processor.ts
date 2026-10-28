@@ -326,10 +326,6 @@ export class QueueProcessor {
               if (job.name.includes('notification'))
                 return this.processNotification(job as unknown as Job<JobData>);
 
-              if (action === 'APPOINTMENT_PROCESSING') {
-                return { success: true };
-              }
-
               throw new Error(
                 `Unknown job type: ${jobType} (Action: ${action}, Name: ${job.name})`
               );
@@ -466,9 +462,6 @@ export class QueueProcessor {
             payload['treatmentType'] as string | undefined,
             payload['notes'] as string | undefined
           );
-
-        case 'APPOINTMENT_PROCESSING':
-          return this.processAppointmentProcessing(job as unknown as Job<JobData>);
 
         default:
           throw new Error(`Unsupported appointment queue action: ${action}`);
@@ -1026,28 +1019,6 @@ export class QueueProcessor {
     }
 
     return { success: true };
-  }
-
-  processAppointmentProcessing(job: Job<JobData>): { success: boolean } {
-    try {
-      void this.loggingService.log(
-        LogType.QUEUE,
-        LogLevel.INFO,
-        `Processing appointment background job ${safeStringify(job.id)}`,
-        'QueueProcessor',
-        { jobId: safeStringify(job.id), data: safeStringify(job.data) }
-      );
-      return { success: true };
-    } catch (error) {
-      void this.loggingService.log(
-        LogType.QUEUE,
-        LogLevel.ERROR,
-        `Error processing appointment background job`,
-        'QueueProcessor',
-        { jobId: safeStringify(job.id), error: String(error) }
-      );
-      throw error;
-    }
   }
 
   processAppointmentAnalytics(job: Job<JobData>): { success: boolean } {
