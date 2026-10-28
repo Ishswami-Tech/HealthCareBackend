@@ -43,7 +43,12 @@ const SECURITY_MINIMUMS = [
   },
   { name: 'webpack', min: '5.104.1', cve: 'npm:1113041', desc: 'buildHttp SSRF bypass' },
   { name: 'diff', min: '4.0.4', cve: 'npm:1112704', desc: 'DoS in parsePatch/applyPatch' },
-  { name: 'qs', min: '6.14.2', cve: 'npm:1113159', desc: 'arrayLimit bypass DoS' },
+  {
+    name: 'qs',
+    min: '6.16.1',
+    cve: 'GHSA-6pq8-jhm2-2vcw',
+    desc: "stringify({arrayFormat:'comma'}) throws on a non-callable own toString (DoS)",
+  },
   {
     name: 'fast-xml-parser',
     min: '4.5.2',
