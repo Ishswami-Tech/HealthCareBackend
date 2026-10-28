@@ -20,7 +20,7 @@ import { JwtAuthService } from './core/jwt.service';
 import { classifyRefreshFailure } from './core/refresh-failure.util';
 import { SocialAuthService } from './core/social-auth.service';
 import { OtpService } from './core/otp.service';
-import { normalizeAuthPhoneNumber } from './core/phone-normalizer.util';
+import { normalizeAuthPhoneNumber, authPhoneLookupCandidates } from './core/phone-normalizer.util';
 import {
   LoginDto,
   RegisterDto,
@@ -1318,10 +1318,12 @@ export class AuthService {
       if (isEmail) {
         user = await this.databaseService.findUserByEmailSafe(requestDto.identifier);
       } else {
-        // Find by phone
-        const normalizedPhoneIdentifier = normalizeAuthPhoneNumber(requestDto.identifier);
+        // Find by phone — try every stored format the same number could be saved as (see
+        // authPhoneLookupCandidates), not just the E.164 form, or an existing account whose
+        // phone is stored as bare digits is missed and a new ghost account gets auto-registered.
+        const phoneCandidates = authPhoneLookupCandidates(requestDto.identifier);
         const users = await this.databaseService.findUsersSafe(
-          { phone: normalizedPhoneIdentifier },
+          { phone: { in: phoneCandidates } },
           { take: 1 }
         );
         user = users[0] || null;
@@ -1555,9 +1557,10 @@ export class AuthService {
     if (isEmail) {
       user = await this.databaseService.findUserByEmailSafe(verifyDto.identifier);
     } else {
-      // Find user by phone number
+      // Find user by phone number — match every format the number could be stored as (see
+      // authPhoneLookupCandidates), not just the E.164 form `normalizedIdentifier` carries.
       const usersByPhone = await this.databaseService.findUsersSafe(
-        { phone: normalizedIdentifier },
+        { phone: { in: authPhoneLookupCandidates(verifyDto.identifier) } },
         { take: 1 }
       );
       user = usersByPhone[0] ?? null;
@@ -2451,10 +2454,14 @@ export class AuthService {
     const firstName = profileRecord['firstName'] ?? profileRecord['first_name'];
     const lastName = profileRecord['lastName'] ?? profileRecord['last_name'];
     const phone = profileRecord['phone'] ?? profileRecord['mobile'];
+    // Accept the account's own login-identity verification (isVerified, set true for any
+    // successful OTP login regardless of channel), not phoneVerified specifically — see
+    // profile-completion.guard.ts's hasVerifiedContact for the same fix and why it matters
+    // (most real patients log in via email OTP and never separately verify a phone).
     const hasVerifiedPhone =
       typeof phone === 'string' &&
       phone.trim().length > 0 &&
-      profileRecord['phoneVerified'] === true;
+      (profileRecord['phoneVerified'] === true || profileRecord['isVerified'] === true);
 
     if (normalizedRole !== 'PATIENT') {
       return profileRecord['isProfileComplete'] === true;
@@ -2470,8 +2477,11 @@ export class AuthService {
   }
 
   private calculateProfileCompletionFromUser(user: Record<string, unknown>, role: Role): boolean {
+    // Same fix as isProfileComplete() above and profile-completion.guard.ts's hasVerifiedContact:
+    // accept isVerified (set for any successful OTP login) as well as phoneVerified specifically.
     const hasVerifiedPhone =
-      this.isProfileFieldPresent(user['phone']) && user['phoneVerified'] === true;
+      this.isProfileFieldPresent(user['phone']) &&
+      (user['phoneVerified'] === true || user['isVerified'] === true);
 
     if (role !== Role.PATIENT) {
       return true;

@@ -84,7 +84,9 @@ export type UserWhereInput = {
   email?: string;
   firstName?: string;
   lastName?: string;
-  phone?: string;
+  // `{ in: [...] }` matches a phone stored in any of several formats (E.164 and bare-digit) in
+  // one query — see authPhoneLookupCandidates in phone-normalizer.util.ts.
+  phone?: string | { in: string[] };
   isActive?: boolean;
   isVerified?: boolean;
   role?: string;

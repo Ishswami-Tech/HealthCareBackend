@@ -43,7 +43,16 @@ function isNonEmptyTrimmedString(value: unknown): boolean {
 function hasVerifiedPhone(user: Record<string, unknown>): boolean {
   const phone = user['phone'] ?? user['mobile'];
 
-  return isNonEmptyTrimmedString(phone) && user['phoneVerified'] === true;
+  // Accept the account's own login-identity verification (isVerified, set true for any
+  // successful OTP login regardless of channel) as well as phoneVerified specifically — same
+  // fix as profile-completion.guard.ts's hasVerifiedContact and auth.service.ts's
+  // isProfileComplete/calculateProfileCompletionFromUser (see
+  // project_healthcarebackend_profile_completion_phoneverified_blocks_dashboard.md: this exact
+  // check was independently duplicated in four places, each requiring its own fix).
+  return (
+    isNonEmptyTrimmedString(phone) &&
+    (user['phoneVerified'] === true || user['isVerified'] === true)
+  );
 }
 
 function hasCompletePatientProfileFields(user: Record<string, unknown>): boolean {
