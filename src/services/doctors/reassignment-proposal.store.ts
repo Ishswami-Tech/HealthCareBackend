@@ -137,39 +137,49 @@ export class ReassignmentProposalStore {
    * appointment, so a replaced override updates the existing row instead of duplicating it.
    */
   async recordPending(input: PendingProposalInput): Promise<void> {
-    const existing = await this.findPending(input.appointmentId, input.clinicId);
-    if (existing) {
-      await this.databaseService.executeHealthcareWrite(
-        async client => {
-          const tx = client as unknown as Prisma.TransactionClient;
-          return await tx.doctorReassignmentProposal.update({
-            where: { id: existing.id },
+    // The read-then-write below is guarded by a transaction-scoped advisory lock keyed on
+    // appointment+clinic: two cascade runs that overlap for the same visit serialize on it,
+    // so "one PENDING row per appointment" holds even though no DB constraint backs it.
+    const lockKey = `reassign-proposal:${input.appointmentId}:${input.clinicId}`;
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const tx = client as unknown as Prisma.TransactionClient;
+        await tx.$transaction(async db => {
+          // $executeRaw (not $queryRaw): the lock function returns a void column, which
+          // Prisma's raw-query deserializer rejects; executeRaw returns only the row count.
+          await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}));`;
+          const existing = await db.doctorReassignmentProposal.findFirst({
+            where: {
+              appointmentId: input.appointmentId,
+              clinicId: input.clinicId,
+              status: 'PENDING',
+              deletedAt: null,
+            },
+          });
+          if (existing) {
+            await db.doctorReassignmentProposal.update({
+              where: { id: existing.id },
+              data: {
+                doctorId: input.doctorId,
+                date: dayKeyToDate(input.dateKey),
+                reason: input.reason ?? null,
+                ...(input.notes != null ? { notes: input.notes } : {}),
+              },
+            });
+            return;
+          }
+          await db.doctorReassignmentProposal.create({
             data: {
+              clinicId: input.clinicId,
               doctorId: input.doctorId,
+              appointmentId: input.appointmentId,
               date: dayKeyToDate(input.dateKey),
+              autoEligible: false,
+              status: 'PENDING',
               reason: input.reason ?? null,
               ...(input.notes != null ? { notes: input.notes } : {}),
             },
           });
-        },
-        this.auditInfo(input, 'PENDING', 'system', 'system')
-      );
-      return;
-    }
-    await this.databaseService.executeHealthcareWrite(
-      async client => {
-        const tx = client as unknown as Prisma.TransactionClient;
-        return await tx.doctorReassignmentProposal.create({
-          data: {
-            clinicId: input.clinicId,
-            doctorId: input.doctorId,
-            appointmentId: input.appointmentId,
-            date: dayKeyToDate(input.dateKey),
-            autoEligible: false,
-            status: 'PENDING',
-            reason: input.reason ?? null,
-            ...(input.notes != null ? { notes: input.notes } : {}),
-          },
         });
       },
       this.auditInfo(input, 'PENDING', 'system', 'system')
@@ -181,7 +191,6 @@ export class ReassignmentProposalStore {
    * the appointment (an earlier override), it is upgraded to APPLIED rather than duplicated.
    */
   async recordApplied(input: AppliedProposalInput): Promise<void> {
-    const existing = await this.findPending(input.appointmentId, input.clinicId);
     const fields = {
       doctorId: input.doctorId,
       date: dayKeyToDate(input.dateKey),
@@ -194,17 +203,34 @@ export class ReassignmentProposalStore {
       notes:
         input.notes ?? 'Auto-moved: an open same-clinic provider was available at the exact slot',
     };
+    // Same transaction-scoped advisory lock as recordPending: the "find the PENDING row, else
+    // create" decision must be atomic so a racing recordPending can't slip a duplicate in.
+    const lockKey = `reassign-proposal:${input.appointmentId}:${input.clinicId}`;
     await this.databaseService.executeHealthcareWrite(
       async client => {
         const tx = client as unknown as Prisma.TransactionClient;
-        if (existing) {
-          return await tx.doctorReassignmentProposal.update({
-            where: { id: existing.id },
-            data: fields,
+        await tx.$transaction(async db => {
+          // $executeRaw (not $queryRaw): the lock function returns a void column, which
+          // Prisma's raw-query deserializer rejects; executeRaw returns only the row count.
+          await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}));`;
+          const existing = await db.doctorReassignmentProposal.findFirst({
+            where: {
+              appointmentId: input.appointmentId,
+              clinicId: input.clinicId,
+              status: 'PENDING',
+              deletedAt: null,
+            },
           });
-        }
-        return await tx.doctorReassignmentProposal.create({
-          data: { ...fields, clinicId: input.clinicId, appointmentId: input.appointmentId },
+          if (existing) {
+            await db.doctorReassignmentProposal.update({
+              where: { id: existing.id },
+              data: fields,
+            });
+            return;
+          }
+          await db.doctorReassignmentProposal.create({
+            data: { ...fields, clinicId: input.clinicId, appointmentId: input.appointmentId },
+          });
         });
       },
       this.auditInfo(input, 'APPLIED', 'system', 'system')
@@ -222,6 +248,15 @@ export class ReassignmentProposalStore {
     notes?: string
   ): Promise<ReassignmentProposalResponse> {
     const actorId = actor.userId || 'system';
+    // Load the row first so the audit record points at the same resource the create side
+    // (recordPending / recordApplied) does: the APPOINTMENT id, not this proposal row's id.
+    const before = await this.databaseService.executeHealthcareRead(async client => {
+      const tx = client as unknown as Prisma.TransactionClient;
+      return await tx.doctorReassignmentProposal.findUnique({
+        where: { id },
+        select: { appointmentId: true, doctorId: true, clinicId: true },
+      });
+    });
     const row = await this.databaseService.executeHealthcareWrite(
       async client => {
         const tx = client as unknown as Prisma.TransactionClient;
@@ -236,7 +271,12 @@ export class ReassignmentProposalStore {
         });
       },
       this.auditInfo(
-        { clinicId: actor.clinicId ?? '', doctorId: '', appointmentId: id, dateKey: '' },
+        {
+          clinicId: before?.clinicId ?? actor.clinicId ?? '',
+          doctorId: before?.doctorId ?? '',
+          appointmentId: before?.appointmentId ?? id,
+          dateKey: '',
+        },
         status,
         actorId,
         actor.role
@@ -289,19 +329,6 @@ export class ReassignmentProposalStore {
     if (!doctor || (doctor.id !== actor.userId && doctor.userId !== actor.userId)) {
       throw new BadRequestException('Doctors can only manage their own reassignment proposals');
     }
-  }
-
-  private async findPending(
-    appointmentId: string,
-    clinicId: string
-  ): Promise<ReassignmentProposalRow | null> {
-    const row = await this.databaseService.executeHealthcareRead(async client => {
-      const tx = client as unknown as Prisma.TransactionClient;
-      return await tx.doctorReassignmentProposal.findFirst({
-        where: { appointmentId, clinicId, status: 'PENDING', deletedAt: null },
-      });
-    });
-    return row ?? null;
   }
 
   private auditInfo(

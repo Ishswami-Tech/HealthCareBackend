@@ -18,6 +18,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events/event.service';
 import { LogType, LogLevel } from '@core/types';
+import { HealthcareError, ErrorCode } from '@core/errors';
 import type { AppointmentContext } from '@core/types/appointment.types';
 import type { AppointmentWithRelations } from '@core/types/database.types';
 import {
@@ -117,7 +118,7 @@ export class ReassignmentProposalService {
         input.notes?.trim()
       );
     }
-    return await this.proposalStore.setStatus(id, actor, 'APPLIED', input.notes?.trim());
+    return await this.markAppliedWithTolerance(id, clinicId, actor, input.notes?.trim());
   }
 
   /**
@@ -139,12 +140,47 @@ export class ReassignmentProposalService {
       );
     }
     await this.applyDayMove(proposal, slot.date, slot.time, actor, 'Next available slot');
-    return await this.proposalStore.setStatus(
+    return await this.markAppliedWithTolerance(
       id,
+      clinicId,
       actor,
-      'APPLIED',
       'Moved to the next available slot'
     );
+  }
+
+  /**
+   * Mark the proposal APPLIED after the visit move already succeeded. The move itself is the
+   * source of truth: if this bookkeeping write fails transiently the patient is NOT un-moved,
+   * so the failure is logged and the response carries a `notes` warning instead of a 500 that
+   * would make the admin believe nothing happened. Re-applying is safe — `requirePending`
+   * rejects it (the row is no longer PENDING) or, in the rarer case the mark truly never
+   * landed, the reschedule path's own reschedulability/slot guards 400 it out cleanly.
+   */
+  private async markAppliedWithTolerance(
+    id: string,
+    clinicId: string,
+    actor: DayAvailabilityActor,
+    notes?: string
+  ): Promise<ReassignmentProposalResponse> {
+    try {
+      return await this.proposalStore.setStatus(id, actor, 'APPLIED', notes);
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.WARN,
+        'Visit moved but the proposal could not be marked APPLIED; the row stays PENDING and needs a re-apply or manual fix',
+        SOURCE,
+        {
+          proposalId: id,
+          clinicId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      throw new HealthcareError(
+        ErrorCode.DATABASE_TRANSACTION_FAILED,
+        'The appointment was moved, but marking the proposal applied failed — please retry the action'
+      );
+    }
   }
 
   /** Defer to reception/admin: no patient move yet, the patient is told it is pending. */

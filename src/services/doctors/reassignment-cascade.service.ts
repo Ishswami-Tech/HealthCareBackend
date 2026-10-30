@@ -115,9 +115,12 @@ export class ReassignmentCascadeService {
     summary.affected = visits.length;
     // One availability lookup per provider per run: every visit shares the day.
     const openSlotsByProvider = new Map<string, string[]>();
+    // Billing state is per-visit but batched into two set lookups up front instead of one
+    // unindexed payment + invoice read per visit (a closed day can strand many at once).
+    const billingBlocked = await this.loadBillingBlockedVisits(visits, input.clinicId);
     for (const visit of visits) {
       try {
-        const moved = await this.trySafeAutoMove(input, visit, openSlotsByProvider);
+        const moved = await this.trySafeAutoMove(input, visit, openSlotsByProvider, billingBlocked);
         if (moved) {
           summary.autoMoved += 1;
         } else {
@@ -239,9 +242,10 @@ export class ReassignmentCascadeService {
   private async trySafeAutoMove(
     input: DayOverrideCascadeInput,
     visit: AffectedVisit,
-    openSlotsByProvider: Map<string, string[]>
+    openSlotsByProvider: Map<string, string[]>,
+    billingBlocked: ReadonlySet<string>
   ): Promise<boolean> {
-    if (await this.hasBillingImpact(visit.id, input.clinicId)) return false;
+    if (billingBlocked.has(visit.id)) return false;
 
     let candidates: ProviderCandidate[];
     try {
@@ -273,6 +277,15 @@ export class ReassignmentCascadeService {
         SYSTEM_ACTOR,
         `Day override removed the OPD window; auto-moved to ${candidate.name} (same time)`
       );
+      // The per-run grid snapshot for this provider no longer has this slot — another move in
+      // this same run must not reuse it (the reassign path does not re-check slot availability).
+      const cachedSlots = openSlotsByProvider.get(candidate.id);
+      if (cachedSlots) {
+        openSlotsByProvider.set(
+          candidate.id,
+          cachedSlots.filter(slot => slot !== visit.time)
+        );
+      }
       await this.notifyPatientOfSameTimeMove(input, visit, candidate.name);
       await this.proposalStore.recordApplied({
         clinicId: input.clinicId,
@@ -314,22 +327,52 @@ export class ReassignmentCascadeService {
     return slots.includes(visit.time);
   }
 
-  /** No billing impact = no COMPLETED payment and no live (non-VOID) invoice on the visit. */
-  private async hasBillingImpact(appointmentId: string, clinicId: string): Promise<boolean> {
-    return await this.databaseService.executeHealthcareRead(async client => {
-      const tx = client as unknown as Prisma.TransactionClient;
-      const [payment, invoice] = await Promise.all([
-        tx.payment.findFirst({
-          where: { appointmentId, status: 'COMPLETED' },
-          select: { id: true },
-        }),
-        tx.invoice.findFirst({
-          where: { appointmentId, clinicId, status: { not: 'VOID' } },
-          select: { id: true },
-        }),
-      ]);
-      return Boolean(payment || invoice);
-    });
+  /**
+   * No billing impact = no COMPLETED payment and no live (non-VOID) invoice on the visit.
+   * Batched: one set lookup each for payments and invoices instead of two per-visit reads
+   * (a closed day can strand many visits at once; `Invoice.appointmentId` had no index and
+   * the cascade issued N×2 scans). Fail-open: any read error returns an empty set, so a
+   * transient blip keeps the safe-auto path available rather than stranding every visit —
+   * the same trade-off the cascade makes everywhere, and the billing sync inside
+   * `rescheduleAppointment` / `reassignDoctor` re-checks on the manual path.
+   */
+  private async loadBillingBlockedVisits(
+    visits: readonly AffectedVisit[],
+    clinicId: string
+  ): Promise<ReadonlySet<string>> {
+    const ids = visits.map(visit => visit.id);
+    if (ids.length === 0) return new Set<string>();
+    try {
+      const blocked = await this.databaseService.executeHealthcareRead(async client => {
+        const tx = client as unknown as Prisma.TransactionClient;
+        const [payments, invoices] = await Promise.all([
+          tx.payment.findMany({
+            where: { appointmentId: { in: ids }, status: 'COMPLETED' },
+            select: { appointmentId: true },
+          }),
+          tx.invoice.findMany({
+            where: { appointmentId: { in: ids }, clinicId, status: { not: 'VOID' } },
+            select: { appointmentId: true },
+          }),
+        ]);
+        const set = new Set<string>();
+        for (const row of payments) {
+          if (row.appointmentId) set.add(row.appointmentId);
+        }
+        for (const row of invoices) {
+          if (row.appointmentId) set.add(row.appointmentId);
+        }
+        return set;
+      });
+      return blocked ?? new Set<string>();
+    } catch (error) {
+      this.warn(
+        'Billing-impact pre-check failed; safe-auto moves stay enabled (fail-open)',
+        { clinicId, count: ids.length },
+        error
+      );
+      return new Set<string>();
+    }
   }
 
   /**

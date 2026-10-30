@@ -435,54 +435,6 @@ export class DayAvailabilityService {
     }
   }
 
-  /**
-   * The single lookup the availability engine calls: the active override's session blocks for
-   * `doctorId` on `dateKey` (IST YYYY-MM-DD), or null when there is no active override (the
-   * engine then falls back to the doctor's weekly workingHours). Fails open (null) on any
-   * read error, mirroring readCalendarClosure: an override-lookup failure must not take
-   * availability down.
-   */
-  async sessionsForDate(
-    doctorId: string,
-    clinicId: string,
-    dateKey: string,
-    locationId?: string | null
-  ): Promise<Array<{ start: string; end: string }> | null> {
-    if (!DAY_KEY.test(dateKey)) return null;
-    try {
-      const row = await this.databaseService.executeHealthcareRead(async client => {
-        const tx = client as unknown as Prisma.TransactionClient;
-        return await tx.doctorDayAvailability.findFirst({
-          where: {
-            doctorId,
-            clinicId,
-            deletedAt: null,
-            date: this.dayKeyToDate(dateKey),
-            ...(locationId ? { locationId } : {}),
-          },
-          select: { sessions: true },
-        });
-      });
-      if (!row) return null;
-      const parsed = this.parseSessionsJson(row.sessions);
-      return parsed ?? [];
-    } catch (error) {
-      void this.loggingService.log(
-        LogType.BUSINESS,
-        LogLevel.WARN,
-        'Doctor day-override lookup failed; falling back to weekly working hours',
-        SOURCE,
-        {
-          doctorId,
-          clinicId,
-          dateKey,
-          error: error instanceof Error ? error.message : String(error),
-        }
-      );
-      return null;
-    }
-  }
-
   /** Resolve a doctor by Doctor.id or the doctor's User.id inside a clinic. */
   private async assertCanManageDoctor(
     doctorId: string,
@@ -495,14 +447,23 @@ export class DayAvailabilityService {
       return;
     }
     if (actor.role === 'DOCTOR' || actor.role === 'ASSISTANT_DOCTOR') {
+      const clinicId = actor.clinicId;
+      if (!clinicId) throw new BadRequestException('Clinic context is required');
+      // Own Doctor row, scoped to the session's clinic: a doctor who works at several
+      // clinics may only manage overrides (and fire the L3 cascade) inside the clinic of
+      // their current session, never in a foreign one. Mirrors resolveDoctorEntityId's
+      // clinic-scoped lookup (doctor id OR the doctor's user id, linked to this clinic).
       const doctor = await this.databaseService.executeHealthcareRead(async client => {
         const tx = client as unknown as Prisma.TransactionClient;
         return await tx.doctor.findFirst({
-          where: { OR: [{ id: doctorId }, { userId: doctorId }] },
+          where: {
+            OR: [{ id: doctorId }, { userId: doctorId }],
+            clinics: { some: { clinicId } },
+          },
           select: { id: true, userId: true },
         });
       });
-      if (!doctor) throw new NotFoundException('Doctor not found');
+      if (!doctor) throw new NotFoundException('Doctor not found in this clinic');
       if (doctor.id !== actor.userId && doctor.userId !== actor.userId) {
         throw new BadRequestException('Doctors can only manage their own day overrides');
       }

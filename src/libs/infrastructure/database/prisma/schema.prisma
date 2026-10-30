@@ -1731,6 +1731,7 @@ model Invoice {
   @@index([patientId, createdAt])
   @@index([clinicId, patientId])
   @@index([clinicId, createdAt]) // Clinic invoice list / reports by date
+  @@index([appointmentId, clinicId, status]) // Reassignment cascade / reschedule billing-impact checks
 }
 
 // Kind of bill an Invoice represents; drives the patient "Bill History" tab.
