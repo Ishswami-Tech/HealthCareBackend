@@ -4146,3 +4146,58 @@ model DoctorFavourite {
   @@index([userId, kind, sortOrder])
   @@map("doctor_favourites")
 }
+
+/// Dated override of a doctor's OPD windows for one calendar day, on top of the static weekly
+/// Doctor.workingHours. Sessions are the per-day shape the availability engine consumes:
+/// a JSON array of { start: 'HH:MM', end: 'HH:MM' } blocks (e.g. going somewhere / family
+/// matter / illness -> a short window, or [] = closed for the day). At most ONE active
+/// (deletedAt IS NULL) override per doctor+date(+location) exists; the service replaces on
+/// create. `date` is an IST-midnight day key in UTC, compared as YYYY-MM-DD.
+model DoctorDayAvailability {
+  id         String    @id @default(uuid())
+  doctorId   String
+  clinicId   String
+  locationId String?
+  date       DateTime  @db.Date
+  sessions   Json      @default("[]")
+  reason     String?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  @@index([doctorId, date])
+  @@index([clinicId, date])
+  @@map("doctor_day_availability")
+}
+
+/// L3 cascade proposal: when a doctor's OPD windows are removed for a day by a
+/// DoctorDayAvailability override, the not-yet-started visits that fall inside the removed
+/// windows either auto-move to an open same-clinic provider (recorded here as a resolved
+/// APPLIED row, autoEligible = true) or become a PENDING proposal the doctor / clinic-admin
+/// reviews (apply a chosen provider or next-available-day, hold for reception, or discard).
+/// At most one PENDING row per appointment; replacing an override updates it, never piles up.
+/// `date` is the IST-midnight day key in UTC, compared as YYYY-MM-DD (same convention as
+/// doctor_day_availability).
+model DoctorReassignmentProposal {
+  id                      String    @id @default(uuid())
+  clinicId                String
+  doctorId                String
+  appointmentId           String
+  date                    DateTime  @db.Date
+  reason                  String?
+  autoEligible            Boolean   @default(false)
+  suggestedTargetDoctorId String?
+  status                  String    @default("PENDING")
+  notes                   String?
+  appliedBy               String?
+  resolvedAt              DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+  deletedAt               DateTime?
+
+  @@index([clinicId, status])
+  @@index([appointmentId])
+  @@index([doctorId, date])
+  @@map("doctor_reassignment_proposal")
+}

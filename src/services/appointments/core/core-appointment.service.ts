@@ -75,6 +75,7 @@ import {
 } from '../../../libs/utils/date-time.util';
 import { startOfIstDay, endOfIstDay } from '@utils/clock.util';
 import { readClosureForDay, type ClosureDecision } from './clinic-closure.util';
+import { readDayOverrideForDay } from './day-availability.util';
 import { queuePriorityWeight } from '@infrastructure/queue/src/services/live-queue-rebuild.util';
 import {
   SAFE_APPOINTMENT_PEOPLE_INCLUDE,
@@ -2304,6 +2305,45 @@ export class CoreAppointmentService {
               };
             }
 
+            // Dated OPD-window override for this exact day (dynamic availability, L1). An
+            // explicit "closed for the day" ([] sessions) is handled right here — before the
+            // paused-flag check below — so it closes the day even when the clinic OPD happens
+            // to be paused. A shrunken window (sessions non-empty) is applied further down in
+            // the cascade: it replaces the doctor's own weekly blocks, but location / clinic
+            // windows still take precedence exactly as they do for the weekly schedule, and a
+            // paused day still suppresses it. The lookup fails open (null = no override), so
+            // with no override this path is byte-for-byte today's behavior. See
+            // day-availability.util.
+            const dayOverride = await readDayOverrideForDay(
+              this.databaseService,
+              _context.clinicId,
+              doctorId,
+              date,
+              _context?.appointmentType === 'VIDEO_CALL' ? null : (_context.locationId ?? null)
+            );
+            if (dayOverride && dayOverride.sessions.length === 0) {
+              const dayClosedMessage = dayOverride.reason
+                ? `The doctor is unavailable on this day: ${dayOverride.reason}`
+                : 'The doctor is unavailable on this day';
+              return {
+                doctorId,
+                date,
+                available: false,
+                availableSlots: [],
+                bookedSlots: [],
+                workingHours,
+                restrictions: {
+                  clinicPaused,
+                  doctorPaused,
+                  emergencyOnly,
+                  generalConsultationEnabled,
+                  videoConsultationEnabled,
+                  reason: dayClosedMessage,
+                },
+                message: dayClosedMessage,
+              };
+            }
+
             if (
               clinicPaused ||
               doctorPaused ||
@@ -2338,7 +2378,17 @@ export class CoreAppointmentService {
               association.location?.workingHours,
               dayName
             );
-            const doctorSessions = extractDaySessions(association.doctor?.workingHours, dayName);
+            // Dated override (when it has sessions) replaces the doctor's own weekly blocks for
+            // this date; the cascade order is otherwise unchanged — location / clinic windows
+            // still take precedence exactly as they do for the weekly schedule, and an
+            // override with no blocks already returned the "unavailable" day above.
+            const overrideSessions = dayOverride
+              ? extractSessions(dayOverride.sessions as unknown)
+              : [];
+            const doctorSessions =
+              dayOverride && dayOverride.sessions.length > 0
+                ? overrideSessions
+                : extractDaySessions(association.doctor?.workingHours, dayName);
             const clinicSessions = extractDaySessions(
               appointmentSettings['operatingWindowsByDay'],
               dayName

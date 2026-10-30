@@ -10,6 +10,8 @@ import {
   IsArray,
   ArrayMaxSize,
   IsObject,
+  IsDefined,
+  Matches,
   MaxLength,
   Min,
   Max,
@@ -349,4 +351,151 @@ export class DoctorReviewsQueryDto {
   @Min(1)
   @Max(50)
   limit?: number;
+}
+
+const IST_DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Create (or replace) a dated OPD-window override for one doctor day, on top of the
+ * doctor's static weekly workingHours. `sessions: []` means the doctor is closed for
+ * the whole day. Times are 24h HH:MM. The service re-validates the blocks (HH:MM,
+ * start < end, no overlaps, today-or-later day) and returns 400 on malformed input.
+ * @class CreateDayOverrideDto
+ */
+export class CreateDayOverrideDto {
+  @ApiProperty({
+    description: 'IST calendar day to override (YYYY-MM-DD), today or later',
+    example: '2026-10-30',
+  })
+  @IsString()
+  @Matches(IST_DAY_KEY, { message: 'date must be an IST calendar day YYYY-MM-DD' })
+  date!: string;
+
+  @ApiProperty({
+    description:
+      'Per-day session blocks, the {start,end} shape the slot grid consumes. Use [] to close the day. Accepts an array or its JSON-string form.',
+    example: [{ start: '12:00', end: '15:00' }],
+    required: false,
+  })
+  @IsDefined({ message: 'sessions is required (use [] to close the day)' })
+  sessions!: unknown;
+
+  @ApiPropertyOptional({
+    description: 'Free-text emergency reason (going somewhere, family matter, illness, ...)',
+    example: 'Attending a family function',
+  })
+  @IsOptional()
+  @Transform(trimString)
+  @IsString()
+  @MaxLength(1000, { message: 'reason cannot exceed 1000 characters' })
+  reason?: string;
+
+  @ApiPropertyOptional({
+    description: 'Optional clinic-location id to scope the override; null/omitted = all locations',
+  })
+  @IsOptional()
+  @Transform(trimString)
+  @IsString()
+  locationId?: string | null;
+}
+
+/**
+ * Optional date bounds (IST YYYY-MM-DD, inclusive) when listing a doctor's active day
+ * overrides. Omit both to get today through +31 days.
+ * @class ListDayOverridesQueryDto
+ */
+export class ListDayOverridesQueryDto {
+  @ApiPropertyOptional({
+    description: 'Inclusive start day (IST YYYY-MM-DD); defaults to today',
+    example: '2026-10-30',
+  })
+  @IsOptional()
+  @Transform(trimString)
+  @Matches(IST_DAY_KEY, { message: 'from must be an IST calendar day YYYY-MM-DD' })
+  from?: string;
+
+  @ApiPropertyOptional({
+    description: 'Inclusive end day (IST YYYY-MM-DD); defaults to today + 31 days',
+    example: '2026-11-15',
+  })
+  @IsOptional()
+  @Transform(trimString)
+  @Matches(IST_DAY_KEY, { message: 'to must be an IST calendar day YYYY-MM-DD' })
+  to?: string;
+}
+
+/**
+ * Filters for listing doctor reassignment cascade proposals (L3). A doctor sees only their
+ * own proposals; a clinic admin sees the clinic's.
+ * @class ListReassignmentProposalsQueryDto
+ */
+export class ListReassignmentProposalsQueryDto {
+  @ApiPropertyOptional({
+    description: 'Proposal status filter (PENDING / APPLIED / DEFERRED / DISCARDED)',
+    example: 'PENDING',
+    required: false,
+  })
+  @IsOptional()
+  @Transform(trimString)
+  @IsString()
+  @MaxLength(32)
+  status?: string;
+
+  @ApiPropertyOptional({
+    description: 'Restrict to one doctor (Doctor.id or the doctor User.id); default PENDING',
+    example: 'b274f231-4b0b-4e3a-8f2f-1c2f5e3d9a11',
+    required: false,
+  })
+  @IsOptional()
+  @Transform(trimString)
+  @IsString()
+  doctorId?: string;
+}
+
+/**
+ * Body of a confirmed same-time / day move for a PENDING reassignment proposal: either a
+ * chosen target doctor (same-time reassign) or a chosen next date+time (reschedule path).
+ * @class ApplyReassignmentProposalDto
+ */
+export class ApplyReassignmentProposalDto {
+  @ApiPropertyOptional({
+    description: 'Chosen target provider (Doctor.id) for a SAME-time move',
+    example: 'b274f231-4b0b-4e3a-8f2f-1c2f5e3d9a11',
+    required: false,
+  })
+  @IsOptional()
+  @Transform(trimString)
+  @IsString()
+  doctorId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Chosen next-available date (IST YYYY-MM-DD) for a day move',
+    example: '2026-11-01',
+    required: false,
+  })
+  @IsOptional()
+  @Transform(trimString)
+  @Matches(IST_DAY_KEY, { message: 'date must be an IST calendar day YYYY-MM-DD' })
+  date?: string;
+
+  @ApiPropertyOptional({
+    description: 'Chosen slot time (HH:MM, 24h) with `date`',
+    example: '10:30',
+    required: false,
+  })
+  @IsOptional()
+  @Transform(trimString)
+  @IsString()
+  time?: string;
+
+  @ApiPropertyOptional({
+    description: 'Free-text note recorded on the proposal when applied',
+    example: 'Moved to Dr. B for 12 Nov',
+    required: false,
+  })
+  @IsOptional()
+  @Transform(trimString)
+  @IsString()
+  @MaxLength(1000)
+  notes?: string;
 }
