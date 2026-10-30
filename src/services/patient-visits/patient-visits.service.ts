@@ -350,6 +350,18 @@ export class PatientVisitsService {
     return this.createVisit({ appointmentId, skipConsultationInvoice: true }, clinicId, actor);
   }
 
+  /**
+   * The visit already linked to an appointment, or `null`. Check-in uses it to open the case sheet
+   * only when none is linked yet, so one appointment never gets two visits.
+   */
+  async findVisitForAppointment(
+    appointmentId: string,
+    clinicId: string
+  ): Promise<PatientVisitResponse | null> {
+    const row = await this.findVisitByAppointment(appointmentId, clinicId);
+    return row ? this.toResponse(row) : null;
+  }
+
   private async findVisitByAppointment(
     appointmentId: string,
     clinicId: string
