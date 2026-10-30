@@ -4576,13 +4576,14 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
       const consultation = await this.getConsultationSession(resolvedAppointmentId);
       if (!consultation) {
-        throw new HealthcareError(
-          ErrorCode.DATABASE_RECORD_NOT_FOUND,
-          `Consultation session not found for appointment ${resolvedAppointmentId}`,
-          undefined,
-          { appointmentId: resolvedAppointmentId },
-          'VideoService.getSessionParticipants'
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.DEBUG,
+          `No active consultation session for appointment ${resolvedAppointmentId}; returning empty participant list`,
+          'VideoService.getSessionParticipants',
+          { appointmentId: resolvedAppointmentId }
         );
+        return [];
       }
 
       const activeProvider = provider as unknown as {
@@ -4656,13 +4657,23 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
       const consultation = await this.getConsultationSession(resolvedAppointmentId);
       if (!consultation) {
-        throw new HealthcareError(
-          ErrorCode.DATABASE_RECORD_NOT_FOUND,
-          `Consultation session not found for appointment ${resolvedAppointmentId}`,
-          undefined,
-          { appointmentId: resolvedAppointmentId },
-          'VideoService.getSessionAnalytics'
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.DEBUG,
+          `No active consultation session for appointment ${resolvedAppointmentId}; returning empty session analytics`,
+          'VideoService.getSessionAnalytics',
+          { appointmentId: resolvedAppointmentId }
         );
+        return {
+          sessionId: '',
+          duration: 0,
+          numberOfParticipants: 0,
+          numberOfConnections: 0,
+          recordingCount: 0,
+          recordingTotalDuration: 0,
+          recordingTotalSize: 0,
+          connections: [],
+        };
       }
 
       const activeProvider = provider as unknown as {
