@@ -102,9 +102,15 @@ import {
   type LegacyClinicInvoiceList,
 } from '@services/billing/clinic-invoice-list.util';
 import {
+  isDeskCollectedInvoice,
   isOnlineCheckoutInvoice,
+  withDeskCollectionMarker,
   type CheckoutInvoiceShape,
 } from '@services/billing/checkout-invoice-kind.util';
+import {
+  pickDeskPlanInvoice,
+  shouldActivatePlanAfterDeskPayment,
+} from '@services/billing/desk-plan-invoice.util';
 import {
   effectivePlanAppointmentTypes,
   isPlanCoverableAppointmentType,
@@ -3508,6 +3514,9 @@ export class BillingService implements OnModuleInit {
           clinicId,
           userId: locked.userId,
           invoiceId,
+          // A plan invoice collected at the desk: the payment belongs to the plan as well, so
+          // the plan purchase counts it (window sweep, ledger) exactly like a gateway payment.
+          ...(locked.subscriptionId ? { subscriptionId: locked.subscriptionId } : {}),
           status: PaymentStatus.COMPLETED,
           method: options.method,
           ...(transactionId && { transactionId }),
@@ -3563,7 +3572,16 @@ export class BillingService implements OnModuleInit {
       const billingSettings = await this.getClinicBillingSettings(clinicId);
       await this.markInvoiceAsPaid(invoiceId, undefined, {
         skipWhatsApp: !billingSettings?.autoWhatsAppReceipts,
+        settledByPaymentId: payment.id,
       });
+      if (
+        shouldActivatePlanAfterDeskPayment({
+          settlesInvoice: outcome.settlesInvoice,
+          subscriptionId: invoice.subscriptionId ?? null,
+        })
+      ) {
+        await this.activatePlanAfterDeskPayment(payment, invoice, options.actor);
+      }
       updatedInvoice = (await this.getInvoiceRecord(invoiceId, clinicId)) ?? invoice;
 
       if (invoice.billType === 'PHARMACY') {
@@ -3581,6 +3599,187 @@ export class BillingService implements OnModuleInit {
     }
 
     return { invoice: updatedInvoice, payment };
+  }
+
+  /**
+   * A desk payment settled a plan invoice: start / renew the plan through the SAME finaliser the
+   * gateway path uses (activation once per payment id, revenue ledger, payment.completed event,
+   * finalisation stamp). A failure here never undoes the collected payment: the finalisation
+   * marker stays unapplied and the stalled-finalisation sweeper retries it.
+   */
+  private async activatePlanAfterDeskPayment(
+    payment: PaymentWithRelations,
+    invoice: InvoiceRecord,
+    actor?: { userId?: string; role?: string }
+  ): Promise<void> {
+    const actorUserId = actor?.userId || 'desk';
+    const context = {
+      clinicId: invoice.clinicId,
+      invoiceId: invoice.id,
+      paymentId: payment.id,
+      subscriptionId: invoice.subscriptionId ?? null,
+      actorUserId,
+      actorRole: actor?.role ?? null,
+    };
+    try {
+      await this.finaliser.repairManually(payment as unknown as PaymentRow, {
+        actorUserId,
+        orderId: payment.transactionId || payment.id,
+      });
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        'Plan started from a payment collected at the desk',
+        'BillingService.recordInvoicePayment',
+        context
+      );
+      await this.eventService.emit('billing.subscription.desk_payment_applied', context);
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.ERROR,
+        `Plan activation after a desk payment failed; the finalisation sweeper will retry: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        'BillingService.recordInvoicePayment',
+        context
+      );
+    }
+  }
+
+  /**
+   * Desk fallback for a plan purchase (owner rule: reception can always help). Returns the plan
+   * invoice the desk collects cash / UPI-at-desk against: the open bill of this plan period when
+   * there is one (taken over, so the online payment window no longer voids it), otherwise a new
+   * desk-raised bill. The amount is always the server's (plan price or prorated amount + GST).
+   * Payment then goes through record-payment, which activates the plan.
+   */
+  async openDeskPlanInvoice(
+    subscriptionId: string,
+    requester: BillingAccessContext | undefined,
+    actor: { userId?: string; role?: string }
+  ): Promise<{ invoice: InvoiceRecord; reused: boolean }> {
+    const subscription = await this.getSubscription(subscriptionId, requester);
+    if (!subscription.plan) {
+      throw new BadRequestException('Subscription plan not found');
+    }
+    if (String(subscription.status) === String(SubscriptionStatus.CANCELLED)) {
+      throw new ConflictException('This plan was cancelled. Start a new plan for the patient.');
+    }
+    const now = new Date();
+    if (!isRenewalOpen(subscription, now)) {
+      const opensAt = renewalOpensAt(subscription);
+      throw new ConflictException({
+        message: opensAt
+          ? `This plan is active. Renewal opens on ${formatDateInIST(opensAt)}.`
+          : 'This plan is active and does not need a renewal yet.',
+        code: 'SUBSCRIPTION_RENEWAL_NOT_OPEN',
+        subscriptionId: subscription.id,
+        ...(opensAt ? { renewalOpensAt: opensAt.toISOString() } : {}),
+      });
+    }
+
+    const amount = this.resolveSubscriptionChargeAmount(subscription);
+    const tax = this.calculateGstAmount(amount);
+    const pending = await this.databaseService.findInvoicesSafe({
+      subscriptionId: subscription.id,
+      status: InvoiceStatus.PENDING,
+    });
+    const reusable = pickDeskPlanInvoice(
+      pending.map(row => ({
+        id: row.id,
+        userId: row.userId,
+        clinicId: row.clinicId,
+        status: String(row.status),
+        totalAmount: this.getInvoiceTotalAmount(row, 0),
+        createdAt: row.createdAt,
+        metadata: row.metadata,
+      })),
+      {
+        userId: subscription.userId,
+        clinicId: subscription.clinicId,
+        totalAmount: this.roundToTwo(amount + tax),
+      }
+    );
+
+    let invoiceId: string;
+    if (reusable) {
+      invoiceId = reusable.id;
+      if (!isDeskCollectedInvoice(reusable)) {
+        const fresh = await this.paymentStore.readInvoice(reusable.id, subscription.clinicId);
+        const marked = fresh
+          ? await this.paymentStore.markInvoiceDeskCollected({
+              invoice: fresh,
+              clinicId: subscription.clinicId,
+              metadata: withDeskCollectionMarker(fresh.metadata, actor, now),
+              ...(actor.userId ? { actorUserId: actor.userId } : {}),
+            })
+          : false;
+        if (!marked) {
+          throw new ConflictException(
+            'This plan bill was just paid or closed. Refresh the patient and try again.'
+          );
+        }
+        await this.databaseService
+          .invalidateEntityCache('invoice', reusable.id, subscription.clinicId)
+          .catch(() => {
+            // Best effort: entries age out via their TTL.
+          });
+        await this.invalidateUserInvoiceCaches(subscription.userId);
+      }
+    } else {
+      const description = buildPlanInvoiceDescription(
+        subscription.plan.name,
+        subscription.plan.interval,
+        subscription.plan.intervalCount
+      );
+      const created = await this.createInvoice({
+        userId: subscription.userId,
+        clinicId: subscription.clinicId,
+        subscriptionId: subscription.id,
+        amount,
+        tax,
+        discount: 0,
+        dueDate: new Date(subscription.currentPeriodEnd).toISOString(),
+        description,
+        lineItems: { items: [{ description, amount, quantity: 1 }] },
+        metadata: withDeskCollectionMarker(
+          {
+            subscriptionId: subscription.id,
+            planId: subscription.planId,
+            gstRatePercent: this.getGstRatePercent(),
+            periodStart: new Date(subscription.currentPeriodStart).toISOString(),
+            periodEnd: new Date(subscription.currentPeriodEnd).toISOString(),
+          },
+          actor,
+          now
+        ),
+      });
+      invoiceId = created.id;
+    }
+
+    const context = {
+      clinicId: subscription.clinicId,
+      subscriptionId: subscription.id,
+      invoiceId,
+      reused: Boolean(reusable),
+      actorUserId: actor.userId ?? null,
+      actorRole: actor.role ?? null,
+    };
+    await this.loggingService.log(
+      LogType.PAYMENT,
+      LogLevel.INFO,
+      'Plan bill opened for collection at the desk',
+      'BillingService.openDeskPlanInvoice',
+      context
+    );
+    await this.eventService.emit('billing.subscription.desk_invoice_opened', context);
+
+    const invoice = await this.getInvoiceRecord(invoiceId, subscription.clinicId);
+    if (!invoice) {
+      throw new NotFoundException(`Invoice ${invoiceId} not found`);
+    }
+    return { invoice, reused: Boolean(reusable) };
   }
 
   private deriveBillRowStatus(
@@ -6970,9 +7169,12 @@ export class BillingService implements OnModuleInit {
       ? await this.voidLapsedCheckoutInvoice(invoice, now, windowMs)
       : false;
     const subscriptionId = fresh.subscriptionId || invoice?.subscriptionId || null;
-    const subscriptionExpired = subscriptionId
-      ? await this.expireLapsedPlanPurchase(subscriptionId, fresh.clinicId, now, windowMs)
-      : false;
+    // A plan the desk is collecting for (cash / UPI at the counter) is not an online checkout:
+    // only this lapsed gateway attempt expires, the plan purchase stays open for the desk.
+    const subscriptionExpired =
+      subscriptionId && !isDeskCollectedInvoice(invoice)
+        ? await this.expireLapsedPlanPurchase(subscriptionId, fresh.clinicId, now, windowMs)
+        : false;
 
     await this.announceLapsedCheckout({
       payment: fresh,

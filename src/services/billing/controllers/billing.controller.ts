@@ -1484,6 +1484,31 @@ export class BillingController {
   }
 
   /**
+   * Desk fallback for a plan purchase: returns the plan bill reception collects cash / UPI-at-
+   * desk against (the open bill of the period, taken over from the online window, or a new
+   * desk-raised bill). Settle it with POST /billing/invoices/:id/record-payment, which starts the
+   * plan. No gateway order is opened. Staff only, own clinic only.
+   */
+  @Post('subscriptions/:id/desk-invoice')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.RECEPTIONIST)
+  @RequireResourcePermission('payments', 'create')
+  async openDeskPlanInvoice(
+    @Param('id') subscriptionId: string,
+    @Request() req?: ClinicAuthenticatedRequest
+  ) {
+    const access = this.buildBillingAccessContext(req);
+    if (access.role !== Role.SUPER_ADMIN) {
+      this.requireClinicContext(req);
+    }
+    const result = await this.billingService.openDeskPlanInvoice(
+      subscriptionId,
+      access,
+      this.buildVisitActor(req)
+    );
+    return { success: true, invoice: result.invoice, reused: result.reused };
+  }
+
+  /**
    * Payment-intent creation honours an `Idempotency-Key` header: a retry with the same key gets
    * the first response instead of opening another gateway order (see idempotency-key.util).
    */

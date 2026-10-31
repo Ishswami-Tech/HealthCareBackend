@@ -384,6 +384,31 @@ export class BillingPaymentStore {
   }
 
   /**
+   * Stamps the desk-collection marker on a still-PENDING invoice (a staff member takes a plan
+   * invoice over for cash / UPI at the desk), so the online payment window no longer voids it.
+   * Guarded on PENDING: an invoice paid or voided meanwhile is left alone.
+   */
+  async markInvoiceDeskCollected(args: {
+    invoice: InvoiceRow;
+    clinicId: string;
+    metadata: JsonRecord;
+    actorUserId?: string;
+  }): Promise<boolean> {
+    const result = await this.database.executeHealthcareWrite(
+      async client =>
+        (client as unknown as StoreClient).invoice.updateMany({
+          where: { id: args.invoice.id, status: 'PENDING' },
+          data: { metadata: args.metadata },
+        }),
+      this.audit(args.clinicId, 'INVOICE', args.invoice.id, 'UPDATE', {
+        reason: 'Plan invoice taken over for desk collection',
+        ...(args.actorUserId ? { actorUserId: args.actorUserId } : {}),
+      })
+    );
+    return result.count === 1;
+  }
+
+  /**
    * INCOMPLETE -> INCOMPLETE_EXPIRED: a plan purchase that was waiting for its first payment.
    * Any other status (ACTIVE, PAST_DUE, ...) is left alone, so a paid plan is never touched.
    */
