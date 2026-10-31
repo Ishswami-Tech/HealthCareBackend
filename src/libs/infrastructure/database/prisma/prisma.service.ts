@@ -217,6 +217,26 @@ export type AppointmentTimeSlotResult = AppointmentTimeSlot[];
  * because query strategies and other services need to inject this as a singleton.
  * Multi-tenant isolation is handled at the query level, not at the service level.
  */
+/**
+ * Model delegates declared on PrismaService that are copied from the generated client only when
+ * present (see assignAllDelegates). Every name must be a model in schema.prisma (unit-tested).
+ */
+export const LENIENT_MODEL_DELEGATES = [
+  'stockBatch',
+  'stockMovement',
+  'stockTransfer',
+  'reorderRule',
+  'stockAlert',
+  'purchaseOrder',
+  'foodItem',
+  'dietPlan',
+  'dietPlanItem',
+  'dietaryRestriction',
+  'foodCompatibilityRule',
+  'prakritiAnalysis',
+  'nadiPariksha',
+] as const;
+
 @Injectable()
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private prismaClient!: PrismaClient;
@@ -1187,19 +1207,11 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     assignDelegate<NursingNoteDelegate>('nursingNote', 'nursingNote');
     assignDelegate<VitalsFlowsheetDelegate>('vitalsFlowsheet', 'vitalsFlowsheet');
     assignDelegate<BedsideMedicationDelegate>('bedsideMedication', 'bedsideMedication');
-    // Pharmacy inventory delegates are declared on this class but were never
-    // copied from the client, so `db.prisma.stockBatch` etc. were undefined at
-    // runtime. Assigned leniently (only when the generated client has the model)
-    // so a stale generated client does not stop the whole app from booting.
-    const pharmacyInventoryDelegates = [
-      'stockBatch',
-      'stockMovement',
-      'stockTransfer',
-      'reorderRule',
-      'stockAlert',
-      'purchaseOrder',
-    ] as const;
-    for (const delegateName of pharmacyInventoryDelegates) {
+    // Pharmacy inventory, diet and Ayurveda delegates are declared on this class but were never
+    // copied from the client, so `db.prisma.stockBatch` / `prakritiAssessment` etc. were undefined
+    // at runtime (Ayurveda endpoints answered 500 "undefined.findMany"). Assigned leniently (only
+    // when the generated client has the model) so a stale generated client does not stop the boot.
+    for (const delegateName of LENIENT_MODEL_DELEGATES) {
       const delegateValue = clientTyped[delegateName];
       if (delegateValue !== undefined && delegateValue !== null) {
         Object.defineProperty(this, delegateName, {
