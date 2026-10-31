@@ -56,6 +56,7 @@ import {
 import { createFrameworkAdapter } from '@infrastructure/framework/adapters/fastify.adapter';
 import { ApplicationLifecycleManager } from '@infrastructure/framework/wrappers/application-lifecycle.manager';
 import { ServerConfigurator } from '@infrastructure/framework/wrappers/server-configurator';
+import { isDevCorsOriginAllowed } from '@security/cors-origin.util';
 import type {
   IFrameworkAdapter,
   ApplicationConfig,
@@ -360,22 +361,14 @@ async function _setupWebSocketAdapter(
           // every restart. Accept any http://localhost:<port> origin in development
           // only; see security-config.service.ts's configureCORS() for the HTTP equivalent.
           const isDevelopment = configService?.isDevelopment() ?? false;
-          const localhostOriginPattern = /^http:\/\/localhost:\d+$/;
           const socketCorsOrigin =
             isDevelopment && corsOrigins !== '*'
               ? (
                   origin: string | undefined,
                   callback: (err: Error | null, allow?: boolean) => void
                 ): void => {
-                  if (
-                    !origin ||
-                    (corsOrigins as string[]).includes(origin) ||
-                    localhostOriginPattern.test(origin)
-                  ) {
-                    callback(null, true);
-                    return;
-                  }
-                  callback(new Error(`Origin ${origin} not allowed by CORS`), false);
+                  // Refuse without an error: no CORS headers instead of a 500.
+                  callback(null, isDevCorsOriginAllowed(origin, corsOrigins as string[]));
                 }
               : corsOrigins;
 

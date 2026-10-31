@@ -1,4 +1,7 @@
-import { Injectable, Logger, INestApplication } from '@nestjs/common';
+import { Injectable, Logger, INestApplication, HttpStatus } from '@nestjs/common';
+import { HealthcareError } from '@core/errors/healthcare-error.class';
+import { ErrorCode } from '@core/errors/error-codes.enum';
+import { CORS_ORIGIN_REJECTED_MESSAGE, isDevCorsOriginAllowed } from '@security/cors-origin.util';
 import { ConfigService } from '@config/config.service';
 import type { AuthenticatedRequest, RateLimitContext } from '@core/types';
 import type { IFrameworkAdapter, IFastifyFrameworkAdapter } from '@core/types/framework.types';
@@ -372,17 +375,26 @@ export class SecurityConfigService {
     // every restart. Accept any http://localhost:<port> origin in development
     // only; staging/production keep the strict exact-match allow-list above.
     const isDevelopment = this.configService.isDevelopment();
-    const localhostOriginPattern = /^http:\/\/localhost:\d+$/;
     const corsOriginOption = isDevelopment
       ? (
           origin: string | undefined,
           callback: (err: Error | null, allow?: boolean) => void
         ): void => {
-          if (!origin || expandedOrigins.includes(origin) || localhostOriginPattern.test(origin)) {
+          if (isDevCorsOriginAllowed(origin, expandedOrigins)) {
             callback(null, true);
             return;
           }
-          callback(new Error(`Origin ${origin} not allowed by CORS`), false);
+          // A 403 without CORS headers (was a plain Error -> 500 on every hostile preflight).
+          callback(
+            new HealthcareError(
+              ErrorCode.SECURITY_VIOLATION,
+              CORS_ORIGIN_REJECTED_MESSAGE,
+              HttpStatus.FORBIDDEN,
+              { origin },
+              'SecurityConfigService.configureCORS'
+            ),
+            false
+          );
         }
       : corsOrigins;
 

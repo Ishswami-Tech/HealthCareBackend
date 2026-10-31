@@ -21,6 +21,7 @@ import { Transform, Type } from 'class-transformer';
 import { PartialType, OmitType } from '@nestjs/mapped-types';
 import { ValidateNested } from 'class-validator';
 import { IsClinicId } from '@core/decorators/clinic-id.validator';
+import { plainTextTransform } from '@utils/plain-text.util';
 
 /**
  * Gender enumeration
@@ -62,6 +63,7 @@ export class EmergencyContactDto {
   })
   @IsString()
   @IsNotEmpty()
+  @Transform(plainTextTransform)
   name!: string;
 
   @ApiProperty({
@@ -94,6 +96,7 @@ export class EmergencyContactDto {
   })
   @IsOptional()
   @IsString()
+  @Transform(plainTextTransform)
   address?: string;
 }
 
@@ -308,7 +311,7 @@ export class SimpleCreateUserDto {
   @IsNotEmpty({ message: 'First name is required' })
   @MinLength(2, { message: 'First name must be at least 2 characters long' })
   @MaxLength(50, { message: 'First name cannot exceed 50 characters' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   firstName: string = '';
 
   @ApiProperty({
@@ -321,7 +324,7 @@ export class SimpleCreateUserDto {
   @IsNotEmpty({ message: 'Last name is required' })
   @MinLength(2, { message: 'Last name must be at least 2 characters long' })
   @MaxLength(50, { message: 'Last name cannot exceed 50 characters' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   lastName: string = '';
 
   @ApiProperty({
@@ -378,7 +381,7 @@ export class SimpleCreateUserDto {
   })
   @IsOptional()
   @IsString({ message: 'Address must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   address?: string;
 
   @ApiPropertyOptional({
@@ -387,7 +390,7 @@ export class SimpleCreateUserDto {
   })
   @IsOptional()
   @IsString({ message: 'City must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   city?: string;
 
   @ApiPropertyOptional({
@@ -396,7 +399,7 @@ export class SimpleCreateUserDto {
   })
   @IsOptional()
   @IsString({ message: 'State must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   state?: string;
 
   @ApiPropertyOptional({
@@ -405,7 +408,7 @@ export class SimpleCreateUserDto {
   })
   @IsOptional()
   @IsString({ message: 'Country must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   country?: string;
 
   @ApiPropertyOptional({
@@ -414,25 +417,25 @@ export class SimpleCreateUserDto {
   })
   @IsOptional()
   @IsString({ message: 'Zip code must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   zipCode?: string;
 
   @ApiPropertyOptional({ example: 'Kothrud', description: 'Locality / area' })
   @IsOptional()
   @IsString({ message: 'Area must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   area?: string;
 
   @ApiPropertyOptional({ example: 'Pune', description: 'District' })
   @IsOptional()
   @IsString({ message: 'District must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   district?: string;
 
   @ApiPropertyOptional({ example: 'Teacher', description: 'Occupation' })
   @IsOptional()
   @IsString({ message: 'Occupation must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   occupation?: string;
 
   @ApiPropertyOptional({
@@ -456,7 +459,7 @@ export class SimpleCreateUserDto {
   @ApiPropertyOptional({ example: 'Sunrise School', description: 'Organization / employer' })
   @IsOptional()
   @IsString({ message: 'Organization must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   organization?: string;
 
   @ApiPropertyOptional({
@@ -964,7 +967,7 @@ export class UpdateUserProfileDto {
   @IsString({ message: 'First name must be a string' })
   @MinLength(2, { message: 'First name must be at least 2 characters long' })
   @MaxLength(50, { message: 'First name cannot exceed 50 characters' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   firstName?: string;
 
   @ApiPropertyOptional({
@@ -975,7 +978,7 @@ export class UpdateUserProfileDto {
   @IsString({ message: 'Last name must be a string' })
   @MinLength(2, { message: 'Last name must be at least 2 characters long' })
   @MaxLength(50, { message: 'Last name cannot exceed 50 characters' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   lastName?: string;
 
   @ApiPropertyOptional({
@@ -1047,7 +1050,7 @@ export class UpdateUserProfileDto {
   })
   @IsOptional()
   @IsString({ message: 'Address must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   address?: string;
 
   @ApiPropertyOptional({
@@ -1056,7 +1059,7 @@ export class UpdateUserProfileDto {
   })
   @IsOptional()
   @IsString({ message: 'City must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   city?: string;
 
   @ApiPropertyOptional({
@@ -1065,7 +1068,7 @@ export class UpdateUserProfileDto {
   })
   @IsOptional()
   @IsString({ message: 'State must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   state?: string;
 
   @ApiPropertyOptional({
@@ -1074,7 +1077,7 @@ export class UpdateUserProfileDto {
   })
   @IsOptional()
   @IsString({ message: 'Country must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   country?: string;
 
   @ApiPropertyOptional({
@@ -1083,25 +1086,25 @@ export class UpdateUserProfileDto {
   })
   @IsOptional()
   @IsString({ message: 'Zip code must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   zipCode?: string;
 
   @ApiPropertyOptional({ example: 'Kothrud', description: 'Locality / area' })
   @IsOptional()
   @IsString({ message: 'Area must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   area?: string;
 
   @ApiPropertyOptional({ example: 'Pune', description: 'District' })
   @IsOptional()
   @IsString({ message: 'District must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   district?: string;
 
   @ApiPropertyOptional({ example: 'Teacher', description: 'Occupation' })
   @IsOptional()
   @IsString({ message: 'Occupation must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   occupation?: string;
 
   @ApiPropertyOptional({
@@ -1125,7 +1128,7 @@ export class UpdateUserProfileDto {
   @ApiPropertyOptional({ example: 'Sunrise School', description: 'Organization / employer' })
   @IsOptional()
   @IsString({ message: 'Organization must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   organization?: string;
 
   @ApiPropertyOptional({

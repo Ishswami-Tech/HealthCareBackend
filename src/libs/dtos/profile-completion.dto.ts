@@ -15,6 +15,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PartialType } from '@nestjs/mapped-types';
 import { Transform, Type } from 'class-transformer';
 import { Role } from '@core/types/enums.types';
+import { plainTextTransform } from '@utils/plain-text.util';
 import { BLOOD_GROUPS, MARITAL_STATUSES } from '@dtos/user.dto';
 import type { BloodGroup, MaritalStatus } from '@dtos/user.dto';
 
@@ -28,6 +29,7 @@ export class EmergencyContactDto {
   })
   @IsString()
   @IsNotEmpty()
+  @Transform(plainTextTransform)
   name!: string;
 
   @ApiProperty({
@@ -65,6 +67,7 @@ export class CompleteProfileRequestDto {
   })
   @IsString()
   @IsNotEmpty()
+  @Transform(plainTextTransform)
   firstName!: string;
 
   @ApiProperty({
@@ -73,6 +76,7 @@ export class CompleteProfileRequestDto {
   })
   @IsString()
   @IsNotEmpty()
+  @Transform(plainTextTransform)
   lastName!: string;
 
   @ApiProperty({
@@ -122,21 +126,25 @@ export class CompleteProfileRequestDto {
   })
   @IsString()
   @IsOptional()
+  @Transform(plainTextTransform)
   address?: string;
 
   @ApiPropertyOptional({ description: 'City' })
   @IsString()
   @IsOptional()
+  @Transform(plainTextTransform)
   city?: string;
 
   @ApiPropertyOptional({ description: 'State' })
   @IsString()
   @IsOptional()
+  @Transform(plainTextTransform)
   state?: string;
 
   @ApiPropertyOptional({ description: 'Country' })
   @IsString()
   @IsOptional()
+  @Transform(plainTextTransform)
   country?: string;
 
   @ApiPropertyOptional({ description: 'Zip Code' })
@@ -147,6 +155,7 @@ export class CompleteProfileRequestDto {
   @ApiPropertyOptional({ description: 'Occupation', example: 'Teacher' })
   @IsString()
   @IsOptional()
+  @Transform(plainTextTransform)
   occupation?: string;
 
   @ApiPropertyOptional({ enum: MARITAL_STATUSES, description: 'Marital status' })
@@ -202,6 +211,7 @@ export class CompleteProfileRequestDto {
   })
   @IsString()
   @IsOptional()
+  @Transform(plainTextTransform)
   clinicName?: string;
 
   @ApiPropertyOptional({
@@ -210,6 +220,7 @@ export class CompleteProfileRequestDto {
   })
   @IsString()
   @IsOptional()
+  @Transform(plainTextTransform)
   clinicAddress?: string;
 }
 

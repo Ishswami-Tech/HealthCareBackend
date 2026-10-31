@@ -16,6 +16,7 @@ import {
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { BLOOD_GROUPS, MARITAL_STATUSES } from '@dtos/user.dto';
+import { plainTextTransform } from '@utils/plain-text.util';
 
 const upperTrim = ({ value }: { value: unknown }): unknown =>
   typeof value === 'string' ? value.trim().toUpperCase() : value;
@@ -36,6 +37,7 @@ export class PatientEmergencyContactDto {
   @ApiProperty({ example: 'Jane Doe', description: 'Emergency contact name' })
   @IsString()
   @IsNotEmpty()
+  @Transform(plainTextTransform)
   name!: string;
 
   @ApiProperty({ example: 'Spouse', description: 'Relationship to patient' })
@@ -142,6 +144,7 @@ export class CreatePatientDto {
   @IsOptional()
   @IsString()
   @MaxLength(200)
+  @Transform(plainTextTransform)
   occupation?: string;
 
   @ApiPropertyOptional({ example: 'MARRIED', enum: MARITAL_STATUSES })
@@ -243,6 +246,7 @@ export class QuickRegisterPatientDto {
   })
   @IsString()
   @IsNotEmpty()
+  @Transform(plainTextTransform)
   firstName!: string;
 
   @ApiProperty({
@@ -251,6 +255,7 @@ export class QuickRegisterPatientDto {
   })
   @IsString()
   @IsNotEmpty()
+  @Transform(plainTextTransform)
   lastName!: string;
 
   @ApiProperty({
@@ -274,21 +279,25 @@ export class QuickRegisterPatientDto {
   @ApiPropertyOptional({ example: '123 Main St' })
   @IsOptional()
   @IsString()
+  @Transform(plainTextTransform)
   address?: string;
 
   @ApiPropertyOptional({ example: 'Mumbai' })
   @IsOptional()
   @IsString()
+  @Transform(plainTextTransform)
   city?: string;
 
   @ApiPropertyOptional({ example: 'MH' })
   @IsOptional()
   @IsString()
+  @Transform(plainTextTransform)
   state?: string;
 
   @ApiPropertyOptional({ example: 'India' })
   @IsOptional()
   @IsString()
+  @Transform(plainTextTransform)
   country?: string;
 
   @ApiPropertyOptional({ example: '400001' })
@@ -332,30 +341,35 @@ export class UpdatePatientDto {
   @IsOptional()
   @IsString()
   @MaxLength(500)
+  @Transform(plainTextTransform)
   address?: string;
 
   @ApiPropertyOptional({ example: 'Kothrud' })
   @IsOptional()
   @IsString()
   @MaxLength(200)
+  @Transform(plainTextTransform)
   area?: string;
 
   @ApiPropertyOptional({ example: 'Pune' })
   @IsOptional()
   @IsString()
   @MaxLength(200)
+  @Transform(plainTextTransform)
   district?: string;
 
   @ApiPropertyOptional({ example: 'Teacher' })
   @IsOptional()
   @IsString()
   @MaxLength(200)
+  @Transform(plainTextTransform)
   occupation?: string;
 
   @ApiPropertyOptional({ example: 'Sunrise School' })
   @IsOptional()
   @IsString()
   @MaxLength(200)
+  @Transform(plainTextTransform)
   organization?: string;
 
   @ApiPropertyOptional({ example: '1990-01-15' })

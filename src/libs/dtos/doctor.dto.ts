@@ -18,6 +18,7 @@ import {
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { BadRequestException } from '@nestjs/common';
+import { plainTextTransform } from '@utils/plain-text.util';
 import {
   LocalizedProfileValidationError,
   normalizeLocalizedProfile,
@@ -326,7 +327,7 @@ export class CreateDoctorReviewDto {
 
   @ApiPropertyOptional({ maxLength: 1000 })
   @IsOptional()
-  @Transform(trimString)
+  @Transform(plainTextTransform)
   @IsString()
   @MaxLength(1000, { message: 'Comment cannot exceed 1000 characters' })
   comment?: string;
