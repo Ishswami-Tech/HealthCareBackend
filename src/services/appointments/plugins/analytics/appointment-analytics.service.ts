@@ -948,7 +948,7 @@ export class AppointmentAnalyticsService {
     try {
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return JSON.parse(cached as string) as AnalyticsResult;
+        return cached as AnalyticsResult;
       }
 
       // Query CheckIn and Appointment tables for wait time analysis
@@ -1135,7 +1135,7 @@ export class AppointmentAnalyticsService {
         };
       });
 
-      await this.cacheService.set(cacheKey, JSON.stringify(waitTimeData), this.ANALYTICS_CACHE_TTL);
+      await this.cacheService.set(cacheKey, waitTimeData, this.ANALYTICS_CACHE_TTL);
 
       return waitTimeData;
     } catch (_error) {
@@ -1182,7 +1182,7 @@ export class AppointmentAnalyticsService {
     try {
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return JSON.parse(cached as string) as AnalyticsResult;
+        return cached as AnalyticsResult;
       }
 
       const patternData = await this.databaseService.executeHealthcareRead(async client => {
@@ -1306,7 +1306,7 @@ export class AppointmentAnalyticsService {
         };
       });
 
-      await this.cacheService.set(cacheKey, JSON.stringify(patternData), this.ANALYTICS_CACHE_TTL);
+      await this.cacheService.set(cacheKey, patternData, this.ANALYTICS_CACHE_TTL);
 
       return patternData;
     } catch (_error) {
@@ -1349,7 +1349,7 @@ export class AppointmentAnalyticsService {
     try {
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return JSON.parse(cached as string) as AnalyticsResult;
+        return cached as AnalyticsResult;
       }
 
       const correlationData = await this.databaseService.executeHealthcareRead(async client => {
@@ -1473,11 +1473,7 @@ export class AppointmentAnalyticsService {
         };
       });
 
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(correlationData),
-        this.ANALYTICS_CACHE_TTL
-      );
+      await this.cacheService.set(cacheKey, correlationData, this.ANALYTICS_CACHE_TTL);
 
       return correlationData;
     } catch (_error) {
