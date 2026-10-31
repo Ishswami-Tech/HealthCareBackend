@@ -6,6 +6,12 @@
  */
 
 import { IST_TIMEZONE } from '@utils/date-time.util';
+
+export type DayAvailabilityActor = {
+  userId: string;
+  role: string;
+  clinicId?: string;
+};
 import { WEEK_DAYS, sessionsForDay, type WeekDay } from '@services/doctors/doctor-schedule.util';
 
 /** One OPD session block, the exact { start: 'HH:MM', end: 'HH:MM' } shape the grid consumes. */

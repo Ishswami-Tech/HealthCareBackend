@@ -18,8 +18,10 @@ import {
 } from '@infrastructure/database/prisma/generated/client';
 import { LogType, LogLevel } from '@core/types';
 import { nowIso } from '@utils/date-time.util';
-import type { DayAvailabilityActor } from '@services/doctors/day-availability.service';
-import { dateToIstDayKey } from '@services/doctors/day-availability-sessions.util';
+import {
+  dateToIstDayKey,
+  type DayAvailabilityActor,
+} from '@services/doctors/day-availability-sessions.util';
 
 const SOURCE = 'ReassignmentProposalStore';
 

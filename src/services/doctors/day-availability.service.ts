@@ -31,14 +31,12 @@ import { Prisma } from '@infrastructure/database/prisma/generated/client';
 import { LogType, LogLevel } from '@core/types';
 import { nowIso } from '@utils/date-time.util';
 import { weeklySessionsForDay } from './day-availability-sessions.util';
+import type { DayAvailabilityActor } from './day-availability-sessions.util';
 import { ReassignmentCascadeService } from './reassignment-cascade.service';
 import { AppointmentsService } from '@services/appointments/appointments.service';
 
-export type DayAvailabilityActor = {
-  userId: string;
-  role: string;
-  clinicId?: string;
-};
+// Defined in the leaf util so the proposal store/cascade can import it without a cycle.
+export type { DayAvailabilityActor } from './day-availability-sessions.util';
 
 export interface DoctorDayAvailabilityResponse {
   id: string;
