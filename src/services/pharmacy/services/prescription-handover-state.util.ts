@@ -7,6 +7,11 @@
  * never represent the hand-over state.
  */
 
+import {
+  checkHandoverReadiness,
+  type HandoverReadinessInput,
+} from '@services/clinic-ops/services/handover-readiness.util';
+
 export type PrescriptionHandoverStatus = 'PENDING_VERIFICATION' | 'HANDED_OVER' | 'UNDONE';
 
 export interface PrescriptionHandoverState {
@@ -74,4 +79,21 @@ export function readyForHandoverAfter(
   handover: PrescriptionHandoverState
 ): boolean {
   return readyForHandover && handover.status !== 'HANDED_OVER';
+}
+
+/**
+ * The patient may ask for a collection code: the counter would accept the hand-over now (the
+ * same `checkHandoverReadiness` rule the hand-over service enforces: approved, paid, dispensed)
+ * and the medicines were not collected yet. Unlike the desk's `readyForHandover` (paid, maybe
+ * not dispensed yet), this never offers "Collect medicines" before the pharmacy dispensed.
+ */
+export function canCollectMedicines(
+  readiness: HandoverReadinessInput,
+  handover: PrescriptionHandoverState
+): boolean {
+  return (
+    readiness.items.length > 0 &&
+    handover.status !== 'HANDED_OVER' &&
+    checkHandoverReadiness(readiness).ok
+  );
 }

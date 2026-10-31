@@ -33,6 +33,11 @@ import {
 import { findTreatmentCatalogEntryOrUndefined } from '@core/types/treatment-catalog.types';
 import type { NotificationData } from '@core/types/appointment.types';
 import type { EnterpriseEventPayload } from '@core/types';
+import {
+  MilestoneDedup,
+  medicineDeskMilestone,
+  medicineDeskMilestoneContent,
+} from '@communication/listeners/medicine-desk-notification.util';
 
 function resolveText(value: unknown, fallback = ''): string {
   if (typeof value === 'string') {
@@ -112,6 +117,23 @@ interface CommunicationRule {
     socketRoom?: string;
   }>;
   shouldNotify: (_payload: EnterpriseEventPayload) => boolean;
+  /** In-app plus only the first reachable out-of-app channel of `channels` (one message). */
+  singleExternalChannel?: boolean;
+}
+
+const DESK_MILESTONE_DEDUP_TTL_MS = 30 * 60_000;
+
+/**
+ * A field of a medicine-desk event. The simple `emit` wraps the data in an envelope: routing ids
+ * are lifted into `metadata`, everything else (action, prescriptionId) stays in `payload`.
+ */
+function deskPayloadValue(payload: EnterpriseEventPayload, key: string): string {
+  const root = payload as unknown as Record<string, unknown>;
+  const inner = root['payload'];
+  const innerValue =
+    inner && typeof inner === 'object' ? (inner as Record<string, unknown>)[key] : undefined;
+  const value = payload.metadata?.[key] ?? root[key] ?? innerValue ?? '';
+  return typeof value === 'string' ? value : '';
 }
 
 @Injectable()
@@ -365,51 +387,28 @@ export class NotificationEventListener implements OnModuleInit {
       },
       shouldNotify: () => true,
     },
-    // Pharmacy Medicine Desk Queue Updates
+    // Pharmacy Medicine Desk Queue Updates: the patient is told only when medicines are ready
+    // to collect (dispensed), once per prescription and milestone, in-app plus ONE out-of-app
+    // channel in preference order. Staff screens refresh from the socket broadcaster.
     {
       eventPattern: /^pharmacy\.medicine_desk\.updated$/,
       category: CommunicationCategory.PRESCRIPTION,
-      channels: ['socket', 'push', 'email', 'whatsapp'],
+      channels: ['socket', 'push', 'whatsapp', 'email'],
+      singleExternalChannel: true,
       priority: CommunicationPriority.NORMAL,
       template: 'pharmacy_medicine_desk_update',
       recipients: payload => {
-        const recipients: Array<{
-          userId?: string;
-          email?: string;
-          deviceToken?: string;
-          socketRoom?: string;
-        }> = [];
         const patientId =
-          (payload.metadata?.['patientId'] as string | undefined) ||
-          ((payload as unknown as Record<string, unknown>)['patientId'] as string | undefined);
-        const doctorId =
-          (payload.metadata?.['doctorId'] as string | undefined) ||
-          ((payload as unknown as Record<string, unknown>)['doctorId'] as string | undefined);
-
-        if (patientId) {
-          recipients.push({
-            userId: patientId,
-            socketRoom: `user:${patientId}`,
-          });
-        }
-        if (doctorId) {
-          recipients.push({
-            userId: doctorId,
-            socketRoom: `user:${doctorId}`,
-          });
-        }
-        if (payload.clinicId) {
-          // The medicine desk screens listen as PHARMACIST; sockets join
-          // `clinic:<id>:role:<ROLE>` on connect. The payload carries patient and medication
-          // details, so it must NOT go to a clinic-wide DOCTOR room: the prescribing doctor is
-          // already reached through `user:<doctorId>` above.
-          recipients.push({
-            socketRoom: `clinic:${payload.clinicId}:role:PHARMACIST`,
-          });
-        }
-        return recipients;
+          deskPayloadValue(payload, 'patientUserId') || deskPayloadValue(payload, 'patientId');
+        return patientId ? [{ userId: patientId, socketRoom: `user:${patientId}` }] : [];
       },
-      shouldNotify: () => true,
+      shouldNotify: payload => {
+        const milestone = medicineDeskMilestone(deskPayloadValue(payload, 'action'));
+        if (!milestone) return false;
+        const prescriptionId =
+          deskPayloadValue(payload, 'prescriptionId') || deskPayloadValue(payload, 'entryId');
+        return this.deskMilestoneDedup.firstTime(`${prescriptionId}:${milestone}`, Date.now());
+      },
     },
     // Ayurveda: Prakriti Assessment Completed
     {
@@ -1078,6 +1077,7 @@ export class NotificationEventListener implements OnModuleInit {
   private appointmentNotificationService?: AppointmentNotificationService | undefined;
   private readonly appointmentNotificationDedup = new Map<string, number>();
   private readonly appointmentNotificationDedupTtlMs = 30_000;
+  private readonly deskMilestoneDedup = new MilestoneDedup(DESK_MILESTONE_DEDUP_TTL_MS);
 
   constructor(
     @Inject(forwardRef(() => EventService))
@@ -1357,6 +1357,7 @@ export class NotificationEventListener implements OnModuleInit {
         body,
         recipients,
         ...(rule.channels && rule.channels.length > 0 && { channels: rule.channels }),
+        ...(rule.singleExternalChannel ? { singleExternalChannel: true } : {}),
         priority: rule.priority,
         data: {
           eventType: normalizedEventType,
@@ -1721,43 +1722,10 @@ export class NotificationEventListener implements OnModuleInit {
           ? `Your ${goal} diet plan has been generated for ${durationDays} days.`
           : `Your ${goal} diet plan has been generated.`;
     } else if (eventType.startsWith('pharmacy.medicine_desk.')) {
-      const action = resolveText(
-        payload.metadata?.['action'] || (payload as unknown as Record<string, unknown>)['action'],
-        'UPDATED'
-      ).toUpperCase();
-      const status = resolveText(
-        payload.metadata?.['status'] || (payload as unknown as Record<string, unknown>)['status'],
-        ''
-      ).toUpperCase();
-      const queuePosition = Number(
-        payload.metadata?.['queuePosition'] ??
-          (payload as unknown as Record<string, unknown>)['queuePosition'] ??
-          0
-      );
-      const totalInQueue = Number(
-        payload.metadata?.['totalInQueue'] ??
-          (payload as unknown as Record<string, unknown>)['totalInQueue'] ??
-          0
-      );
-      const readyForHandover =
-        Boolean(payload.metadata?.['readyForHandover']) ||
-        Boolean((payload as unknown as Record<string, unknown>)['readyForHandover']);
-      const pendingAmount = Number(
-        payload.metadata?.['pendingAmount'] ??
-          (payload as unknown as Record<string, unknown>)['pendingAmount'] ??
-          0
-      );
-
-      title = 'Pharmacy Update';
-      if (readyForHandover || action === 'DISPENSED' || status === 'READY_FOR_HANDOVER') {
-        body = 'Your medicines are ready at the pharmacy counter.';
-      } else if (pendingAmount > 0) {
-        body = `Your prescription is queued in pharmacy. Pending amount: ${pendingAmount}.`;
-      } else if (queuePosition > 0) {
-        body = `Your prescription is in the pharmacy queue at position ${queuePosition}${totalInQueue > 0 ? ` of ${totalInQueue}` : ''}.`;
-      } else {
-        body = 'Your pharmacy request has been updated.';
-      }
+      const milestone = medicineDeskMilestone(deskPayloadValue(payload, 'action'));
+      ({ title, body } = milestone
+        ? medicineDeskMilestoneContent(milestone)
+        : { title: 'Pharmacy Update', body: 'Your pharmacy request has been updated.' });
     } else if (eventType.startsWith('ayurveda.')) {
       if (eventType.includes('.prakriti.assessed')) {
         const prakritiType = resolveText(

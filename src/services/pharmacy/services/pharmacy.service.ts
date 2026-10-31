@@ -92,6 +92,7 @@ import {
   EMPTY_HANDOVER_STATE,
   latestHandoverByPrescription,
   readyForHandoverAfter,
+  canCollectMedicines,
   type HandoverStateRow,
   type PrescriptionHandoverState,
 } from '@services/pharmacy/services/prescription-handover-state.util';
@@ -1217,6 +1218,20 @@ export class PharmacyService {
         ...response,
         ...this.buildPrescriptionDeskFields(prescription, deskContext),
         readyForHandover: readyForHandoverAfter(response.readyForHandover, handover),
+        // Server-derived "Collect medicines" gate for the patient apps (dispensed AND paid).
+        canCollect: canCollectMedicines(
+          {
+            status: String(prescription.status || ''),
+            items: (prescription.items || []).map(item => ({
+              quantity: item.quantity,
+              dispensedQuantity: item.dispensedQuantity,
+              unitPrice: item.medicine?.price,
+            })),
+            paidAmount: Number(paymentState.paidAmount || 0),
+            invoiceStatus: invoicesByPrescriptionId.get(prescription.id)?.status ?? null,
+          },
+          handover
+        ),
         handover: { ...handover },
       };
     });
@@ -3506,6 +3521,14 @@ export class PharmacyService {
             a.inventoryMedicineId.localeCompare(b.inventoryMedicineId)
           )) {
             const { requestItem, prescriptionItem, inventoryMedicineId } = plan;
+            // The batch the pharmacist confirmed or changed is the batch consumed and recorded
+            // (validated server-side), not replaced by a silent FEFO pick.
+            const preferredLots = requestItem.lots
+              .filter(lot => Boolean(lot.batchNumber))
+              .map(lot => ({
+                lotNumber: String(lot.batchNumber),
+                quantity: Number(lot.quantity || 0),
+              }));
             const [fefoResult] = await this.inventoryService.dispenseFefo(
               prescriptionId,
               {
@@ -3514,6 +3537,7 @@ export class PharmacyService {
                     prescriptionItemId: String(prescriptionItem.id),
                     medicineId: inventoryMedicineId,
                     quantity: requestItem.quantity,
+                    ...(preferredLots.length > 0 ? { preferredLots } : {}),
                   },
                 ],
               },

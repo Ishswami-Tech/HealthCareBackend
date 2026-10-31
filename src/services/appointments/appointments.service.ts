@@ -6186,14 +6186,9 @@ export class AppointmentsService {
           },
         });
 
-        await this.eventService.emit('appointment.completed', {
-          appointmentId,
-          clinicId,
-          status: 'COMPLETED',
-          patientId: appointment?.patientId,
-          doctorId: appointment?.doctorId,
-          appointment,
-        });
+        // One emit per completion (INT-05): the enterprise event above carries the same ids
+        // (billing's payout listener reads payload.appointmentId); a second plain emit sent
+        // every completion twice to sockets and listeners.
       }
       return result;
     } catch (_error) {

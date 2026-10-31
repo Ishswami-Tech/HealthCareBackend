@@ -39,6 +39,10 @@ import { EmailTemplatesService } from '@communication/channels/email/email-templ
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { SNSBackupService } from '@communication/channels/push/sns-backup.service';
 import { CommunicationHealthMonitorService } from './communication-health-monitor.service';
+import {
+  eligibleChannels,
+  initialNotificationState,
+} from '@communication/services/notification-delivery-plan.util';
 import { formatTimeInIST, IST_TIMEZONE, nowIso } from '../utils/date-time.util';
 
 // Types
@@ -325,6 +329,13 @@ export class CommunicationService implements OnModuleInit {
             }
 
             const inboxFields = this.buildInboxFields(request);
+            // Start state from the channels that will really be attempted: a row no channel can
+            // carry is SKIPPED with the reason instead of PENDING forever (INT-03).
+            const initialState = initialNotificationState(
+              finalChannels,
+              recipient,
+              request.singleExternalChannel === true
+            );
             const notification = await this.databaseService.executeWrite(
               async prisma => {
                 const client = this.databaseService['toTransactionClient'](prisma);
@@ -338,6 +349,7 @@ export class CommunicationService implements OnModuleInit {
                         status: string;
                         deliveryStatus: string;
                         channel: string;
+                        failureReason?: string;
                         clinicId: string | null;
                         title: string | null;
                         category: string;
@@ -350,11 +362,16 @@ export class CommunicationService implements OnModuleInit {
                 return await notificationClient.notification.create({
                   data: {
                     userId: recipient.userId!,
-                    type: this.mapChannelToNotificationType(finalChannels[0] || 'email'),
+                    type: this.mapChannelToNotificationType(
+                      (initialState.channel as CommunicationChannel) || 'socket'
+                    ),
                     message: request.body,
-                    status: 'PENDING',
-                    deliveryStatus: 'PENDING',
-                    channel: finalChannels[0] || 'email',
+                    status: initialState.status,
+                    deliveryStatus: initialState.deliveryStatus,
+                    channel: initialState.channel,
+                    ...(initialState.failureReason
+                      ? { failureReason: initialState.failureReason }
+                      : {}),
                     ...inboxFields,
                     clinicId:
                       request.metadata &&
@@ -398,8 +415,15 @@ export class CommunicationService implements OnModuleInit {
 
       for (const channel of finalChannels) {
         for (const recipient of request.recipients) {
-          // Validate channel can be sent to this recipient (skip if missing required contact info)
-          if (!this.canSendChannel(channel, recipient)) {
+          // Validate channel can be sent to this recipient (skip if missing required contact info,
+          // or not the one out-of-app channel picked for a single-channel request)
+          if (
+            !eligibleChannels(
+              finalChannels,
+              recipient,
+              request.singleExternalChannel === true
+            ).includes(channel)
+          ) {
             const recipientId =
               recipient.userId || recipient.email || recipient.phoneNumber || 'unknown';
             await this.loggingService.log(
@@ -675,31 +699,6 @@ export class CommunicationService implements OnModuleInit {
     }
 
     return true;
-  }
-
-  /**
-   * Check if a channel can be sent to a recipient based on required contact info
-   * @param channel - Channel to check
-   * @param recipient - Recipient to validate
-   * @returns true if channel can be sent, false otherwise
-   */
-  private canSendChannel(
-    channel: CommunicationChannel,
-    recipient: CommunicationRequest['recipients'][0]
-  ): boolean {
-    switch (channel) {
-      case 'email':
-        return !!recipient.email;
-      case 'whatsapp':
-      case 'sms':
-        return !!recipient.phoneNumber;
-      case 'push':
-        return !!recipient.deviceToken || !!recipient.userId; // Can fetch device token from userId
-      case 'socket':
-        return !!recipient.socketRoom || !!recipient.userId; // Can derive room from userId
-      default:
-        return true; // Unknown channels - allow (will fail gracefully in sendToChannel)
-    }
   }
 
   /**
@@ -1143,6 +1142,17 @@ export class CommunicationService implements OnModuleInit {
                     deliveryReceipt: unknown;
                   };
                 }) => Promise<unknown>;
+                updateMany: (args: {
+                  where: { id: string; status: { not: string } };
+                  data: {
+                    status: string;
+                    deliveryStatus: string;
+                    failedAt: Date;
+                    failureReason: string;
+                    channel: string;
+                    deliveryReceipt: unknown;
+                  };
+                }) => Promise<{ count: number }>;
               };
             };
             await notificationClient.notificationDeliveryLog.create({
@@ -1161,22 +1171,34 @@ export class CommunicationService implements OnModuleInit {
               },
             });
 
-            // Update notification delivery status
-            await notificationClient.notification.update({
-              where: { id: notificationId },
-              data: {
-                status: result.success ? 'SENT' : 'FAILED',
-                deliveryStatus: result.success ? 'SENT' : 'FAILED',
-                sentAt: result.timestamp,
-                ...(result.success && { deliveredAt: new Date() }),
-                ...(!result.success && {
+            // Update notification delivery status. One row covers every channel of the request,
+            // so a failed channel (e.g. push without a device) must not overwrite a channel that
+            // already delivered it (e.g. socket): a failure only lands on a row not yet SENT.
+            if (result.success) {
+              await notificationClient.notification.update({
+                where: { id: notificationId },
+                data: {
+                  status: 'SENT',
+                  deliveryStatus: 'SENT',
+                  sentAt: result.timestamp,
+                  deliveredAt: new Date(),
+                  channel,
+                  deliveryReceipt: result.metadata || null,
+                },
+              });
+            } else {
+              await notificationClient.notification.updateMany({
+                where: { id: notificationId, status: { not: 'SENT' } },
+                data: {
+                  status: 'FAILED',
+                  deliveryStatus: 'FAILED',
                   failedAt: new Date(),
                   failureReason: result.error || 'Unknown error',
-                }),
-                channel,
-                deliveryReceipt: result.metadata || null,
-              },
-            });
+                  channel,
+                  deliveryReceipt: result.metadata || null,
+                },
+              });
+            }
           },
           {
             userId: 'system',

@@ -3451,6 +3451,8 @@ enum NotificationStatus {
   PENDING
   SENT
   FAILED
+  /// No channel could carry it (channel disabled / no contact for it); in-app inbox only.
+  SKIPPED
 }
 
 enum DeliveryStatus {
@@ -3460,6 +3462,8 @@ enum DeliveryStatus {
   FAILED
   BOUNCED
   REJECTED
+  /// Never attempted: no eligible channel for the recipient (reason in failureReason).
+  SKIPPED
 }
 
 enum AppointmentType {

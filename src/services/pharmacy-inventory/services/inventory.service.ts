@@ -21,6 +21,21 @@ import type {
   StockAdjustmentDto,
   DispenseFefoDto,
 } from '../dto/pharmacy-inventory.dto';
+import {
+  normalisePreferredLots,
+  planFefoConsumption,
+  type FefoPreferredLot,
+} from '@services/pharmacy-inventory/services/fefo-plan.util';
+
+/** A FEFO dispense line; `preferredLots` are batches the pharmacist chose (honoured, validated). */
+export type FefoDispenseItemInput = DispenseFefoDto['items'][number] & {
+  readonly preferredLots?: readonly FefoPreferredLot[];
+};
+
+/** FEFO dispense request (the HTTP DTO, or an internal caller passing chosen batches). */
+export interface FefoDispenseInput {
+  readonly items: readonly FefoDispenseItemInput[];
+}
 
 /**
  * Cache key prefix for inventory queries
@@ -347,7 +362,7 @@ export class InventoryService {
    */
   async dispenseFefo(
     prescriptionId: string,
-    dto: DispenseFefoDto,
+    dto: FefoDispenseInput,
     userId: string,
     clinicId: string,
     tx?: PrismaTransactionClientWithDelegates,
@@ -398,13 +413,28 @@ export class InventoryService {
           : Math.max(0, stockBeforeDispense - trackedQuantity);
 
         const consumedBatches: FefoDispenseResult['consumedBatches'] = [];
-        let remaining = item.quantity;
+        // Batches the pharmacist chose are honoured (validated: belongs to this medicine, not
+        // expired, enough on hand); the rest is taken earliest expiry first. A medicine with no
+        // tracked batch has nothing to allocate: the caller records the typed lot as given.
+        const plan = planFefoConsumption(
+          batches,
+          item.quantity,
+          batches.length > 0 ? normalisePreferredLots(item.preferredLots) : [],
+          now
+        );
+        if (!plan.ok) {
+          throw new HealthcareError(
+            plan.refusal.code === 'BATCH_SHORT'
+              ? ErrorCode.PHARMACY_STOCK_INSUFFICIENT
+              : ErrorCode.PHARMACY_BATCH_NOT_FOUND,
+            `${medicineLabel(medicine?.name)}: ${plan.refusal.message}`,
+            plan.refusal.code === 'BATCH_SHORT' ? HttpStatus.CONFLICT : HttpStatus.BAD_REQUEST,
+            { medicineId: item.medicineId, lotNumber: plan.refusal.lotNumber }
+          );
+        }
+        const remaining = plan.remaining;
 
-        for (const batch of batches) {
-          if (remaining <= 0) break;
-          if (batch.expiryDate.getTime() <= now) continue;
-
-          const take = Math.min(batch.quantityOnHand ?? 0, remaining);
+        for (const { batch, quantity: take } of plan.takes) {
           const updated = await client.stockBatch.updateMany({
             where: { id: batch.id, clinicId, quantityOnHand: { gte: take } },
             data: { quantityOnHand: { decrement: take } },
@@ -440,7 +470,6 @@ export class InventoryService {
             expiryDate: batch.expiryDate,
             lotNumber: batch.lotNumber,
           });
-          remaining -= take;
         }
 
         if (remaining > unbatchedAvailable) {

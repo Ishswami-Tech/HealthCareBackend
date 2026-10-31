@@ -759,17 +759,9 @@ export class CoreAppointmentService {
         // 7. Queue background operations
         void this.queueBackgroundOperations(appointment, context);
 
-        // 8. Emit events
-        void this.eventService.emit('appointment.created', {
-          appointmentId: appointment.id,
-          clinicId: appointment.clinicId,
-          doctorId: appointment.doctorId,
-          patientId: appointment.patientId,
-          scheduledDate: appointment.date,
-          scheduledTime: appointment.time,
-          appointment: appointmentResult,
-          context,
-        });
+        // 8. `appointment.created` is emitted ONCE by AppointmentsService.createAppointment (the
+        // only caller) as an enterprise event; emitting it here as well delivered every booking
+        // twice to sockets and listeners (INT-05).
 
         // 7. HIPAA audit log
         void this.hipaaAuditLog('CREATE_APPOINTMENT', context, {

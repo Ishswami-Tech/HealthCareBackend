@@ -210,6 +210,45 @@ describe('PharmacyService.dispensePrescription partial dispensing', () => {
     });
   });
 
+  it('passes the batch the pharmacist chose to the FEFO consumer instead of dropping it', async () => {
+    const h = createHarness({ prescribed: 10, stock: 10 });
+
+    await h.service.dispensePrescription(
+      RX,
+      {
+        items: [
+          {
+            medicineId: MED,
+            prescriptionItemId: ITEM,
+            quantity: 4,
+            batchNumber: 'LOT-B',
+            expiryDate: '2027-05-01',
+          },
+        ],
+      },
+      CLINIC,
+      PHARMACIST
+    );
+
+    expect(h.inventoryService.dispenseFefo).toHaveBeenCalledWith(
+      RX,
+      {
+        items: [
+          {
+            prescriptionItemId: ITEM,
+            medicineId: MED,
+            quantity: 4,
+            preferredLots: [{ lotNumber: 'LOT-B', quantity: 4 }],
+          },
+        ],
+      },
+      'pharm-user',
+      CLINIC,
+      expect.anything(),
+      false
+    );
+  });
+
   it('dispenses the remainder later and reaches FILLED only when every item is complete', async () => {
     const h = createHarness({ prescribed: 10, dispensed: 4, stock: 6 });
 
