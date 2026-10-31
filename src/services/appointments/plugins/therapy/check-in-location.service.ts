@@ -40,6 +40,7 @@ import type {
   CheckInValidation,
 } from '@core/types/appointment.types';
 import { Role } from '@core/types/enums.types';
+import { logLevelForError } from '@core/errors/error-severity.util';
 import { isVideoCallAppointmentType } from '@core/types/appointment-guards.types';
 import {
   isAppointmentOwnedByPatientUser,
@@ -756,7 +757,8 @@ export class CheckInLocationService {
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
-        LogLevel.ERROR,
+        // An unknown / inactive QR code (404) is a refused scan, not a failure of ours.
+        logLevelForError(error),
         `Failed to get location by QR code: ${error instanceof Error ? error.message : String(error)}`,
         'CheckInLocationService',
         {
@@ -1219,7 +1221,8 @@ export class CheckInLocationService {
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
-        LogLevel.ERROR,
+        // Geofence / window / already-checked-in refusals (4xx) are expected traffic: WARN.
+        logLevelForError(error),
         `Failed to process check-in: ${error instanceof Error ? error.message : String(error)}`,
         'CheckInLocationService',
         {

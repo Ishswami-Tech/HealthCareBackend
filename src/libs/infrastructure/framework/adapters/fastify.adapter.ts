@@ -29,6 +29,7 @@ import { INestApplication, Logger, LogLevel } from '@nestjs/common';
 import fastify, { type FastifyInstance } from 'fastify';
 import { getEnvBoolean, getEnvWithDefault } from '@config/environment/utils';
 import { dropEmptyJsonContentType } from '@infrastructure/framework/adapters/empty-json-body.util';
+import { REQUEST_ID_HEADER, resolveRequestId } from '@infrastructure/logging/access-log.util';
 import {
   IFrameworkAdapter,
   IFastifyFrameworkAdapter,
@@ -136,9 +137,13 @@ export class FastifyFrameworkAdapter implements IFastifyFrameworkAdapter {
         disableRequestLogging: true, // LoggingInterceptor handles request logging
         requestIdLogLabel: 'requestId',
       }),
-      requestIdHeader: options.isHorizontalScaling
-        ? `x-request-id-${options.instanceId}`
-        : 'x-request-id',
+      // request.id = the caller's own x-request-id when it is a sane token (proxy / client
+      // correlation), else a fresh UUID. Fastify's header passthrough would trust any value
+      // (newlines, huge strings) and its default ids are a per-process counter that collides
+      // across replicas, so the id is resolved here instead. Echoed back in the onRequest hook.
+      requestIdHeader: false,
+      genReqId: (raw: { headers: Record<string, string | string[] | undefined> }) =>
+        resolveRequestId(raw.headers[REQUEST_ID_HEADER]),
       trustProxy: options.trustProxy,
 
       // Production performance optimizations
@@ -198,8 +203,10 @@ export class FastifyFrameworkAdapter implements IFastifyFrameworkAdapter {
     ]);
 
     // An empty body sent as application/json is "no body", not a 400 (see empty-json-body.util).
-    this.getHttpServer(app).addHook('onRequest', (request, _reply, done) => {
+    this.getHttpServer(app).addHook('onRequest', (request, reply, done) => {
       dropEmptyJsonContentType(request.headers);
+      // Every response (guard refusals and errors included) carries the id its log lines use.
+      reply.header(REQUEST_ID_HEADER, request.id);
       done();
     });
 

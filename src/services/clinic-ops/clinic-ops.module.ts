@@ -23,6 +23,7 @@ import { DirectDispenseService } from './services/direct-dispense.service';
 import { BillingOpsService } from './services/billing-ops.service';
 import { StaffAdminService } from './services/staff-admin.service';
 import { ClinicAuditService } from './services/audit.service';
+import { ClinicDayAuditListener } from './services/clinic-day-audit.listener';
 import { HandoverService } from './services/handover.service';
 import { BatchActionsService } from './services/batch-actions.service';
 import { PatientOpsService } from './services/patient-ops.service';
@@ -75,6 +76,7 @@ import { BillingOpsController, StaffAdminController } from './controllers/admin-
     BillingOpsService,
     StaffAdminService,
     ClinicAuditService,
+    ClinicDayAuditListener,
     HandoverService,
     BatchActionsService,
     PatientOpsService,

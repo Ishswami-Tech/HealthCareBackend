@@ -15,6 +15,7 @@ import { ClinicModule } from '@services/clinic/clinic.module';
 // Core Services
 import { AppointmentsController } from './appointments.controller';
 import { AppointmentsService } from './appointments.service';
+import { AppointmentsSchedulerService } from './appointments-scheduler.service';
 
 // Enhanced Core Services
 import { CoreAppointmentService } from './core/core-appointment.service';
@@ -148,6 +149,9 @@ import { EHRModule } from '@services/ehr/ehr.module';
       provide: 'APPOINTMENTS_SERVICE',
       useExisting: AppointmentsService,
     },
+    // Appointment @Cron jobs: kept off AppointmentsService, whose alias above made
+    // @nestjs/schedule register every job twice (see appointments-scheduler.service.ts).
+    AppointmentsSchedulerService,
     CoreAppointmentService,
     ConflictResolutionService,
     AppointmentWorkflowEngine,

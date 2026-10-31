@@ -814,6 +814,57 @@ export class PharmacyService {
     );
   }
 
+  /**
+   * Clinic audit row (AuditLog, resourceId = prescription id) for a prescription lifecycle step:
+   * created / sent to pharmacy, status changed, dispensed. Ids and statuses only, never the
+   * diagnosis, notes or medicine names. A failed audit write is logged and never fails the action.
+   */
+  private async auditPrescriptionAction(args: {
+    action: 'PRESCRIPTION_CREATED' | 'PRESCRIPTION_STATUS_CHANGED' | 'PRESCRIPTION_DISPENSED';
+    prescriptionId: string;
+    clinicId: string;
+    actor?: PharmacyActor | undefined;
+    metadata: Record<string, string | number | boolean | null>;
+  }): Promise<void> {
+    if (!args.actor?.userId) {
+      await this.loggingService.log(
+        LogType.AUDIT,
+        LogLevel.WARN,
+        `Prescription audit skipped: ${args.action} has no acting user`,
+        'PharmacyService',
+        { prescriptionId: args.prescriptionId, clinicId: args.clinicId, action: args.action }
+      );
+      return;
+    }
+    try {
+      await this.recordPharmacyAuditLog({
+        userId: args.actor.userId,
+        action: args.action,
+        description: args.action,
+        clinicId: args.clinicId,
+        resourceType: 'PRESCRIPTION',
+        resourceId: args.prescriptionId,
+        metadata: {
+          ...args.metadata,
+          prescriptionId: args.prescriptionId,
+          actorRole: args.actor.role ? String(args.actor.role).toUpperCase() : null,
+        },
+      });
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.AUDIT,
+        LogLevel.WARN,
+        `Prescription audit could not be written: ${args.action}`,
+        'PharmacyService',
+        {
+          prescriptionId: args.prescriptionId,
+          clinicId: args.clinicId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+    }
+  }
+
   private getMedicineDeskQueueOwnerId(clinicId: string): string {
     return `medicine-desk:${clinicId}`;
   }
@@ -2797,6 +2848,24 @@ export class PharmacyService {
       String((prescription as { id?: string }).id),
       'CREATED'
     );
+    const createdStatus = String(
+      (prescription as { status?: PrescriptionStatus | string }).status ||
+        PrescriptionStatus.PENDING
+    );
+    await this.auditPrescriptionAction({
+      action: 'PRESCRIPTION_CREATED',
+      prescriptionId: String((prescription as { id?: string }).id),
+      clinicId,
+      actor,
+      metadata: {
+        status: createdStatus,
+        // A doctor's prescription goes straight to the pharmacy; an assistant's DRAFT waits for
+        // approval (audited as PRESCRIPTION_APPROVED by RxDraftService).
+        sentToPharmacy: createdStatus === String(PrescriptionStatus.PENDING),
+        appointmentId: dto.appointmentId ?? null,
+        itemCount: dto.items.length,
+      },
+    });
     return prescription;
   }
 
@@ -3171,6 +3240,15 @@ export class PharmacyService {
         await this.voidPrescriptionInvoiceIfUnpaid(prescriptionId, clinicId);
       }
       await this.emitMedicineDeskQueueUpdated(clinicId, prescriptionId, 'CANCELLED');
+    }
+    if (resolvedClinicId) {
+      await this.auditPrescriptionAction({
+        action: 'PRESCRIPTION_STATUS_CHANGED',
+        prescriptionId,
+        clinicId: resolvedClinicId,
+        actor,
+        metadata: { status: String(status) },
+      });
     }
 
     return prescription;
@@ -3655,6 +3733,16 @@ export class PharmacyService {
         clinicId: resolvedClinicId,
         itemCount: dto.items?.length || 0,
         userId: dispenser.id ?? 'system',
+      });
+      await this.auditPrescriptionAction({
+        action: 'PRESCRIPTION_DISPENSED',
+        prescriptionId,
+        clinicId: resolvedClinicId,
+        actor,
+        metadata: {
+          status: String(dispenseSummary.status || '').toUpperCase(),
+          itemCount: dto.items?.length || 0,
+        },
       });
 
       if (String(dispenseSummary.status || '').toUpperCase() === 'FILLED') {

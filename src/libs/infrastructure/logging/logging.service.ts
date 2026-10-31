@@ -714,10 +714,12 @@ export class LoggingService implements OnApplicationShutdown {
   ): Promise<void> {
     const timestamp = new Date();
 
-    // `[OTP DEV]` lines carry a live OTP for local testing. They never leave a production
-    // process, and elsewhere they are kept verbatim (testers read the OTP from the log).
+    // `[OTP DEV]` lines carry a live OTP for local testing. They exist in development only
+    // (staging / test / production drop them), and even there only the TERMINAL copy is verbatim:
+    // local test tooling greps `identifier=<phone> ... OTP=<code>` from `docker logs`. Every stored
+    // copy (Logger UI ring buffer, DB) goes through the normal redaction below.
     const isDevOtpLine = message.startsWith(LoggingService.DEV_OTP_LINE_PREFIX);
-    if (isDevOtpLine && this.configService?.isProduction()) {
+    if (isDevOtpLine && !(this.configService?.isDevelopment() ?? false)) {
       return;
     }
     // Check if this log passes the configured level filter. A filtered line reaches no sink,
@@ -730,8 +732,9 @@ export class LoggingService implements OnApplicationShutdown {
     }
 
     // Central PII/secret redaction (phones, emails, OTPs, tokens) before ANY sink.
-    const metadata = isDevOtpLine ? rawMetadata || {} : redactLogMetadata(rawMetadata || {});
-    const safeMessage = isDevOtpLine ? message : redactText(message);
+    const metadata = redactLogMetadata(rawMetadata || {});
+    const safeMessage = redactText(message);
+    const terminalMessage = isDevOtpLine ? message : safeMessage;
 
     // Enterprise-grade unique ID generation for 1M+ users
     const id = `${timestamp.getTime()}-${this.serviceName}-${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`;
@@ -809,7 +812,7 @@ export class LoggingService implements OnApplicationShutdown {
         // metadata (the actual JWT / database / provider failure) never reached the container
         // log and survived only in the dashboard store. Append it here.
         const errorDetail = this.formatErrorDetail(metadata, safeMessage);
-        const coloredMessage = `${levelColor}[${level}]${resetColor} ${contextColor}[${context}]${resetColor} ${safeMessage}${errorDetail}`;
+        const coloredMessage = `${levelColor}[${level}]${resetColor} ${contextColor}[${context}]${resetColor} ${terminalMessage}${errorDetail}`;
         // Terminal output - using console.warn which is allowed by ESLint config
         // This provides visibility in both development and production (with reduced noise in production)
         console.warn(coloredMessage);

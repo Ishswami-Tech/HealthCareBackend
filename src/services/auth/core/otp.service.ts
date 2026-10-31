@@ -137,13 +137,17 @@ export class OtpService {
 
   /**
    * Log full OTP for local testing. Active ONLY when ENABLE_OTP_DEBUG=true AND
-   * NODE_ENV !== 'production' (a stray ENABLE_OTP_DEBUG in prod must never print OTPs; the
-   * LoggingService also drops `[OTP DEV]` lines in production as a second guard).
+   * NODE_ENV=development (a stray ENABLE_OTP_DEBUG in staging / prod must never print OTPs; the
+   * LoggingService also drops `[OTP DEV]` lines outside development as a second guard).
+   *
+   * The line format `identifier=<phone> OTP=<code>` is read by the local QA tooling from the
+   * terminal (docker logs), so it stays verbatim there; the LoggingService masks the phone and
+   * the code in every stored copy, and the metadata below carries neither.
    */
   private logDevOtp(identifier: string, otp: string, channel: string, purpose: string): void {
     const devOtpLoggingEnabled =
       this.configService.getEnvBoolean('ENABLE_OTP_DEBUG', false) &&
-      !this.configService.isProduction();
+      this.configService.isDevelopment();
     if (!devOtpLoggingEnabled) {
       return;
     }
@@ -153,7 +157,7 @@ export class OtpService {
       LogLevel.WARN,
       `[OTP DEV] channel=${channel} purpose=${purpose} identifier=${identifier} OTP=${otp}`,
       'OtpService',
-      { identifier, channel, purpose, otp }
+      { channel, purpose }
     );
   }
 

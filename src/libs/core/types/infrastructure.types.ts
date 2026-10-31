@@ -109,6 +109,8 @@ export interface CustomFastifyRequest {
   readonly params?: Record<string, unknown>;
   readonly ip?: string;
   readonly user?: AuthenticatedUser;
+  /** Fastify request id (incoming x-request-id or a generated UUID). */
+  readonly id?: string;
 }
 
 /**
@@ -117,6 +119,7 @@ export interface CustomFastifyRequest {
  * @description Defines the structure of error logs for debugging and monitoring
  */
 export interface ErrorLog {
+  readonly requestId?: string;
   readonly path: string;
   readonly method: string;
   readonly statusCode: number;

@@ -75,6 +75,7 @@ describe('RxDraftService', () => {
         invalidatePrescriptionListCache: jest.fn(async () => undefined),
       } as never,
       { emit: jest.fn(async () => undefined) } as never,
+      { record: jest.fn(async () => undefined) } as never,
       { log } as never
     );
   });

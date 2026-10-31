@@ -9,6 +9,7 @@ import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { EventService } from '@infrastructure/events/event.service';
 import { HealthcareError, HealthcareErrorsService } from '@core/errors';
+import { logLevelForError } from '@core/errors/error-severity.util';
 import { LogType, LogLevel } from '@core/types';
 import { EmailService } from '@communication/channels/email/email.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
@@ -1475,7 +1476,8 @@ export class AuthService {
     } catch (_error) {
       await this.logging.log(
         LogType.SYSTEM,
-        LogLevel.ERROR,
+        // "A code was just sent, wait" (429) is expected traffic, not a failure of ours.
+        logLevelForError(_error),
         `OTP request failed for ${requestDto.identifier}`,
         'AuthService.requestOtp',
         {

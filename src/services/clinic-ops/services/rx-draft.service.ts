@@ -24,6 +24,7 @@ import { LoggingService } from '@infrastructure/logging';
 import { LogLevel, LogType } from '@core/types';
 import { PharmacyService } from '@services/pharmacy/services/pharmacy.service';
 import { OpsDbService, type OpsActor } from './ops-db.service';
+import { ClinicAuditService } from './audit.service';
 import { displayName, type OpsClient, type PrescriptionLiteRow } from '../clinic-ops.types';
 import type { ReturnRxDraftDto } from '../dto/clinic-ops.dto';
 
@@ -110,6 +111,7 @@ export class RxDraftService {
     private readonly ops: OpsDbService,
     private readonly pharmacyService: PharmacyService,
     private readonly eventService: EventService,
+    private readonly audit: ClinicAuditService,
     @Optional() private readonly loggingService?: LoggingService
   ) {}
 
@@ -226,6 +228,17 @@ export class RxDraftService {
       throw new BadRequestException('This draft was already handled');
     }
     await this.publishSafely(id, clinicId);
+    // Approval is what sends the prescription to the pharmacy (DRAFT -> PENDING).
+    await this.audit.record(
+      clinicId,
+      { type: 'PRESCRIPTION', id },
+      'PRESCRIPTION_APPROVED',
+      actor,
+      {
+        prescriptionId: id,
+        sentToPharmacy: true,
+      }
+    );
     await this.eventService.emit('clinic-ops.rx-draft.approved', {
       prescriptionId: id,
       clinicId,
@@ -273,6 +286,15 @@ export class RxDraftService {
     );
     if (claimed.count !== 1) throw new BadRequestException('This draft was already handled');
     await this.pharmacyService.invalidatePrescriptionListCache({ prescriptionId: id, clinicId });
+    await this.audit.record(
+      clinicId,
+      { type: 'PRESCRIPTION', id },
+      'PRESCRIPTION_RETURNED',
+      actor,
+      {
+        prescriptionId: id,
+      }
+    );
     await this.eventService.emit('clinic-ops.rx-draft.returned', {
       prescriptionId: id,
       clinicId,
@@ -324,6 +346,15 @@ export class RxDraftService {
     );
     if (claimed.count !== 1) throw new BadRequestException('This draft was already handled');
     await this.pharmacyService.invalidatePrescriptionListCache({ prescriptionId: id, clinicId });
+    await this.audit.record(
+      clinicId,
+      { type: 'PRESCRIPTION', id },
+      'PRESCRIPTION_RESUBMITTED',
+      actor,
+      {
+        prescriptionId: id,
+      }
+    );
     await this.eventService.emit('clinic-ops.rx-draft.submitted', {
       prescriptionId: id,
       clinicId,

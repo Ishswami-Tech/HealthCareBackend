@@ -21,6 +21,7 @@ import {
   fixtureInstant,
   paidVideoRow,
   rejection,
+  schedulerFor,
 } from './appointments-harness';
 
 function completeDto(overrides: Partial<CompleteAppointmentDto> = {}): CompleteAppointmentDto {
@@ -544,21 +545,21 @@ describe('AppointmentsService.rescheduleAppointment', () => {
   });
 });
 
-describe('AppointmentsService.handlePastVideoCallClosureCron', () => {
+describe('AppointmentsSchedulerService.handlePastVideoCallClosureCron', () => {
   it('runs on one replica per tick: the second one skips', async () => {
     const first = buildHarness();
     const run = jest
       .spyOn(first.service, 'processPastVideoCallClosures')
       .mockResolvedValue({ totalChecked: 0, closed: 0, failed: 0, details: [] });
 
-    await first.service.handlePastVideoCallClosureCron();
+    await schedulerFor(first).handlePastVideoCallClosureCron();
     // Same cache (same lock), second replica:
     const second = buildHarness();
     second.cache.heldLocks.add('lock:cron:appointments:past-video-closure');
     const secondRun = jest
       .spyOn(second.service, 'processPastVideoCallClosures')
       .mockResolvedValue({ totalChecked: 0, closed: 0, failed: 0, details: [] });
-    await second.service.handlePastVideoCallClosureCron();
+    await schedulerFor(second).handlePastVideoCallClosureCron();
 
     expect(run).toHaveBeenCalledTimes(1);
     expect(secondRun).not.toHaveBeenCalled();

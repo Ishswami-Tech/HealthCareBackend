@@ -418,8 +418,9 @@ export class SecurityConfigService {
         'idempotency-key',
       ],
       // Content-Disposition: the web app saves invoice / receipt / report files under the name
-      // the server chose instead of a blob <uuid>.
-      exposedHeaders: ['Set-Cookie', 'Authorization', 'Content-Disposition'],
+      // the server chose instead of a blob <uuid>. X-Request-ID: the id of the request's log
+      // lines, so a client can quote it in a bug report.
+      exposedHeaders: ['Set-Cookie', 'Authorization', 'Content-Disposition', 'X-Request-ID'],
       maxAge: 86400, // 24 hours
     });
   }

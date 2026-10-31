@@ -9,7 +9,6 @@ import {
   ConflictException,
   InternalServerErrorException,
 } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfigService } from '@config/config.service';
 import { getVideoActiveWindowMinutes, getVideoEarlyJoinMinutes } from '@config/video.config';
 
@@ -618,18 +617,8 @@ export class AppointmentsService {
     };
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_3AM)
-  async handleNoShowCancellationCron() {
-    await this.processNoShowCancellations();
-  }
-
-  @Cron(CronExpression.EVERY_DAY_AT_7AM, { timeZone: IST_TIMEZONE })
-  async handleDoctorDailyAppointmentSummaryCron() {
-    await this.triggerDoctorDailySummary({ triggeredBy: 'cron' });
-  }
-
   /**
-   * Shared implementation for the 7 AM cron and the manual-trigger endpoint.
+   * Shared implementation for the 7 AM cron (AppointmentsSchedulerService) and the manual-trigger endpoint.
    * Enqueues one DOCTOR_SUMMARY job per doctor-clinic pair.
    */
   async triggerDoctorDailySummary(opts: { triggeredBy?: string; dateKey?: string } = {}) {
@@ -741,11 +730,6 @@ export class AppointmentsService {
       skipCount,
       totalDoctors: doctorClinics.length,
     };
-  }
-
-  @Cron(CronExpression.EVERY_HOUR)
-  async handleExpiredVideoSlotConfirmationCron() {
-    await this.processExpiredVideoSlotConfirmations();
   }
 
   async processExpiredVideoSlotConfirmations(settings?: {
@@ -917,52 +901,9 @@ export class AppointmentsService {
     };
   }
 
-  /**
-   * Closes every video visit that is still open when its window ends (scheduled start +
-   * VIDEO_ACTIVE_WINDOW_MINUTES, 5 hours by default): confirmed visits nobody joined and
-   * visits the doctor started but never completed. They become EXPIRED, never COMPLETED.
-   */
-  @Cron(CronExpression.EVERY_5_MINUTES)
-  async handlePastVideoCallClosureCron(): Promise<void> {
-    // One replica per tick. The lock is deliberately not released: it expires just before the
-    // next tick, so a replica whose cron fires a moment later still sees it and skips.
-    const acquired = await this.acquireCronLock(
-      AppointmentsService.PAST_VIDEO_CLOSURE_LOCK_KEY,
-      AppointmentsService.PAST_VIDEO_CLOSURE_LOCK_TTL_SECONDS,
-      'AppointmentsService.handlePastVideoCallClosureCron'
-    );
-    if (!acquired) {
-      return;
-    }
-    await this.processPastVideoCallClosures();
-  }
-
-  /**
-   * Expires in-clinic visits that never happened, hourly (at :20, away from the 3 AM no-show
-   * cron). Only SCHEDULED and CONFIRMED rows are ever touched: a visit that was started or ended
-   * is left alone. The payment is not touched either; the patient simply books again.
-   *
-   * Which cron ends a row: paid (or plan-covered) visits and checked-in visits end here as
-   * EXPIRED, never cancelled, so billing sees no cancellation. Unpaid visits nobody arrived for are
-   * left to the 3 AM no-show cron, which skips everything this one handles.
-   */
-  @Cron('20 * * * *')
-  async handleExpiredInPersonAppointmentsCron(): Promise<void> {
-    const acquired = await this.acquireCronLock(
-      AppointmentsService.IN_PERSON_EXPIRY_LOCK_KEY,
-      AppointmentsService.IN_PERSON_EXPIRY_LOCK_TTL_SECONDS,
-      'AppointmentsService.handleExpiredInPersonAppointmentsCron'
-    );
-    if (!acquired) {
-      return;
-    }
-    await this.processExpiredInPersonAppointments();
-  }
-
-  private static readonly PAST_VIDEO_CLOSURE_LOCK_KEY = 'lock:cron:appointments:past-video-closure';
-  private static readonly PAST_VIDEO_CLOSURE_LOCK_TTL_SECONDS = 240;
-  private static readonly IN_PERSON_EXPIRY_LOCK_KEY = 'lock:cron:appointments:in-person-expiry';
-  private static readonly IN_PERSON_EXPIRY_LOCK_TTL_SECONDS = 3300;
+  // The @Cron entry points (and their locks) live in AppointmentsSchedulerService: this class is
+  // also registered under the 'APPOINTMENTS_SERVICE' alias, which made @nestjs/schedule register
+  // every @Cron declared here twice.
   /** Candidates read per page. The scan keeps paging until none are left (or time runs out). */
   private static readonly EXPIRY_BATCH_SIZE = 200;
   /** A scan stops after this long, safely inside the 240 s video lock, and the next tick resumes. */
@@ -971,24 +912,6 @@ export class AppointmentsService {
   private static readonly IN_PERSON_NO_SHOW_GRACE_MINUTES = 180;
   /** In-clinic CONFIRMED (checked-in, queued) visit never started: expires this long after its day ends. */
   private static readonly IN_PERSON_QUEUED_GRACE_MINUTES = 120;
-
-  private async acquireCronLock(
-    lockKey: string,
-    ttlSeconds: number,
-    source: string
-  ): Promise<boolean> {
-    const acquired = await this.cacheService.acquireLock(lockKey, ttlSeconds);
-    if (!acquired) {
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.WARN,
-        'Cron run skipped: its lock is held by another replica, or the cache is unavailable',
-        source,
-        { lockKey }
-      );
-    }
-    return acquired;
-  }
 
   /**
    * Pages through every row matching `baseWhere`, oldest first, with a (date, id) keyset cursor,

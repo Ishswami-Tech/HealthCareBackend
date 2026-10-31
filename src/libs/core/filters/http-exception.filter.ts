@@ -235,7 +235,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const stackTrace = exception instanceof Error ? exception.stack : undefined;
 
     // Enhanced error logging with better context
+    const requestId = typeof request.id === 'string' ? request.id : undefined;
+    const ridSuffix = requestId ? ` rid=${requestId}` : '';
     const errorLog: ErrorLog = {
+      ...(requestId ? { requestId } : {}),
       path: request.url,
       method: request.method,
       statusCode: status,
@@ -262,7 +265,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `[ERROR] [API] ${request.method} ${request.url} failed: ${errorMessage}`,
+        `[ERROR] [API] ${request.method} ${request.url} [${status}]${ridSuffix} failed: ${errorMessage}`,
         'HttpExceptionFilter',
         errorLog as unknown as Record<string, unknown>
       );
@@ -298,7 +301,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.INFO,
-        `[${errorType}] [API] ${request.method} ${request.url} failed: ${errorMessage}`,
+        `[${errorType}] [API] ${request.method} ${request.url} [${status}]${ridSuffix} failed: ${errorMessage}`,
         'HttpExceptionFilter',
         {
           ...errorLog,

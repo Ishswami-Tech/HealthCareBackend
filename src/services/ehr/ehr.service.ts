@@ -697,6 +697,9 @@ export class EHRService {
       doctorId: data.doctorId || undefined,
       clinicId: data.clinicId || undefined,
       prescriptionId: createdPrescription?.id,
+      // The prescriber, for the clinic audit trail (userId above is the patient's user id).
+      ...(actor?.userId ? { prescribedByUserId: actor.userId } : {}),
+      ...(actor?.role ? { actorRole: actor.role } : {}),
       count: medicationCount,
       medicationsCount: medicationCount,
       diagnosis: data.diagnosis,

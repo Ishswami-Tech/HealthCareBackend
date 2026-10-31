@@ -31,6 +31,8 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ErrorsModule } from '@core/errors';
 import { CommunicationModule } from '@communication/communication.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { DiscoveryService } from '@nestjs/core';
+import { SCHEDULER_TYPE_METADATA_KEY, findDuplicateSchedulers } from '@utils/scheduler-alias.util';
 import { createFrameworkAdapter } from '@infrastructure/framework/adapters/fastify.adapter';
 import { ApplicationLifecycleManager } from '@infrastructure/framework/wrappers/application-lifecycle.manager';
 import { BullBoardModule } from '@infrastructure/queue/src/bull-board/bull-board.module';
@@ -192,6 +194,29 @@ async function bootstrap() {
           serviceName: configService.get<string>('SERVICE_NAME', 'clinic'),
         }
       );
+
+      // A scheduled class that is also registered under an alias (`useExisting`) gets every job
+      // registered twice by @nestjs/schedule: each tick runs twice. Say so at boot.
+      try {
+        const duplicates = findDuplicateSchedulers(
+          app.get(DiscoveryService, { strict: false }).getProviders(),
+          fn =>
+            typeof fn === 'function'
+              ? Reflect.getMetadata(SCHEDULER_TYPE_METADATA_KEY, fn as object)
+              : undefined
+        );
+        for (const duplicate of duplicates) {
+          void logService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Scheduled jobs of ${duplicate.className} are registered ${duplicate.registrations} times (alias provider): each tick runs ${duplicate.registrations}x. Move the @Cron methods to a class without an alias.`,
+            'WorkerBootstrap',
+            { className: duplicate.className, methods: duplicate.methods }
+          );
+        }
+      } catch {
+        // Discovery unavailable: the check is diagnostic only.
+      }
 
       void logService.log(
         LogType.SYSTEM,

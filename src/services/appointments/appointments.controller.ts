@@ -55,6 +55,7 @@ import { RolesGuard } from '@core/guards/roles.guard';
 import { ClinicGuard } from '@core/guards/clinic.guard';
 import { ClinicRoute } from '@core/decorators/clinic-route.decorator';
 import { HealthcareErrorsService, HealthcareError } from '@core/errors';
+import { logLevelForError } from '@core/errors/error-severity.util';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { CacheService } from '@infrastructure/cache/cache.service';
@@ -605,7 +606,8 @@ export class AppointmentsController {
       const errorClinicId = req.clinicContext?.clinicId || '';
       await this.loggingService.log(
         LogType.ERROR,
-        LogLevel.ERROR,
+        // A 409 "slot is being booked" / 400 refusal is expected traffic: WARN, not ERROR.
+        logLevelForError(_error),
         `Failed to create appointment: ${_error instanceof Error ? _error.message : String(_error)}`,
         'AppointmentsController',
         {
