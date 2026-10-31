@@ -5683,12 +5683,32 @@ export class AppointmentsController {
 
   @Get(':id/qr')
   @Roles(Role.PATIENT, Role.RECEPTIONIST)
+  @ClinicRoute()
   @ApiOperation({ summary: 'Generate appointment QR code' })
   @ApiResponse({ status: 200, description: 'QR code generated successfully' })
+  @ApiResponse({ status: 403, description: 'Cannot access this appointment' })
   async generateQR(
-    @Param('id') appointmentId: string,
-    @Request() _req: ClinicAuthenticatedRequest
+    @Param('id', ParseUUIDPipe) appointmentId: string,
+    @Request() req: ClinicAuthenticatedRequest
   ) {
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) {
+      throw new BadRequestException('Clinic context is required');
+    }
+    // Same clinic + patient-ownership rule as GET /appointments/:id.
+    const appointment = (await this.appointmentService.getAppointmentById(
+      appointmentId,
+      clinicId
+    )) as { patientId: string };
+    const currentUserId = req.user?.sub;
+    if (req.user?.role === Role.PATIENT && currentUserId) {
+      const patient = (await this.appointmentService.getPatientByUserId(currentUserId)) as {
+        id: string;
+      } | null;
+      if (appointment.patientId !== patient?.id && appointment.patientId !== currentUserId) {
+        throw new ForbiddenException('Patients can only access their own appointments');
+      }
+    }
     const qrCode = await this.qrService.generateAppointmentQR(appointmentId);
     return {
       success: true,
