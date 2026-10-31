@@ -1,6 +1,6 @@
 import { hasUsablePassword } from '@services/auth/core/has-password.util';
 import { nowIso } from '@utils/date-time.util';
-import { Inject, Injectable, UnauthorizedException, forwardRef } from '@nestjs/common';
+import { HttpStatus, Inject, Injectable, UnauthorizedException, forwardRef } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@config/config.service';
 import { DatabaseService } from '@infrastructure/database/database.service';
@@ -19,6 +19,12 @@ import { QueueService, JobPriority } from '@infrastructure/queue';
 import { JobType } from '@core/types/queue.types';
 import { JwtAuthService } from './core/jwt.service';
 import { classifyRefreshFailure } from './core/refresh-failure.util';
+import {
+  REFRESH_SESSION_REFUSALS,
+  decideRefreshSessionAccess,
+} from '@services/auth/core/refresh-session.util';
+import { resolveVerifiedSessionId } from '@core/guards/jwt-auth-guard.util';
+import { ErrorCode } from '@core/errors/error-codes.enum';
 import { SocialAuthService } from './core/social-auth.service';
 import { OtpService } from './core/otp.service';
 import { normalizeAuthPhoneNumber, authPhoneLookupCandidates } from './core/phone-normalizer.util';
@@ -887,12 +893,14 @@ export class AuthService {
         );
       }
 
-      // Use enhanced JWT refresh with security validation
+      // Use enhanced JWT refresh with security validation. The session the refresh token
+      // belongs to must still be live (same rule JwtAuthGuard applies to every request).
       return await this.jwtAuthService.refreshEnhancedToken(
         refreshTokenDto.refreshToken,
         refreshTokenDto.deviceFingerprint,
         sessionMetadata?.userAgent || refreshTokenDto.userAgent,
-        sessionMetadata?.ipAddress || refreshTokenDto.ipAddress
+        sessionMetadata?.ipAddress || refreshTokenDto.ipAddress,
+        payload => this.assertRefreshSessionActive(payload)
       );
     } catch (_error) {
       // Errors raised above (e.g. a missing refresh token) already carry the right code.
@@ -941,6 +949,50 @@ export class AuthService {
           throw this.errors.serviceUnavailable('token refresh', context);
       }
     }
+  }
+
+  /**
+   * Refuse a refresh whose session was revoked (logout, DELETE /auth/sessions/:id, eviction) or
+   * whose token names no session. Uses the session store and revocation list JwtAuthGuard uses,
+   * so a refresh can never mint tokens the very next request would reject as revoked.
+   */
+  private async assertRefreshSessionActive(payload: TokenPayload): Promise<void> {
+    const context = 'AuthService.refreshToken';
+    const sessionId = resolveVerifiedSessionId({
+      sub: payload.sub,
+      sessionId: payload.sessionId,
+    });
+    const session = sessionId ? await this.sessionService.getSession(sessionId) : null;
+    // getSession() returns null for a revoked id, so the revocation list is read only when
+    // nothing usable is stored (same order as JwtAuthGuard).
+    const decision = decideRefreshSessionAccess({
+      sessionId,
+      hasActiveSession: session !== null,
+      belongsToAnotherUser: session !== null && session.userId !== payload.sub,
+      revoked:
+        sessionId !== undefined &&
+        session === null &&
+        (await this.sessionService.isSessionRevoked(sessionId)),
+    });
+    if (decision === 'allow') {
+      return;
+    }
+
+    const refusal = REFRESH_SESSION_REFUSALS[decision];
+    await this.logging.log(
+      LogType.SECURITY,
+      LogLevel.WARN,
+      `Refresh refused: ${refusal.reason}`,
+      context,
+      { userId: payload.sub, sessionId: sessionId ?? 'MISSING', reason: refusal.reason }
+    );
+    throw new HealthcareError(
+      ErrorCode.AUTH_SESSION_EXPIRED,
+      refusal.message,
+      HttpStatus.UNAUTHORIZED,
+      { reason: refusal.reason },
+      context
+    );
   }
 
   /**

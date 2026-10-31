@@ -25,6 +25,13 @@ import type {
   SessionSummary,
 } from '@core/types/session.types';
 import type { FastifySession } from '@core/types/guard.types';
+import {
+  parseJwtDurationSeconds,
+  sessionRevocationTtlSeconds,
+} from '@core/session/session-revocation.util';
+
+/** Default JWT_REFRESH_EXPIRES_IN (7 days), used when the variable is missing or malformed. */
+const DEFAULT_REFRESH_TOKEN_LIFETIME_SECONDS = 7 * 24 * 60 * 60;
 
 /**
  * Session Management Service for Healthcare Backend
@@ -400,23 +407,17 @@ export class SessionManagementService implements OnModuleInit {
   async invalidateSession(sessionId: string): Promise<boolean> {
     try {
       const session = await this.getSessionRaw(sessionId);
+      const blacklistKey = `${this.BLACKLIST_PREFIX}${sessionId}`;
       if (!session) {
         // Not stored (cold cache / already gone): still revoke the id, otherwise the next request
-        // with its access token would restore it (JwtAuthGuard cold-cache recovery).
-        const timeout =
-          this.config?.sessionTimeout || this.configService.getEnvNumber('SESSION_TIMEOUT', 86400);
-        await this.cacheService.set(`${this.BLACKLIST_PREFIX}${sessionId}`, '1', timeout);
+        // with its access token (or a refresh with its refresh token) would restore it.
+        await this.cacheService.set(blacklistKey, '1', this.revocationTtlSeconds(0));
         return false;
       }
 
-      // Add to blacklist
-      // Kept at least one session timeout, so an access token issued for this session (and still
-      // within its own lifetime) can never restore it after the stored session is gone.
-      const blacklistKey = `${this.BLACKLIST_PREFIX}${sessionId}`;
-      const sessionTimeout =
-        this.config?.sessionTimeout || this.configService.getEnvNumber('SESSION_TIMEOUT', 86400);
-      const ttl = Math.max(
-        sessionTimeout,
+      // Add to blacklist. Kept for the longest token lifetime that can still name this session
+      // (refresh token included), so no token issued for it can restore it or mint new tokens.
+      const ttl = this.revocationTtlSeconds(
         Math.floor((new Date(session.expiresAt).getTime() - Date.now()) / 1000)
       );
       await this.cacheService.set(blacklistKey, '1', ttl);
@@ -759,6 +760,21 @@ export class SessionManagementService implements OnModuleInit {
       // Revocation list unreadable: treat as not revoked; the session lookup still gates access.
       return false;
     }
+  }
+
+  /** Revocation-list TTL for a session that had `remainingSessionSeconds` left. */
+  private revocationTtlSeconds(remainingSessionSeconds: number): number {
+    const sessionTimeoutSeconds =
+      this.config?.sessionTimeout || this.configService.getEnvNumber('SESSION_TIMEOUT', 86400);
+    const refreshTokenLifetimeSeconds = parseJwtDurationSeconds(
+      this.configService.getEnv('JWT_REFRESH_EXPIRES_IN', '7d'),
+      DEFAULT_REFRESH_TOKEN_LIFETIME_SECONDS
+    );
+    return sessionRevocationTtlSeconds({
+      sessionTimeoutSeconds,
+      remainingSessionSeconds,
+      refreshTokenLifetimeSeconds,
+    });
   }
 
   private async isSessionBlacklisted(sessionId: string): Promise<boolean> {
