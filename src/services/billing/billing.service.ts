@@ -10,7 +10,6 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
-import { Cron, CronExpression } from '@nestjs/schedule';
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -2027,7 +2026,6 @@ export class BillingService implements OnModuleInit {
   /**
    * Automated cron job to mark expired active subscriptions as PAST_DUE
    */
-  @Cron(CronExpression.EVERY_HOUR)
   async checkExpiredSubscriptions() {
     try {
       const expiredSubscriptions = await this.databaseService.executeHealthcareWrite(
@@ -6933,7 +6931,6 @@ export class BillingService implements OnModuleInit {
   }
 
   /** Cron: repairs payments stuck between the claim and their side effects (crashed finalisation). */
-  @Cron(CronExpression.EVERY_10_MINUTES)
   async repairStalledPaymentFinalisations(): Promise<number> {
     try {
       return await this.finaliser.repairStalled();
@@ -6956,7 +6953,6 @@ export class BillingService implements OnModuleInit {
    * with the gateway itself (never trusted from us), and only a booking still waiting for its
    * payment is confirmed; expired or cancelled ones are left to an admin.
    */
-  @Cron(CronExpression.EVERY_5_MINUTES)
   async reconcileStalePendingPayments(): Promise<number> {
     const acquired = await this.cacheService.acquireLock(
       STALE_PENDING_LOCK_KEY,
@@ -7077,7 +7073,6 @@ export class BillingService implements OnModuleInit {
    * (VideoAppointmentSchedulerService.handleExpiredPaymentWindows). Every write is guarded on
    * the state it expects, so a payment completing at the same moment always wins.
    */
-  @Cron(CronExpression.EVERY_MINUTE)
   async expireUnpaidCheckouts(): Promise<number> {
     const acquired = await this.cacheService.acquireLock(
       PAYMENT_WINDOW_LOCK_KEY,
@@ -8581,7 +8576,6 @@ export class BillingService implements OnModuleInit {
    * Reconcile legacy paid appointments that are still stuck in SCHEDULED state.
    * This keeps the database aligned with completed payment records.
    */
-  @Cron(CronExpression.EVERY_HOUR)
   async reconcileLegacyPaidAppointments(): Promise<{ reconciled: number }> {
     try {
       const completedPayments = await this.databaseService.findPaymentsSafe({
