@@ -126,3 +126,4 @@ deploy_status*.txt
 
 # jest ts-jest emit dir
 dist-test/
+.ccm/
