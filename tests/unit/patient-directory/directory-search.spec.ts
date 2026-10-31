@@ -1,7 +1,10 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  UNNAMED_PATIENT_LABEL,
   classifySearchTerm,
+  directoryDisplayName,
   escapeLike,
+  normalizePhoneDigits,
   isPharmacySearchAllowed,
   isRealCalendarDate,
 } from '../../../src/services/patient-directory/utils/directory-search.util';
@@ -28,7 +31,7 @@ describe('classifySearchTerm', () => {
   });
 
   it('treats a country-code mobile without a plus as a phone, not a register number', () => {
-    expect(classifySearchTerm('919876543210')).toEqual({ kind: 'phone', value: '919876543210' });
+    expect(classifySearchTerm('919876543210')).toEqual({ kind: 'phone', value: '9876543210' });
   });
 
   it('recognises OPD numbers with or without the VM prefix', () => {
@@ -38,7 +41,7 @@ describe('classifySearchTerm', () => {
   });
 
   it('treats a phone number in any format as digits', () => {
-    expect(classifySearchTerm('+91 98765-43210')).toEqual({ kind: 'phone', value: '919876543210' });
+    expect(classifySearchTerm('+91 98765-43210')).toEqual({ kind: 'phone', value: '9876543210' });
     expect(classifySearchTerm('09876543210')).toEqual({ kind: 'phone', value: '9876543210' });
     expect(classifySearchTerm('4321')).toEqual({ kind: 'phone', value: '4321' });
   });
@@ -66,6 +69,34 @@ describe('classifySearchTerm', () => {
     const many = classifySearchTerm('a1 b2 c3 d4 e5 f6 g7 h8');
     expect(many?.tokens).toHaveLength(6);
     expect(classifySearchTerm('x'.repeat(500))?.value.length).toBeLessThanOrEqual(100);
+  });
+});
+
+describe('phone search matches every stored form of an Indian mobile', () => {
+  it('searches the national number for +91, 91 and 0 prefixes', () => {
+    for (const typed of ['+919000000980', '919000000980', '+91 90000 00980', '09000000980']) {
+      expect(classifySearchTerm(typed)).toEqual({ kind: 'phone', value: '9000000980' });
+    }
+    expect(classifySearchTerm('9000000980')).toEqual({ kind: 'phone', value: '9000000980' });
+  });
+
+  it('keeps partial numbers and non-Indian numbers as typed', () => {
+    expect(normalizePhoneDigits('0980')).toBe('0980');
+    expect(normalizePhoneDigits('447854545454')).toBe('447854545454');
+    // 91 followed by a number that is not a mobile is left alone.
+    expect(normalizePhoneDigits('911234567890')).toBe('911234567890');
+  });
+});
+
+describe('directoryDisplayName', () => {
+  it('uses the full name, else first and last name', () => {
+    expect(directoryDisplayName('PERF Gate Test', 'PERF Gate', 'Test')).toBe('PERF Gate Test');
+    expect(directoryDisplayName(null, 'Asha', 'Patil')).toBe('Asha Patil');
+  });
+
+  it('labels an app sign-up that has no name yet instead of showing a blank row', () => {
+    expect(directoryDisplayName('', '', '')).toBe(UNNAMED_PATIENT_LABEL);
+    expect(directoryDisplayName('   ', null, undefined)).toBe(UNNAMED_PATIENT_LABEL);
   });
 });
 

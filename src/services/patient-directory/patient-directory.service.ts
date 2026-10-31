@@ -16,6 +16,7 @@ import { Role } from '@core/types/enums.types';
 import type { PatientDirectoryQueryDto } from './dto/patient-directory-query.dto';
 import {
   classifySearchTerm,
+  directoryDisplayName,
   isPharmacySearchAllowed,
   isRealCalendarDate,
   PHARMACY_SEARCH_MESSAGE,
@@ -256,11 +257,10 @@ export class PatientDirectoryService {
   }
 
   private toRow(row: DirectoryDbRow): PatientDirectoryRow {
-    const fallbackName = [row.firstName, row.lastName].filter(Boolean).join(' ');
     return {
       patientId: row.patient_id,
       userId: row.user_id,
-      name: row.name ?? (fallbackName || 'Unnamed patient'),
+      name: directoryDisplayName(row.name, row.firstName, row.lastName),
       gender: row.gender,
       age: row.age,
       dateOfBirth: toIso(row.dateOfBirth),
