@@ -17,6 +17,8 @@
  * @see https://docs.sentry.io/platforms/javascript/guides/nestjs/
  */
 
+// Must stay first: OpenTelemetry has to register before Sentry and any instrumented library.
+import { isOtelEnabled } from './otel';
 import * as Sentry from '@sentry/nestjs';
 
 /**
@@ -98,6 +100,8 @@ export function initSentry(): boolean {
     // forwards a scrubbed context explicitly instead.
     dataCollection: SENTRY_DATA_COLLECTION,
     maxBreadcrumbs: 50,
+    // When OTel owns tracing (see ./otel), attach its active span/trace id to Sentry events.
+    ...(isOtelEnabled() ? { integrations: [Sentry.openTelemetryIntegration()] } : {}),
   });
 
   sentryEnabled = true;
