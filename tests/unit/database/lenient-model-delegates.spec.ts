@@ -44,4 +44,25 @@ describe('LENIENT_MODEL_DELEGATES', () => {
   it('includes the Ayurveda nadi-pariksha delegate that previously stayed undefined', () => {
     expect(lenientDelegates()).toContain('nadiPariksha');
   });
+
+  it('includes every Ayurveda clinical delegate the Ayurveda services read', () => {
+    expect(lenientDelegates()).toEqual(
+      expect.arrayContaining([
+        'nadiParikshaRecord',
+        'prakritiAssessment',
+        'doshaImbalance',
+        'sampraptiStage',
+        'ayurvedicDiagnosis',
+      ])
+    );
+  });
+
+  it('has no two schema models sharing one client delegate name', () => {
+    // `model NadiPariksha` and `model nadiPariksha` both became `prisma.nadiPariksha`; the
+    // legacy one won, so pulse-diagnosis queries hit the wrong table and answered 500.
+    const names = [...schema.matchAll(/^model\s+([A-Za-z0-9_]+)\s*\{/gm)].map(m => m[1] ?? '');
+    const delegates = names.map(n => n.charAt(0).toLowerCase() + n.slice(1));
+    const duplicates = delegates.filter((d, i) => delegates.indexOf(d) !== i);
+    expect(duplicates).toEqual([]);
+  });
 });

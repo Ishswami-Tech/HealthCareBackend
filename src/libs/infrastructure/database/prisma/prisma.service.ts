@@ -122,6 +122,7 @@ import type {
   NursingNoteDelegate,
   VitalsFlowsheetDelegate,
   BedsideMedicationDelegate,
+  NadiParikshaRecordDelegate,
   TransactionDelegate,
 } from '@core/types/prisma.types';
 
@@ -235,6 +236,11 @@ export const LENIENT_MODEL_DELEGATES = [
   'foodCompatibilityRule',
   'prakritiAnalysis',
   'nadiPariksha',
+  'nadiParikshaRecord',
+  'prakritiAssessment',
+  'doshaImbalance',
+  'sampraptiStage',
+  'ayurvedicDiagnosis',
 ] as const;
 
 @Injectable()
@@ -292,6 +298,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   readonly ayurvedicDiagnosis!: any;
   readonly prakritiAssessment!: any;
   readonly nadiPariksha!: any;
+  readonly nadiParikshaRecord!: NadiParikshaRecordDelegate;
   readonly doshaImbalance!: any;
   readonly $transaction!: TransactionDelegate['$transaction'];
   private static connectionCount = 0;

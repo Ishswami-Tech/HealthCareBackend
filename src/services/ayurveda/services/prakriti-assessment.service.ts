@@ -137,27 +137,35 @@ export class PrakritiAssessmentService {
    * @returns Array of Prakriti assessments sorted by date descending
    */
   async getAssessmentHistory(
-    patientId: string,
+    patientId: string | undefined,
     clinicId: string,
     limit = 20,
     offset = 0
   ): Promise<PrakritiAssessmentResponseDto[]> {
-    const cacheKey = `${PRAKRITI_CACHE_PREFIX}:history:${clinicId}:${patientId}:${limit}:${offset}`;
+    // Without a patient this is the clinic's most recent assessments; not cached because the
+    // per-patient invalidation below would never clear it.
+    const cacheKey = patientId
+      ? `${PRAKRITI_CACHE_PREFIX}:history:${clinicId}:${patientId}:${limit}:${offset}`
+      : undefined;
 
-    const cached = await this.cache.get<PrakritiAssessmentResponseDto[]>(cacheKey);
-    if (cached) {
-      return cached;
+    if (cacheKey) {
+      const cached = await this.cache.get<PrakritiAssessmentResponseDto[]>(cacheKey);
+      if (cached) {
+        return cached;
+      }
     }
 
     const assessments = await this.db.prisma.prakritiAssessment.findMany({
-      where: { patientId, clinicId },
+      where: patientId ? { patientId, clinicId } : { clinicId },
       orderBy: { assessedAt: 'desc' },
       take: limit,
       skip: offset,
     });
 
     const result = assessments.map((a: (typeof assessments)[number]) => this.mapToResponseDto(a));
-    await this.cache.set(cacheKey, result, 300);
+    if (cacheKey) {
+      await this.cache.set(cacheKey, result, 300);
+    }
 
     return result;
   }

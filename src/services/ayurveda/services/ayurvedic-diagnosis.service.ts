@@ -222,7 +222,7 @@ export class AyurvedicDiagnosisService {
         where: { id: dto.prakritiAssessmentId, clinicId },
         select: { id: true },
       }),
-      this.db.prisma.nadiPariksha.findFirst({
+      this.db.prisma.nadiParikshaRecord.findFirst({
         where: { id: dto.nadiParikshaId, clinicId },
         select: { id: true },
       }),

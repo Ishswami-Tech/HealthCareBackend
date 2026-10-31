@@ -2290,7 +2290,10 @@ model prakritiAssessment {
   @@map("prakriti_assessments")
 }
 
-model nadiPariksha {
+// Named NadiParikshaRecord (not `nadiPariksha`): the legacy `NadiPariksha` model above already
+// owns the `prisma.nadiPariksha` client delegate, so a same-named model here was unreachable and
+// every query hit the legacy userId-based table. The table name is unchanged (@@map below).
+model NadiParikshaRecord {
   id             String   @id @default(uuid())
   patientId      String
   clinicId       String?

@@ -17,6 +17,7 @@ import {
   invalidatePharmacyCacheTags,
 } from './pharmacy-cache-invalidation.util';
 import type { CreateStockBatchDto, BatchFilterDto } from '../dto/pharmacy-inventory.dto';
+import { buildBatchReceiptMovement } from '@services/pharmacy-inventory/services/stock-receipt-movement.util';
 
 /**
  * Cache key prefix for batch queries
@@ -158,6 +159,19 @@ export class BatchService {
       await typedClient.medicine.update({
         where: { id: medicine.id },
         data: { stock: { increment: dto.quantity } },
+      });
+
+      // Ledger row for the receipt, in the same transaction as the stock increase, so the
+      // movement history (and anything reconciling on-hand against it) sees the received units.
+      await typedClient.stockMovement.create({
+        data: buildBatchReceiptMovement({
+          batchId: created.id,
+          productId: created.productId,
+          clinicId,
+          lotNumber: created.lotNumber,
+          quantity: dto.quantity,
+          recordedById: userId,
+        }),
       });
 
       return created;

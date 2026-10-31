@@ -199,7 +199,7 @@ export class AyurvedicTimelineService {
       if (dateFilter.lte) where.assessedAt.lte = dateFilter.lte;
     }
 
-    return this.db.prisma.nadiPariksha.findMany({
+    return this.db.prisma.nadiParikshaRecord.findMany({
       where,
       orderBy: { assessedAt: 'desc' },
     }) as Promise<NadiRecord[]>;

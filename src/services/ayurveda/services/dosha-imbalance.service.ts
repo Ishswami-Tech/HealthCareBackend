@@ -5,7 +5,11 @@
  */
 
 import { Injectable, NotFoundException } from '@nestjs/common';
-import type { CreateDoshaImbalanceDto, DoshaType } from '@services/ayurveda/dto';
+import type {
+  CreateDoshaImbalanceDto,
+  DoshaImbalanceResponseDto,
+  DoshaType,
+} from '@services/ayurveda/dto';
 import { DoshaType as DoshaTypeEnum } from '@services/ayurveda/dto';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
@@ -136,6 +140,26 @@ export class DoshaImbalanceService {
 
     await this.cache.set(cacheKey, result, 300);
     return result;
+  }
+
+  /**
+   * Retrieves the clinic's most recent dosha imbalance records (any patient), newest first.
+   * Used when a list is requested without a patient (e.g. the doctor Ayurveda dashboard).
+   * Not cached: it changes with every new assessment in the clinic.
+   *
+   * @param clinicId - Clinic context (records of other clinics are never returned)
+   * @param limit - Maximum results
+   * @returns Recent imbalance records sorted by date descending
+   */
+  async getRecentClinicImbalances(
+    clinicId: string,
+    limit: number
+  ): Promise<DoshaImbalanceResponseDto[]> {
+    return this.db.prisma.doshaImbalance.findMany({
+      where: { clinicId },
+      orderBy: { assessedAt: 'desc' },
+      take: limit,
+    }) as Promise<DoshaImbalanceResponseDto[]>;
   }
 
   /**

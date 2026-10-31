@@ -45,6 +45,12 @@ import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
 import { Role } from '@core/types/enums.types';
+import { HealthcareError, ErrorCode } from '@core/errors';
+import {
+  parseAyurvedaListLimit,
+  parseAyurvedaListOffset,
+  resolveAyurvedaPatientFilter,
+} from '@services/ayurveda/utils/patient-filter.util';
 
 /**
  * Controller for Ayurvedic clinical data operations.
@@ -105,16 +111,16 @@ export class AyurvedaController {
   )
   @RequireResourcePermission('ayurveda', 'read', { requireOwnership: true })
   async getPrakritiAssessments(
-    @Query('patientId') patientId: string,
-    @Query('limit') limit = '20',
-    @Query('offset') offset = '0',
+    @Query('patientId') patientId: string | undefined,
+    @Query('limit') limit: string | undefined,
+    @Query('offset') offset: string | undefined,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<PrakritiAssessmentResponseDto[]> {
     return this.ayurvedaService.getPrakritiHistory(
-      patientId,
+      this.resolvePatientScope(patientId, req),
       req.clinicContext?.clinicId as string,
-      parseInt(limit as string, 10),
-      parseInt(offset as string, 10)
+      parseAyurvedaListLimit(limit),
+      parseAyurvedaListOffset(offset)
     );
   }
 
@@ -197,16 +203,16 @@ export class AyurvedaController {
   )
   @RequireResourcePermission('ayurveda', 'read', { requireOwnership: true })
   async getNadiParikshaHistory(
-    @Query('patientId') patientId: string,
-    @Query('limit') limit = '20',
-    @Query('offset') offset = '0',
+    @Query('patientId') patientId: string | undefined,
+    @Query('limit') limit: string | undefined,
+    @Query('offset') offset: string | undefined,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<NadiParikshaResponseDto[]> {
     return this.ayurvedaService.getNadiHistory(
-      patientId,
+      this.resolvePatientScope(patientId, req),
       req.clinicContext?.clinicId as string,
-      parseInt(limit as string, 10),
-      parseInt(offset as string, 10)
+      parseAyurvedaListLimit(limit),
+      parseAyurvedaListOffset(offset)
     );
   }
 
@@ -324,13 +330,42 @@ export class AyurvedaController {
   )
   @RequireResourcePermission('ayurveda', 'read', { requireOwnership: true })
   async getDoshaImbalances(
-    @Query('patientId') patientId: string,
+    @Query('patientId') patientId: string | undefined,
+    @Query('limit') limit: string | undefined,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<DoshaImbalanceResponseDto[]> {
     return this.ayurvedaService.getDoshaImbalances(
-      patientId,
-      req.clinicContext?.clinicId as string
+      this.resolvePatientScope(patientId, req),
+      req.clinicContext?.clinicId as string,
+      parseAyurvedaListLimit(limit)
     );
+  }
+
+  /**
+   * Resolves the `patientId` query of a list endpoint. Blank means "not provided" (clinic-scoped
+   * recent list for staff, own records for a patient); a non-blank value must be a UUID.
+   *
+   * @returns The patient to filter by, or undefined for the clinic-scoped recent list
+   * @throws {HealthcareError} 400 when patientId is present but not a UUID
+   */
+  private resolvePatientScope(
+    rawPatientId: string | undefined,
+    req: ClinicAuthenticatedRequest
+  ): string | undefined {
+    const filter = resolveAyurvedaPatientFilter(rawPatientId, {
+      id: req.user?.id,
+      role: req.user?.role,
+    });
+    if (filter.kind === 'invalid') {
+      throw new HealthcareError(
+        ErrorCode.VALIDATION_INVALID_FORMAT,
+        'patientId must be a valid UUID',
+        HttpStatus.BAD_REQUEST,
+        undefined,
+        'AyurvedaController'
+      );
+    }
+    return filter.kind === 'patient' ? filter.patientId : undefined;
   }
 
   // ============ Timeline ============
