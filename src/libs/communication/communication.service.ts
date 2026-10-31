@@ -29,6 +29,10 @@ import {
 
 // Channel services
 import { SocketService } from '@communication/channels/socket/socket.service';
+import {
+  NOTIFICATION_SOCKET_EVENT,
+  buildNotificationSocketPayload,
+} from '@communication/channels/socket/socket-room-policy';
 import { PushNotificationService } from '@communication/channels/push/push.service';
 import { EmailService } from '@communication/channels/email/email.service';
 import { EmailTemplatesService } from '@communication/channels/email/email-templates.service';
@@ -1100,7 +1104,7 @@ export class CommunicationService implements OnModuleInit {
     recipient: CommunicationRequest['recipients'][0],
     notificationId?: string
   ): Promise<ChannelDeliveryResult> {
-    const result = await this.sendToChannel(channel, request, recipient);
+    const result = await this.sendToChannel(channel, request, recipient, notificationId);
 
     // Track delivery status
     if (notificationId && recipient.userId) {
@@ -1213,14 +1217,15 @@ export class CommunicationService implements OnModuleInit {
   private async sendToChannel(
     channel: CommunicationChannel,
     request: CommunicationRequest,
-    recipient: CommunicationRequest['recipients'][0]
+    recipient: CommunicationRequest['recipients'][0],
+    notificationId?: string
   ): Promise<ChannelDeliveryResult> {
     const timestamp = new Date();
 
     try {
       switch (channel) {
         case 'socket':
-          return this.sendSocket(request, recipient, timestamp);
+          return this.sendSocket(request, recipient, timestamp, notificationId);
         case 'push':
           return await this.sendPush(request, recipient, timestamp);
         case 'email':
@@ -1250,12 +1255,14 @@ export class CommunicationService implements OnModuleInit {
   }
 
   /**
-   * Send via Socket.IO
+   * Send via Socket.IO: always the `notification` event with an ids-only payload (category,
+   * inbox row id, routing ids). The client reads title/body from the inbox API.
    */
   private sendSocket(
     request: CommunicationRequest,
     recipient: CommunicationRequest['recipients'][0],
-    timestamp: Date
+    timestamp: Date,
+    notificationId?: string
   ): Promise<ChannelDeliveryResult> {
     try {
       if (!recipient.socketRoom && !recipient.userId) {
@@ -1269,28 +1276,12 @@ export class CommunicationService implements OnModuleInit {
 
       const room =
         recipient.socketRoom || (recipient.userId ? `user:${recipient.userId}` : 'unknown');
-      const socketData: Record<string, string | number | boolean | null> = {
-        type: String(request.category),
-        title: request.title,
-        body: request.body,
-      };
-      if (request.data) {
-        // Convert data to socket-compatible format
-        for (const [key, value] of Object.entries(request.data)) {
-          if (
-            typeof value === 'string' ||
-            typeof value === 'number' ||
-            typeof value === 'boolean' ||
-            value === null
-          ) {
-            socketData[key] = value;
-          } else {
-            socketData[key] = JSON.stringify(value);
-          }
-        }
-      }
+      const socketData = buildNotificationSocketPayload(
+        { category: String(request.category), notificationId, data: request.data },
+        timestamp.toISOString()
+      );
       // SocketService.sendToRoom is synchronous, but we wrap it for consistency
-      this.socketService.sendToRoom(room, request.title, socketData);
+      this.socketService.sendToRoom(room, NOTIFICATION_SOCKET_EVENT, socketData);
 
       return Promise.resolve({
         channel: 'socket',

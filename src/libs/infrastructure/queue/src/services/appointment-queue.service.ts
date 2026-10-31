@@ -601,8 +601,53 @@ export class AppointmentQueueService {
     }
   }
 
+  /**
+   * `appointment.consultation_started` for a visit started straight in the database by the queue
+   * routes (call-next / status IN_PROGRESS). The queue job that follows runs in the worker and only
+   * reshuffles the live list, so without this the start reached no socket and no listener.
+   */
+  async emitConsultationStarted(params: {
+    appointmentId: string;
+    clinicId: string;
+    doctorId: string;
+    startedAt: Date;
+    actorUserId?: string;
+    source: string;
+  }): Promise<void> {
+    const startedAt = params.startedAt.toISOString();
+    try {
+      await this.emitAppointmentQueueEvent('appointment.consultation_started', {
+        eventId: `appointment-consultation-started-${params.appointmentId}-${params.startedAt.getTime()}`,
+        priority: EventPriority.HIGH,
+        appointmentId: params.appointmentId,
+        payload: {
+          id: params.appointmentId,
+          appointmentId: params.appointmentId,
+          clinicId: params.clinicId,
+          doctorId: params.doctorId,
+          status: 'IN_PROGRESS',
+          startedAt,
+          updatedAt: startedAt,
+          ...(params.actorUserId ? { userId: params.actorUserId } : {}),
+          source: params.source,
+        },
+      });
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.WARN,
+        `Failed to emit consultation started event: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentQueueService',
+        { appointmentId: params.appointmentId, clinicId: params.clinicId }
+      );
+    }
+  }
+
   private async emitAppointmentQueueEvent(
-    eventType: 'appointment.queue.updated' | 'appointment.queue.position.updated',
+    eventType:
+      | 'appointment.queue.updated'
+      | 'appointment.queue.position.updated'
+      | 'appointment.consultation_started',
     params: {
       eventId: string;
       priority?: EventPriority;

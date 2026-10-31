@@ -1626,6 +1626,8 @@ export class PharmacyService {
         action,
         entryId: prescriptionId,
         patientId: patientUser?.id || prescription.patientId,
+        // Routing only (the patient's own socket room); stripped from the socket payload.
+        ...(patientUser?.id ? { patientUserId: patientUser.id } : {}),
         patientProfileId: prescription.patientId,
         patientName: patientUser?.name || undefined,
         doctorId: doctorUser?.id || undefined,

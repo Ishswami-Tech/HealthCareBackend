@@ -640,7 +640,12 @@ export class QueueController {
       await this.assertCheckedInForDoctor(patientId, clinicId);
       // H2: the visit is started in the database first, atomically; a doctor who already has a
       // consultation in progress today gets 409 and nothing is enqueued.
-      await this.startVisitInDatabase(patientId, clinicId);
+      await this.startVisitInDatabase(
+        patientId,
+        clinicId,
+        this.asString(req.user?.sub) || this.asString(req.user?.id),
+        'QueueController.status'
+      );
     }
 
     const context = await this.safeContext(patientId, clinicId, domain);
@@ -768,7 +773,12 @@ export class QueueController {
     const clinicId = this.requireClinicId(req);
     await this.assertCheckedInForDoctor(body.appointmentId, clinicId);
     // H2: calling a patient in starts their visit (database first, atomic, one per doctor).
-    await this.startVisitInDatabase(body.appointmentId, clinicId);
+    await this.startVisitInDatabase(
+      body.appointmentId,
+      clinicId,
+      this.asString(req.user?.sub) || this.asString(req.user?.id),
+      'QueueController.callNext'
+    );
     const job = await this.queueService.addJob(JobType.APPOINTMENT, 'queue.call_next', {
       doctorId: body.doctorId,
       clinicId,
@@ -2736,7 +2746,12 @@ export class QueueController {
    * A repeated start, an operational lane item (no appointment row) or a legacy row the check-in
    * gate above let through goes on to the queue worker as before.
    */
-  private async startVisitInDatabase(appointmentId: string, clinicId: string): Promise<void> {
+  private async startVisitInDatabase(
+    appointmentId: string,
+    clinicId: string,
+    actorUserId: string | undefined,
+    source: string
+  ): Promise<void> {
     if (!this.databaseService) return;
     const outcome = await this.databaseService.executeInTransaction(async client =>
       supportsRawSql(client)
@@ -2749,6 +2764,17 @@ export class QueueController {
         code: DOCTOR_BUSY_CODE,
         message: DOCTOR_BUSY_MESSAGE,
         inProgressAppointmentId: outcome.inProgressAppointmentId,
+      });
+    }
+    // Only a real transition announces the start (a repeated click is 'already-started').
+    if (outcome?.kind === 'started') {
+      await this.appointmentQueueService.emitConsultationStarted({
+        appointmentId,
+        clinicId,
+        doctorId: outcome.doctorId,
+        startedAt: outcome.startedAt,
+        ...(actorUserId ? { actorUserId } : {}),
+        source,
       });
     }
   }

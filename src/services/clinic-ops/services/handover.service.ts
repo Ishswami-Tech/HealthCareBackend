@@ -18,6 +18,9 @@ import {
   Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
+import { EventService } from '@infrastructure/events/event.service';
+import { LoggingService } from '@infrastructure/logging';
+import { LogLevel, LogType } from '@core/types';
 import { QrService } from '@utils/QR/qr.service';
 import { PharmacyService } from '@services/pharmacy/services/pharmacy.service';
 import { OpsDbService, type OpsActor } from './ops-db.service';
@@ -37,6 +40,9 @@ export const HANDOVER_CODE_TTL_MINUTES = 15;
 export const HANDOVER_UNDO_MINUTES = 5;
 const MAX_ATTEMPTS = 5;
 const UNDO_ROLES = new Set(['CLINIC_ADMIN', 'SUPER_ADMIN']);
+/** Socket-broadcast event of every hand-over state change (see EventSocketBroadcaster). */
+export const HANDOVER_UPDATED_EVENT = 'pharmacy.handover.updated';
+export type HandoverAction = 'CODE_ISSUED' | 'VERIFIED' | 'HANDED_OVER' | 'UNDONE';
 
 export interface HandoverCodeResponse {
   handoverId: string;
@@ -130,7 +136,9 @@ export class HandoverService {
     private readonly audit: ClinicAuditService,
     private readonly qr: QrService,
     private readonly pharmacy: PharmacyService,
-    @Optional() config?: ConfigService
+    private readonly eventService: EventService,
+    @Optional() config?: ConfigService,
+    @Optional() private readonly loggingService?: LoggingService
   ) {
     this.otpKey =
       config?.getEnv('HANDOVER_OTP_SECRET') || config?.getEnv('JWT_SECRET') || undefined;
@@ -179,6 +187,7 @@ export class HandoverService {
         )
       : await this.createWithCode(prescriptionId, clinicId, rx, code, expiresAt, actor);
     if (!open) await this.bustPrescriptionCache(prescriptionId, clinicId);
+    await this.emitHandoverUpdated(rx, row.id, 'PENDING_VERIFICATION', 'CODE_ISSUED');
     const qrPayload = `TBD-HO:${row.id}:${code}`;
     return {
       handoverId: row.id,
@@ -288,6 +297,7 @@ export class HandoverService {
     if (claimed.count !== 1) {
       throw new BadRequestException('This code was already used or renewed - verify again');
     }
+    await this.emitHandoverUpdated(rx, row.id, 'PENDING_VERIFICATION', 'VERIFIED');
     return this.toResponse(await this.loadHandover(row.id, clinicId), rx);
   }
 
@@ -354,6 +364,7 @@ export class HandoverService {
       }
     );
     await this.bustPrescriptionCache(row.prescriptionId, clinicId);
+    await this.emitHandoverUpdated(rx, handoverId, 'HANDED_OVER', 'HANDED_OVER');
     return this.get(handoverId, clinicId);
   }
 
@@ -399,6 +410,8 @@ export class HandoverService {
       actor
     );
     await this.bustPrescriptionCache(row.prescriptionId, clinicId);
+    const rx = await this.loadPrescription(row.prescriptionId, clinicId);
+    await this.emitHandoverUpdated(rx, handoverId, 'UNDONE', 'UNDONE');
     return this.get(handoverId, clinicId);
   }
 
@@ -425,6 +438,41 @@ export class HandoverService {
   }
 
   // ------------------------------------------------------------------ helpers
+
+  /**
+   * Ids-only state change for the pharmacist board and the patient's own room. Emitted after the
+   * write committed; a failure is logged and never fails the hand-over itself.
+   */
+  private async emitHandoverUpdated(
+    rx: PrescriptionLiteRow,
+    handoverId: string,
+    status: string,
+    action: HandoverAction
+  ): Promise<void> {
+    try {
+      await this.eventService.emit(HANDOVER_UPDATED_EVENT, {
+        clinicId: rx.clinicId,
+        prescriptionId: rx.id,
+        handoverId,
+        status,
+        action,
+        ...(rx.patient?.userId ? { patientUserId: rx.patient.userId } : {}),
+      });
+    } catch (error) {
+      await this.loggingService?.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'Hand-over update event could not be emitted',
+        'HandoverService',
+        {
+          prescriptionId: rx.id,
+          handoverId,
+          action,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+    }
+  }
 
   /** The code is already issued; a QR render failure only drops the image (logged by QrService). */
   private async renderQr(payload: string): Promise<string | null> {

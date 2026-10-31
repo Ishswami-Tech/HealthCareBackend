@@ -1,7 +1,10 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  NOTIFICATION_SOCKET_EVENT,
+  buildNotificationSocketPayload,
   buildSlimSocketPayload,
   canJoinRoom,
+  isPatientScopedEvent,
   determineTargetRooms,
   isStaffRole,
   resolveUserRooms,
@@ -245,5 +248,95 @@ describe('socket relay message parsing', () => {
       parseSocketRelayMessage(JSON.stringify({ rooms: [1], event: 'x', data: {} }))
     ).toBeNull();
     expect(parseSocketRelayMessage(JSON.stringify({ event: 'x', data: {} }))).toBeNull();
+  });
+});
+
+describe('pharmacy desk and hand-over events (INT-01)', () => {
+  it('reach the clinic staff room and the patient own room, ids only', () => {
+    const summary = summarizeEvent({
+      clinicId: 'CL1',
+      prescriptionId: 'rx-1',
+      entryId: 'rx-1',
+      patientId: 'u-pat',
+      patientUserId: 'u-pat',
+      patientName: 'Asha Patil',
+      medicationNames: ['Paracetamol'],
+      status: 'WAITING_FOR_PAYMENT',
+      action: 'CREATED',
+    });
+    expect(isPatientScopedEvent('pharmacy.medicine_desk.updated')).toBe(true);
+    const rooms = determineTargetRooms('pharmacy.medicine_desk.updated', summary.ids);
+    expect(rooms).toEqual(expect.arrayContaining(['clinic:CL1', 'user:u-pat']));
+    expect(rooms).not.toContain('clinic:CL1:public');
+
+    const payload = buildSlimSocketPayload('pharmacy.medicine_desk.updated', summary, 'now');
+    expect(payload).toMatchObject({ prescriptionId: 'rx-1', status: 'WAITING_FOR_PAYMENT' });
+    expect(JSON.stringify(payload)).not.toContain('Asha');
+    expect(JSON.stringify(payload)).not.toContain('Paracetamol');
+    expect(payload).not.toHaveProperty('patientUserId');
+  });
+
+  it('routes a hand-over change with its handover id', () => {
+    const summary = summarizeEvent({
+      clinicId: 'CL1',
+      prescriptionId: 'rx-1',
+      handoverId: 'ho-1',
+      patientUserId: 'u-pat',
+      status: 'HANDED_OVER',
+      action: 'HANDED_OVER',
+    });
+    expect(determineTargetRooms('pharmacy.handover.updated', summary.ids)).toEqual(
+      expect.arrayContaining(['clinic:CL1', 'user:u-pat'])
+    );
+    expect(buildSlimSocketPayload('pharmacy.handover.updated', summary, 'now')).toMatchObject({
+      handoverId: 'ho-1',
+      prescriptionId: 'rx-1',
+    });
+  });
+
+  it('keeps Rx drafts staff-only (no patient room)', () => {
+    expect(isPatientScopedEvent('clinic-ops.rx-draft.approved')).toBe(false);
+    const summary = summarizeEvent({ clinicId: 'CL1', prescriptionId: 'rx-1', patientUserId: 'u' });
+    expect(determineTargetRooms('clinic-ops.rx-draft.approved', summary.ids)).toEqual([
+      'clinic:CL1',
+    ]);
+  });
+});
+
+describe('in-app notification socket payload (INT-02)', () => {
+  it('uses the fixed notification event name', () => {
+    expect(NOTIFICATION_SOCKET_EVENT).toBe('notification');
+  });
+
+  it('carries the category, inbox id and routing ids, never title/body/free text', () => {
+    const payload = buildNotificationSocketPayload(
+      {
+        category: 'PRESCRIPTION',
+        notificationId: 'n-1',
+        data: {
+          clinicId: 'CL1',
+          prescriptionId: 'rx-1',
+          patientName: 'Asha Patil',
+          medicationNames: ['Paracetamol'],
+          message: 'Your medicines are ready',
+        },
+      },
+      '2026-10-31T10:00:00.000Z'
+    );
+    expect(payload).toEqual({
+      eventType: 'notification',
+      timestamp: '2026-10-31T10:00:00.000Z',
+      clinicId: 'CL1',
+      prescriptionId: 'rx-1',
+      type: 'PRESCRIPTION',
+      category: 'PRESCRIPTION',
+      notificationId: 'n-1',
+    });
+  });
+
+  it('omits a missing notification id', () => {
+    const payload = buildNotificationSocketPayload({ category: 'SYSTEM' }, 'now');
+    expect(payload).not.toHaveProperty('notificationId');
+    expect(payload['type']).toBe('SYSTEM');
   });
 });

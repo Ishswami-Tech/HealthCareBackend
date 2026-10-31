@@ -67,6 +67,12 @@ export class EventSocketBroadcaster implements OnModuleInit {
     // Bare 'queue.*' events (e.g. queue.metrics.updated): the frontend listens for them on the
     // default namespace (useWebSocketIntegration.ts).
     'queue.',
+    // Prescription at the medicine desk (created / updated / paid / dispensed / cancelled), its
+    // counter hand-over, and the assistant's Rx drafts: the pharmacist board, the doctor's lists
+    // and the patient's own medicines screen refetch on these (ids-only payloads).
+    'pharmacy.medicine_desk.',
+    'pharmacy.handover.',
+    'clinic-ops.rx-draft.',
   ];
 
   constructor(

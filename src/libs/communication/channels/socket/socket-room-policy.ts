@@ -96,6 +96,8 @@ export interface SocketEventIds {
   ehrRecordId?: string;
   queueName?: string;
   entryId?: string;
+  prescriptionId?: string;
+  handoverId?: string;
 }
 
 export interface SocketEventSummary {
@@ -126,6 +128,8 @@ const ID_KEYS: ReadonlyArray<Exclude<keyof SocketEventIds, 'patientUserId'>> = [
   'ehrRecordId',
   'queueName',
   'entryId',
+  'prescriptionId',
+  'handoverId',
 ];
 
 /** Short opaque identifiers only: anything longer or with spaces is not an id. */
@@ -284,6 +288,9 @@ export const PATIENT_SCOPED_PREFIXES = [
   'ehr.',
   'queue.',
   'subscription.',
+  // The patient's own prescription at the medicine desk and its counter hand-over.
+  'pharmacy.medicine_desk.',
+  'pharmacy.handover.',
 ];
 
 export function isPublicCatalogEvent(event: string): boolean {
@@ -324,4 +331,35 @@ export function determineTargetRooms(event: string, ids: SocketEventIds): string
   if (ids.ehrRecordId) rooms.add(`ehr:${ids.ehrRecordId}`);
 
   return Array.from(rooms);
+}
+
+// ---------------------------------------------------------------------------
+// In-app notifications (socket channel)
+// ---------------------------------------------------------------------------
+
+/** The one event name every in-app notification is pushed under (the web listens for it). */
+export const NOTIFICATION_SOCKET_EVENT = 'notification';
+
+export interface NotificationSocketInput {
+  category: string;
+  notificationId?: string | undefined;
+  data?: Record<string, unknown> | undefined;
+}
+
+/**
+ * Ids-only payload of an in-app notification push: the category, the inbox row id and the
+ * routing ids found in the request data. Never the title, body or free-text data: the client
+ * reads the notification itself from the inbox API (RBAC applies there).
+ */
+export function buildNotificationSocketPayload(
+  input: NotificationSocketInput,
+  now: string
+): SocketEventData {
+  const summary = summarizeEvent(input.data ?? {});
+  const data = buildSlimSocketPayload(NOTIFICATION_SOCKET_EVENT, summary, now);
+  data['type'] = input.category;
+  data['category'] = input.category;
+  const notificationId = asId(input.notificationId);
+  if (notificationId) data['notificationId'] = notificationId;
+  return data;
 }
