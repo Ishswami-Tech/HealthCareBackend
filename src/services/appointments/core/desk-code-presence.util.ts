@@ -26,6 +26,10 @@ export const DESK_CODE_MAX_ACCURACY_ALLOWANCE_METERS = 1000;
 export const DESK_CODE_LOCATION_REQUIRED_MESSAGE =
   'Turn on location to check in with the desk code, scan the QR at the desk, or ask the reception desk to check you in.';
 
+/** Poster scan refused because the clinic requires the device position and none was sent. */
+export const POSTER_LOCATION_REQUIRED_MESSAGE =
+  'Turn on location to check in at the clinic, or ask the reception desk to check you in.';
+
 /** TOO_FAR without a distance. */
 export const DESK_CODE_TOO_FAR_MESSAGE =
   'You are too far from the clinic. Check in when you reach the clinic, or ask the reception desk to check you in.';

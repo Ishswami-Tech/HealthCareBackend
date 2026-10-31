@@ -45,6 +45,7 @@ import { CheckInLocationService } from '../plugins/therapy/check-in-location.ser
 import { CHECK_IN_EVENT_NAMES, buildCheckInEventPayload } from '../core/check-in-events.util';
 import {
   DESK_CODE_LOCATION_REQUIRED_MESSAGE,
+  POSTER_LOCATION_REQUIRED_MESSAGE,
   DESK_CODE_TOO_FAR_MESSAGE,
   assessDeskCodePresence,
   deskCodeTooFarMessage,
@@ -244,6 +245,23 @@ export class InPersonCheckInService {
    * high-volume clinic turns it on. Defaults to enabled when unset.
    */
   private async isQrCheckInEnabled(clinicId: string): Promise<boolean> {
+    const opdControls = await this.readOpdControls(clinicId);
+    return Boolean(opdControls['qrCheckInEnabled'] ?? true);
+  }
+
+  /**
+   * Clinic-wide "Require location for QR check-in" toggle
+   * (appointmentSettings.opdControls.requireLocationForQrCheckIn). When on (the default) a
+   * patient's poster scan must carry a device position inside the location geofence; without it
+   * the scan is refused (LOCATION_REQUIRED) and the patient is pointed to the reception desk,
+   * so a photographed poster cannot check anyone in from elsewhere.
+   */
+  private async isLocationRequiredForQrCheckIn(clinicId: string): Promise<boolean> {
+    const opdControls = await this.readOpdControls(clinicId);
+    return Boolean(opdControls['requireLocationForQrCheckIn'] ?? true);
+  }
+
+  private async readOpdControls(clinicId: string): Promise<Record<string, unknown>> {
     const clinic = await this.databaseService.executeHealthcareRead<{
       settings: unknown;
     } | null>(async client => {
@@ -263,10 +281,9 @@ export class InPersonCheckInService {
     const appointmentSettings = isPlainRecord(settings['appointmentSettings'])
       ? settings['appointmentSettings']
       : {};
-    const opdControls = isPlainRecord(appointmentSettings['opdControls'])
+    return isPlainRecord(appointmentSettings['opdControls'])
       ? appointmentSettings['opdControls']
       : {};
-    return Boolean(opdControls['qrCheckInEnabled'] ?? true);
   }
 
   /** Patient scans the poster of the location they booked. */
@@ -306,10 +323,13 @@ export class InPersonCheckInService {
     const booking = match as InPersonAppointmentRow;
 
     // Typed desk code: the device position is the presence proof (verified here, with the GPS
-    // accuracy allowance). Scanned signed poster: the scan is the proof, position if supplied.
+    // accuracy allowance). Scanned signed poster: the position is required too unless the clinic
+    // turned that off, because the poster itself is static and can be photographed.
     const fix = parseDeviceFix(dto.coordinates);
-    if (isTypedDeskCode) {
-      await this.assertDeskCodePresence(context, location, dto.coordinates);
+    const verifyPositionHere =
+      isTypedDeskCode || (await this.isLocationRequiredForQrCheckIn(clinicId));
+    if (verifyPositionHere) {
+      await this.assertDeskCodePresence(context, location, dto.coordinates, !isTypedDeskCode);
     }
     // An unparseable position on the poster path goes through as sent, so processCheckIn still
     // answers 400 "Invalid check-in coordinates" (unchanged 'if-supplied' behaviour).
@@ -319,7 +339,7 @@ export class InPersonCheckInService {
     const confirm = (): Promise<InPersonCheckInResult> =>
       this.confirmArrival(context, booking, {
         locationId: location.id,
-        presence: isTypedDeskCode ? 'skip' : 'if-supplied',
+        presence: verifyPositionHere ? 'skip' : 'if-supplied',
         ...(storedCoordinates !== undefined ? { coordinates: storedCoordinates } : {}),
         ...(dto.deviceInfo !== undefined ? { deviceInfo: dto.deviceInfo } : {}),
       });
@@ -344,12 +364,15 @@ export class InPersonCheckInService {
   private async assertDeskCodePresence(
     context: AttemptContext,
     location: CheckInLocation,
-    coordinates: unknown
+    coordinates: unknown,
+    isPosterScan = false
   ): Promise<void> {
     const presence = assessDeskCodePresence(coordinates, location);
     if (!presence.ok) {
       if (presence.code === 'LOCATION_REQUIRED') {
-        return this.refuse(context, 'LOCATION_REQUIRED');
+        return isPosterScan
+          ? this.refuse(context, 'LOCATION_REQUIRED', POSTER_LOCATION_REQUIRED_MESSAGE)
+          : this.refuse(context, 'LOCATION_REQUIRED');
       }
       return this.refuse(context, 'TOO_FAR', deskCodeTooFarMessage(presence.distanceMeters));
     }
