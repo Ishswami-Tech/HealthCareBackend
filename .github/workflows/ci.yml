@@ -206,6 +206,11 @@ jobs:
             || (echo "Prisma schema validation failed!" && exit 1)
           echo "Prisma schema valid" >> $GITHUB_STEP_SUMMARY
 
+      - name: Set up QEMU (arm64 emulation for the multi-arch image)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -249,7 +254,8 @@ jobs:
             BUILD_TIMESTAMP=${{ github.event.head_commit.timestamp }}
           cache-from: type=gha
           cache-to: type=gha,mode=max,ignore-error=true
-          platforms: linux/amd64
+          # amd64 for the Contabo/Coolify VPS, arm64 for Oracle Cloud Ampere (A1) and other ARM hosts
+          platforms: linux/amd64,linux/arm64
 
       - name: Ensure SHA tag exists
         run: |
