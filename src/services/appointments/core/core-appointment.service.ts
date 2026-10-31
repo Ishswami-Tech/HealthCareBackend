@@ -44,6 +44,7 @@ import {
   resolveVisitDurationMinutes,
   visitMinutesForType,
 } from '@utils/visit-duration.util';
+import { intersectSessionLayers } from '@services/appointments/core/session-layers.util';
 import { type DayBookability, resolveDayBookability } from '@utils/clinic-working-days.util';
 
 // DTOs and Types
@@ -2409,16 +2410,21 @@ export class CoreAppointmentService {
             }
 
             const legacySession = [{ start: workingHours.start, end: workingHours.end }];
-            sessionWindows =
-              locationSessions.length > 0
-                ? locationSessions
-                : doctorSessions.length > 0
+            // Slots sit inside EVERY configured layer (location hours, clinic windows, the
+            // doctor's hours or dated override). Empty location/clinic windows mean "not set";
+            // a doctor whose stored schedule has no block that weekday is off that day.
+            const doctorLayer =
+              dayOverride && dayOverride.sessions.length > 0
+                ? overrideSessions
+                : association.doctor?.workingHours
                   ? doctorSessions
-                  : clinicSessions.length > 0
-                    ? clinicSessions
-                    : hasJsonSchedule
-                      ? []
-                      : legacySession;
+                  : null;
+            const intersected = intersectSessionLayers([
+              locationSessions.length > 0 ? locationSessions : null,
+              clinicSessions.length > 0 ? clinicSessions : null,
+              doctorLayer,
+            ]);
+            sessionWindows = intersected ?? (hasJsonSchedule ? [] : legacySession);
 
             // For VIDEO_CALL appointments with a configured videoCallWindow that falls
             // OUTSIDE the session windows, add videoCallWindow as a separate valid session.
