@@ -35,6 +35,11 @@ import type { NotificationData } from '@core/types/appointment.types';
 import type { EnterpriseEventPayload } from '@core/types';
 import { AppointmentNotificationDedup } from '@communication/listeners/appointment-notification-dedup.util';
 import {
+  recipientUserIds,
+  remapRecipientUserIds,
+  type NotificationRecipient,
+} from '@communication/listeners/recipient-user-id.util';
+import {
   MilestoneDedup,
   medicineDeskMilestone,
   medicineDeskMilestoneContent,
@@ -1526,7 +1531,7 @@ export class NotificationEventListener implements OnModuleInit {
     const rawRecipients = rule.recipients(payload);
 
     if (!eventType.startsWith('appointment.')) {
-      return rawRecipients;
+      return await this.mapDoctorProfileRecipients(rawRecipients);
     }
 
     const appointmentId = payload.metadata?.['appointmentId'] as string | undefined;
@@ -1576,6 +1581,40 @@ export class NotificationEventListener implements OnModuleInit {
       );
 
     return resolvedRecipients;
+  }
+
+  /**
+   * Non-appointment events (doctor availability, prescriptions, queue ...) often name the doctor
+   * by Doctor.id; the recipient must be the doctor's User.id or the notification is dropped as
+   * "user not found". One lookup per event; a failure keeps the recipients unchanged.
+   */
+  private async mapDoctorProfileRecipients<Recipient extends NotificationRecipient>(
+    recipients: Recipient[]
+  ): Promise<Recipient[]> {
+    const ids = recipientUserIds(recipients);
+    if (ids.length === 0) return recipients;
+    try {
+      const doctors = await this.databaseService.executeHealthcareRead(client =>
+        client.doctor.findMany({
+          where: { id: { in: ids } },
+          select: { id: true, userId: true },
+        })
+      );
+      if (doctors.length === 0) return recipients;
+      return remapRecipientUserIds(
+        recipients,
+        new Map(doctors.map(doctor => [doctor.id, doctor.userId]))
+      );
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.WARN,
+        'Could not resolve doctor recipients to their user ids',
+        'NotificationEventListener',
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+      return recipients;
+    }
   }
 
   /**

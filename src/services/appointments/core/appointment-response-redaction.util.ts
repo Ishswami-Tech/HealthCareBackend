@@ -14,10 +14,12 @@
  * safe columns the list endpoint selects — `redactAppointmentResponse` also drops the same
  * infrastructure/secret keys `toSafeClinicResponse` (clinic-response.util.ts) blocks, so the
  * clinic's db_connection_string etc. never leaves this controller either, whichever read path
- * answered.
+ * answered. That clinic blocklist (it includes a bare `token` key for provider credentials) is
+ * applied only inside the embedded clinic and settings subtrees: applied to the whole answer it
+ * removed the queue display token ("K-014") of every appointment and visit.
  * Pure helpers: no Nest imports, so the spec runs without the framework.
  */
-import { stripKeysDeep } from '@core/interceptors/billing-redaction.util';
+import { stripKeysDeep, type ScopedKeyBlock } from '@core/interceptors/billing-redaction.util';
 import { isClinicalBlindRole, isClinicalKey } from '@core/interceptors/clinical-redaction.util';
 import { isSensitiveClinicKey } from '@services/clinic/clinic-response.util';
 
@@ -47,6 +49,10 @@ const CREDENTIAL_KEYS: ReadonlySet<string> = new Set([
   'hashedpassword',
   'passwordchangedat',
   'refreshtoken',
+  'accesstoken',
+  'authtoken',
+  'sessiontoken',
+  'idtoken',
   'resettoken',
   'resetpasswordtoken',
   'otpsecret',
@@ -69,14 +75,33 @@ export function isCredentialKey(key: string): boolean {
   return CREDENTIAL_KEYS.has(normalizeKey(key));
 }
 
-/** A credential key, or one of the clinic's infrastructure/secret keys (db_connection_string, ...). */
-function isUnsafeAppointmentKey(key: string): boolean {
-  return isCredentialKey(key) || isSensitiveClinicKey(key);
+/** Keys whose value is a clinic row or a settings / configuration object (provider secrets). */
+function opensClinicSecretScope(key: string): boolean {
+  const normalized = normalizeKey(key);
+  return (
+    normalized === 'clinic' ||
+    normalized === 'clinics' ||
+    normalized.endsWith('settings') ||
+    normalized.endsWith('config') ||
+    normalized.endsWith('configuration')
+  );
 }
 
-/** Deep copy of `value` without any credential or clinic-infrastructure key (every role, every depth). */
+/**
+ * The clinic's infrastructure/secret keys (db_connection_string, provider token, apiKey, ...)
+ * are removed inside the embedded clinic / settings subtrees only.
+ */
+const CLINIC_SECRET_SCOPE: ScopedKeyBlock = {
+  opensScope: opensClinicSecretScope,
+  isBlockedInScope: isSensitiveClinicKey,
+};
+
+/**
+ * Deep copy of `value` without any credential key (every role, every depth) and without the
+ * clinic-infrastructure keys inside the embedded clinic / settings subtrees.
+ */
 export function stripCredentialFields<T>(value: T): T {
-  return stripKeysDeep(value, isUnsafeAppointmentKey);
+  return stripKeysDeep(value, isCredentialKey, CLINIC_SECRET_SCOPE);
 }
 
 /**
@@ -85,7 +110,11 @@ export function stripCredentialFields<T>(value: T): T {
  */
 export function redactAppointmentResponse<T>(value: T, role: unknown): T {
   if (isClinicalBlindRole(role)) {
-    return stripKeysDeep(value, key => isUnsafeAppointmentKey(key) || isClinicalKey(key));
+    return stripKeysDeep(
+      value,
+      key => isCredentialKey(key) || isClinicalKey(key),
+      CLINIC_SECRET_SCOPE
+    );
   }
   return stripCredentialFields(value);
 }

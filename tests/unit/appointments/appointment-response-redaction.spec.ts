@@ -108,6 +108,93 @@ describe('appointment response redaction (C1)', () => {
     expect(out).toEqual({ passwordPolicy: 'x', token: 'K-001', tokenLabel: 'K-001', notes: 'n' });
   });
 
+  const ROLES = ['PATIENT', 'DOCTOR', 'RECEPTIONIST', 'CLINIC_ADMIN', 'SUPER_ADMIN', undefined];
+
+  it('keeps the queue display token at the top level and in visit data, for every role', () => {
+    const response = {
+      success: true,
+      data: {
+        ...appointmentRow(),
+        token: 'K-014',
+        tokenNumber: 14,
+        tokenLabel: 'K-014',
+        visit: { appointmentId: 'apt-1', token: 'K-014', tokenNumber: 14, status: 'WAITING' },
+        appointments: [{ id: 'apt-2', token: 'K-015', tokenLabel: 'K-015' }],
+      },
+    };
+    for (const role of ROLES) {
+      const out = redactAppointmentResponse(response, role);
+      expect(out.data.token).toBe('K-014');
+      expect(out.data.tokenLabel).toBe('K-014');
+      expect(out.data.visit.token).toBe('K-014');
+      expect(out.data.appointments[0]?.token).toBe('K-015');
+    }
+  });
+
+  it('still removes provider secrets inside the embedded clinic row and settings objects', () => {
+    const response = {
+      data: {
+        id: 'apt-1',
+        token: 'K-001',
+        clinic: {
+          id: 'clinic-1',
+          name: 'Kothrud Clinic',
+          db_connection_string: 'postgresql://u:p@db:5432/x',
+          databaseName: 'clinic_db',
+          settings: {
+            whatsapp: { phoneNumberId: '123', token: 'wa-provider-token', apiKey: 'k' },
+            payment: { cashfreeSecretKey: 's', mode: 'TEST' },
+          },
+        },
+        location: {
+          id: 'loc-1',
+          name: 'Kothrud',
+          settings: { tokenPrefix: 'K', sms: { token: 'sms-provider-token' } },
+        },
+      },
+    };
+    for (const role of ROLES) {
+      const out = redactAppointmentResponse(response, role);
+      const json = JSON.stringify(out);
+      expect(json).not.toContain('wa-provider-token');
+      expect(json).not.toContain('sms-provider-token');
+      expect(json).not.toContain('postgresql://');
+      expect(out.data.clinic.name).toBe('Kothrud Clinic');
+      expect(out.data.clinic.settings.whatsapp).toEqual({ phoneNumberId: '123' });
+      expect(out.data.clinic.settings.payment).toEqual({ mode: 'TEST' });
+      expect(out.data.location.settings.tokenPrefix).toBe('K');
+      // the visit's own queue token next to the clinic row is kept
+      expect(out.data.token).toBe('K-001');
+    }
+  });
+
+  it('access / refresh / session tokens never leak, at any depth', () => {
+    const response = {
+      accessToken: 'jwt-a',
+      refreshToken: 'jwt-r',
+      data: {
+        token: 'K-002',
+        session: { sessionToken: 'secret-sess-value', access_token: 'jwt-b', id_token: 'oidc' },
+        patient: { user: { authToken: 'secret-auth-value', refresh_token: 'jwt-c' } },
+      },
+    };
+    for (const role of ROLES) {
+      const json = JSON.stringify(redactAppointmentResponse(response, role));
+      for (const secret of [
+        'jwt-a',
+        'jwt-r',
+        'jwt-b',
+        'jwt-c',
+        'secret-sess-value',
+        'oidc',
+        'secret-auth-value',
+      ]) {
+        expect(json).not.toContain(secret);
+      }
+      expect(json).toContain('"token":"K-002"');
+    }
+  });
+
   it('findCredentialKeyPaths reports where a leak is', () => {
     expect(findCredentialKeyPaths({ a: [{ user: { password: 'x' } }] })).toEqual([
       '$.a[0].user.password',

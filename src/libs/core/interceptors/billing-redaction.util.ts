@@ -147,15 +147,46 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * other class instances are returned as they are; cycles and absurd depth are cut). Shared by the
  * billing redaction below and the reception clinical redaction.
  */
-export function stripKeysDeep<T>(value: T, isBlocked: (key: string) => boolean): T {
-  return strip(value, new WeakSet<object>(), 0, isBlocked) as T;
+export function stripKeysDeep<T>(
+  value: T,
+  isBlocked: (key: string) => boolean,
+  scoped?: ScopedKeyBlock
+): T {
+  return strip(value, new WeakSet<object>(), 0, isBlocked, scoped) as T;
+}
+
+/**
+ * An extra blocklist that applies only INSIDE the subtrees opened by certain keys (e.g. the
+ * embedded clinic row and settings objects, where provider secrets live), so a key such as a bare
+ * `token` is removed there without removing an ordinary field of the same name elsewhere.
+ */
+export interface ScopedKeyBlock {
+  /** True when the value under this key starts a scoped subtree. */
+  opensScope: (key: string) => boolean;
+  /** Blocked within a scoped subtree, in addition to the global predicate. */
+  isBlockedInScope: (key: string) => boolean;
+}
+
+function childPredicate(
+  key: string,
+  isBlocked: (key: string) => boolean,
+  scoped: ScopedKeyBlock | undefined
+): { predicate: (key: string) => boolean; scoped: ScopedKeyBlock | undefined } {
+  if (!scoped || !scoped.opensScope(key)) return { predicate: isBlocked, scoped };
+  const inScope = scoped.isBlockedInScope;
+  // Inside the scope the blocklist stays on for the whole subtree (no need to re-open it).
+  return {
+    predicate: (childKey: string) => isBlocked(childKey) || inScope(childKey),
+    scoped: undefined,
+  };
 }
 
 function strip(
   value: unknown,
   seen: WeakSet<object>,
   depth: number,
-  isBlocked: (key: string) => boolean
+  isBlocked: (key: string) => boolean,
+  scoped?: ScopedKeyBlock
 ): unknown {
   if (value === null || typeof value !== 'object') {
     return value;
@@ -168,7 +199,7 @@ function strip(
       return undefined;
     }
     seen.add(value);
-    const out = value.map(item => strip(item, seen, depth + 1, isBlocked));
+    const out = value.map(item => strip(item, seen, depth + 1, isBlocked, scoped));
     seen.delete(value);
     return out;
   }
@@ -181,7 +212,7 @@ function strip(
     const withToJson = value as { toJSON?: () => unknown };
     if (typeof withToJson.toJSON === 'function') {
       try {
-        return strip(withToJson.toJSON(), seen, depth + 1, isBlocked);
+        return strip(withToJson.toJSON(), seen, depth + 1, isBlocked, scoped);
       } catch {
         return value;
       }
@@ -197,7 +228,8 @@ function strip(
     if (isBlocked(key)) {
       continue;
     }
-    out[key] = strip(child, seen, depth + 1, isBlocked);
+    const next = childPredicate(key, isBlocked, scoped);
+    out[key] = strip(child, seen, depth + 1, next.predicate, next.scoped);
   }
   seen.delete(value);
   return out;
