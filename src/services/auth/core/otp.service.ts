@@ -172,13 +172,13 @@ export class OtpService {
    * development). Logged as a distinct "not sent" outcome, never as a successful send.
    */
   private logOtpChannelDisabled(channel: 'WhatsApp' | 'Email', purpose: string): void {
-    const hint = this.isDevOtpLogEnabled()
-      ? ' (dev: OTP is in the log)'
-      : ' (enable the provider to deliver it)';
+    const outcome = this.isDevOtpLogEnabled()
+      ? 'available in dev log only'
+      : 'enable the provider to deliver it';
     void this.loggingService.log(
       LogType.AUTH,
       LogLevel.INFO,
-      `${channel} disabled — OTP not sent via ${channel}${hint}`,
+      `OTP not delivered: ${channel} disabled; ${outcome}`,
       'OtpService',
       {
         channel: channel.toLowerCase(),
@@ -622,6 +622,13 @@ export class OtpService {
         });
       }
 
+      // WhatsApp switched off in this environment: nothing is scheduled, so log the real
+      // outcome (not delivered) instead of a misleading "delivery scheduled" line.
+      if (!this.whatsAppService.isEnabled()) {
+        this.logOtpChannelDisabled('WhatsApp', purpose);
+        return this.buildPhoneOtpSuccess(otp, expirySeconds, newAttemptCount);
+      }
+
       // Fire-and-forget delivery so the request can complete immediately after
       // the OTP is persisted. This prevents the login UI from hanging on slow
       // WhatsApp/provider responses while still keeping the OTP available for
@@ -649,13 +656,7 @@ export class OtpService {
         { phone: normalizedPhone, purpose }
       );
 
-      return {
-        success: true,
-        message: 'OTP sent successfully',
-        otp,
-        expiresIn: expirySeconds,
-        attemptsRemaining: this.getRequestsRemainingInStage(newAttemptCount),
-      };
+      return this.buildPhoneOtpSuccess(otp, expirySeconds, newAttemptCount);
     } catch (_error) {
       void this.loggingService.log(
         LogType.ERROR,
@@ -675,16 +676,27 @@ export class OtpService {
     }
   }
 
+  /** Success result for a phone OTP that is issued and cached (delivery is logged separately). */
+  private buildPhoneOtpSuccess(
+    otp: string,
+    expirySeconds: number,
+    attemptCount: number
+  ): OtpResult {
+    return {
+      success: true,
+      message: 'OTP sent successfully',
+      otp,
+      expiresIn: expirySeconds,
+      attemptsRemaining: this.getRequestsRemainingInStage(attemptCount),
+    };
+  }
+
   private async dispatchOtpSmsDelivery(
     normalizedPhone: string,
     otp: string,
     clinicId: string | undefined,
     purpose: string
   ): Promise<void> {
-    if (!this.whatsAppService.isEnabled()) {
-      this.logOtpChannelDisabled('WhatsApp', purpose);
-      return;
-    }
     const sent = await this.whatsAppService.sendOTP(
       normalizedPhone,
       otp,

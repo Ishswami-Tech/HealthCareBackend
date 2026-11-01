@@ -178,6 +178,25 @@ describe('OtpService', () => {
       expect(result.success).toBe(true);
       expect(mockCache.set).toHaveBeenCalled();
     });
+
+    it('logs delivery as scheduled via WhatsApp when the channel is enabled', async () => {
+      mockCache.get.mockResolvedValue(null);
+      mockCache.set.mockResolvedValue(undefined);
+      (mockWhatsApp.isEnabled as jest.Mock).mockReturnValue(true);
+
+      await (
+        service as unknown as {
+          sendOtpPhone: (phone: string, purpose?: string) => Promise<OtpResult>;
+        }
+      ).sendOtpPhone('+919000000992', 'login');
+
+      const logging = (service as unknown as Record<string, unknown>)['loggingService'] as {
+        log: jest.Mock;
+      };
+      const messages = logging.log.mock.calls.map(call => String(call[2]));
+      expect(messages.some(m => m.startsWith('OTP delivery scheduled via WhatsApp'))).toBe(true);
+      expect(messages.some(m => m.startsWith('OTP not delivered'))).toBe(false);
+    });
   });
 
   describe('disabled channel providers', () => {
@@ -210,10 +229,9 @@ describe('OtpService', () => {
       expect(mockCache.set).toHaveBeenCalled();
       expect(mockWhatsApp.sendOTP).not.toHaveBeenCalled();
       const messages = logMessages();
-      expect(
-        messages.some(m => m.startsWith('WhatsApp disabled — OTP not sent via WhatsApp'))
-      ).toBe(true);
+      expect(messages.some(m => m.startsWith('OTP not delivered: WhatsApp disabled'))).toBe(true);
       expect(messages.some(m => m.includes('OTP sent via WhatsApp'))).toBe(false);
+      expect(messages.some(m => m.includes('OTP delivery scheduled'))).toBe(false);
     });
 
     it('email disabled: the OTP is issued but no email send is attempted or claimed', async () => {
@@ -227,9 +245,7 @@ describe('OtpService', () => {
       expect(result.success).toBe(true);
       expect(mockEmail.sendEmail).not.toHaveBeenCalled();
       const messages = logMessages();
-      expect(messages.some(m => m.startsWith('Email disabled — OTP not sent via Email'))).toBe(
-        true
-      );
+      expect(messages.some(m => m.startsWith('OTP not delivered: Email disabled'))).toBe(true);
       expect(messages.some(m => m.startsWith('Email OTP sent directly'))).toBe(false);
     });
   });
