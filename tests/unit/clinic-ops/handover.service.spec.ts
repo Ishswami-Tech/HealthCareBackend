@@ -15,10 +15,13 @@ type Row = Record<string, unknown>;
 const qrFake = { generateQR: jest.fn(async (text: string) => `data:image/png;base64,QR(${text})`) };
 const pharmacyFake = {
   invalidatePrescriptionListCache: jest.fn(async (_context: Record<string, string>) => undefined),
+  findPrescriptionsByPatient: jest.fn(
+    async (_userId: string, _caller: unknown): Promise<Row[]> => []
+  ),
 };
+const eventFake = { emit: jest.fn(async () => undefined) };
 
 describe('HandoverService', () => {
-  let handover: Row | null;
   let created: Row[];
   let service: HandoverService;
   let forceNoClaim: boolean;
@@ -46,8 +49,15 @@ describe('HandoverService', () => {
     ],
   });
 
+  // Every hand-over row the fake database holds (newest last).
+  let rows: Row[];
+  let listRows: Row[];
+  const current = (): Row | undefined => rows[rows.length - 1];
+
   beforeEach(() => {
-    handover = null;
+    rows = [];
+    listRows = [];
+    pharmacyFake.findPrescriptionsByPatient.mockImplementation(async () => listRows);
     nextHandoverId = 'h1';
     created = [];
     forceNoClaim = false;
@@ -57,22 +67,50 @@ describe('HandoverService', () => {
       prescription: { findFirst: jest.fn(async () => rx) },
       payment: { findMany: jest.fn(async () => payments) },
       invoice: { findFirst: jest.fn(async () => null) },
+      patient: {
+        findFirst: jest.fn(async () => ({
+          id: 'p1',
+          userId: 'patient-user',
+          user: { phone: '+919000004321' },
+        })),
+      },
+      patientIdentifier: { findMany: jest.fn(async () => [{ value: 'UH-0007' }]) },
       dispenseHandover: {
-        findFirst: jest.fn(async () => handover),
+        findFirst: jest.fn(async ({ where }: { where: Row }) => {
+          const hits = rows.filter(row => matchesWhere(row, where));
+          return hits[hits.length - 1] ?? null;
+        }),
+        findMany: jest.fn(async ({ where }: { where: Row }) =>
+          rows.filter(row => matchesWhere(row, where)).reverse()
+        ),
         create: jest.fn(async ({ data }: { data: Row }) => {
-          handover = { id: nextHandoverId, otpAttempts: 0, verifiedAt: null, ...data };
-          created.push(handover);
-          return handover;
+          const row: Row = {
+            id: nextHandoverId,
+            otpAttempts: 0,
+            verifiedAt: null,
+            createdAt: new Date(),
+            ...data,
+          };
+          rows.push(row);
+          created.push(row);
+          nextHandoverId = `${nextHandoverId}x`;
+          return row;
         }),
-        update: jest.fn(async ({ data }: { data: Row }) => {
-          handover = applyData(handover as Row, data);
-          return handover;
+        update: jest.fn(async ({ where, data }: { where: Row; data: Row }) => {
+          const index = rows.findIndex(row => row['id'] === where['id']);
+          rows[index] = applyData(rows[index] as Row, data);
+          return rows[index];
         }),
-        // Honours the `where` guards (lt / not / gte / equality) the service relies on.
+        // Honours the `where` guards (lt / gt / not / gte / equality) the service relies on.
         updateMany: jest.fn(async ({ where, data }: { where: Row; data: Row }) => {
-          if (forceNoClaim || !handover || !matchesWhere(handover, where)) return { count: 0 };
-          handover = applyData(handover, data);
-          return { count: 1 };
+          if (forceNoClaim) return { count: 0 };
+          let count = 0;
+          rows = rows.map(row => {
+            if (!matchesWhere(row, where)) return row;
+            count += 1;
+            return applyData(row, data);
+          });
+          return { count };
         }),
       },
     };
@@ -84,29 +122,37 @@ describe('HandoverService', () => {
       ops as never,
       { record: jest.fn(async () => undefined) } as never,
       qrFake as never,
-      pharmacyFake as never
+      pharmacyFake as never,
+      eventFake as never
     );
   });
 
-  function applyData(current: Row, data: Row): Row {
-    const next: Row = { ...current };
+  function applyData(row: Row, data: Row): Row {
+    const next: Row = { ...row };
     for (const [key, value] of Object.entries(data)) {
-      next[key] =
-        typeof value === 'object' && value !== null && 'increment' in value
-          ? Number(next[key] ?? 0) + Number((value as { increment: number }).increment)
-          : value;
+      if (typeof value === 'object' && value !== null && 'increment' in value) {
+        next[key] = Number(next[key] ?? 0) + Number((value as { increment: number }).increment);
+      } else if (typeof value === 'object' && value !== null && 'decrement' in value) {
+        next[key] = Number(next[key] ?? 0) - Number((value as { decrement: number }).decrement);
+      } else {
+        next[key] = value;
+      }
     }
     return next;
   }
 
-  function matchesWhere(current: Row, where: Row): boolean {
+  function matchesWhere(row: Row, where: Row): boolean {
     return Object.entries(where).every(([key, cond]) => {
-      const actual = current[key] ?? null;
+      if (key === 'OR') {
+        return (cond as Row[]).some(branch => matchesWhere(row, branch));
+      }
+      const actual = row[key] ?? null;
       if (cond instanceof Date || cond === null || typeof cond !== 'object') {
         return actual === cond;
       }
-      const c = cond as { lt?: number; not?: unknown; gte?: Date; lte?: Date };
+      const c = cond as { lt?: number; gt?: number; not?: unknown; gte?: Date; lte?: Date };
       if (c.lt !== undefined && !(Number(actual) < c.lt)) return false;
+      if (c.gt !== undefined && !(Number(actual) > c.gt)) return false;
       if (c.not !== undefined && actual === c.not) return false;
       if (c.gte !== undefined && !((actual as Date).getTime() >= c.gte.getTime())) return false;
       if (c.lte !== undefined && !((actual as Date).getTime() <= c.lte.getTime())) return false;
@@ -125,11 +171,11 @@ describe('HandoverService', () => {
         service.verify('rx-1', { code: wrong }, 'c1', { userId: 'ph', role: 'PHARMACIST' })
       ).rejects.toThrow('That code does not match');
     }
-    expect(handover?.['otpAttempts']).toBe(5);
+    expect(current()?.['otpAttempts']).toBe(5);
     await expect(
       service.verify('rx-1', { code: issued.code }, 'c1', { userId: 'ph', role: 'PHARMACIST' })
     ).rejects.toThrow(/Too many wrong codes/);
-    expect(handover?.['verifiedAt']).toBeNull();
+    expect(current()?.['verifiedAt']).toBeNull();
   });
 
   it('returns the QR as a PNG data URL of qrPayload and busts the prescription cache', async () => {
@@ -179,6 +225,7 @@ describe('HandoverService', () => {
       { record: async () => undefined } as never,
       qrFake as never,
       pharmacyFake as never,
+      eventFake as never,
       { getEnv: (key: string) => (key === 'JWT_SECRET' ? 'server-secret' : undefined) } as never
     );
     const issued = await keyed.issueCode('rx-1', 'c1', { userId: 'patient-user', role: 'PATIENT' });
@@ -187,18 +234,20 @@ describe('HandoverService', () => {
   });
 
   it('undo refuses when the guarded write claims nothing', async () => {
-    handover = {
-      id: 'h1',
-      clinicId: 'c1',
-      prescriptionId: 'rx-1',
-      status: 'HANDED_OVER',
-      handedOverById: 'ph',
-      undoUntil: new Date(Date.now() + 60_000),
-    };
+    rows = [
+      {
+        id: 'h1',
+        clinicId: 'c1',
+        prescriptionId: 'rx-1',
+        status: 'HANDED_OVER',
+        handedOverById: 'ph',
+        undoUntil: new Date(Date.now() + 60_000),
+      },
+    ];
     await service.undo('h1', 'c1', { userId: 'ph', role: 'PHARMACIST' });
-    expect(handover['status']).toBe('UNDONE');
+    expect(current()?.['status']).toBe('UNDONE');
     // A second undo racing the first: the row reads HANDED_OVER but the write claims nothing.
-    handover = { ...handover, status: 'HANDED_OVER' };
+    rows = [{ ...(current() as Row), status: 'HANDED_OVER' }];
     forceNoClaim = true;
     await expect(
       service.undo('h1', 'c1', { userId: 'ph', role: 'PHARMACIST' })
@@ -219,7 +268,7 @@ describe('HandoverService', () => {
     });
 
     expect(verified.verified).toBe(true);
-    expect(handover?.['method']).toBe('QR');
+    expect(current()?.['method']).toBe('QR');
   });
 
   it('refuses a QR of another hand-over without spending an attempt', async () => {
@@ -232,9 +281,9 @@ describe('HandoverService', () => {
 
     await expect(
       service.verify('rx-1', { code: otherQr }, 'c1', { userId: 'ph', role: 'PHARMACIST' })
-    ).rejects.toThrow(/not for this prescription/);
-    expect(handover?.['otpAttempts']).toBe(0);
-    expect(handover?.['verifiedAt']).toBeNull();
+    ).rejects.toThrow(/not for this patient/);
+    expect(current()?.['otpAttempts']).toBe(0);
+    expect(current()?.['verifiedAt']).toBeNull();
   });
 
   it('parses the QR text (code + hand-over id) and the bare code', () => {
@@ -264,13 +313,13 @@ describe('HandoverService', () => {
       role: 'PATIENT',
     });
     expect(issued.code).toMatch(/^\d{6}$/);
-    expect(handover?.['otpHash']).toBe(hashHandoverCode('h1', issued.code));
+    expect(current()?.['otpHash']).toBe(hashHandoverCode('h1', issued.code));
 
     const wrong = issued.code === '000000' ? '111111' : '000000';
     await expect(
       service.verify('rx-1', { code: wrong }, 'c1', { userId: 'ph', role: 'PHARMACIST' })
     ).rejects.toBeInstanceOf(BadRequestException);
-    expect(handover?.['otpAttempts']).toBe(1);
+    expect(current()?.['otpAttempts']).toBe(1);
 
     // not verified yet -> cannot confirm
     await expect(
@@ -324,5 +373,104 @@ describe('HandoverService', () => {
       ConflictException
     );
     expect(created).toHaveLength(0);
+  });
+
+  describe('one code per patient at the counter', () => {
+    const patient = { userId: 'patient-user', role: 'PATIENT' };
+    const pharmacist = { userId: 'ph', role: 'PHARMACIST' };
+    const secondRx = (): Row => ({
+      id: 'rx-2',
+      clinicId: 'c1',
+      canCollect: true,
+      prescriptionNumber: 'RX-20261101-RX2',
+      date: '2026-10-31T22:03:06.244Z',
+      items: [{ medicine: { name: 'Triphala' } }],
+    });
+
+    it('covers every ready prescription of the patient at the clinic and lists them', async () => {
+      listRows = [secondRx(), { ...secondRx(), id: 'rx-3', clinicId: 'other-clinic' }];
+      const issued = await service.issueCode('rx-1', 'c1', patient);
+      expect(issued.prescriptions.map(p => p.prescriptionId)).toEqual(['rx-1', 'rx-2']);
+      expect(issued.prescriptions[1]?.medicines).toEqual(['Triphala']);
+      expect(rows.map(row => row['prescriptionId'])).toEqual(['rx-1', 'rx-2']);
+      for (const row of rows) {
+        expect(row['otpHash']).toBe(hashHandoverCode(String(row['id']), issued.code));
+      }
+    });
+
+    it('verifies all of them from either prescription and spends no attempt', async () => {
+      listRows = [secondRx()];
+      const issued = await service.issueCode('rx-1', 'c1', patient);
+      const verified = await service.verify('rx-2', { code: issued.code }, 'c1', pharmacist);
+      expect(verified.prescriptionId).toBe('rx-2');
+      expect(verified.alsoVerified?.map(v => v.prescriptionId)).toEqual(['rx-1']);
+      expect(rows.every(row => row['verifiedAt'] instanceof Date)).toBe(true);
+      expect(rows.every(row => row['otpAttempts'] === 0)).toBe(true);
+    });
+
+    it('accepts the right code entered on another prescription of the patient', async () => {
+      const issued = await service.issueCode('rx-1', 'c1', patient);
+      // The desk opened rx-2 (no code of its own): the code still verifies rx-1, no lockout.
+      const verified = await service.verify('rx-2', { code: issued.code }, 'c1', pharmacist);
+      expect(verified.prescriptionId).toBe('rx-1');
+      expect(current()?.['otpAttempts']).toBe(0);
+    });
+
+    it('a wrong code spends one attempt on each live code of the patient', async () => {
+      listRows = [secondRx()];
+      const issued = await service.issueCode('rx-1', 'c1', patient);
+      const wrong = issued.code === '000000' ? '111111' : '000000';
+      await expect(service.verify('rx-1', { code: wrong }, 'c1', pharmacist)).rejects.toThrow(
+        'That code does not match'
+      );
+      expect(rows.map(row => row['otpAttempts'])).toEqual([1, 1]);
+    });
+  });
+
+  describe('hand over without a code', () => {
+    const pharmacist = { userId: 'ph', role: 'PHARMACIST' };
+    const dto = (
+      identityCheck: 'PHONE_LAST4' | 'UHID',
+      identityValue: string
+    ): { identityCheck: 'PHONE_LAST4' | 'UHID'; identityValue: string; reason: string } => ({
+      identityCheck,
+      identityValue,
+      reason: 'No phone with the patient',
+    });
+
+    it('verifies after the phone last-4 check and records the method', async () => {
+      const verified = await service.verifyWithoutCode(
+        'rx-1',
+        dto('PHONE_LAST4', '4321'),
+        'c1',
+        pharmacist
+      );
+      expect(verified.verified).toBe(true);
+      expect(verified.method).toBe('MANUAL');
+    });
+
+    it('accepts the clinic UHID, case-insensitively', async () => {
+      const verified = await service.verifyWithoutCode(
+        'rx-1',
+        dto('UHID', 'uh-0007'),
+        'c1',
+        pharmacist
+      );
+      expect(verified.verified).toBe(true);
+    });
+
+    it('refuses a wrong identity and verifies nothing', async () => {
+      await expect(
+        service.verifyWithoutCode('rx-1', dto('PHONE_LAST4', '1111'), 'c1', pharmacist)
+      ).rejects.toThrow(/do not match/);
+      expect(rows).toHaveLength(0);
+    });
+
+    it('still refuses an unpaid prescription', async () => {
+      payments = [{ amount: 5 }];
+      await expect(
+        service.verifyWithoutCode('rx-1', dto('PHONE_LAST4', '4321'), 'c1', pharmacist)
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
   });
 });

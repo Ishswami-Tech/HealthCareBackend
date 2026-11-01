@@ -5,6 +5,7 @@
  *   POST /pharmacy-ops/prescriptions/:id/handover/code     PATIENT: issue the 6-digit code + QR text
  *   GET  /pharmacy-ops/prescriptions/:id/handover          latest hand-over of the prescription
  *   POST /pharmacy-ops/prescriptions/:id/handover/verify   check the code the patient shows
+ *   POST /pharmacy-ops/prescriptions/:id/handover/verify-without-code  no app: identity check + reason
  *   POST /pharmacy-ops/handovers/:id/confirm               checklist + receiver + signature
  *   POST /pharmacy-ops/handovers/:id/undo                  inside the undo window
  *   GET  /pharmacy-ops/batches/:id/audit                   batch movement trail
@@ -79,6 +80,7 @@ import {
   UpdateLabBookingStatusDto,
   UpsertFavouriteDto,
   VerifyHandoverDto,
+  VerifyHandoverWithoutCodeDto,
 } from '../dto/clinic-ops.dto';
 import { actorOf, ADMIN_ROLES, clinicIdOf } from './ops-request.util';
 
@@ -128,6 +130,22 @@ export class PharmacyOpsController {
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<HandoverResponse> {
     return this.handovers.verify(id, dto, clinicIdOf(req), actorOf(req));
+  }
+
+  @Post('prescriptions/:id/handover/verify-without-code')
+  @HttpCode(HttpStatus.OK)
+  @Roles(...COUNTER_ROLES)
+  @RateLimitAPI({ points: 10, duration: 60 })
+  @ApiOperation({
+    summary:
+      'Counter fallback: verify the patient without a code (phone last 4 digits or UHID + reason, audited)',
+  })
+  verifyWithoutCode(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: VerifyHandoverWithoutCodeDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<HandoverResponse> {
+    return this.handovers.verifyWithoutCode(id, dto, clinicIdOf(req), actorOf(req));
   }
 
   @Post('handovers/:id/confirm')

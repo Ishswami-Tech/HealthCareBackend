@@ -18,6 +18,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Length,
   Matches,
   Max,
   MaxLength,
@@ -399,6 +400,37 @@ export class VerifyHandoverDto {
   @IsOptional()
   @IsIn(['QR', 'OTP'])
   method?: 'QR' | 'OTP';
+}
+
+/** Counter fallback when the patient has no app / phone: an explicit identity check + reason. */
+export class VerifyHandoverWithoutCodeDto {
+  @ApiProperty({
+    enum: ['PHONE_LAST4', 'UHID'],
+    description: 'How the desk confirmed who the patient is',
+  })
+  @IsIn(['PHONE_LAST4', 'UHID'])
+  identityCheck!: 'PHONE_LAST4' | 'UHID';
+
+  @ApiProperty({
+    description: 'Last 4 digits of the phone on file, or the clinic UHID',
+    example: '4321',
+    maxLength: 40,
+  })
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(40)
+  identityValue!: string;
+
+  @ApiProperty({
+    description: 'Why the code could not be used (for example: no phone with the patient)',
+    minLength: 3,
+    maxLength: 200,
+  })
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @Length(3, 200)
+  reason!: string;
 }
 
 export class HandoverChecklistItemDto {

@@ -169,6 +169,12 @@ const MATRIX: Array<[string, AnyController, string, TestRole[]]> = [
     ['CLINIC_ADMIN', 'PHARMACIST'],
   ],
   [
+    'POST /pharmacy-ops/prescriptions/:id/handover/verify-without-code',
+    PharmacyOpsController,
+    'verifyWithoutCode',
+    ['CLINIC_ADMIN', 'PHARMACIST'],
+  ],
+  [
     'POST /pharmacy-ops/handovers/:id/confirm',
     PharmacyOpsController,
     'confirm',

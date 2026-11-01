@@ -404,6 +404,12 @@ export type OpsClient = {
   invoiceReminder: OpsDelegate<InvoiceReminderRow>;
   user: OpsDelegate<UserLiteRow>;
   patient: OpsDelegate<PatientLiteRow>;
+  patientIdentifier: OpsDelegate<{
+    patientId: string;
+    clinicId: string;
+    system: string;
+    value: string;
+  }>;
   doctor: OpsDelegate<{ id: string; userId: string; clinicId?: string | null }>;
   appointment: OpsDelegate<AppointmentLiteRow>;
   prescription: OpsDelegate<PrescriptionLiteRow>;
