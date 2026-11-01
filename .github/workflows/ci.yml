@@ -287,9 +287,7 @@ jobs:
     name: "Ensure Infrastructure Health"
     runs-on: ubuntu-latest
     needs: [docker-build]
-    # TEMP: Coolify deploy chain disabled for this push — testing the arm64 image build only.
-    # Revert this `if: false` once the arm64 build is confirmed.
-    if: false && github.event_name == 'push'
+    if: github.event_name == 'push'
     timeout-minutes: 10
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
     outputs:
@@ -338,8 +336,7 @@ jobs:
     name: "Pre-Deploy Backup"
     runs-on: ubuntu-latest
     needs: [ensure-infrastructure-health]
-    # TEMP: Coolify deploy chain disabled for this push — testing the arm64 image build only.
-    if: false && github.event_name == 'push'
+    if: github.event_name == 'push'
     timeout-minutes: 20
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
     steps:
@@ -365,8 +362,7 @@ jobs:
     name: "Deploy"
     runs-on: ubuntu-latest
     needs: [docker-build, ensure-infrastructure-health, pre-deployment-backup]
-    # TEMP: Coolify deploy chain disabled for this push — testing the arm64 image build only.
-    if: false && github.event_name == 'push'
+    if: github.event_name == 'push'
     timeout-minutes: 60
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
     concurrency:
@@ -383,71 +379,46 @@ jobs:
           printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
-      - name: Sync deploy scripts to VPS
-        env:
-          DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
-        run: |
-          scp ${{ env.SSH_OPTS }} \
-            "$GITHUB_WORKSPACE/devops/scripts/docker-infra/coolify-deploy.sh" \
-            "$GITHUB_WORKSPACE/devops/scripts/docker-infra/health-check.sh" \
-            "$GITHUB_WORKSPACE/devops/scripts/docker-infra/verify.sh" \
-            "$GITHUB_WORKSPACE/devops/scripts/docker-infra/backup.sh" \
-            "$GITHUB_WORKSPACE/devops/scripts/docker-infra/incident-response.sh" \
-            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${DEPLOY_PATH}/devops/scripts/docker-infra/"
-
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "mkdir -p ${DEPLOY_PATH}/devops/config"
-          scp ${{ env.SSH_OPTS }} \
-            "$GITHUB_WORKSPACE/devops/config/coolify-apps.env" \
-            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${DEPLOY_PATH}/devops/config/"
-
-      - name: Deploy via Coolify (GHCR image)
+      - name: Deploy via Temps API
         id: deploy
         env:
           DEPLOY_ENV: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
-          DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
-          COOLIFY_APP_UUID: ${{ github.ref == 'refs/heads/main' && secrets.COOLIFY_PROD_APP_UUID || secrets.COOLIFY_PREPROD_APP_UUID }}
           IMAGE_FULL: ${{ needs.docker-build.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}
-          INFRA_CHANGED: ${{ needs.detect-changes.outputs.infra-changed }}
-          APP_CHANGED: ${{ needs.detect-changes.outputs.app-changed }}
-          # P0-3: deploy-time Prisma migrations, set per GitHub environment (production/preprod).
-          #   status (default) - run `prisma migrate status` only and print drift/pending (never blocks)
-          #   true             - status pre-check + `prisma migrate deploy` before the new release starts
-          #   false            - skip entirely
-          # Switch an environment to `true` only after docs/DEPLOY_MIGRATIONS.md was run on a prod copy.
-          RUN_DB_MIGRATIONS: ${{ vars.RUN_DB_MIGRATIONS || 'status' }}
+          # Temps project/environment this image deploys into. Only the preprod
+          # project exists today — a production Temps project isn't set up yet,
+          # so production pushes stay gated off below until one is.
+          TEMPS_PROJECT: ${{ github.ref == 'refs/heads/main' && vars.TEMPS_PROD_PROJECT || 'healthcare-api-test' }}
+          TEMPS_ENVIRONMENT: production
         run: |
           echo "Deploying to: ${DEPLOY_ENV} (image: ${IMAGE_FULL})"
-          echo "RUN_DB_MIGRATIONS=${RUN_DB_MIGRATIONS}"
 
-          # ── Gate: production deploys disabled until preprod is validated ────
+          # ── Gate: production deploys disabled until a Temps prod project exists ──
           if [ "${DEPLOY_ENV}" = "production" ]; then
-            if [ "${{ vars.ENABLE_PROD_DEPLOY || 'true' }}" != "true" ]; then
-              echo "::warning::Production deploys are gated off. Set ENABLE_PROD_DEPLOY=true to enable."
-              echo "Skipping production deploy — preprod not yet validated."
+            if [ "${{ vars.ENABLE_PROD_DEPLOY || 'true' }}" != "true" ] || [ -z "${TEMPS_PROJECT}" ]; then
+              echo "::warning::Production deploys are gated off (no Temps production project configured yet)."
+              echo "Skipping production deploy — preprod not yet validated on Temps."
               exit 0
             fi
             echo "Production deploys are ENABLED."
           fi
 
-          # ── Deploy via Coolify ─────────────────────────────────────────────
-          echo "Triggering Coolify deploy..."
+          # ── Deploy via Temps: pull the image on the control-plane host (it
+          # already holds GHCR credentials), then push it to Temps through the
+          # loopback API context (bypasses Cloudflare's upload-size limit that a
+          # direct `deploy:local-image` from this runner would hit). ──
+          echo "Triggering Temps deploy (project=${TEMPS_PROJECT}, environment=${TEMPS_ENVIRONMENT})..."
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
             set -euo pipefail
-            cd '${DEPLOY_PATH}'
-            DEPLOY_ENV='${DEPLOY_ENV}' \
-            IMAGE_FULL='${IMAGE_FULL}' \
-            RUN_DB_MIGRATIONS='${RUN_DB_MIGRATIONS}' \
-            COOLIFY_APP_UUID='${COOLIFY_APP_UUID}' \
-            COOLIFY_API_TOKEN='${{ secrets.COOLIFY_API_TOKEN }}' \
-            bash devops/scripts/docker-infra/coolify-deploy.sh \
-              --app api \
+            docker pull '${IMAGE_FULL}'
+            npx -y @temps-sdk/cli --target-context temps-local deploy:local-image \
               --image '${IMAGE_FULL}' \
-              --wait \
-              --force
+              --no-build \
+              -p '${TEMPS_PROJECT}' \
+              -e '${TEMPS_ENVIRONMENT}' \
+              -y --wait --timeout 600
           "
 
-          echo "Coolify deploy complete for ${DEPLOY_ENV}"
+          echo "Temps deploy complete for ${DEPLOY_ENV}"
 
       - name: Record deploy status
         id: status
