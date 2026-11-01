@@ -172,7 +172,10 @@ jobs:
     name: "Docker Build and Push"
     runs-on: ubuntu-latest
     needs: [detect-changes, security]
-    timeout-minutes: 30
+    # QEMU-emulated arm64 is much slower than native amd64; 30m was cutting off
+    # a build that was otherwise succeeding (see the yarn --network-timeout fix
+    # right above the Dockerfile's production-stage install).
+    timeout-minutes: 60
     outputs:
       image_tag: ${{ steps.meta.outputs.tags }}
       image_name: ${{ steps.image.outputs.image }}
