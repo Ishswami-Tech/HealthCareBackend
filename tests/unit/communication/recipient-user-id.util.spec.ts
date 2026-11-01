@@ -68,9 +68,23 @@ describe('isQueueBoardEventWithoutPatient', () => {
         metadata: { patientId: 'p1' },
       })
     ).toBe(false);
-    expect(isQueueBoardEventWithoutPatient('appointment.queue.position.updated', board)).toBe(
-      false
-    );
     expect(isQueueBoardEventWithoutPatient('appointment.confirmed', board)).toBe(false);
+  });
+
+  it('a position refresh (read-path, no patient) is skipped, not a patient notification', () => {
+    const positionRead = {
+      eventType: 'appointment.queue.position.updated',
+      appointmentId: 'a1',
+      payload: { appointmentId: 'a1', position: 2, totalInQueue: 5, doctorId: DOCTOR_PROFILE },
+    };
+    expect(
+      isQueueBoardEventWithoutPatient('appointment.queue.position.updated', positionRead)
+    ).toBe(true);
+    expect(
+      isQueueBoardEventWithoutPatient('appointment.queue.position.updated', {
+        ...positionRead,
+        payload: { ...positionRead.payload, patientId: 'p1' },
+      })
+    ).toBe(false);
   });
 });

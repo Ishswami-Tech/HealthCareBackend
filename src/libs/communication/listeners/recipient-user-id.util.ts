@@ -17,7 +17,7 @@ export interface NotificationRecipient {
 type PayloadValue = string | number | boolean | object | null | undefined;
 type PayloadRecord = Readonly<Record<string, PayloadValue>>;
 
-const QUEUE_BOARD_EVENT = /^appointment\.queue\.(updated|reordered)$/;
+const QUEUE_BOARD_EVENT = /^appointment\.queue\.(updated|reordered|position\.updated)$/;
 
 const asPayloadRecord = (value: PayloadValue): PayloadRecord | null =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as PayloadRecord) : null;
@@ -34,6 +34,12 @@ const hasText = (record: PayloadRecord | null, key: string): boolean => {
  * skips them (logged at INFO) instead of failing to build one ("missing patientId"). One that
  * does name a patient (userId / patientId at the top level, in metadata or in `payload`) is
  * still notified.
+ *
+ * `appointment.queue.position.updated` is treated the same way: it is emitted from the READ path
+ * (getPatientQueuePosition, i.e. whenever the patient's screen polls its position) as a live
+ * socket refresh for the appointment room (QueueStatusGateway). It is not a position CHANGE, so
+ * a push / email / WhatsApp on it would repeat on every poll; a "you are next" alert belongs on
+ * the queue mutations (call-next / start / remove), not here.
  */
 export function isQueueBoardEventWithoutPatient(eventType: string, event: PayloadRecord): boolean {
   if (!QUEUE_BOARD_EVENT.test(eventType)) return false;

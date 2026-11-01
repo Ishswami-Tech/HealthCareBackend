@@ -1272,7 +1272,7 @@ export class NotificationEventListener implements OnModuleInit {
         await this.loggingService.log(
           LogType.NOTIFICATION,
           LogLevel.INFO,
-          `No patient notification for queue-board event ${normalizedEventType} (queue-wide, no patient)`,
+          `No patient notification for queue event ${normalizedEventType} (live refresh, no patient)`,
           'NotificationEventListener'
         );
         return;
