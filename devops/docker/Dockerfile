@@ -19,7 +19,7 @@ COPY package.json yarn.lock ./
 # Skip postinstall during install - source files (including prisma.config.js) aren't copied yet
 # Prisma generate is called manually after COPY . . below
 # --ignore-engines suppresses warnings about invalid engine specifications
-RUN yarn install --frozen-lockfile --ignore-scripts --ignore-engines
+RUN yarn install --frozen-lockfile --ignore-scripts --ignore-engines --network-timeout 600000
 
 # Copy all source files including SWC configuration
 # .swcrc and nest-cli.json are required for SWC compiler (20x faster than tsc)
@@ -172,7 +172,7 @@ WORKDIR /app
 COPY package.json yarn.lock ./
 # Skip postinstall script in production - Prisma client is already generated in builder stage
 # Prisma Client is in src/libs/infrastructure/database/prisma/generated (app-local directory), not in node_modules
-RUN yarn install --production --frozen-lockfile --ignore-scripts --ignore-engines && yarn cache clean
+RUN yarn install --production --frozen-lockfile --ignore-scripts --ignore-engines --network-timeout 600000 && yarn cache clean
 
 # Remove yarn-installed @prisma packages to avoid conflicts
 # We'll copy only the necessary @prisma packages from builder stage
