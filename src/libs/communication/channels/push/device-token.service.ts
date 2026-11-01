@@ -1,4 +1,7 @@
-import { Injectable, Optional, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef, OnModuleInit, HttpStatus } from '@nestjs/common';
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
+import { isUnknownUserForeignKeyError } from '@communication/channels/push/device-token-errors.util';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
@@ -189,6 +192,18 @@ export class DeviceTokenService implements OnModuleInit {
             }
           );
         } catch (dbError) {
+          // The user behind this session no longer exists (FK on device_tokens.userId): drop the
+          // in-memory token and tell the app its session is dead instead of reporting success.
+          if (isUnknownUserForeignKeyError(dbError)) {
+            this.tokenStore.delete(tokenData.token);
+            throw new HealthcareError(
+              ErrorCode.AUTH_SESSION_EXPIRED,
+              'Your session is no longer valid. Please sign in again.',
+              HttpStatus.UNAUTHORIZED,
+              { userId: tokenData.userId },
+              'DeviceTokenService.registerDeviceToken'
+            );
+          }
           // Log but don't fail - in-memory storage is primary
           // This handles cases where DeviceToken model doesn't exist yet
           void this.loggingService.log(
@@ -206,6 +221,9 @@ export class DeviceTokenService implements OnModuleInit {
 
       return Promise.resolve(true);
     } catch (error) {
+      if (error instanceof HealthcareError && error.code === ErrorCode.AUTH_SESSION_EXPIRED) {
+        throw error;
+      }
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
