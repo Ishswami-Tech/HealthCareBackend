@@ -343,7 +343,11 @@ export class AppointmentQueueService {
   }
 
   /** Arrivals of the day that belong in a live list (one bounded, indexed query). */
-  private async loadLiveArrivals(clinicId: string, day: string): Promise<LiveQueueRebuildRow[]> {
+  private async loadLiveArrivals(
+    clinicId: string,
+    day: string,
+    doctorId?: string
+  ): Promise<LiveQueueRebuildRow[]> {
     const from = startOfIstDay(day);
     const to = endOfIstDay(day);
     if (!from || !to || !this.databaseService) return [];
@@ -351,6 +355,7 @@ export class AppointmentQueueService {
       (client as unknown as RebuildReadClient).appointment.findMany({
         where: {
           clinicId,
+          ...(doctorId ? { doctorId } : {}),
           type: { not: 'VIDEO_CALL' },
           status: { in: [...LIVE_QUEUE_DB_STATUSES] },
           // The slot day is within a day of the arrival (cross-midnight window), which lets the
@@ -521,32 +526,104 @@ export class AppointmentQueueService {
     return new Map(rows.map(row => [row.id, String(row.status)]));
   }
 
-  /** One doctor's list, under its queue lock (a list someone is rewriting right now is skipped). */
+  /**
+   * One doctor's list, under its queue lock. A list someone holds the lock of right now is
+   * skipped for this pass and logged: the holder (a check-in) refills an empty list itself under
+   * that lock (see refillEmptyListUnderHeldLock), and the next check / worker reconcile retries.
+   */
   private async rebuildDoctorList(
     queueKey: string,
     doctorRows: readonly LiveQueueRebuildRow[]
   ): Promise<number> {
     const lockKey = `lock:${queueKey}`;
-    if (!(await this.cacheService.acquireLock(lockKey, 10))) return 0;
-    try {
-      if ((await this.cacheService.lLen(queueKey)) > 0) return 0;
-      const entries = doctorRows.map(row =>
-        JSON.stringify(
-          toRebuiltEntry(row, type =>
-            this.resolveDisplayLabel(AppointmentQueueCategory.DOCTOR_CONSULTATION, type)
-          )
-        )
+    if (!(await this.cacheService.acquireLock(lockKey, 10))) {
+      void this.loggingService.log(
+        LogType.APPOINTMENT,
+        LogLevel.WARN,
+        'Live queue rebuild skipped a list: its queue lock is held by another operation',
+        'AppointmentQueueService',
+        { queueKey, pendingEntries: doctorRows.length }
       );
-      const length = await this.cacheService.rPush(queueKey, ...entries);
-      if (length < entries.length) {
-        throw new Error(`Queue rebuild write failed: ${queueKey}`);
-      }
-      await this.cacheService.expire(queueKey, this.LIVE_QUEUE_LIST_TTL);
-      await this.trackLiveQueueList(queueKey);
-      return entries.length;
+      return 0;
+    }
+    try {
+      return await this.writeRebuiltList(queueKey, doctorRows);
     } finally {
       await this.cacheService.releaseLock(lockKey);
     }
+  }
+
+  /**
+   * Check-in path: the caller already HOLDS `lock:${queueKey}`. When the list is empty, this
+   * doctor's arrivals of the day are written from the database first (the arriving visit itself
+   * excluded: check-in pushes its own entry), so the arrival never becomes the only entry of a
+   * list that should hold the whole morning, even when the clinic-wide hydration was skipped or
+   * still running elsewhere. Never fails the check-in (logged as WARN).
+   */
+  private async refillEmptyListUnderHeldLock(params: {
+    queueKey: string;
+    clinicId: string;
+    doctorId: string;
+    domain: string;
+    day: string;
+    excludeAppointmentId: string;
+  }): Promise<number> {
+    const { queueKey, clinicId, doctorId, domain, day, excludeAppointmentId } = params;
+    if (domain !== IN_PERSON_QUEUE_DOMAIN || !this.databaseService) return 0;
+    try {
+      if ((await this.cacheService.lLen(queueKey)) > 0) return 0;
+      const rows = (await this.loadLiveArrivals(clinicId, day, doctorId)).filter(
+        row => row.id !== excludeAppointmentId
+      );
+      const doctorRows = groupRebuildRowsByDoctor(rows).get(doctorId) ?? [];
+      if (doctorRows.length === 0) return 0;
+      const written = await this.writeRebuiltList(queueKey, doctorRows);
+      for (const locationId of new Set(doctorRows.map(row => row.locationId ?? undefined))) {
+        await this.invalidateQueueReadCaches({ clinicId, domain, doctorId, date: day, locationId });
+      }
+      if (written > 0) {
+        void this.loggingService.log(
+          LogType.APPOINTMENT,
+          LogLevel.WARN,
+          'Live queue list rebuilt from the database at check-in (cache entries were missing)',
+          'AppointmentQueueService',
+          { clinicId, date: day, doctorId, rebuiltEntries: written }
+        );
+      }
+      return written;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        `Live queue refill at check-in failed: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentQueueService',
+        { clinicId, date: day, doctorId }
+      );
+      return 0;
+    }
+  }
+
+  /** Writes the rebuilt entries into an EMPTY list; the caller holds the list's queue lock. */
+  private async writeRebuiltList(
+    queueKey: string,
+    doctorRows: readonly LiveQueueRebuildRow[]
+  ): Promise<number> {
+    if ((await this.cacheService.lLen(queueKey)) > 0) return 0;
+    const entries = doctorRows.map(row =>
+      JSON.stringify(
+        toRebuiltEntry(row, type =>
+          this.resolveDisplayLabel(AppointmentQueueCategory.DOCTOR_CONSULTATION, type)
+        )
+      )
+    );
+    if (entries.length === 0) return 0;
+    const length = await this.cacheService.rPush(queueKey, ...entries);
+    if (length < entries.length) {
+      throw new Error(`Queue rebuild write failed: ${queueKey}`);
+    }
+    await this.cacheService.expire(queueKey, this.LIVE_QUEUE_LIST_TTL);
+    await this.trackLiveQueueList(queueKey);
+    return entries.length;
   }
 
   private normalizeQueueLabel(value?: string): string {
@@ -1179,10 +1256,24 @@ export class AppointmentQueueService {
       // before either has pushed, both see `exists=false`, and both push — the same patient ends
       // up as two separate queue entries. Serialized with the same per-doctor-list lock every
       // other read-modify-write on this cache key already uses (see withQueueLock).
+      //
+      // A list lost with the cache is rebuilt BEFORE the lock is taken: the clinic-wide rebuild
+      // takes each doctor's queue lock itself (non-reentrant), so running it under this lock made
+      // it skip this very list and the arrival became its only entry (regression of af14d157).
+      await this.ensureLiveQueueHydrated(clinicId, domain, date);
       const { existingLength } = await this.withQueueLock(cacheKey, async () => {
-        // A list lost with the cache is rebuilt first, so this arrival never becomes the only
-        // entry of a list that should hold the whole morning.
-        await this.ensureLiveQueueHydrated(clinicId, domain, date);
+        // The hydration above can be skipped (another replica's rebuild still running and its
+        // wait timed out, or this list's lock was busy during that rebuild). Whichever check-in
+        // takes this lock first refills an empty list from the database before adding its own
+        // arrival, so concurrent arrivals after a flush all land in the rebuilt list once.
+        await this.refillEmptyListUnderHeldLock({
+          queueKey: cacheKey,
+          clinicId,
+          doctorId,
+          domain,
+          day: date,
+          excludeAppointmentId: appointmentId,
+        });
         // Check if already in queue
         const entries = await this.cacheService.lRange(cacheKey, 0, -1);
         const alreadyIn = entries.some(entry => {

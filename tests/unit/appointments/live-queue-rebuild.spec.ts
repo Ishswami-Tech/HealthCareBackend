@@ -146,6 +146,7 @@ describe('AppointmentQueueService rebuilds a lost live queue from the database',
   let findMany: jest.Mock<(args: unknown) => Promise<LiveQueueRebuildRow[]>>;
   let service: AppointmentQueueService;
   let today: string;
+  let logging: { log: jest.Mock<(...args: unknown[]) => Promise<undefined>> };
 
   const listKey = (doctorId = 'doctor-1'): string => `queue:clinic:${CLINIC}:${doctorId}:${today}`;
 
@@ -160,7 +161,7 @@ describe('AppointmentQueueService rebuilds a lost live queue from the database',
         fn({ appointment: { findMany } }),
       executeInTransaction: async <T>(fn: (client: unknown) => Promise<T>) => fn({}),
     };
-    const logging = { log: jest.fn(async (..._args: unknown[]) => undefined) };
+    logging = { log: jest.fn(async (..._args: unknown[]) => undefined) };
     service = new AppointmentQueueService(
       cache as never,
       logging as never,
@@ -267,6 +268,72 @@ describe('AppointmentQueueService rebuilds a lost live queue from the database',
 
     const queue = await service.getDoctorQueue('doctor-1', CLINIC, today, 'clinic');
     expect(queue.queue.map(entry => entry.tokenLabel)).toEqual(['K-001', 'K-002', 'K-003']);
+  });
+
+  const checkInOf = (id: string, tokenNumber: number) => ({
+    appointmentId: id,
+    doctorId: 'doctor-1',
+    patientId: `patient-${id}`,
+    clinicId: CLINIC,
+    locationId: 'loc-kothrud',
+    tokenNumber,
+    tokenLabel: `K-${String(tokenNumber).padStart(3, '0')}`,
+  });
+
+  it('two concurrent check-ins after a flush both land in the rebuilt queue exactly once', async () => {
+    // Both arrivals are already recorded in the database (check-in writes the row first).
+    rows = [
+      row({ id: 'k1', tokenNumber: 1, tokenLabel: 'K-001' }),
+      row({ id: 'k2', tokenNumber: 2, tokenLabel: 'K-002' }),
+      row({ id: 'k3', tokenNumber: 3, tokenLabel: 'K-003' }),
+      row({ id: 'k4', tokenNumber: 4, tokenLabel: 'K-004' }),
+    ];
+
+    await Promise.all([
+      service.checkIn(checkInOf('k3', 3), 'clinic').catch(() => undefined),
+      service.checkIn(checkInOf('k4', 4), 'clinic').catch(() => undefined),
+    ]);
+
+    const ids = (await cache.lRange(listKey(), 0, -1)).map(
+      entry => (JSON.parse(entry) as { appointmentId: string }).appointmentId
+    );
+    expect([...ids].sort()).toEqual(['k1', 'k2', 'k3', 'k4']);
+    const queue = await service.getDoctorQueue('doctor-1', CLINIC, today, 'clinic');
+    expect(queue.queue.map(entry => entry.tokenLabel)).toEqual([
+      'K-001',
+      'K-002',
+      'K-003',
+      'K-004',
+    ]);
+  });
+
+  it('a check-in whose clinic-wide hydration was skipped still refills the empty list under its lock', async () => {
+    rows = [
+      row({ id: 'k1', tokenNumber: 1, tokenLabel: 'K-001' }),
+      row({ id: 'k2', tokenNumber: 2, tokenLabel: 'K-002' }),
+      row({ id: 'k3', tokenNumber: 3, tokenLabel: 'K-003' }),
+    ];
+    // Another replica holds the clinic/day rebuild lock and never finishes within the wait.
+    cache.locks.add(`lock:queue-rebuild:clinic:${CLINIC}:${today}`);
+
+    await service.checkIn(checkInOf('k3', 3), 'clinic');
+
+    const ids = (await cache.lRange(listKey(), 0, -1)).map(
+      entry => (JSON.parse(entry) as { appointmentId: string }).appointmentId
+    );
+    expect(ids).toEqual(['k1', 'k2', 'k3']);
+  });
+
+  it('a rebuild that cannot take a busy list lock logs a warning instead of skipping silently', async () => {
+    rows = [row({ id: 'k1', tokenNumber: 1, tokenLabel: 'K-001' })];
+    cache.locks.add(`lock:${listKey()}`);
+
+    await service.getDoctorQueue('doctor-1', CLINIC, today, 'clinic');
+
+    const messages = logging.log.mock.calls.map(call => String(call[2]));
+    expect(messages).toContain(
+      'Live queue rebuild skipped a list: its queue lock is held by another operation'
+    );
   });
 
   it('a duplicate entry (check-in racing the rebuild) is shown once', async () => {
