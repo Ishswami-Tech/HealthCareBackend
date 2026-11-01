@@ -72,6 +72,11 @@ export interface PrescriptionListLookups {
    * (or whose total is 0). Required when `pharmacyStage` is PAYMENT_PENDING / READY_TO_DISPENSE.
    */
   readonly readyPendingIds?: readonly string[];
+  /**
+   * Dispensed, paid, not-yet-collected prescriptions of the scope (any age, bounded). Required
+   * when `pharmacyStage` is READY_TO_COLLECT.
+   */
+  readonly readyToCollectIds?: readonly string[];
 }
 
 export class PrescriptionListRangeError extends Error {}
@@ -98,17 +103,40 @@ export function stageNeedsPaymentLookup(stage?: PrescriptionPharmacyStage): bool
   );
 }
 
+/** True when the stage is decided by the ready-to-collect lookup (needs readyToCollectIds). */
+export function stageNeedsCollectLookup(stage?: PrescriptionPharmacyStage): boolean {
+  return stage === PrescriptionPharmacyStage.READY_TO_COLLECT;
+}
+
+/** The id lookup a stage's clauses are built from (empty for stages decided by status alone). */
+export function stageLookupIds(
+  stage: PrescriptionPharmacyStage | undefined,
+  lookups: PrescriptionListLookups
+): readonly string[] {
+  if (stageNeedsCollectLookup(stage)) return lookups.readyToCollectIds ?? [];
+  return lookups.readyPendingIds ?? [];
+}
+
 /**
  * Mirrors the PHARMACY pill of the doctor screen (doctor-prescriptions.logic.ts `pharmacyState`):
  * FILLED -> dispensed; PENDING -> ready when the payments cover the total (canDispense), else
  * payment pending; DRAFT / RETURNED never reached the pharmacy. PARTIAL (partly dispensed,
- * the rest still to hand over) counts as ready to dispense.
+ * the rest still to hand over) counts as ready to dispense. READY_TO_COLLECT is the counter's
+ * hand-over list: the dispensed (FILLED / PARTIAL) rows the collect lookup found.
+ *
+ * `stageIds`: readyPendingIds for PAYMENT_PENDING / READY_TO_DISPENSE, readyToCollectIds for
+ * READY_TO_COLLECT (see stageLookupIds).
  */
 export function stageClauses(
   stage: PrescriptionPharmacyStage,
-  readyPendingIds: readonly string[] = []
+  stageIds: readonly string[] = []
 ): StatusClause[] {
   switch (stage) {
+    case PrescriptionPharmacyStage.READY_TO_COLLECT:
+      return [PrescriptionStatus.FILLED, PrescriptionStatus.PARTIAL].map(status => ({
+        status,
+        id: { in: [...stageIds] },
+      }));
     case PrescriptionPharmacyStage.DISPENSED:
       return [{ status: PrescriptionStatus.FILLED }];
     case PrescriptionPharmacyStage.NOT_SENT:
@@ -116,13 +144,13 @@ export function stageClauses(
     case PrescriptionPharmacyStage.READY_TO_DISPENSE:
       return [
         { status: PrescriptionStatus.PARTIAL },
-        { status: PrescriptionStatus.PENDING, id: { in: [...readyPendingIds] } },
+        { status: PrescriptionStatus.PENDING, id: { in: [...stageIds] } },
       ];
     case PrescriptionPharmacyStage.PAYMENT_PENDING:
       return [
         {
           status: PrescriptionStatus.PENDING,
-          ...(readyPendingIds.length > 0 ? { id: { notIn: [...readyPendingIds] } } : {}),
+          ...(stageIds.length > 0 ? { id: { notIn: [...stageIds] } } : {}),
         },
       ];
     default:
@@ -145,7 +173,7 @@ export function visibleStatuses(allowDrafts: boolean): PrescriptionStatus[] {
 export function buildStatusCondition(
   filters: Pick<PrescriptionListFilters, 'status' | 'pharmacyStage'>,
   allowDrafts: boolean,
-  readyPendingIds: readonly string[] = []
+  stageIds: readonly string[] = []
 ): Record<string, unknown> {
   if (!filters.status && !filters.pharmacyStage) {
     return { status: { in: [...PUBLISHED_PRESCRIPTION_STATUSES] } };
@@ -153,7 +181,7 @@ export function buildStatusCondition(
   const visible = new Set(visibleStatuses(allowDrafts));
   const wanted = filters.status ? new Set(statusesForListStatus(filters.status)) : null;
   const candidates: StatusClause[] = filters.pharmacyStage
-    ? stageClauses(filters.pharmacyStage, readyPendingIds)
+    ? stageClauses(filters.pharmacyStage, stageIds)
     : [...visible].map(status => ({ status }));
   const clauses = candidates.filter(
     clause => visible.has(clause.status) && (!wanted || wanted.has(clause.status))
@@ -260,7 +288,11 @@ export function buildPrescriptionListWhere(
   const range = istDayRange(filters.dateFrom, filters.dateTo);
   const q = filters.q?.trim();
   const and: Record<string, unknown>[] = [
-    buildStatusCondition(filters, scope.allowDrafts, lookups.readyPendingIds),
+    buildStatusCondition(
+      filters,
+      scope.allowDrafts,
+      stageLookupIds(filters.pharmacyStage, lookups)
+    ),
     ...(q ? [buildSearchCondition(q, lookups.searchPatientIds)] : []),
   ];
   return { ...buildScopeWhere(scope, range, filters.patientId), AND: and };

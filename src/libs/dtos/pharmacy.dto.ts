@@ -299,6 +299,11 @@ export enum PrescriptionPharmacyStage {
   PAYMENT_PENDING = 'PAYMENT_PENDING',
   READY_TO_DISPENSE = 'READY_TO_DISPENSE',
   DISPENSED = 'DISPENSED',
+  /**
+   * Waiting at the counter: paid (or zero-priced), dispensed (FILLED, or PARTIAL with units
+   * dispensed), has medicines, and never collected (no HANDED_OVER hand-over) - at any age.
+   */
+  READY_TO_COLLECT = 'READY_TO_COLLECT',
   NOT_SENT = 'NOT_SENT',
 }
 

@@ -14,6 +14,7 @@ import {
   pageWindow,
   prescriptionListOrderBy,
   PUBLISHED_PRESCRIPTION_STATUSES,
+  stageNeedsCollectLookup,
   stageNeedsPaymentLookup,
   type PrescriptionListFilters,
   type PrescriptionListScope,
@@ -23,6 +24,9 @@ import {
 
 /** Most patients one side lookup (UHID / OPD number / phone) may contribute to a search. */
 export const MAX_SEARCH_PATIENT_IDS = 500;
+
+/** Most uncollected prescriptions the READY_TO_COLLECT stage reaches (newest first). */
+export const MAX_READY_TO_COLLECT_IDS = 2000;
 
 const PAYMENT_FOR_PRESCRIPTION_DISPENSE = 'PRESCRIPTION_DISPENSE';
 
@@ -124,6 +128,60 @@ export async function findReadyPendingPrescriptionIds(
   return rows.map(row => row.id);
 }
 
+/**
+ * Prescriptions of the scope waiting at the counter, at ANY age (the legacy list only reaches the
+ * newest 200): has medicines, dispensed (FILLED, or PARTIAL with units dispensed), paid like
+ * `checkHandoverReadiness` (COMPLETED payments linked to it cover the total, the PHARMACY invoice
+ * is PAID, or the total is 0), and no HANDED_OVER hand-over. Newest first, at most
+ * MAX_READY_TO_COLLECT_IDS (the page then pages over these ids).
+ */
+export async function findReadyToCollectPrescriptionIds(
+  db: PrescriptionListClient,
+  scope: PrescriptionListScope,
+  range: Partial<DateRange>,
+  patientId?: string
+): Promise<string[]> {
+  const where = rawScope('rx', scope, range, patientId);
+  const sql = `
+    WITH dispensed AS (
+      SELECT rx.id, rx.status, rx.date,
+        COALESCE(SUM(it.quantity * COALESCE(m.price, 0)), 0) AS total,
+        COALESCE(SUM(GREATEST(it."dispensedQuantity", 0)), 0) AS units,
+        COUNT(it.id) AS lines
+      FROM "Prescription" rx
+      LEFT JOIN "PrescriptionItem" it ON it."prescriptionId" = rx.id
+      LEFT JOIN "Medicine" m ON m.id = it."medicineId"
+      WHERE ${where.sql} AND rx.status IN ('FILLED', 'PARTIAL')
+      GROUP BY rx.id, rx.status, rx.date
+    ), paid AS (
+      SELECT pay.metadata->>'prescriptionId' AS pid, SUM(pay.amount) AS paid
+      FROM "Payment" pay
+      WHERE pay."clinicId" = $1
+        AND pay.status = 'COMPLETED'
+        AND pay.metadata->>'prescriptionId' IN (SELECT id FROM dispensed)
+      GROUP BY 1
+    )
+    SELECT d.id FROM dispensed d LEFT JOIN paid p ON p.pid = d.id
+    WHERE d.lines > 0
+      AND (d.status = 'FILLED' OR d.units > 0)
+      AND (
+        ROUND(d.total::numeric, 2) <= ROUND(COALESCE(p.paid, 0)::numeric, 2)
+        OR EXISTS (
+          SELECT 1 FROM "Invoice" inv
+          WHERE inv."prescriptionId" = d.id AND inv."clinicId" = $1
+            AND inv."billType" = 'PHARMACY' AND inv.status = 'PAID'
+        )
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM "dispense_handovers" h
+        WHERE h."prescriptionId" = d.id AND h."clinicId" = $1 AND h.status = 'HANDED_OVER'
+      )
+    ORDER BY d.date DESC, d.id DESC
+    LIMIT ${MAX_READY_TO_COLLECT_IDS}`;
+  const rows = await db.$queryRawUnsafe<Array<{ id: string }>>(sql, ...where.params);
+  return rows.map(row => row.id);
+}
+
 /** Patients of the clinic whose UHID, OPD number or contact phone contains `q`. */
 export async function findSearchPatientIds(
   db: PrescriptionListClient,
@@ -169,13 +227,20 @@ export async function loadPrescriptionPage(
   return await databaseService.executeHealthcareRead(async client => {
     const db = client as unknown as PrescriptionListClient;
     const q = filters.q?.trim();
-    const [searchPatientIds, readyPendingIds] = await Promise.all([
+    const [searchPatientIds, readyPendingIds, readyToCollectIds] = await Promise.all([
       q ? findSearchPatientIds(db, scope.clinicId, q) : Promise.resolve([]),
       stageNeedsPaymentLookup(filters.pharmacyStage)
         ? findReadyPendingPrescriptionIds(db, scope, range, filters.patientId)
         : Promise.resolve([]),
+      stageNeedsCollectLookup(filters.pharmacyStage)
+        ? findReadyToCollectPrescriptionIds(db, scope, range, filters.patientId)
+        : Promise.resolve([]),
     ]);
-    const where = buildPrescriptionListWhere(filters, scope, { searchPatientIds, readyPendingIds });
+    const where = buildPrescriptionListWhere(filters, scope, {
+      searchPatientIds,
+      readyPendingIds,
+      readyToCollectIds,
+    });
     const { skip, take } = pageWindow(filters.page, filters.limit);
     const [total, rows] = await Promise.all([
       db.prescription.count({ where }),

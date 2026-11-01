@@ -13,6 +13,8 @@ import {
   pageWindow,
   prescriptionListOrderBy,
   PrescriptionListRangeError,
+  stageLookupIds,
+  stageNeedsCollectLookup,
   stageNeedsPaymentLookup,
 } from '@services/pharmacy/services/prescription-list.util';
 
@@ -101,6 +103,64 @@ describe('buildStatusCondition', () => {
     expect(stageNeedsPaymentLookup(PrescriptionPharmacyStage.READY_TO_DISPENSE)).toBe(true);
     expect(stageNeedsPaymentLookup(PrescriptionPharmacyStage.DISPENSED)).toBe(false);
     expect(stageNeedsPaymentLookup(undefined)).toBe(false);
+    expect(stageNeedsPaymentLookup(PrescriptionPharmacyStage.READY_TO_COLLECT)).toBe(false);
+  });
+
+  it('READY_TO_COLLECT = the FILLED / PARTIAL rows the collect lookup found', () => {
+    expect(
+      buildStatusCondition({ pharmacyStage: PrescriptionPharmacyStage.READY_TO_COLLECT }, false, [
+        'rx-old',
+        'rx-new',
+      ])
+    ).toEqual({
+      OR: [
+        { status: 'FILLED', id: { in: ['rx-old', 'rx-new'] } },
+        { status: 'PARTIAL', id: { in: ['rx-old', 'rx-new'] } },
+      ],
+    });
+    // Nothing uncollected: matches nothing rather than every dispensed prescription.
+    expect(
+      buildStatusCondition({ pharmacyStage: PrescriptionPharmacyStage.READY_TO_COLLECT }, false)
+    ).toEqual({
+      OR: [
+        { status: 'FILLED', id: { in: [] } },
+        { status: 'PARTIAL', id: { in: [] } },
+      ],
+    });
+  });
+
+  it('only READY_TO_COLLECT needs the collect lookup, and it reads its own ids', () => {
+    expect(stageNeedsCollectLookup(PrescriptionPharmacyStage.READY_TO_COLLECT)).toBe(true);
+    expect(stageNeedsCollectLookup(PrescriptionPharmacyStage.DISPENSED)).toBe(false);
+    expect(stageNeedsCollectLookup(undefined)).toBe(false);
+    const lookups = { readyPendingIds: ['pending'], readyToCollectIds: ['collect'] };
+    expect(stageLookupIds(PrescriptionPharmacyStage.READY_TO_COLLECT, lookups)).toEqual([
+      'collect',
+    ]);
+    expect(stageLookupIds(PrescriptionPharmacyStage.READY_TO_DISPENSE, lookups)).toEqual([
+      'pending',
+    ]);
+    expect(stageLookupIds(PrescriptionPharmacyStage.READY_TO_COLLECT, {})).toEqual([]);
+  });
+
+  it('a READY_TO_COLLECT page is not limited by date unless the caller asks', () => {
+    const where = buildPrescriptionListWhere(
+      { page: 2, limit: 100, pharmacyStage: PrescriptionPharmacyStage.READY_TO_COLLECT },
+      { clinicId: 'c1', allowDrafts: false, medicinesOnly: true },
+      { readyToCollectIds: ['rx-1'] }
+    );
+    expect(where).toEqual({
+      clinicId: 'c1',
+      items: { some: {} },
+      AND: [
+        {
+          OR: [
+            { status: 'FILLED', id: { in: ['rx-1'] } },
+            { status: 'PARTIAL', id: { in: ['rx-1'] } },
+          ],
+        },
+      ],
+    });
   });
 });
 
