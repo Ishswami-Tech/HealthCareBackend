@@ -33,6 +33,7 @@ import {
 import { findTreatmentCatalogEntryOrUndefined } from '@core/types/treatment-catalog.types';
 import type { NotificationData } from '@core/types/appointment.types';
 import type { EnterpriseEventPayload } from '@core/types';
+import { AppointmentNotificationDedup } from '@communication/listeners/appointment-notification-dedup.util';
 import {
   MilestoneDedup,
   medicineDeskMilestone,
@@ -122,6 +123,10 @@ interface CommunicationRule {
 }
 
 const DESK_MILESTONE_DEDUP_TTL_MS = 30 * 60_000;
+/** Repeats of the same appointment event inside this window are one notification. */
+const APPOINTMENT_NOTIFICATION_DEDUP_TTL_MS = 30_000;
+/** A booking and a check-in of one appointment this close together (a walk-in) notify once. */
+const APPOINTMENT_FIRST_CONTACT_WINDOW_MS = 2 * 60_000;
 
 /**
  * A field of a medicine-desk event. The simple `emit` wraps the data in an envelope: routing ids
@@ -1075,8 +1080,11 @@ export class NotificationEventListener implements OnModuleInit {
   private typedEventService?: IEventService;
   private typedCommunicationService?: CommunicationService;
   private appointmentNotificationService?: AppointmentNotificationService | undefined;
-  private readonly appointmentNotificationDedup = new Map<string, number>();
-  private readonly appointmentNotificationDedupTtlMs = 30_000;
+  // One notification per appointment happening: see appointment-notification-dedup.util.
+  private readonly appointmentNotificationDedup = new AppointmentNotificationDedup(
+    APPOINTMENT_NOTIFICATION_DEDUP_TTL_MS,
+    APPOINTMENT_FIRST_CONTACT_WINDOW_MS
+  );
   private readonly deskMilestoneDedup = new MilestoneDedup(DESK_MILESTONE_DEDUP_TTL_MS);
 
   constructor(
@@ -1273,8 +1281,11 @@ export class NotificationEventListener implements OnModuleInit {
             Boolean(rawPayloadRecord['paymentStatus']) ||
             Boolean(nestedPayload?.['paymentStatus']);
 
+          // Both events of a check-in (checked_in + confirmed) are one "confirmed" notification;
+          // whichever arrives first sends it and the dedup drops the other.
+          const isCheckInEvent = normalizedEventType === 'appointment.checked_in';
           const nextType =
-            normalizedEventType === 'appointment.confirmed'
+            normalizedEventType === 'appointment.confirmed' || isCheckInEvent
               ? 'confirmation'
               : normalizedEventType === 'appointment.cancelled'
                 ? 'cancellation'
@@ -1425,26 +1436,18 @@ export class NotificationEventListener implements OnModuleInit {
     const paymentId = resolveText(
       metadata?.['paymentId'] ?? record['paymentId'] ?? nestedPayload?.['paymentId'] ?? ''
     ).trim();
-    const dedupKey = [eventType, appointmentId || 'no-appointment', paymentId || 'no-payment'].join(
-      '|'
+    const checkInMarker =
+      record['checkInMethod'] ??
+      record['checkedInAt'] ??
+      metadata?.['checkInMethod'] ??
+      metadata?.['checkedInAt'] ??
+      nestedPayload?.['checkInMethod'] ??
+      nestedPayload?.['checkedInAt'];
+    return this.appointmentNotificationDedup.shouldSkip(
+      eventType,
+      { appointmentId, paymentId, fromCheckIn: Boolean(checkInMarker) },
+      Date.now()
     );
-    const now = Date.now();
-    const lastSeen = this.appointmentNotificationDedup.get(dedupKey);
-    if (lastSeen && now - lastSeen < this.appointmentNotificationDedupTtlMs) {
-      return true;
-    }
-
-    this.appointmentNotificationDedup.set(dedupKey, now);
-
-    if (this.appointmentNotificationDedup.size > 500) {
-      for (const [key, timestamp] of this.appointmentNotificationDedup.entries()) {
-        if (now - timestamp >= this.appointmentNotificationDedupTtlMs) {
-          this.appointmentNotificationDedup.delete(key);
-        }
-      }
-    }
-
-    return false;
   }
 
   /**

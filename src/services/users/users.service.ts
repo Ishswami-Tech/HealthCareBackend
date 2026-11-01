@@ -1,5 +1,5 @@
 import { hasUsablePassword } from '@services/auth/core/has-password.util';
-import { Injectable, BadRequestException, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, BadRequestException, Inject, forwardRef, HttpStatus } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -14,7 +14,15 @@ import { EmergencyContact } from '@core/types/database.types';
 import { RbacService } from '@core/rbac/rbac.service';
 import { CreateUserDto, UserResponseDto, UpdateUserDto, MedicalDocumentDto } from '@dtos/user.dto';
 import type { BloodGroup, EmergencyContactDto, MaritalStatus } from '@dtos/user.dto';
-import { HealthcareErrorsService } from '@core/errors';
+import { HealthcareErrorsService, HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
+import { isUniqueViolation } from '@services/compliance/utils/db-errors.util';
+import {
+  describePhoneConflict,
+  phoneConflictLookupCandidates,
+  type ExistingPhoneOwner,
+  type PhoneConflict,
+} from '@services/users/phone-conflict.util';
 // Removed ProfileCompletionService import as logic is moved here
 import { PatientsService } from '@services/patients/patients.service';
 import type {
@@ -635,6 +643,11 @@ export class UsersService {
         registeredByDoctorId = callerDoctor?.id;
       }
 
+      // One account per mobile number: refuse up front with a 409 the desk can act on (and the
+      // existing patient's id when this clinic may serve them) instead of letting the insert hit
+      // users_phone_key and surface as a 500.
+      await this.assertPhoneAvailable(data.phone, userClinicId);
+
       await this.authService.register(
         {
           email: data.email,
@@ -872,8 +885,124 @@ export class UsersService {
           type: 'createUser_error',
         }
       );
+      // A concurrent registration can still win the race to the unique index: answer 409, not 500.
+      const alreadyClientError = error instanceof HealthcareError && error.getStatus() < 500;
+      // AuthService.register maps the same race to a bare USER_PHONE_ALREADY_EXISTS; enrich it.
+      const barePhoneConflict =
+        error instanceof HealthcareError &&
+        error.code === ErrorCode.USER_PHONE_ALREADY_EXISTS &&
+        !error.metadata?.['reason'];
+      if (barePhoneConflict || (!alreadyClientError && isUniqueViolation(error))) {
+        throw await this.conflictForUniqueViolation(data.phone, data.clinicId || clinicId);
+      }
       throw error;
     }
+  }
+
+  /** Throws a 409 when the phone number already has an account (any stored format). */
+  private async assertPhoneAvailable(phone: string | undefined, clinicId: string): Promise<void> {
+    const candidates = phoneConflictLookupCandidates(phone);
+    if (candidates.length === 0) return;
+    const clinicUUID = await this.resolveClinicIdForConflict(clinicId);
+    const owner = await this.findPhoneOwner(candidates, clinicUUID);
+    if (owner) {
+      throw this.toConflictError(describePhoneConflict(owner, clinicUUID));
+    }
+  }
+
+  /** The 409 for a unique-index violation seen at insert time (lost a registration race). */
+  private async conflictForUniqueViolation(
+    phone: string | undefined,
+    clinicId: string | undefined
+  ): Promise<HealthcareError> {
+    const candidates = phoneConflictLookupCandidates(phone);
+    if (candidates.length > 0 && clinicId) {
+      try {
+        const clinicUUID = await this.resolveClinicIdForConflict(clinicId);
+        const owner = await this.findPhoneOwner(candidates, clinicUUID);
+        if (owner) return this.toConflictError(describePhoneConflict(owner, clinicUUID));
+      } catch (lookupError) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Phone owner lookup after a unique violation failed',
+          'UsersService',
+          { error: lookupError instanceof Error ? lookupError.message : String(lookupError) }
+        );
+      }
+    }
+    return this.errors.userAlreadyExists(undefined, 'UsersService.createUser');
+  }
+
+  private toConflictError(conflict: PhoneConflict): HealthcareError {
+    return new HealthcareError(
+      conflict.code,
+      conflict.message,
+      HttpStatus.CONFLICT,
+      { ...conflict.metadata },
+      'UsersService.createUser'
+    );
+  }
+
+  private async resolveClinicIdForConflict(clinicId: string): Promise<string> {
+    const { resolveClinicUUID } = await import('@utils/clinic.utils');
+    return resolveClinicUUID(this.databaseService, clinicId);
+  }
+
+  /** Fresh (uncached) lookup of the account holding any stored form of the number. */
+  private async findPhoneOwner(
+    candidates: string[],
+    clinicId: string
+  ): Promise<ExistingPhoneOwner | null> {
+    return this.databaseService.executeHealthcareRead<ExistingPhoneOwner | null>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        user: {
+          findFirst: (args: PrismaDelegateArgs) => Promise<{
+            id: string;
+            role: string;
+            primaryClinicId: string | null;
+            patient: { id: string } | null;
+          } | null>;
+        };
+        appointment: { findFirst: (args: PrismaDelegateArgs) => Promise<{ id: string } | null> };
+        patientIdentifier: {
+          findFirst: (args: PrismaDelegateArgs) => Promise<{ id: string } | null>;
+        };
+      };
+      const user = await typedClient.user.findFirst({
+        where: { phone: { in: candidates } } as PrismaDelegateArgs,
+        select: {
+          id: true,
+          role: true,
+          primaryClinicId: true,
+          patient: { select: { id: true } },
+        } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+      if (!user) return null;
+
+      const patientId = user.patient?.id ?? null;
+      let linkedToClinic = false;
+      if (patientId && user.primaryClinicId !== clinicId) {
+        const [appointment, identifier] = await Promise.all([
+          typedClient.appointment.findFirst({
+            where: { patientId, clinicId } as PrismaDelegateArgs,
+            select: { id: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs),
+          typedClient.patientIdentifier.findFirst({
+            where: { patientId, clinicId } as PrismaDelegateArgs,
+            select: { id: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs),
+        ]);
+        linkedToClinic = Boolean(appointment || identifier);
+      }
+      return {
+        userId: user.id,
+        role: user.role,
+        primaryClinicId: user.primaryClinicId ?? null,
+        patientId,
+        linkedToClinic,
+      };
+    });
   }
 
   /** Top-level Prisma delegate name for each "simple" staff profile shape ({userId, clinicId?, locationId?}). */

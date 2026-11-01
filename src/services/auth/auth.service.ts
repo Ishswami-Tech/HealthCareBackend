@@ -10,6 +10,7 @@ import { LoggingService } from '@infrastructure/logging/logging.service';
 import { EventService } from '@infrastructure/events/event.service';
 import { HealthcareError, HealthcareErrorsService } from '@core/errors';
 import { logLevelForError } from '@core/errors/error-severity.util';
+import { isUniqueViolation } from '@services/compliance/utils/db-errors.util';
 import { LogType, LogLevel } from '@core/types';
 import { EmailService } from '@communication/channels/email/email.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
@@ -652,6 +653,21 @@ export class AuthService {
           error: error instanceof Error ? error.message : String(error),
         }
       );
+      // An account that already holds this phone/email is a 409, never a 500.
+      const alreadyClientError = error instanceof HealthcareError && error.getStatus() < 500;
+      if (!alreadyClientError && isUniqueViolation(error)) {
+        const detail = error instanceof Error ? error.message : '';
+        if (registerDto.phone && /phone/i.test(detail)) {
+          throw this.errors.phoneAlreadyExists(
+            normalizeAuthPhoneNumber(registerDto.phone),
+            'AuthService.register'
+          );
+        }
+        if (/email/i.test(detail)) {
+          throw this.errors.emailAlreadyExists(registerDto.email, 'AuthService.register');
+        }
+        throw this.errors.userAlreadyExists(undefined, 'AuthService.register');
+      }
       throw error;
     }
   }
