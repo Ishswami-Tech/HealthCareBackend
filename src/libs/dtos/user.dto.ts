@@ -690,6 +690,17 @@ export class UserResponseDto extends OmitType(CreateUserDto, ['password'] as con
   @IsUUID('4', { message: 'User ID must be a valid UUID' })
   id!: string;
 
+  // `users.name` is the canonical display name (always set at registration / staff creation).
+  // firstName/lastName can be empty for staff created with a single name, so clients should
+  // prefer this over joining the two parts.
+  @ApiPropertyOptional({
+    example: 'Dr. Asha Rao',
+    description: 'Full display name (users.name)',
+  })
+  @IsOptional()
+  @IsString({ message: 'Name must be a string' })
+  name?: string;
+
   @ApiProperty({
     example: '2024-01-01T00:00:00.000Z',
     description: 'User creation timestamp',

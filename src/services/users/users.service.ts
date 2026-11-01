@@ -263,7 +263,7 @@ export class UsersService {
   }
 
   async findOne(id: string, clinicId?: string): Promise<UserResponseDto> {
-    const cacheKey = `users:one:v7:${id}:${clinicId || 'global'}`;
+    const cacheKey = `users:one:v8:${id}:${clinicId || 'global'}`;
 
     return this.cacheService.cache(
       cacheKey,
@@ -320,6 +320,7 @@ export class UsersService {
         const userResponse: UserResponseDto = {
           id: result.id,
           email: result.email,
+          name: result.name,
           firstName: result.firstName ?? '',
           lastName: result.lastName ?? '',
           role: result.role as Role,

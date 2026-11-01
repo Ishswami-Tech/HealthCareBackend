@@ -835,6 +835,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       `users:one:v5:${id}:*`,
       `users:one:v6:${id}:*`,
       `users:one:v7:${id}:*`,
+      `users:one:v8:${id}:*`,
     ];
     let count = await this.invalidateCacheByTag(`user:${userId}`);
     count += await this.invalidateCacheByTag(`doctor:${userId}`);
