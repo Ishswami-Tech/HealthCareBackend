@@ -8,8 +8,8 @@
  *   jest.mock('@payment/payment.handoff-token.service', () => ({ PaymentHandoffTokenService: class {} }), { virtual: true });
  *   jest.mock('@infrastructure/database', () => ({ DatabaseService: class {} }));
  *
- * jest.config.unit.ts has no `@payment` alias, and BillingService only needs the classes as
- * injection tokens, so they are stubbed instead of loading the real provider modules.
+ * BillingService only needs the payment classes as injection tokens, so they are stubbed
+ * instead of loading the real provider modules.
  */
 import { BillingService } from '@services/billing/billing.service';
 
