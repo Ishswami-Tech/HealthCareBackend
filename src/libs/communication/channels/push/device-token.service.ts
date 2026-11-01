@@ -526,6 +526,53 @@ export class DeviceTokenService implements OnModuleInit {
    * @param userId - User ID to get tokens for
    * @returns Array of active device tokens for the user
    */
+  /**
+   * Active tokens for a user, read from the database when it is available. The in-memory map is
+   * per process and only loaded at start-up, so a token the phone registered through the API
+   * after the worker (or another API instance) booted was invisible to it. Falls back to the
+   * in-memory map when the database is unavailable.
+   */
+  async getActiveUserTokens(userId: string): Promise<DeviceTokenData[]> {
+    if (!userId) return [];
+    if (!this.databaseService) return this.getUserTokens(userId);
+
+    try {
+      const rows = await this.databaseService.executeHealthcareRead(async client => {
+        const delegate = (
+          client as unknown as {
+            deviceToken?: { findMany: (args: unknown) => Promise<unknown> };
+          }
+        ).deviceToken;
+        return delegate ? delegate.findMany({ where: { userId, isActive: true } }) : null;
+      });
+
+      if (!Array.isArray(rows)) return this.getUserTokens(userId);
+
+      const persisted = rows
+        .filter(row => this.isPersistedDeviceToken(row))
+        .map(row => this.normalizePersistedToken(row));
+      // The database is the source of truth: a token signed out through another process is
+      // inactive there even if this process still caches it as active.
+      const activeTokens = new Set(persisted.map(token => token.token));
+      for (const cached of this.getUserTokens(userId)) {
+        if (!activeTokens.has(cached.token)) this.tokenStore.delete(cached.token);
+      }
+      for (const token of persisted) {
+        this.tokenStore.set(token.token, token);
+      }
+      return persisted;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'Failed to read device tokens from database; using in-memory cache',
+        'DeviceTokenService',
+        { userId, error: error instanceof Error ? error.message : 'Unknown error' }
+      );
+      return this.getUserTokens(userId);
+    }
+  }
+
   getUserTokens(userId: string): DeviceTokenData[] {
     try {
       const userTokens: DeviceTokenData[] = [];

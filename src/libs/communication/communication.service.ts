@@ -38,6 +38,10 @@ import { EmailService } from '@communication/channels/email/email.service';
 import { EmailTemplatesService } from '@communication/channels/email/email-templates.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { SNSBackupService } from '@communication/channels/push/sns-backup.service';
+import {
+  NO_REGISTERED_DEVICE,
+  isNoDeviceResult,
+} from '@communication/channels/push/push-targets.util';
 import { CommunicationHealthMonitorService } from './communication-health-monitor.service';
 import {
   eligibleChannels,
@@ -1331,25 +1335,29 @@ export class CommunicationService implements OnModuleInit {
     timestamp: Date
   ): Promise<ChannelDeliveryResult> {
     try {
-      if (!recipient.deviceToken) {
+      const notification = {
+        title: request.title,
+        body: request.body,
+        ...(request.data && { data: request.data as Record<string, string> }),
+      };
+
+      // An explicit token targets that device only; most callers know just the user, so push to
+      // every device that user registered. FCM primary and SNS fallback happen inside.
+      const result = recipient.deviceToken
+        ? await this.pushService.sendToDevice(recipient.deviceToken, notification, recipient.userId)
+        : recipient.userId
+          ? await this.pushService.sendToUser(recipient.userId, notification)
+          : { success: false, error: NO_REGISTERED_DEVICE };
+
+      if (isNoDeviceResult(result)) {
         return {
           channel: 'push',
           success: false,
-          error: 'No device token provided',
+          error: NO_REGISTERED_DEVICE,
           timestamp,
+          metadata: { skipped: true, skipReason: NO_REGISTERED_DEVICE },
         };
       }
-
-      // PushNotificationService handles FCM primary and SNS fallback automatically
-      const result = await this.pushService.sendToDevice(
-        recipient.deviceToken,
-        {
-          title: request.title,
-          body: request.body,
-          ...(request.data && { data: request.data as Record<string, string> }),
-        },
-        recipient.userId
-      );
 
       return {
         channel: 'push',

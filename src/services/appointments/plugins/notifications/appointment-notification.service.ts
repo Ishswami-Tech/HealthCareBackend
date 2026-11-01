@@ -1016,7 +1016,9 @@ export class AppointmentNotificationService {
     // This follows the architecture pattern: use service layer, not direct database access
     let deviceTokens: string[] = [];
     try {
-      const tokenData = patientUserId ? this.deviceTokenService.getUserTokens(patientUserId) : [];
+      const tokenData = patientUserId
+        ? await this.deviceTokenService.getActiveUserTokens(patientUserId)
+        : [];
       deviceTokens = tokenData.map(token => token.token);
     } catch (error) {
       await this.loggingService.log(
@@ -1283,6 +1285,9 @@ export class AppointmentNotificationService {
       expired: `Appointment Expired`,
       reschedule: `Appointment Rescheduled`,
       follow_up: `Follow-up Required`,
+      created: `Appointment Booked`,
+      updated: `Appointment Update`,
+      prescription: `Prescription Ready`,
     };
 
     return titles[type as keyof typeof titles] || 'Appointment Notification';
@@ -1300,6 +1305,9 @@ export class AppointmentNotificationService {
       expired: `Your appointment has expired`,
       reschedule: `Your appointment has been rescheduled`,
       follow_up: `Please schedule a follow-up appointment`,
+      created: 'Your appointment has been booked. Open the app for details.',
+      updated: 'There is an update to your appointment. Open the app for details.',
+      prescription: 'Your prescription is ready. Open the app for details.',
     };
 
     return bodies[type as keyof typeof bodies] || 'Appointment notification';
