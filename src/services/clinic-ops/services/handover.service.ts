@@ -9,14 +9,8 @@
  */
 
 import { randomInt } from 'crypto';
-import {
-  BadRequestException,
-  ConflictException,
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-  Optional,
-} from '@nestjs/common';
+import { HttpStatus, Injectable, Optional } from '@nestjs/common';
+import { ErrorCode } from '@core/errors/error-codes.enum';
 import { ConfigService } from '@config/config.service';
 import { EventService } from '@infrastructure/events/event.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -35,7 +29,26 @@ import {
 } from '@services/clinic-ops/services/handover-code-match.util';
 import { type DispenseHandoverRow, type PrescriptionLiteRow } from '../clinic-ops.types';
 import {
-  HANDOVER_RX_SELECT,
+  alreadyVerifiedError,
+  codeLockedError,
+  handoverError,
+  handoverNotReadyError,
+  identityMismatchError,
+  noLiveCodeError,
+  prescriptionNotFoundError,
+} from '@services/clinic-ops/services/handover-errors.util';
+import {
+  HANDOVER_MAX_ATTEMPTS,
+  MAX_SHARED_PRESCRIPTIONS,
+  claimAttempts,
+  latestOpenRow,
+  loadHandoverRow,
+  loadIdentityRecord,
+  loadPrescriptionRow,
+  openRowsOfPatient,
+  refundAttempts,
+} from '@services/clinic-ops/services/handover-rows.query';
+import {
   eventTargetOf,
   parseHandoverInput,
   summaryOfListRow,
@@ -70,9 +83,6 @@ import type {
 
 export const HANDOVER_CODE_TTL_MINUTES = 15;
 export const HANDOVER_UNDO_MINUTES = 5;
-const MAX_ATTEMPTS = 5;
-/** Most prescriptions one shared collection code covers (newest ready ones first). */
-const MAX_SHARED_PRESCRIPTIONS = 10;
 /** `method` of a hand-over the desk verified by an identity check instead of a code. */
 const MANUAL_METHOD = 'MANUAL';
 const UNDO_ROLES = new Set(['CLINIC_ADMIN', 'SUPER_ADMIN']);
@@ -110,14 +120,18 @@ export class HandoverService {
   ): Promise<HandoverCodeResponse> {
     const rx = await this.loadPrescription(prescriptionId, clinicId);
     if (rx.patient?.userId !== actor.userId) {
-      throw new ForbiddenException('This prescription belongs to another patient');
+      throw handoverError(
+        ErrorCode.PHARMACY_HANDOVER_FORBIDDEN,
+        'This prescription belongs to another patient',
+        HttpStatus.FORBIDDEN
+      );
     }
     await this.assertReadyForHandover(prescriptionId, clinicId);
     const siblings = await this.collectableSiblings(rx, clinicId);
     const code = String(randomInt(100000, 1000000));
     const expiresAt = new Date(Date.now() + HANDOVER_CODE_TTL_MINUTES * 60_000);
     const row = await this.putCode(rx, prescriptionId, code, expiresAt, actor, true);
-    if (!row) throw new BadRequestException('This hand-over is already verified at the counter');
+    if (!row) throw alreadyVerifiedError();
     const covered: HandoverCodePrescription[] = [summaryOfLite(rx)];
     for (const sibling of siblings) {
       const siblingRow = await this.putCode(rx, sibling.prescriptionId, code, expiresAt, actor);
@@ -147,9 +161,12 @@ export class HandoverService {
   ): Promise<HandoverResponse> {
     const rx = await this.loadPrescription(prescriptionId, clinicId);
     await this.assertReadyForHandover(prescriptionId, clinicId);
-    const open = await this.openRowsOfPatient(rx, clinicId);
+    const open = await openRowsOfPatient(this.ops, rx, clinicId);
     if (!open.some(row => row.otpHash && row.otpExpiresAt)) {
-      throw new BadRequestException('The patient has not generated a hand-over code yet');
+      throw handoverError(
+        ErrorCode.PHARMACY_HANDOVER_CODE_NOT_ISSUED,
+        'The patient has not generated a hand-over code yet'
+      );
     }
     const entered = parseHandoverInput(dto.code);
     // A QR names its hand-over: a QR of another patient (or an older, renewed code) is refused
@@ -158,26 +175,17 @@ export class HandoverService {
       entered.handoverId &&
       !open.some(row => String(row.id).toLowerCase() === entered.handoverId)
     ) {
-      throw new BadRequestException(
+      throw handoverError(
+        ErrorCode.PHARMACY_HANDOVER_CODE_STALE,
         'This QR code is not for this patient or was renewed - ask the patient to show the current code'
       );
     }
-    const candidates = classifyHandoverCandidates(open, Date.now(), MAX_ATTEMPTS);
-    if (candidates.live.length === 0) {
-      throw new BadRequestException(
-        candidates.locked.length > 0
-          ? 'Too many wrong codes - ask the patient to generate a new code'
-          : 'The code has expired - ask the patient to generate a new one'
-      );
-    }
+    const candidates = classifyHandoverCandidates(open, Date.now(), HANDOVER_MAX_ATTEMPTS);
+    if (candidates.live.length === 0) throw noLiveCodeError(candidates.locked.length);
     // Claim one attempt per live row atomically BEFORE comparing, so parallel guesses cannot all
     // slip in under the limit between the read above and the increment.
-    const claimed = await this.claimAttempts(candidates.live, clinicId, actor);
-    if (claimed.length === 0) {
-      throw new BadRequestException(
-        'Too many wrong codes - ask the patient to generate a new code'
-      );
-    }
+    const claimed = await claimAttempts(this.ops, candidates.live, clinicId, actor);
+    if (claimed.length === 0) throw codeLockedError();
     const matched = matchHandoverCode(
       claimed,
       entered.code,
@@ -192,15 +200,18 @@ export class HandoverService {
         actor,
         { prescriptionId, handoverIds: claimed.map(row => row.id) }
       );
-      throw new BadRequestException('That code does not match');
+      throw handoverError(ErrorCode.PHARMACY_HANDOVER_CODE_MISMATCH, 'That code does not match');
     }
     // The right code costs nothing: give back the attempts claimed above.
-    await this.refundAttempts(claimed, clinicId, actor);
+    await refundAttempts(this.ops, claimed, clinicId, actor);
     const method = dto.method ?? (entered.handoverId ? 'QR' : 'OTP');
     const verified = await this.claimVerified(matched, prescriptionId, clinicId, method, actor);
     const primary = primaryVerifiedRow(verified, prescriptionId);
     if (!primary) {
-      throw new BadRequestException('This code was already used or renewed - verify again');
+      throw handoverError(
+        ErrorCode.PHARMACY_HANDOVER_CODE_STALE,
+        'This code was already used or renewed - verify again'
+      );
     }
     return this.verifiedResponse(primary, verified, clinicId);
   }
@@ -218,7 +229,7 @@ export class HandoverService {
   ): Promise<HandoverResponse> {
     const rx = await this.loadPrescription(prescriptionId, clinicId);
     await this.assertReadyForHandover(prescriptionId, clinicId);
-    const record = await this.identityRecord(rx, clinicId);
+    const record = await loadIdentityRecord(this.ops, rx, clinicId);
     if (!identityMatches(dto.identityCheck, dto.identityValue, record)) {
       await this.audit.record(
         clinicId,
@@ -227,18 +238,9 @@ export class HandoverService {
         actor,
         { identityCheck: dto.identityCheck, reason: dto.reason }
       );
-      throw new BadRequestException(
-        dto.identityCheck === 'PHONE_LAST4'
-          ? "Those digits do not match the patient's phone number"
-          : "That UHID does not match the patient's record"
-      );
+      throw identityMismatchError(dto.identityCheck);
     }
-    const open = await this.ops.read(client =>
-      client.dispenseHandover.findFirst({
-        where: { clinicId, prescriptionId, status: 'PENDING_VERIFICATION' },
-        orderBy: { createdAt: 'desc' },
-      })
-    );
+    const open = await latestOpenRow(this.ops, clinicId, prescriptionId);
     if (open?.verifiedAt) return toHandoverResponse(open, rx);
     const rowId = open ? open.id : (await this.createOpenRow(rx, prescriptionId, actor)).id;
     const claimed = await this.ops.write(
@@ -256,7 +258,10 @@ export class HandoverService {
       }
     );
     if (claimed.count !== 1) {
-      throw new BadRequestException('This hand-over was already verified - reload the page');
+      throw handoverError(
+        ErrorCode.PHARMACY_HANDOVER_ALREADY_HANDLED,
+        'This hand-over was already verified - reload the page'
+      );
     }
     await this.audit.record(
       clinicId,
@@ -278,10 +283,16 @@ export class HandoverService {
   ): Promise<HandoverResponse> {
     const row = await this.loadHandover(handoverId, clinicId);
     if (row.status !== 'PENDING_VERIFICATION') {
-      throw new BadRequestException(`This hand-over is already ${row.status}`);
+      throw handoverError(
+        ErrorCode.PHARMACY_HANDOVER_INVALID_STATE,
+        `This hand-over is already ${row.status}`
+      );
     }
     if (!row.verifiedAt) {
-      throw new BadRequestException('Verify the patient code before handing over');
+      throw handoverError(
+        ErrorCode.PHARMACY_HANDOVER_INVALID_STATE,
+        'Verify the patient code before handing over'
+      );
     }
     const rx = await this.loadPrescription(row.prescriptionId, clinicId);
     // Re-checked at the moment of hand-over: a reverse-dispense or cancellation since the
@@ -290,11 +301,17 @@ export class HandoverService {
     const valid = new Set((rx.items ?? []).map(i => i.id));
     for (const item of dto.itemChecklist) {
       if (!valid.has(item.prescriptionItemId)) {
-        throw new BadRequestException('A checked item does not belong to this prescription');
+        throw handoverError(
+          ErrorCode.PHARMACY_HANDOVER_INVALID_ITEMS,
+          'A checked item does not belong to this prescription'
+        );
       }
     }
     if (!dto.itemChecklist.some(i => i.handedOver)) {
-      throw new BadRequestException('Tick at least one item that was handed over');
+      throw handoverError(
+        ErrorCode.PHARMACY_HANDOVER_INVALID_ITEMS,
+        'Tick at least one item that was handed over'
+      );
     }
     const now = new Date();
     const undoUntil = new Date(now.getTime() + HANDOVER_UNDO_MINUTES * 60_000);
@@ -320,7 +337,12 @@ export class HandoverService {
         resourceId: handoverId,
       }
     );
-    if (claimed.count !== 1) throw new BadRequestException('This hand-over was already handled');
+    if (claimed.count !== 1) {
+      throw handoverError(
+        ErrorCode.PHARMACY_HANDOVER_ALREADY_HANDLED,
+        'This hand-over was already handled'
+      );
+    }
     await this.audit.record(
       clinicId,
       { type: 'DISPENSE_HANDOVER', id: handoverId },
@@ -340,14 +362,24 @@ export class HandoverService {
   async undo(handoverId: string, clinicId: string, actor: OpsActor): Promise<HandoverResponse> {
     const row = await this.loadHandover(handoverId, clinicId);
     if (row.status !== 'HANDED_OVER') {
-      throw new BadRequestException('Only a completed hand-over can be undone');
+      throw handoverError(
+        ErrorCode.PHARMACY_HANDOVER_INVALID_STATE,
+        'Only a completed hand-over can be undone'
+      );
     }
     const isOwner = row.handedOverById === actor.userId;
     if (!isOwner && !UNDO_ROLES.has(actor.role.toUpperCase())) {
-      throw new ForbiddenException('Only the person who handed over can undo it');
+      throw handoverError(
+        ErrorCode.PHARMACY_HANDOVER_FORBIDDEN,
+        'Only the person who handed over can undo it',
+        HttpStatus.FORBIDDEN
+      );
     }
     if (!row.undoUntil || row.undoUntil.getTime() < Date.now()) {
-      throw new BadRequestException('The undo window has closed');
+      throw handoverError(
+        ErrorCode.PHARMACY_HANDOVER_UNDO_WINDOW_CLOSED,
+        'The undo window has closed'
+      );
     }
     const undone = await this.ops.write(
       client =>
@@ -369,7 +401,10 @@ export class HandoverService {
       }
     );
     if (undone.count !== 1) {
-      throw new BadRequestException('This hand-over was already undone or the window has closed');
+      throw handoverError(
+        ErrorCode.PHARMACY_HANDOVER_ALREADY_HANDLED,
+        'This hand-over was already undone or the window has closed'
+      );
     }
     await this.audit.record(
       clinicId,
@@ -490,16 +525,9 @@ export class HandoverService {
     strict = false
   ): Promise<DispenseHandoverRow | null> {
     const clinicId = rx.clinicId;
-    const open = await this.ops.read(client =>
-      client.dispenseHandover.findFirst({
-        where: { clinicId, prescriptionId, status: 'PENDING_VERIFICATION' },
-        orderBy: { createdAt: 'desc' },
-      })
-    );
+    const open = await latestOpenRow(this.ops, clinicId, prescriptionId);
     if (open?.verifiedAt) {
-      if (strict) {
-        throw new BadRequestException('This hand-over is already verified at the counter');
-      }
+      if (strict) throw alreadyVerifiedError();
       return null;
     }
     const row = open
@@ -530,81 +558,6 @@ export class HandoverService {
       'CODE_ISSUED'
     );
     return row;
-  }
-
-  /** Unverified hand-overs of the patient at this clinic (plus any of this prescription). */
-  private async openRowsOfPatient(
-    rx: PrescriptionLiteRow,
-    clinicId: string
-  ): Promise<DispenseHandoverRow[]> {
-    return await this.ops.read(client =>
-      client.dispenseHandover.findMany({
-        where: {
-          clinicId,
-          status: 'PENDING_VERIFICATION',
-          verifiedAt: null,
-          OR: [{ patientId: rx.patientId }, { prescriptionId: rx.id }],
-        },
-        orderBy: { createdAt: 'desc' },
-        take: MAX_SHARED_PRESCRIPTIONS * 2,
-      })
-    );
-  }
-
-  /** One attempt per row, claimed atomically under the limit; returns the rows it was claimed on. */
-  private async claimAttempts(
-    rows: readonly DispenseHandoverRow[],
-    clinicId: string,
-    actor: OpsActor
-  ): Promise<DispenseHandoverRow[]> {
-    const claimed: DispenseHandoverRow[] = [];
-    for (const row of rows) {
-      const attempt = await this.ops.write(
-        client =>
-          client.dispenseHandover.updateMany({
-            where: {
-              id: row.id,
-              clinicId,
-              status: 'PENDING_VERIFICATION',
-              otpAttempts: { lt: MAX_ATTEMPTS },
-            },
-            data: { otpAttempts: { increment: 1 } },
-          }),
-        {
-          actor,
-          clinicId,
-          resourceType: 'DISPENSE_HANDOVER',
-          operation: 'VERIFY_ATTEMPT',
-          resourceId: row.id,
-        }
-      );
-      if (attempt.count === 1) claimed.push(row);
-    }
-    return claimed;
-  }
-
-  /** A matching code gives back the attempts claimed for the comparison. */
-  private async refundAttempts(
-    rows: readonly DispenseHandoverRow[],
-    clinicId: string,
-    actor: OpsActor
-  ): Promise<void> {
-    for (const row of rows) {
-      await this.ops.write(
-        client =>
-          client.dispenseHandover.updateMany({
-            where: { id: row.id, clinicId, otpAttempts: { gt: 0 } },
-            data: { otpAttempts: { decrement: 1 } },
-          }),
-        {
-          actor,
-          clinicId,
-          resourceType: 'DISPENSE_HANDOVER',
-          operation: 'VERIFY_ATTEMPT_REFUND',
-          resourceId: row.id,
-        }
-      );
-    }
   }
 
   /**
@@ -678,29 +631,6 @@ export class HandoverService {
         .filter(row => row.id !== primary.id)
         .map(row => ({ handoverId: row.id, prescriptionId: row.prescriptionId })),
     };
-  }
-
-  /** Phone on file and the clinic UHID(s) of the prescription's patient. */
-  private async identityRecord(
-    rx: PrescriptionLiteRow,
-    clinicId: string
-  ): Promise<{ phone: string | null; uhids: string[] }> {
-    return await this.ops.read(async client => {
-      const [patient, identifiers] = await Promise.all([
-        client.patient.findFirst({
-          where: { id: rx.patientId },
-          select: { id: true, userId: true, user: { select: { phone: true } } },
-        }),
-        client.patientIdentifier.findMany({
-          where: { patientId: rx.patientId, clinicId, system: 'UHID' },
-          select: { value: true },
-        }),
-      ]);
-      return {
-        phone: patient?.user?.phone ?? null,
-        uhids: identifiers.map(row => row.value).filter(Boolean),
-      };
-    });
   }
 
   /** The code is already issued; a QR render failure only drops the image (logged by QrService). */
@@ -799,23 +729,15 @@ export class HandoverService {
   /** 409 unless approved, paid (or zero-priced) and dispensed (see handover-readiness.query). */
   private async assertReadyForHandover(prescriptionId: string, clinicId: string): Promise<void> {
     const readiness = await loadHandoverReadiness(this.ops, prescriptionId, clinicId);
-    if (!readiness) throw new NotFoundException('Prescription not found');
-    if (!readiness.ok) throw new ConflictException(readiness.message);
+    if (!readiness) throw prescriptionNotFoundError();
+    if (!readiness.ok) throw handoverNotReadyError(readiness.message);
   }
 
   private async loadPrescription(id: string, clinicId: string): Promise<PrescriptionLiteRow> {
-    const rx = await this.ops.read(client =>
-      client.prescription.findFirst({ where: { id, clinicId }, select: HANDOVER_RX_SELECT })
-    );
-    if (!rx) throw new NotFoundException('Prescription not found');
-    return rx;
+    return await loadPrescriptionRow(this.ops, id, clinicId);
   }
 
   private async loadHandover(id: string, clinicId: string): Promise<DispenseHandoverRow> {
-    const row = await this.ops.read(client =>
-      client.dispenseHandover.findFirst({ where: { id, clinicId } })
-    );
-    if (!row) throw new NotFoundException('Hand-over not found');
-    return row;
+    return await loadHandoverRow(this.ops, id, clinicId);
   }
 }

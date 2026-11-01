@@ -2,7 +2,9 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 
 jest.mock('@logging', () => jest.requireActual('@infrastructure/logging'), { virtual: true });
 
-import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { HttpStatus } from '@nestjs/common';
+import { ErrorCode } from '@core/errors/error-codes.enum';
+import { HealthcareError } from '@core/errors/healthcare-error.class';
 import {
   HandoverService,
   extractHandoverCode,
@@ -11,6 +13,21 @@ import {
 } from '@services/clinic-ops/services/handover.service';
 
 type Row = Record<string, unknown>;
+
+/** The call fails with a typed hand-over error of this HTTP status and code. */
+async function expectHandoverError(
+  call: Promise<object>,
+  status: HttpStatus,
+  code: ErrorCode
+): Promise<void> {
+  const error = await call.then(
+    () => null,
+    (reason: Error) => reason
+  );
+  expect(error).toBeInstanceOf(HealthcareError);
+  expect((error as HealthcareError).getStatus()).toBe(status);
+  expect((error as HealthcareError).code).toBe(code);
+}
 
 const qrFake = { generateQR: jest.fn(async (text: string) => `data:image/png;base64,QR(${text})`) };
 const pharmacyFake = {
@@ -249,9 +266,11 @@ describe('HandoverService', () => {
     // A second undo racing the first: the row reads HANDED_OVER but the write claims nothing.
     rows = [{ ...(current() as Row), status: 'HANDED_OVER' }];
     forceNoClaim = true;
-    await expect(
-      service.undo('h1', 'c1', { userId: 'ph', role: 'PHARMACIST' })
-    ).rejects.toBeInstanceOf(BadRequestException);
+    await expectHandoverError(
+      service.undo('h1', 'c1', { userId: 'ph', role: 'PHARMACIST' }),
+      HttpStatus.BAD_REQUEST,
+      ErrorCode.PHARMACY_HANDOVER_ALREADY_HANDLED
+    );
   });
 
   it('verifies with the raw QR text and records the method as QR', async () => {
@@ -302,9 +321,11 @@ describe('HandoverService', () => {
   });
 
   it('only the owning patient can issue a code', async () => {
-    await expect(
-      service.issueCode('rx-1', 'c1', { userId: 'someone-else', role: 'PATIENT' })
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expectHandoverError(
+      service.issueCode('rx-1', 'c1', { userId: 'someone-else', role: 'PATIENT' }),
+      HttpStatus.FORBIDDEN,
+      ErrorCode.PHARMACY_HANDOVER_FORBIDDEN
+    );
   });
 
   it('issues a code, verifies it, rejects a wrong one, then confirms', async () => {
@@ -316,13 +337,15 @@ describe('HandoverService', () => {
     expect(current()?.['otpHash']).toBe(hashHandoverCode('h1', issued.code));
 
     const wrong = issued.code === '000000' ? '111111' : '000000';
-    await expect(
-      service.verify('rx-1', { code: wrong }, 'c1', { userId: 'ph', role: 'PHARMACIST' })
-    ).rejects.toBeInstanceOf(BadRequestException);
+    await expectHandoverError(
+      service.verify('rx-1', { code: wrong }, 'c1', { userId: 'ph', role: 'PHARMACIST' }),
+      HttpStatus.BAD_REQUEST,
+      ErrorCode.PHARMACY_HANDOVER_CODE_MISMATCH
+    );
     expect(current()?.['otpAttempts']).toBe(1);
 
     // not verified yet -> cannot confirm
-    await expect(
+    await expectHandoverError(
       service.confirm(
         'h1',
         {
@@ -331,8 +354,10 @@ describe('HandoverService', () => {
         },
         'c1',
         { userId: 'ph', role: 'PHARMACIST' }
-      )
-    ).rejects.toBeInstanceOf(BadRequestException);
+      ),
+      HttpStatus.BAD_REQUEST,
+      ErrorCode.PHARMACY_HANDOVER_INVALID_STATE
+    );
 
     const verified = await service.verify(
       'rx-1',
@@ -359,8 +384,10 @@ describe('HandoverService', () => {
     const patient = { userId: 'patient-user', role: 'PATIENT' };
     rx = { ...readyRx(), status: 'PENDING' };
     rx['items'] = [{ ...(readyRx()['items'] as Row[])[0], dispensedQuantity: 0 }];
-    await expect(service.issueCode('rx-1', 'c1', patient)).rejects.toBeInstanceOf(
-      ConflictException
+    await expectHandoverError(
+      service.issueCode('rx-1', 'c1', patient),
+      HttpStatus.CONFLICT,
+      ErrorCode.PHARMACY_HANDOVER_NOT_READY
     );
 
     rx = readyRx();
@@ -369,8 +396,10 @@ describe('HandoverService', () => {
 
     rx = { ...readyRx(), status: 'DRAFT' };
     payments = [{ amount: 20 }];
-    await expect(service.issueCode('rx-1', 'c1', patient)).rejects.toBeInstanceOf(
-      ConflictException
+    await expectHandoverError(
+      service.issueCode('rx-1', 'c1', patient),
+      HttpStatus.CONFLICT,
+      ErrorCode.PHARMACY_HANDOVER_NOT_READY
     );
     expect(created).toHaveLength(0);
   });
@@ -468,9 +497,11 @@ describe('HandoverService', () => {
 
     it('still refuses an unpaid prescription', async () => {
       payments = [{ amount: 5 }];
-      await expect(
-        service.verifyWithoutCode('rx-1', dto('PHONE_LAST4', '4321'), 'c1', pharmacist)
-      ).rejects.toBeInstanceOf(ConflictException);
+      await expectHandoverError(
+        service.verifyWithoutCode('rx-1', dto('PHONE_LAST4', '4321'), 'c1', pharmacist),
+        HttpStatus.CONFLICT,
+        ErrorCode.PHARMACY_HANDOVER_NOT_READY
+      );
     });
   });
 });

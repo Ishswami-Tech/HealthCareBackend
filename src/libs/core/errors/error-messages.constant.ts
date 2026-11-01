@@ -209,6 +209,30 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.PHARMACY_PURCHASE_ORDER_NOT_FOUND]: 'Pharmacy purchase order not found.',
   [ErrorCode.PHARMACY_REORDER_RULE_NOT_FOUND]: 'Pharmacy reorder rule not found.',
   [ErrorCode.PHARMACY_ALERT_NOT_FOUND]: 'Pharmacy alert not found.',
+  [ErrorCode.PHARMACY_PRESCRIPTION_NOT_FOUND]: 'Prescription not found.',
+
+  // Pharmacy counter hand-over Errors
+  [ErrorCode.PHARMACY_HANDOVER_NOT_FOUND]: 'Hand-over not found.',
+  [ErrorCode.PHARMACY_HANDOVER_NOT_READY]: 'This prescription is not ready to hand over yet.',
+  [ErrorCode.PHARMACY_HANDOVER_CODE_NOT_ISSUED]:
+    'The patient has not generated a hand-over code yet.',
+  [ErrorCode.PHARMACY_HANDOVER_CODE_MISMATCH]: 'That code does not match.',
+  [ErrorCode.PHARMACY_HANDOVER_CODE_EXPIRED]:
+    'The code has expired - ask the patient to generate a new one.',
+  [ErrorCode.PHARMACY_HANDOVER_CODE_LOCKED]:
+    'Too many wrong codes - ask the patient to generate a new code.',
+  [ErrorCode.PHARMACY_HANDOVER_CODE_STALE]:
+    'This code was renewed or belongs to another patient - ask for the current code.',
+  [ErrorCode.PHARMACY_HANDOVER_IDENTITY_MISMATCH]:
+    "The identity check does not match the patient's record.",
+  [ErrorCode.PHARMACY_HANDOVER_ALREADY_HANDLED]:
+    'This hand-over was already handled - reload the page.',
+  [ErrorCode.PHARMACY_HANDOVER_INVALID_STATE]:
+    'This hand-over cannot do that in its current state.',
+  [ErrorCode.PHARMACY_HANDOVER_INVALID_ITEMS]:
+    'The checked items are not valid for this prescription.',
+  [ErrorCode.PHARMACY_HANDOVER_UNDO_WINDOW_CLOSED]: 'The undo window has closed.',
+  [ErrorCode.PHARMACY_HANDOVER_FORBIDDEN]: 'You are not allowed to do this for this hand-over.',
 
   // Event Errors
   [ErrorCode.EVENT_EMISSION_FAILED]: 'Event emission failed. Please try again.',
