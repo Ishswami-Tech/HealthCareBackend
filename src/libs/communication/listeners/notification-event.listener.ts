@@ -50,6 +50,7 @@ import {
   MilestoneDedup,
   medicineDeskMilestone,
   medicineDeskMilestoneContent,
+  type MedicineDeskDetails,
 } from '@communication/listeners/medicine-desk-notification.util';
 
 function resolveText(value: unknown, fallback = ''): string {
@@ -153,6 +154,25 @@ function deskPayloadValue(payload: EnterpriseEventPayload, key: string): string 
     inner && typeof inner === 'object' ? (inner as Record<string, unknown>)[key] : undefined;
   const value = payload.metadata?.[key] ?? root[key] ?? innerValue ?? '';
   return typeof value === 'string' ? value : '';
+}
+
+/** A numeric field of a medicine-desk payload (0 when missing / not a number). */
+function deskPayloadNumber(payload: EnterpriseEventPayload, key: string): number {
+  const root = payload as unknown as Record<string, unknown>;
+  const inner = root['payload'];
+  const innerValue =
+    inner && typeof inner === 'object' ? (inner as Record<string, unknown>)[key] : undefined;
+  const value = Number(payload.metadata?.[key] ?? root[key] ?? innerValue ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+/** Prescription facts of a medicine-desk payload the patient message is built from. */
+function deskDetails(payload: EnterpriseEventPayload): MedicineDeskDetails {
+  return {
+    medicationCount: deskPayloadNumber(payload, 'medicationCount'),
+    pendingAmount: deskPayloadNumber(payload, 'pendingAmount'),
+    doctorName: deskPayloadValue(payload, 'doctorName'),
+  };
 }
 
 @Injectable()
@@ -406,9 +426,10 @@ export class NotificationEventListener implements OnModuleInit {
       },
       shouldNotify: () => true,
     },
-    // Pharmacy Medicine Desk Queue Updates: the patient is told only when medicines are ready
-    // to collect (dispensed), once per prescription and milestone, in-app plus ONE out-of-app
-    // channel in preference order. Staff screens refresh from the socket broadcaster.
+    // Pharmacy Medicine Desk Queue Updates: the patient is told when the prescription reaches
+    // the pharmacy (ready, amount to pay) and when medicines are ready to collect (dispensed),
+    // once per prescription and milestone, in-app plus ONE out-of-app channel in preference
+    // order. Staff screens refresh from the socket broadcaster.
     {
       eventPattern: /^pharmacy\.medicine_desk\.updated$/,
       category: CommunicationCategory.PRESCRIPTION,
@@ -422,7 +443,10 @@ export class NotificationEventListener implements OnModuleInit {
         return patientId ? [{ userId: patientId, socketRoom: `user:${patientId}` }] : [];
       },
       shouldNotify: payload => {
-        const milestone = medicineDeskMilestone(deskPayloadValue(payload, 'action'));
+        const milestone = medicineDeskMilestone(
+          deskPayloadValue(payload, 'action'),
+          deskDetails(payload)
+        );
         if (!milestone) return false;
         const prescriptionId =
           deskPayloadValue(payload, 'prescriptionId') || deskPayloadValue(payload, 'entryId');
@@ -1634,8 +1658,9 @@ export class NotificationEventListener implements OnModuleInit {
 
   /**
    * Non-appointment events (doctor availability, prescriptions, queue ...) often name the doctor
-   * by Doctor.id; the recipient must be the doctor's User.id or the notification is dropped as
-   * "user not found". One lookup per event; a failure keeps the recipients unchanged.
+   * by Doctor.id or the patient by Patient.id; the recipient must be the User.id or the
+   * notification is dropped as "user not found". One lookup per profile table per event; a
+   * failure keeps the recipients unchanged.
    */
   private async mapDoctorProfileRecipients<Recipient extends NotificationRecipient>(
     recipients: Recipient[]
@@ -1643,32 +1668,37 @@ export class NotificationEventListener implements OnModuleInit {
     const ids = recipientUserIds(recipients);
     if (ids.length === 0) return recipients;
     try {
-      const doctors = await this.databaseService.executeHealthcareRead<
+      const profiles = await this.databaseService.executeHealthcareRead<
         Array<{ id: string; userId: string }>
       >(async client => {
-        const doctorClient = client as unknown as {
-          doctor: {
+        const profileClient = client as unknown as Record<
+          'doctor' | 'patient',
+          {
             findMany: (args: {
               where: { id: { in: string[] } };
               select: { id: true; userId: true };
             }) => Promise<Array<{ id: string; userId: string }>>;
-          };
-        };
-        return await doctorClient.doctor.findMany({
-          where: { id: { in: ids } },
-          select: { id: true, userId: true },
-        });
+          }
+        >;
+        const query = { where: { id: { in: ids } }, select: { id: true, userId: true } } as const;
+        const [doctors, patients] = await Promise.all([
+          profileClient.doctor.findMany(query),
+          profileClient.patient.findMany(query),
+        ]);
+        return [...doctors, ...patients];
       });
-      if (doctors.length === 0) return recipients;
-      return remapRecipientUserIds(
-        recipients,
-        new Map(doctors.map(doctor => [doctor.id, doctor.userId]))
+      const profileToUser = new Map(
+        profiles
+          .filter(profile => profile.userId && profile.userId !== profile.id)
+          .map(profile => [profile.id, profile.userId])
       );
+      if (profileToUser.size === 0) return recipients;
+      return remapRecipientUserIds(recipients, profileToUser);
     } catch (error) {
       void this.loggingService.log(
         LogType.NOTIFICATION,
         LogLevel.WARN,
-        'Could not resolve doctor recipients to their user ids',
+        'Could not resolve doctor / patient recipients to their user ids',
         'NotificationEventListener',
         { error: error instanceof Error ? error.message : String(error) }
       );
@@ -1823,9 +1853,10 @@ export class NotificationEventListener implements OnModuleInit {
           ? `Your ${goal} diet plan has been generated for ${durationDays} days.`
           : `Your ${goal} diet plan has been generated.`;
     } else if (eventType.startsWith('pharmacy.medicine_desk.')) {
-      const milestone = medicineDeskMilestone(deskPayloadValue(payload, 'action'));
+      const details = deskDetails(payload);
+      const milestone = medicineDeskMilestone(deskPayloadValue(payload, 'action'), details);
       ({ title, body } = milestone
-        ? medicineDeskMilestoneContent(milestone)
+        ? medicineDeskMilestoneContent(milestone, details)
         : { title: 'Pharmacy Update', body: 'Your pharmacy request has been updated.' });
     } else if (eventType.startsWith('ayurveda.')) {
       if (eventType.includes('.prakriti.assessed')) {

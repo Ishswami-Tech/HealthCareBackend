@@ -10,6 +10,8 @@ import {
 } from '../../../src/libs/communication/services/notification-delivery-plan.util';
 import {
   MilestoneDedup,
+  doctorDisplayName,
+  formatRupees,
   medicineDeskMilestone,
   medicineDeskMilestoneContent,
 } from '../../../src/libs/communication/listeners/medicine-desk-notification.util';
@@ -147,6 +149,48 @@ describe('medicine desk milestones', () => {
 
   it('says the medicines are ready to collect', () => {
     expect(medicineDeskMilestoneContent('READY_TO_COLLECT').body).toContain('ready');
+  });
+
+  it('a prescription with medicines reaching the pharmacy is PRESCRIPTION_READY (D4)', () => {
+    expect(medicineDeskMilestone('CREATED', { medicationCount: 2, pendingAmount: 2480 })).toBe(
+      'PRESCRIPTION_READY'
+    );
+    // A note-only prescription has nothing to pay or collect.
+    expect(medicineDeskMilestone('CREATED', { medicationCount: 0 })).toBeNull();
+    expect(medicineDeskMilestone('UPDATED', { medicationCount: 2 })).toBeNull();
+    expect(medicineDeskMilestone('PAYMENT_UPDATED', { medicationCount: 2 })).toBeNull();
+  });
+
+  it('names the doctor and the amount to pay', () => {
+    expect(
+      medicineDeskMilestoneContent('PRESCRIPTION_READY', {
+        doctorName: 'Chandrakumar Deshmukh',
+        pendingAmount: 2480,
+      })
+    ).toEqual({
+      title: 'Prescription ready',
+      body: 'Your prescription from Dr Chandrakumar Deshmukh is ready — ₹2,480 to pay at the pharmacy or online.',
+    });
+    expect(
+      medicineDeskMilestoneContent('PRESCRIPTION_READY', {
+        doctorName: 'Dr. Asha Rao',
+        pendingAmount: 99.5,
+      }).body
+    ).toBe(
+      'Your prescription from Dr Asha Rao is ready — ₹99.50 to pay at the pharmacy or online.'
+    );
+    // Nothing to pay (plan-covered) and no doctor name.
+    expect(medicineDeskMilestoneContent('PRESCRIPTION_READY', { pendingAmount: 0 }).body).toBe(
+      'Your prescription is ready. Collect your medicines at the pharmacy counter.'
+    );
+  });
+
+  it('formats doctor names and rupees', () => {
+    expect(doctorDisplayName('  dr   asha  rao ')).toBe('Dr asha rao');
+    expect(doctorDisplayName('Dr.')).toBe('');
+    expect(doctorDisplayName('Drona Patil')).toBe('Dr Drona Patil');
+    expect(doctorDisplayName(null)).toBe('');
+    expect(formatRupees(124000)).toBe('₹1,24,000');
   });
 
   it('sends a milestone once per prescription within the window', () => {
