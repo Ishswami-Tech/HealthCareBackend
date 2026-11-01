@@ -46,6 +46,7 @@ import {
   remapRecipientUserIds,
   type NotificationRecipient,
 } from '@communication/listeners/recipient-user-id.util';
+import { loginAlertContent } from '@communication/listeners/login-alert-content.util';
 import {
   MilestoneDedup,
   medicineDeskMilestone,
@@ -1914,24 +1915,15 @@ export class NotificationEventListener implements OnModuleInit {
           Boolean((payload as unknown as Record<string, unknown>)['isFirstLogin']) ||
           Boolean(payload.metadata?.['isFirstLogin']);
         const loginMethod =
-          typeof payload.metadata?.['loginMethod'] === 'string' &&
-          payload.metadata['loginMethod'].trim().length > 0
+          typeof payload.metadata?.['loginMethod'] === 'string'
             ? payload.metadata['loginMethod']
-            : 'account';
-        const loginTime = formatTimeInIST(payload.timestamp);
-        if (isFirstLogin) {
-          title = `Welcome to ${displayName}`;
-          body = `Your account is new and you have now logged in successfully to ${displayName} via ${loginMethod.replace(
-            /_/g,
-            ' '
-          )} at ${loginTime}. If this was not you, please change your password immediately.`;
-        } else {
-          title = `${displayName} Login Alert`;
-          body = `You have been logged in to ${displayName} via ${loginMethod.replace(
-            /_/g,
-            ' '
-          )} at ${loginTime}. If this was not you, please change your password immediately.`;
-        }
+            : null;
+        ({ title, body } = loginAlertContent({
+          displayName,
+          loginMethod,
+          loginTime: formatTimeInIST(payload.timestamp),
+          isFirstLogin,
+        }));
       } else if (eventType.includes('.created')) {
         const displayName = resolveText(
           (payload as unknown as Record<string, unknown>)['clinicName'] ||
