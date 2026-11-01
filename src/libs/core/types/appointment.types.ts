@@ -1141,6 +1141,7 @@ export interface NotificationData {
     | 'follow_up'
     | 'created'
     | 'updated'
+    | 'completed'
     | 'prescription';
   scheduledFor?: Date;
   priority: 'low' | 'normal' | 'high' | 'urgent';

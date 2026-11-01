@@ -33,7 +33,11 @@ import {
 import { findTreatmentCatalogEntryOrUndefined } from '@core/types/treatment-catalog.types';
 import type { NotificationData } from '@core/types/appointment.types';
 import type { EnterpriseEventPayload } from '@core/types';
-import { AppointmentNotificationDedup } from '@communication/listeners/appointment-notification-dedup.util';
+import {
+  APPOINTMENT_COMPLETED_EVENT,
+  AppointmentNotificationDedup,
+  appointmentCompletedChannels,
+} from '@communication/listeners/appointment-notification-dedup.util';
 import {
   QUEUE_PATIENT_ALERT_EVENT,
   isQueuePatientAlertEvent,
@@ -1368,7 +1372,9 @@ export class NotificationEventListener implements OnModuleInit {
                     ? 'reschedule'
                     : normalizedEventType === 'appointment.created'
                       ? 'created'
-                      : 'updated';
+                      : normalizedEventType === APPOINTMENT_COMPLETED_EVENT
+                        ? 'completed'
+                        : 'updated';
 
           const nextChannels: NotificationData['channels'] =
             normalizedEventType === 'appointment.confirmed'
@@ -1379,7 +1385,11 @@ export class NotificationEventListener implements OnModuleInit {
                   normalizedEventType === 'appointment.rescheduled' ||
                   nextType === 'expired'
                 ? ['email', 'push', 'socket']
-                : ['push', 'socket'];
+                : nextType === 'completed'
+                  ? appointmentCompletedChannels(
+                      await this.hasPrescriptionWithMedicines(notificationData.appointmentId)
+                    )
+                  : ['push', 'socket'];
 
           notificationData.type = nextType as NotificationData['type'];
           notificationData.channels = nextChannels;
@@ -1655,6 +1665,39 @@ export class NotificationEventListener implements OnModuleInit {
       );
 
     return resolvedRecipients;
+  }
+
+  /**
+   * True when the visit has a prescription with at least one medicine that reached the pharmacy
+   * (not a draft, returned or cancelled one): its "Prescription ready" push stands in for the
+   * completion push. A failed lookup reads as false, so the patient still gets one push.
+   */
+  private async hasPrescriptionWithMedicines(appointmentId: string): Promise<boolean> {
+    if (!appointmentId) return false;
+    try {
+      const count = await this.databaseService.executeHealthcareRead<number>(async client => {
+        const prescriptionClient = client as unknown as {
+          prescription: { count: (args: object) => Promise<number> };
+        };
+        return prescriptionClient.prescription.count({
+          where: {
+            appointmentId,
+            status: { notIn: ['DRAFT', 'RETURNED', 'CANCELLED'] },
+            items: { some: {} },
+          },
+        });
+      });
+      return count > 0;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.WARN,
+        'Prescription lookup for the completion push failed; sending the push',
+        'NotificationEventListener',
+        { appointmentId, error: error instanceof Error ? error.message : String(error) }
+      );
+      return false;
+    }
   }
 
   /**

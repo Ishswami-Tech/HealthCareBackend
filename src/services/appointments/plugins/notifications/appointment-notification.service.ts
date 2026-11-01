@@ -28,6 +28,7 @@ import {
 } from './appointment-inbox.util';
 import { EmailTemplate } from '@core/types';
 import { findTreatmentCatalogEntryOrUndefined } from '@core/types/treatment-catalog.types';
+import { APPOINTMENT_COMPLETED_PUSH } from '@communication/listeners/appointment-notification-dedup.util';
 import type {
   PrismaTransactionClientWithDelegates,
   PrismaDelegateArgs,
@@ -1287,6 +1288,7 @@ export class AppointmentNotificationService {
       follow_up: `Follow-up Required`,
       created: `Appointment Booked`,
       updated: `Appointment Update`,
+      completed: APPOINTMENT_COMPLETED_PUSH.title,
       prescription: `Prescription Ready`,
     };
 
@@ -1307,6 +1309,7 @@ export class AppointmentNotificationService {
       follow_up: `Please schedule a follow-up appointment`,
       created: 'Your appointment has been booked. Open the app for details.',
       updated: 'There is an update to your appointment. Open the app for details.',
+      completed: APPOINTMENT_COMPLETED_PUSH.body,
       prescription: 'Your prescription is ready. Open the app for details.',
     };
 

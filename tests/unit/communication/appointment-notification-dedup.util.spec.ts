@@ -1,7 +1,9 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  APPOINTMENT_COMPLETED_PUSH,
   AppointmentNotificationDedup,
   CHECK_IN_KIND,
+  appointmentCompletedChannels,
   appointmentNotificationKind,
 } from '../../../src/libs/communication/listeners/appointment-notification-dedup.util';
 
@@ -73,5 +75,20 @@ describe('AppointmentNotificationDedup', () => {
     expect(dedup.shouldSkip('appointment.cancelled', plain, 0)).toBe(false);
     expect(dedup.shouldSkip('appointment.cancelled', plain, TTL - 1)).toBe(true);
     expect(dedup.shouldSkip('appointment.cancelled', plain, TTL * 2)).toBe(false);
+  });
+});
+
+describe('visit completion push (doctor save & complete)', () => {
+  it('no second push when the prescription-ready push covers the visit', () => {
+    expect(appointmentCompletedChannels(true)).toEqual(['socket']);
+  });
+
+  it('a visit with no medicines gets one meaningful push', () => {
+    expect(appointmentCompletedChannels(false)).toEqual(['push', 'socket']);
+    expect(APPOINTMENT_COMPLETED_PUSH).toEqual({
+      title: 'Visit completed',
+      body: 'Your visit is complete. Open the app for your visit summary.',
+    });
+    expect(APPOINTMENT_COMPLETED_PUSH.title).not.toBe('Appointment Update');
   });
 });

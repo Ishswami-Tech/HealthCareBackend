@@ -82,3 +82,23 @@ export class AppointmentNotificationDedup {
     }
   }
 }
+
+export const APPOINTMENT_COMPLETED_EVENT = 'appointment.completed';
+
+/**
+ * Visit completion (doctor "save & complete"): exactly one clear patient push. When the visit has
+ * a prescription with medicines, the pharmacy's "Prescription ready — ₹N" push already tells the
+ * patient the visit is done and what to do next, so the completion goes to the live socket only
+ * (screens refresh, no second push). Without one, the patient gets "Visit completed".
+ */
+export function appointmentCompletedChannels(
+  hasPrescriptionWithMedicines: boolean
+): Array<'push' | 'socket'> {
+  return hasPrescriptionWithMedicines ? ['socket'] : ['push', 'socket'];
+}
+
+/** Push copy of a completed visit (no PHI: no diagnosis or medicine names). */
+export const APPOINTMENT_COMPLETED_PUSH = Object.freeze({
+  title: 'Visit completed',
+  body: 'Your visit is complete. Open the app for your visit summary.',
+});
