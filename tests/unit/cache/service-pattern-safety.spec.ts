@@ -48,15 +48,9 @@ interface ServicePattern {
  * Hand-audited list of every service-level pattern delete in `src/` (the call-site count below is
  * checked against the sources, so a new call site fails this suite until it is added here).
  */
+// (therapy-queue.service.ts and its two patterns were removed with the unused therapy
+// scaffolding in 24d87c6a.)
 const SERVICE_PATTERNS: readonly ServicePattern[] = [
-  {
-    file: 'services/appointments/plugins/therapy/therapy-queue.service.ts',
-    template: 'therapy-queues:clinic:${clinicId}*',
-  },
-  {
-    file: 'services/appointments/plugins/therapy/therapy-queue.service.ts',
-    template: 'therapy-queue:*:${queueId}*',
-  },
   {
     file: 'services/appointments/plugins/checkin/check-in.service.ts',
     template: 'queue:doctor:*:${clinicId}',

@@ -216,7 +216,9 @@ describe('AuthService', () => {
         'valid-refresh-token',
         'fp-1',
         'ua',
-        '10.0.0.1'
+        '10.0.0.1',
+        // 677e00c9: the refresh is refused unless the token's session is still live.
+        expect.any(Function)
       );
     });
 

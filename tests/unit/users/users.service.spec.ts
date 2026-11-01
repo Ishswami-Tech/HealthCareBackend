@@ -158,19 +158,27 @@ describe('UsersService', () => {
       );
     });
 
-    it('scopes the cache key by role and clinic', async () => {
+    it('scopes the cache key by role, clinic and location', async () => {
       const h = createHarness();
 
+      // 8ac60356 added the location segment so a location-scoped list never
+      // serves (or is served from) the clinic-wide entry.
       await h.service.findAll(Role.DOCTOR, 'clinic-1');
+      await h.service.findAll(Role.DOCTOR, 'clinic-1', 'loc-1');
       await h.service.findAll();
 
       expect(h.cacheService.cache).toHaveBeenCalledWith(
-        'users:all:DOCTOR:clinic-1',
+        'users:all:DOCTOR:clinic-1:any-location',
         expect.any(Function),
         expect.objectContaining({ containsPHI: true })
       );
       expect(h.cacheService.cache).toHaveBeenCalledWith(
-        'users:all:all:global',
+        'users:all:DOCTOR:clinic-1:loc-1',
+        expect.any(Function),
+        expect.objectContaining({ containsPHI: true })
+      );
+      expect(h.cacheService.cache).toHaveBeenCalledWith(
+        'users:all:all:global:any-location',
         expect.any(Function),
         expect.any(Object)
       );

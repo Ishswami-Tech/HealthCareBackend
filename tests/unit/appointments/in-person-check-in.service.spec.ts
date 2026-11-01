@@ -8,6 +8,7 @@ import {
 } from '@services/appointments/in-person/in-person-check-in.service';
 import type { InPersonAppointmentRow } from '@services/appointments/in-person/in-person-visit.service';
 import { formatDateKeyInIST } from '@utils/date-time.util';
+import { opdControlsDatabase } from './in-person-check-in-world';
 
 const CLINIC = 'clinic-1';
 const LOC_A = 'loc-a';
@@ -94,6 +95,7 @@ function build(bookings: InPersonAppointmentRow[]) {
     locationQr as never,
     events as never,
     logging as never,
+    opdControlsDatabase() as never,
     checkInLog as never
   );
   return { service, checkInLocations, visits, events, checkInLog, locationQr };

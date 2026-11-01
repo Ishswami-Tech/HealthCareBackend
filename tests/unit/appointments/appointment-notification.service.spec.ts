@@ -43,7 +43,9 @@ describe('AppointmentNotificationService recipient resolution', () => {
       {} as unknown as Deps[5],
       {} as unknown as Deps[6],
       {} as unknown as Deps[7],
-      databaseService as unknown as Deps[8]
+      databaseService as unknown as Deps[8],
+      // notificationPreferenceService (afe19c0e); recipient resolution does not consult it.
+      {} as unknown as Deps[9]
     ) as AppointmentNotificationService;
 
     return { service, loggingService, databaseService };

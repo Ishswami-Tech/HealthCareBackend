@@ -101,9 +101,18 @@ describe('AppointmentsService.completeAppointment', () => {
     });
     expect(harness.db.rows('appointment')[0]?.['status']).toBe('COMPLETED');
     expect(harness.confirmationPlugin.process).toHaveBeenCalledTimes(1);
-    expect(harness.events.emit).toHaveBeenCalledWith(
+    // d44d570b (INT-05): one enterprise event per completion; the duplicate plain emit is gone.
+    expect(harness.events.emitEnterprise).toHaveBeenCalledWith(
       'appointment.completed',
-      expect.objectContaining({ appointmentId: 'appt-1', clinicId: CLINIC })
+      expect.objectContaining({
+        clinicId: CLINIC,
+        payload: expect.objectContaining({ appointmentId: 'appt-1', clinicId: CLINIC }),
+      })
+    );
+    expect(harness.events.emitEnterprise).toHaveBeenCalledTimes(1);
+    expect(harness.events.emit).not.toHaveBeenCalledWith(
+      'appointment.completed',
+      expect.anything()
     );
   });
 

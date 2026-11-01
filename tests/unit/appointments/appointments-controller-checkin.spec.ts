@@ -22,6 +22,7 @@ import {
   VIDEO_CHECK_IN_REJECTION_MESSAGE,
 } from '@services/appointments/plugins/therapy/check-in-location.service';
 import { formatDateKeyInIST } from '@utils/date-time.util';
+import { POSTER_LOCATION_REQUIRED_MESSAGE } from '@services/appointments/core/desk-code-presence.util';
 import type { ForceCheckInDto, ScanLocationQRDto } from '@dtos/appointment.dto';
 import { CLINIC, OTHER_CLINIC, buildHarness, rejection, type Row } from './appointments-harness';
 import { createInPersonCheckIn } from './in-person-check-in-world';
@@ -207,6 +208,17 @@ function expectCheckedIn(w: World, appointmentId = 'appt-1'): void {
     expect.objectContaining({ appointmentId, doctorId: 'doctor-1', locationId: 'loc-1' }),
     'clinic'
   );
+}
+
+/**
+ * The clinic turned 'Require location for QR check-in' off (opdControls, df4f03ed): a poster
+ * scan then reaches processCheckIn with its coordinates 'if-supplied', the pre-df4f03ed path.
+ */
+function allowPosterScanWithoutPosition(w: World): void {
+  w.db.insert('clinic', {
+    id: CLINIC,
+    settings: { appointmentSettings: { opdControls: { requireLocationForQrCheckIn: false } } },
+  });
 }
 
 function expectNothingRecorded(
@@ -581,6 +593,7 @@ describe('AppointmentsController.scanLocationQRAndCheckIn (deprecated, delegates
   );
 
   it('keeps the 400 of a bad request instead of turning it into a 500 (error mapping)', async () => {
+    allowPosterScanWithoutPosition(w);
     w.db.insert('appointment', inPersonAppointment());
 
     const error = await rejection(
@@ -599,6 +612,7 @@ describe('AppointmentsController.scanLocationQRAndCheckIn (deprecated, delegates
   ])(
     'a patient scanning with %s coordinates gets 400 and nothing is recorded',
     async (_label, coordinates) => {
+      allowPosterScanWithoutPosition(w);
       w.db.insert('appointment', inPersonAppointment());
 
       const error = await rejection(
@@ -638,7 +652,24 @@ describe('AppointmentsController.scanLocationQRAndCheckIn (deprecated, delegates
     expectNothingRecorded(w);
   });
 
-  it('the signed poster needs no device position', async () => {
+  it('a signed poster scan without a device position is refused by default (400 LOCATION_REQUIRED), nothing recorded', async () => {
+    // df4f03ed: opdControls.requireLocationForQrCheckIn defaults to on, a poster can be photographed.
+    w.db.insert('appointment', inPersonAppointment());
+
+    const error = await rejection(
+      scan('PATIENT', 'user-patient', { qrCode: POSTER } as ScanLocationQRDto)
+    );
+
+    expect(error.getStatus()).toBe(400);
+    expect(error.getResponse()).toMatchObject({
+      code: 'LOCATION_REQUIRED',
+      message: POSTER_LOCATION_REQUIRED_MESSAGE,
+    });
+    expectNothingRecorded(w);
+  });
+
+  it('the signed poster needs no device position when the clinic turned the requirement off', async () => {
+    allowPosterScanWithoutPosition(w);
     w.db.insert('appointment', inPersonAppointment());
 
     const result = await scan('PATIENT', 'user-patient', { qrCode: POSTER } as ScanLocationQRDto);

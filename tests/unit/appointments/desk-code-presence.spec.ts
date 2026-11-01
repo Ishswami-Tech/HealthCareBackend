@@ -7,6 +7,7 @@ import { describe, it, expect, jest } from '@jest/globals';
 import {
   DESK_CODE_LOCATION_REQUIRED_MESSAGE,
   DESK_CODE_MAX_ACCURACY_ALLOWANCE_METERS,
+  POSTER_LOCATION_REQUIRED_MESSAGE,
   assessDeskCodePresence,
   deskCodeTooFarMessage,
   formatApproxDistance,
@@ -24,6 +25,7 @@ import {
   isCheckInWindowOpen,
 } from '@utils/in-person-flow.util';
 import { formatDateKeyInIST } from '@utils/date-time.util';
+import { opdControlsDatabase } from './in-person-check-in-world';
 
 // The local test location (CheckInLocation be79acc7-...): seeded { latitude, longitude }, 500 m.
 const CENTRE = { latitude: 18.5696256, longitude: 73.8852864 };
@@ -175,7 +177,7 @@ function booking(): InPersonAppointmentRow {
   } as InPersonAppointmentRow;
 }
 
-function build() {
+function build(opdControls: Record<string, unknown> = {}) {
   const rows = [booking()];
   const location = {
     id: 'qr-a',
@@ -210,6 +212,7 @@ function build() {
     { inspectLocationQR: jest.fn(() => 'VALID') } as never,
     { emit: jest.fn(async () => undefined) } as never,
     { log: jest.fn(async () => undefined) } as never,
+    opdControlsDatabase(opdControls) as never,
     checkInLog as never
   );
   return { service, checkInLocations, checkInLog };
@@ -283,8 +286,35 @@ describe('InPersonCheckInService - typed desk code needs the device position', (
     ).resolves.toMatchObject({ result: 'CHECKED_IN' });
   });
 
-  it('signed poster scan is unaffected: no coordinates needed, presence stays if-supplied', async () => {
+  it('signed poster scan without coordinates is refused by default (LOCATION_REQUIRED, poster message)', async () => {
+    // df4f03ed: opdControls.requireLocationForQrCheckIn defaults to on.
     const world = build();
+    const error = await world.service
+      .checkIn({ qrCode: POSTER }, CLINIC, PATIENT)
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(InPersonCheckInError);
+    expect((error as InPersonCheckInError).getStatus()).toBe(400);
+    expect((error as InPersonCheckInError).getResponse()).toMatchObject({
+      code: 'LOCATION_REQUIRED',
+      message: POSTER_LOCATION_REQUIRED_MESSAGE,
+    });
+    expect(world.checkInLocations.processCheckIn).not.toHaveBeenCalled();
+  });
+
+  it('signed poster scan inside the radius is checked in, presence verified here (skip)', async () => {
+    const world = build();
+    await expect(
+      world.service.checkIn({ qrCode: POSTER, coordinates: north(100) }, CLINIC, PATIENT)
+    ).resolves.toMatchObject({ result: 'CHECKED_IN' });
+    expect(world.checkInLocations.processCheckIn).toHaveBeenCalledWith(
+      expect.objectContaining({ coordinates: expect.anything() }),
+      CLINIC,
+      { actor: PATIENT, presence: 'skip' }
+    );
+  });
+
+  it('signed poster scan with the clinic requirement off: no coordinates needed, presence stays if-supplied', async () => {
+    const world = build({ requireLocationForQrCheckIn: false });
     await expect(world.service.checkIn({ qrCode: POSTER }, CLINIC, PATIENT)).resolves.toMatchObject(
       { result: 'CHECKED_IN' }
     );
