@@ -35,6 +35,7 @@ import type { NotificationData } from '@core/types/appointment.types';
 import type { EnterpriseEventPayload } from '@core/types';
 import { AppointmentNotificationDedup } from '@communication/listeners/appointment-notification-dedup.util';
 import {
+  isQueueBoardEventWithoutPatient,
   recipientUserIds,
   remapRecipientUserIds,
   type NotificationRecipient,
@@ -1261,6 +1262,22 @@ export class NotificationEventListener implements OnModuleInit {
         return;
       }
 
+      // Queue-board refreshes name no patient by design (see isQueueBoardEventWithoutPatient).
+      if (
+        isQueueBoardEventWithoutPatient(
+          normalizedEventType,
+          eventPayload as unknown as Readonly<Record<string, object | string | null>>
+        )
+      ) {
+        await this.loggingService.log(
+          LogType.NOTIFICATION,
+          LogLevel.INFO,
+          `No patient notification for queue-board event ${normalizedEventType} (queue-wide, no patient)`,
+          'NotificationEventListener'
+        );
+        return;
+      }
+
       if (normalizedEventType.startsWith('appointment.')) {
         const notificationData = this.buildAppointmentConfirmationNotificationData(eventPayload);
         const notificationService = this.resolveAppointmentNotificationService();
@@ -1594,12 +1611,22 @@ export class NotificationEventListener implements OnModuleInit {
     const ids = recipientUserIds(recipients);
     if (ids.length === 0) return recipients;
     try {
-      const doctors = await this.databaseService.executeHealthcareRead(client =>
-        client.doctor.findMany({
+      const doctors = await this.databaseService.executeHealthcareRead<
+        Array<{ id: string; userId: string }>
+      >(async client => {
+        const doctorClient = client as unknown as {
+          doctor: {
+            findMany: (args: {
+              where: { id: { in: string[] } };
+              select: { id: true; userId: true };
+            }) => Promise<Array<{ id: string; userId: string }>>;
+          };
+        };
+        return await doctorClient.doctor.findMany({
           where: { id: { in: ids } },
           select: { id: true, userId: true },
-        })
-      );
+        });
+      });
       if (doctors.length === 0) return recipients;
       return remapRecipientUserIds(
         recipients,
