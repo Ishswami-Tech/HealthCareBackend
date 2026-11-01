@@ -490,7 +490,9 @@ export class ClinicController {
 
       this.logger.log(`Getting clinic for user ${userId}`);
 
-      const result = await this.clinicService.getCurrentUserClinic(userId);
+      const result = await this.clinicService.withExpectedWalkInFee(
+        await this.clinicService.getCurrentUserClinic(userId)
+      );
 
       this.logger.log(`Retrieved clinic for user ${userId} successfully`);
       return toSafeClinicResponse(result);
@@ -560,7 +562,9 @@ export class ClinicController {
 
       this.logger.log(`Getting clinic ${id} for user ${userId}`);
 
-      const result = await this.clinicService.getClinicById(id, false, userId, role, clinicId);
+      const result = await this.clinicService.withExpectedWalkInFee(
+        await this.clinicService.getClinicById(id, false, userId, role, clinicId)
+      );
 
       this.logger.log(`Retrieved clinic ${id} successfully`);
       return toSafeClinicResponse(result);

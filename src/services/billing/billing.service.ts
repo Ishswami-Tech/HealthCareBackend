@@ -182,6 +182,7 @@ import type {
 import { PaymentProvider } from '@core/types/payment.types';
 import { formatDateInIST, IST_TIMEZONE, nowIso } from '@utils/date-time.util';
 import { endOfIstDay } from '@utils/clock.util';
+import { pickConsultationFee, positiveFeeOrNull } from '@utils/walk-in-plan-policy.util';
 import {
   buildAppointmentInvoiceDescription,
   buildPharmacyInvoiceDescription,
@@ -3087,20 +3088,14 @@ export class BillingService implements OnModuleInit {
         return typeof doctor?.consultationFee === 'number' ? doctor.consultationFee : null;
       });
 
-      if (typeof doctorFee === 'number' && doctorFee > 0) {
-        return doctorFee;
+      // Doctor first: skip the clinic read when the doctor has a fee (rule: pickConsultationFee).
+      if (positiveFeeOrNull(doctorFee) !== null) {
+        return pickConsultationFee(doctorFee, null)?.amount ?? null;
       }
     }
 
     const billingSettings = await this.getClinicBillingSettings(clinicId);
-    if (
-      typeof billingSettings?.opdConsultationFee === 'number' &&
-      billingSettings.opdConsultationFee > 0
-    ) {
-      return billingSettings.opdConsultationFee;
-    }
-
-    return null;
+    return pickConsultationFee(null, billingSettings?.opdConsultationFee)?.amount ?? null;
   }
 
   /**

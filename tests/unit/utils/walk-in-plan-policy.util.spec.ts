@@ -8,7 +8,9 @@ import {
   WALK_IN_PLAN_REQUIRED_MESSAGE,
   normalizeWalkInDeskFee,
   normalizeWalkInPlanPolicy,
+  pickConsultationFee,
   planWaiverOf,
+  resolveExpectedWalkInFee,
   planWaiverOutcomeLabel,
   resolveWalkInPlanSettings,
   sanitizeWalkInPlanSettings,
@@ -97,5 +99,80 @@ describe('walk-in without plan policy resolver', () => {
       'No plan needed — free visit'
     );
     expect(walkInInvoiceDescription('22 Oct 2026')).toBe('Walk-in consultation — 22 Oct 2026');
+  });
+
+  it('consultation fee: the doctor fee first, else the clinic default', () => {
+    expect(pickConsultationFee(500, 300)).toEqual({ amount: 500, source: 'doctor' });
+    expect(pickConsultationFee(null, 300)).toEqual({ amount: 300, source: 'clinic' });
+    expect(pickConsultationFee(0, undefined)).toBeNull();
+  });
+});
+
+describe('expected walk-in fee (patient clinic payload)', () => {
+  const deskFeeRule = { policy: 'ALLOW_WITH_DESK_FEE' as const, deskFee: null };
+
+  it('no fee when the clinic does not bill plan-less walk-ins', () => {
+    for (const policy of ['REQUIRE_PLAN', 'ALLOW_FREE'] as const) {
+      expect(
+        resolveExpectedWalkInFee({
+          rule: { policy, deskFee: 300 },
+          clinicConsultationFee: 400,
+          doctorFees: [500],
+        })
+      ).toEqual({ basis: null, amount: null, minAmount: null, maxAmount: null });
+    }
+  });
+
+  it('the desk fee wins when set', () => {
+    expect(
+      resolveExpectedWalkInFee({
+        rule: { policy: 'ALLOW_WITH_DESK_FEE', deskFee: 300 },
+        clinicConsultationFee: 400,
+        doctorFees: [500, 600],
+      })
+    ).toEqual({ basis: 'desk_fee', amount: 300, minAmount: 300, maxAmount: 300 });
+  });
+
+  it('desk fee blank, clinic fee blank: the doctor fee (re-test D9b: ₹500)', () => {
+    expect(
+      resolveExpectedWalkInFee({
+        rule: deskFeeRule,
+        clinicConsultationFee: undefined,
+        doctorFees: [500],
+      })
+    ).toEqual({ basis: 'doctor_fee', amount: 500, minAmount: 500, maxAmount: 500 });
+  });
+
+  it('doctors without a fee bill the clinic fee, like the desk invoice', () => {
+    expect(
+      resolveExpectedWalkInFee({
+        rule: deskFeeRule,
+        clinicConsultationFee: 400,
+        doctorFees: [null, 0],
+      })
+    ).toEqual({ basis: 'clinic_consultation_fee', amount: 400, minAmount: 400, maxAmount: 400 });
+    expect(
+      resolveExpectedWalkInFee({ rule: deskFeeRule, clinicConsultationFee: 400, doctorFees: [] })
+    ).toEqual({ basis: 'clinic_consultation_fee', amount: 400, minAmount: 400, maxAmount: 400 });
+  });
+
+  it('a range when the doctors differ (a doctor with no fee counts at the clinic fee)', () => {
+    expect(
+      resolveExpectedWalkInFee({
+        rule: deskFeeRule,
+        clinicConsultationFee: 400,
+        doctorFees: [600, null, 500],
+      })
+    ).toEqual({ basis: 'doctor_fee_range', amount: null, minAmount: 400, maxAmount: 600 });
+  });
+
+  it('nothing configured anywhere: unknown', () => {
+    expect(
+      resolveExpectedWalkInFee({
+        rule: deskFeeRule,
+        clinicConsultationFee: null,
+        doctorFees: [null],
+      })
+    ).toEqual({ basis: null, amount: null, minAmount: null, maxAmount: null });
   });
 });

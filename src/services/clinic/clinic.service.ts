@@ -6,7 +6,13 @@ import {
 } from '@utils/visit-duration.util';
 import { sanitizeBookableTreatmentTypesSetting } from '@utils/bookable-services.util';
 import { sanitizeWorkingDaysSetting } from '@utils/clinic-working-days.util';
-import { sanitizeWalkInPlanSettings } from '@utils/walk-in-plan-policy.util';
+import {
+  NO_EXPECTED_WALK_IN_FEE,
+  resolveExpectedWalkInFee,
+  resolveWalkInPlanSettings,
+  sanitizeWalkInPlanSettings,
+  type ExpectedWalkInFee,
+} from '@utils/walk-in-plan-policy.util';
 import { summarizeStockLevels, type StockLevelSummary } from '@utils/stock-level.util';
 import {
   HttpStatus,
@@ -2484,6 +2490,68 @@ export class ClinicService {
         { error: (error as Error).stack }
       );
       throw error;
+    }
+  }
+
+  /**
+   * The clinic payload a patient reads (GET /clinics/my-clinic, /clinics/:id) plus
+   * `expectedWalkInFee`: what the desk will bill a plan-less walk-in, resolved here because the
+   * app cannot know which doctor the desk assigns (same rule as the desk invoice). Never fails the
+   * clinic read: on error the fee is unknown (null basis) and the app keeps its neutral wording.
+   */
+  async withExpectedWalkInFee<T extends { id: string; settings?: unknown }>(
+    clinic: T
+  ): Promise<T & { expectedWalkInFee: ExpectedWalkInFee }> {
+    try {
+      const settings = clinic.settings;
+      const rule = resolveWalkInPlanSettings(settings);
+      if (rule.policy !== 'ALLOW_WITH_DESK_FEE' || rule.deskFee !== null) {
+        return {
+          ...clinic,
+          expectedWalkInFee: resolveExpectedWalkInFee({
+            rule,
+            clinicConsultationFee: null,
+            doctorFees: [],
+          }),
+        };
+      }
+      const doctorFees = await this.databaseService.executeHealthcareRead<unknown[]>(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          const links = (await typedClient.doctorClinic.findMany({
+            where: {
+              clinicId: clinic.id,
+              doctor: {
+                inPersonConsultationEnabled: true,
+                user: { role: Role.DOCTOR, isActive: true },
+              },
+            } as PrismaDelegateArgs,
+            select: { doctor: { select: { consultationFee: true } } } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs)) as Array<{ doctor?: { consultationFee?: number | null } }>;
+          return links.map(link => link.doctor?.consultationFee ?? null);
+        }
+      );
+      const billing =
+        settings && typeof settings === 'object' && !Array.isArray(settings)
+          ? (settings as Record<string, unknown>)['billingSettings']
+          : null;
+      const clinicConsultationFee =
+        billing && typeof billing === 'object' && !Array.isArray(billing)
+          ? (billing as Record<string, unknown>)['opdConsultationFee']
+          : null;
+      return {
+        ...clinic,
+        expectedWalkInFee: resolveExpectedWalkInFee({ rule, clinicConsultationFee, doctorFees }),
+      };
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.WARN,
+        'Expected walk-in fee could not be resolved',
+        'ClinicService',
+        { clinicId: clinic.id, error: error instanceof Error ? error.message : String(error) }
+      );
+      return { ...clinic, expectedWalkInFee: NO_EXPECTED_WALK_IN_FEE };
     }
   }
 }

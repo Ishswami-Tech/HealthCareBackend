@@ -220,6 +220,11 @@ export class DoctorsService {
       await this.cacheService.invalidateCacheByTag(`user:${userId}`);
       await this.cacheService.invalidateCacheByTag('user_profiles');
       await this.cacheService.invalidateCacheByTag('user_details');
+      // The patient clinic payload carries `expectedWalkInFee`, derived from doctor fees.
+      if ('consultationFee' in updateData || 'inPersonConsultationEnabled' in updateData) {
+        await this.cacheService.invalidateCacheByTag('user_clinic');
+        await this.cacheService.invalidateCacheByTag('clinics');
+      }
       if (!data.clinicId) await this.invalidateDoctorClinicLists(userId);
     }
 

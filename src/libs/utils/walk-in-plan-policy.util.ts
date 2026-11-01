@@ -99,6 +99,90 @@ export function planWaiverOf(metadata: unknown): PlanWaiver | null {
   };
 }
 
+/** A configured fee (rupees) is a finite number above zero; anything else is "not set". */
+export function positiveFeeOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/** Where a consultation fee came from (see {@link pickConsultationFee}). */
+export type ConsultationFeeSource = 'doctor' | 'clinic';
+
+/**
+ * The consultation fee of a visit with one doctor: the doctor's own `Doctor.consultationFee`
+ * first, else the clinic's `billingSettings.opdConsultationFee`; null when neither is set.
+ * Single source of the rule behind `BillingService.resolveConsultationFee`.
+ */
+export function pickConsultationFee(
+  doctorFee: unknown,
+  clinicFee: unknown
+): { amount: number; source: ConsultationFeeSource } | null {
+  const doctor = positiveFeeOrNull(doctorFee);
+  if (doctor !== null) return { amount: doctor, source: 'doctor' };
+  const clinic = positiveFeeOrNull(clinicFee);
+  return clinic !== null ? { amount: clinic, source: 'clinic' } : null;
+}
+
+export type ExpectedWalkInFeeBasis =
+  'desk_fee' | 'clinic_consultation_fee' | 'doctor_fee' | 'doctor_fee_range';
+
+/**
+ * What the desk will bill a plan-less walk-in, told to the patient before the desk has picked a
+ * doctor (patient clinic payload `expectedWalkInFee`). `amount` is set for a single figure,
+ * `minAmount`/`maxAmount` for a range (and equal to `amount` otherwise). All null with a null
+ * basis when the clinic does not bill plan-less walk-ins or no fee is configured anywhere.
+ */
+export interface ExpectedWalkInFee {
+  basis: ExpectedWalkInFeeBasis | null;
+  amount: number | null;
+  minAmount: number | null;
+  maxAmount: number | null;
+}
+
+export const NO_EXPECTED_WALK_IN_FEE: ExpectedWalkInFee = Object.freeze({
+  basis: null,
+  amount: null,
+  minAmount: null,
+  maxAmount: null,
+});
+
+function single(basis: ExpectedWalkInFeeBasis, amount: number): ExpectedWalkInFee {
+  return { basis, amount, minAmount: amount, maxAmount: amount };
+}
+
+/**
+ * The desk bill of a plan-less walk-in (same rule as the desk invoice, `applyPlanWaiver`:
+ * `walkInDeskFee ?? consultation fee of the visit's doctor`), resolved for every doctor the desk
+ * may assign: one figure when they all come to the same amount, else a min–max range. Only
+ * ALLOW_WITH_DESK_FEE bills; REQUIRE_PLAN / ALLOW_FREE give no fee.
+ */
+export function resolveExpectedWalkInFee(input: {
+  rule: WalkInPlanSettings;
+  clinicConsultationFee: unknown;
+  /** `Doctor.consultationFee` of each active in-person doctor of the clinic. */
+  doctorFees: readonly unknown[];
+}): ExpectedWalkInFee {
+  const { rule, clinicConsultationFee, doctorFees } = input;
+  if (rule.policy !== 'ALLOW_WITH_DESK_FEE') return NO_EXPECTED_WALK_IN_FEE;
+  if (rule.deskFee !== null) return single('desk_fee', rule.deskFee);
+
+  const perDoctor = doctorFees
+    .map(fee => pickConsultationFee(fee, clinicConsultationFee))
+    .filter((fee): fee is { amount: number; source: ConsultationFeeSource } => fee !== null);
+  if (perDoctor.length === 0) {
+    // No doctor on record (or none with a fee): the clinic default is all the desk can bill.
+    const clinic = positiveFeeOrNull(clinicConsultationFee);
+    return clinic !== null ? single('clinic_consultation_fee', clinic) : NO_EXPECTED_WALK_IN_FEE;
+  }
+  const amounts = perDoctor.map(fee => fee.amount);
+  const min = Math.min(...amounts);
+  const max = Math.max(...amounts);
+  if (min !== max) {
+    return { basis: 'doctor_fee_range', amount: null, minAmount: min, maxAmount: max };
+  }
+  const allClinic = perDoctor.every(fee => fee.source === 'clinic');
+  return single(allClinic ? 'clinic_consultation_fee' : 'doctor_fee', min);
+}
+
 /** "Walk-in consultation — 22 Oct 2026" (the bill line a patient reads). */
 export function walkInInvoiceDescription(dateLabel: string): string {
   return `Walk-in consultation — ${dateLabel}`;
