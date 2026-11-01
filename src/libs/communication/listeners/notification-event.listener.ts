@@ -35,6 +35,12 @@ import type { NotificationData } from '@core/types/appointment.types';
 import type { EnterpriseEventPayload } from '@core/types';
 import { AppointmentNotificationDedup } from '@communication/listeners/appointment-notification-dedup.util';
 import {
+  QUEUE_PATIENT_ALERT_EVENT,
+  isQueuePatientAlertEvent,
+  queuePatientAlertContent,
+  queuePatientAlertRecipientUserId,
+} from '@communication/listeners/queue-patient-alert.util';
+import {
   isQueueBoardEventWithoutPatient,
   recipientUserIds,
   remapRecipientUserIds,
@@ -126,6 +132,8 @@ interface CommunicationRule {
   shouldNotify: (_payload: EnterpriseEventPayload) => boolean;
   /** In-app plus only the first reachable out-of-app channel of `channels` (one message). */
   singleExternalChannel?: boolean;
+  /** The emitter already sends at most one message per happening (its own idempotency key). */
+  skipRateLimit?: boolean;
 }
 
 const DESK_MILESTONE_DEDUP_TTL_MS = 30 * 60_000;
@@ -802,6 +810,20 @@ export class NotificationEventListener implements OnModuleInit {
       },
       shouldNotify: () => true,
     },
+    // Live queue "2 ahead" / "you're next": built and deduplicated (once per appointment and
+    // threshold) by QueuePatientAlertService on queue mutations; recipient = the patient's User.id.
+    {
+      eventPattern: QUEUE_PATIENT_ALERT_EVENT,
+      category: CommunicationCategory.APPOINTMENT,
+      channels: ['socket', 'push'],
+      priority: CommunicationPriority.HIGH,
+      skipRateLimit: true,
+      recipients: payload => {
+        const userId = queuePatientAlertRecipientUserId(payload);
+        return userId ? [{ userId, socketRoom: `user:${userId}` }] : [];
+      },
+      shouldNotify: () => true,
+    },
     // Queue Position Updates
     {
       eventPattern: /^appointment\.queue\.(position\.updated|updated|reordered)$/,
@@ -1278,7 +1300,10 @@ export class NotificationEventListener implements OnModuleInit {
         return;
       }
 
-      if (normalizedEventType.startsWith('appointment.')) {
+      if (
+        normalizedEventType.startsWith('appointment.') &&
+        !isQueuePatientAlertEvent(normalizedEventType)
+      ) {
         const notificationData = this.buildAppointmentConfirmationNotificationData(eventPayload);
         const notificationService = this.resolveAppointmentNotificationService();
         if (notificationData && notificationService) {
@@ -1402,7 +1427,7 @@ export class NotificationEventListener implements OnModuleInit {
           }),
         },
         respectPreferences: true,
-        applyRateLimit: true,
+        applyRateLimit: !rule.skipRateLimit,
       };
       if (!this.typedCommunicationService) {
         throw new Error('CommunicationService is not available');
@@ -1442,7 +1467,9 @@ export class NotificationEventListener implements OnModuleInit {
     eventType: string,
     payload: EnterpriseEventPayload | Record<string, unknown>
   ): boolean {
-    if (!eventType.startsWith('appointment.')) {
+    // Queue alerts carry their own per appointment + threshold key (NEAR then NEXT can be seconds
+    // apart and both must be delivered).
+    if (!eventType.startsWith('appointment.') || isQueuePatientAlertEvent(eventType)) {
       return false;
     }
 
@@ -1546,6 +1573,11 @@ export class NotificationEventListener implements OnModuleInit {
     }>
   > {
     const rawRecipients = rule.recipients(payload);
+
+    // Already the patient's User.id (resolved by the emitter in its one batched read).
+    if (isQueuePatientAlertEvent(eventType)) {
+      return rawRecipients;
+    }
 
     if (!eventType.startsWith('appointment.')) {
       return await this.mapDoctorProfileRecipients(rawRecipients);
@@ -1885,6 +1917,8 @@ export class NotificationEventListener implements OnModuleInit {
     } else if (eventType.startsWith('billing.')) {
       title = 'Billing Update';
       body = 'You have a new billing notification';
+    } else if (isQueuePatientAlertEvent(eventType)) {
+      ({ title, body } = queuePatientAlertContent(payload));
     } else if (eventType.startsWith('appointment.queue.')) {
       const position = payload.metadata?.['position'] as number | undefined;
       const totalInQueue = payload.metadata?.['totalInQueue'] as number | undefined;

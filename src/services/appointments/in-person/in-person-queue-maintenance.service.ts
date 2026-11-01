@@ -6,32 +6,25 @@
  *   - every 5 min: rebuild + consistency check of every live queue of the day (per clinic with
  *     arrivals, all its locations), reusing the live-queue rebuild rules;
  *   - daily: delete `location_token_counters` rows older than 30 days (one row per location/day);
- *   - every minute: "you're next" / "N ahead of you" to waiting patients (once per appointment and
- *     threshold, through the CommunicationService; a channel that is not configured just logs).
+ *   - every minute: safety net of the "2 ahead" / "you're next" alerts (QueuePatientAlertService,
+ *     normally fired by the queue mutation itself; the shared per appointment + threshold keys
+ *     keep it to one message whoever runs first).
  *
  * Every cron takes the distributed cron lock first (one replica per tick; the lock is not released
  * and expires just before the next tick). None of it touches the API request path.
  */
-import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
+import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { AppointmentQueueService } from '@infrastructure/queue';
 import { supportsRawSql } from '@infrastructure/queue/src/services/location-token.allocator';
-import { CommunicationService } from '@communication/communication.service';
 import { LogLevel, LogType } from '@core/types';
-import { CommunicationCategory, CommunicationPriority } from '@core/types/communication.types';
 import { endOfIstDay, startOfIstDay } from '@utils/clock.util';
 import { formatDateKeyInIST } from '@utils/date-time.util';
 import { resolveClinicVisitDurations } from '@utils/visit-duration.util';
-import {
-  QUEUE_NOTIFY_DEBOUNCE_SECONDS,
-  queueNotifyKey,
-  queueNotifyMessage,
-  selectQueueNotifications,
-  type QueueNotification,
-} from './queue-notify.util';
+import { QueuePatientAlertService } from '@services/appointments/in-person/queue-patient-alert.service';
 import { clinicIdsFromQueueKeys } from '@services/appointments/in-person/queue-maintenance.util';
 
 const SOURCE = 'InPersonQueueMaintenanceService';
@@ -59,13 +52,6 @@ interface ActiveClinicRow {
   locationId: string | null;
 }
 
-interface NotifyRecipientRow {
-  id: string;
-  clinicId: string;
-  userId: string | null;
-  patient: { user: { id: string; phone: string | null } | null } | null;
-}
-
 @Injectable()
 export class InPersonQueueMaintenanceService {
   constructor(
@@ -77,9 +63,8 @@ export class InPersonQueueMaintenanceService {
     private readonly logging: LoggingService,
     @Inject(forwardRef(() => AppointmentQueueService))
     private readonly queue: AppointmentQueueService,
-    @Optional()
-    @Inject(forwardRef(() => CommunicationService))
-    private readonly communication?: CommunicationService
+    @Inject(forwardRef(() => QueuePatientAlertService))
+    private readonly alerts: QueuePatientAlertService
   ) {}
 
   // ------------------------------------------------------------------ crons
@@ -173,7 +158,7 @@ export class InPersonQueueMaintenanceService {
     }
   }
 
-  /** "You're next" / "N ahead" to the waiting patients of every live queue today. */
+  /** Safety net: "2 ahead" / "you're next" still due on every live queue today. */
   async notifyQueuePositions(now: Date = new Date()): Promise<number> {
     let sent = 0;
     try {
@@ -182,20 +167,7 @@ export class InPersonQueueMaintenanceService {
       for (const clinicId of clinicIds) {
         const entries = await this.queue.getClinicQueue(clinicId, day, 'clinic');
         const minutes = await this.inPersonMinutes(clinicId);
-        const due = selectQueueNotifications(entries, minutes);
-        if (due.length === 0) continue;
-        const recipients = await this.recipientsOf(due.map(item => item.appointmentId));
-        for (const notification of due) {
-          if (
-            await this.notifyOnce(
-              clinicId,
-              notification,
-              recipients.get(notification.appointmentId)
-            )
-          ) {
-            sent += 1;
-          }
-        }
+        sent += await this.alerts.alertEntries(clinicId, entries, now, minutes);
       }
     } catch (error) {
       this.logFailure('Queue position notifications failed', error);
@@ -268,111 +240,6 @@ export class InPersonQueueMaintenanceService {
     } catch {
       return resolveClinicVisitDurations(undefined).inPersonMinutes;
     }
-  }
-
-  /** The patient user (and phone) to notify, per appointment (one batched read). */
-  private async recipientsOf(
-    appointmentIds: readonly string[]
-  ): Promise<Map<string, { userId: string; phone: string | null }>> {
-    const rows = await this.database.executeHealthcareRead(async client =>
-      (
-        client as unknown as {
-          appointment: { findMany: (args: unknown) => Promise<NotifyRecipientRow[]> };
-        }
-      ).appointment.findMany({
-        where: { id: { in: [...new Set(appointmentIds)] } },
-        select: {
-          id: true,
-          clinicId: true,
-          userId: true,
-          patient: { select: { user: { select: { id: true, phone: true } } } },
-        },
-      })
-    );
-    const recipients = new Map<string, { userId: string; phone: string | null }>();
-    for (const row of rows) {
-      const userId = row.patient?.user?.id || row.userId;
-      if (userId) recipients.set(row.id, { userId, phone: row.patient?.user?.phone ?? null });
-    }
-    return recipients;
-  }
-
-  /** Sends one threshold message unless it was already sent (SET NX debounce). Never throws. */
-  private async notifyOnce(
-    clinicId: string,
-    notification: QueueNotification,
-    recipient: { userId: string; phone: string | null } | undefined
-  ): Promise<boolean> {
-    if (!recipient) return false;
-    // NEAR after NEXT would read backwards: once "next" was sent, "near" is never sent.
-    if (
-      notification.threshold === 'NEAR' &&
-      (await this.cache.get<string>(queueNotifyKey(notification.appointmentId, 'NEXT')))
-    ) {
-      return false;
-    }
-    const key = queueNotifyKey(notification.appointmentId, notification.threshold);
-    if (!(await this.cache.acquireLock(key, QUEUE_NOTIFY_DEBOUNCE_SECONDS))) return false;
-    if (notification.threshold === 'NEXT') {
-      await this.cache.set(key, '1', QUEUE_NOTIFY_DEBOUNCE_SECONDS);
-    }
-    const message = queueNotifyMessage(notification);
-    if (!this.communication) {
-      void this.logging.log(LogType.NOTIFICATION, LogLevel.INFO, message.title, SOURCE, {
-        appointmentId: notification.appointmentId,
-        threshold: notification.threshold,
-        delivered: false,
-        reason: 'communication service unavailable',
-      });
-      return true;
-    }
-    try {
-      const result = await this.communication.send({
-        category: CommunicationCategory.APPOINTMENT,
-        title: message.title,
-        body: message.body,
-        recipients: [
-          {
-            userId: recipient.userId,
-            ...(recipient.phone ? { phoneNumber: recipient.phone } : {}),
-          },
-        ],
-        channels: ['push', 'socket', 'whatsapp'],
-        priority: CommunicationPriority.HIGH,
-        data: {
-          type: 'QUEUE_POSITION',
-          appointmentId: notification.appointmentId,
-          clinicId,
-          threshold: notification.threshold,
-          peopleAhead: notification.peopleAhead,
-          ...(notification.token ? { token: notification.token } : {}),
-        },
-        respectPreferences: true,
-        applyRateLimit: false,
-        initiatorRole: 'SYSTEM',
-      });
-      void this.logging.log(
-        LogType.NOTIFICATION,
-        LogLevel.INFO,
-        'Queue position notification processed',
-        SOURCE,
-        {
-          appointmentId: notification.appointmentId,
-          threshold: notification.threshold,
-          success: result.success,
-        }
-      );
-    } catch (error) {
-      // An unconfigured channel (placeholder WhatsApp credentials ...) is logged, never retried.
-      void this.logging.log(
-        LogType.NOTIFICATION,
-        LogLevel.WARN,
-        `Queue position notification not delivered: ${error instanceof Error ? error.message : String(error)}`,
-        SOURCE,
-        { appointmentId: notification.appointmentId, threshold: notification.threshold }
-      );
-    }
-    return true;
   }
 
   private logFailure(message: string, error: unknown): void {

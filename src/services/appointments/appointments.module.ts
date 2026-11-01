@@ -67,6 +67,7 @@ import { InPersonCheckInService } from './in-person/in-person-check-in.service';
 import { InPersonDeskService } from './in-person/in-person-desk.service';
 import { InPersonDeskFeesService } from './in-person/in-person-desk-fees.service';
 import { InPersonQueueMaintenanceService } from './in-person/in-person-queue-maintenance.service';
+import { QueuePatientAlertService } from '@services/appointments/in-person/queue-patient-alert.service';
 import { PaymentService } from './plugins/payment/payment.service';
 // VideoService and VideoConsultationTracker are provided by VideoModule (imported below)
 import { AppointmentCommunicationsService } from './communications/appointment-communications.service';
@@ -202,6 +203,8 @@ import { EHRModule } from '@services/ehr/ehr.module';
     InPersonDeskFeesService,
     // Worker crons (live queue consistency, token counter cleanup, "you're next" notifications).
     InPersonQueueMaintenanceService,
+    // "2 ahead" / "you're next" patient alerts on every live queue mutation (API and worker).
+    QueuePatientAlertService,
     PaymentService,
     // VideoService and VideoConsultationTracker are provided by VideoModule (imported above)
     AppointmentCommunicationsService,
