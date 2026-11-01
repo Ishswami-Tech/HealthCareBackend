@@ -481,7 +481,11 @@ export class QuietHoursDto {
   @IsString()
   end?: string;
 
-  @ApiPropertyOptional({ description: 'Timezone', example: 'UTC', default: 'UTC' })
+  @ApiPropertyOptional({
+    description: 'IANA time zone of the quiet hours (default India Standard Time)',
+    example: 'Asia/Kolkata',
+    default: 'Asia/Kolkata',
+  })
   @IsOptional()
   @IsString()
   timezone?: string;
