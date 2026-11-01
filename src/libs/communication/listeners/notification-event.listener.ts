@@ -1750,6 +1750,13 @@ export class NotificationEventListener implements OnModuleInit {
     payload: EnterpriseEventPayload,
     _rule: CommunicationRule
   ): { title: string; body: string } {
+    // Queue patient alerts are `appointment.queue.patient_alert`: they must be handled before the
+    // generic `appointment.` branch below, which would otherwise swallow them and leave the
+    // default "You have a new notification" text on the push.
+    if (isQueuePatientAlertEvent(eventType)) {
+      return queuePatientAlertContent(payload);
+    }
+
     // Default content
     let title = 'Notification';
     let body = 'You have a new notification';
@@ -1940,8 +1947,6 @@ export class NotificationEventListener implements OnModuleInit {
     } else if (eventType.startsWith('billing.')) {
       title = 'Billing Update';
       body = 'You have a new billing notification';
-    } else if (isQueuePatientAlertEvent(eventType)) {
-      ({ title, body } = queuePatientAlertContent(payload));
     } else if (eventType.startsWith('appointment.queue.')) {
       const position = payload.metadata?.['position'] as number | undefined;
       const totalInQueue = payload.metadata?.['totalInQueue'] as number | undefined;
