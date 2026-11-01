@@ -5,6 +5,7 @@
  *   GET  /in-person/appointments/:id         one visit: stage, token, people ahead, ETA, window
  *   POST /in-person/check-in                 patient QR scan OR reception one-click (same service)
  *   GET  /in-person/desk?date&locationId     reception: every appointment of its location today
+ *   GET  /in-person/desk/fees-due?date       reception: unpaid desk fees of today's visits there
  *   POST /in-person/walk-in                  reception: book "now" + check in (idempotent)
  *   POST /in-person/appointments/:id/undo-no-show   put a mistaken no-show back (queue restored)
  * Calling / starting / completing stays doctor-only in /queue and /appointments.
@@ -40,6 +41,8 @@ import { parseGeoPoint } from '@utils/in-person-flow.util';
 import { InPersonCheckInService } from './in-person-check-in.service';
 import { InPersonVisitService } from './in-person-visit.service';
 import { InPersonDeskService } from './in-person-desk.service';
+import { InPersonDeskFeesService } from './in-person-desk-fees.service';
+import type { DeskFeesDue } from './desk-fees.util';
 import { InPersonCheckInDto, InPersonWalkInDto } from './in-person.dto';
 import { AppointmentResponseRedactionInterceptor } from '../core/appointment-response-redaction.interceptor';
 import type {
@@ -103,7 +106,8 @@ export class InPersonController {
   constructor(
     private readonly visits: InPersonVisitService,
     private readonly checkIns: InPersonCheckInService,
-    private readonly deskActions: InPersonDeskService
+    private readonly deskActions: InPersonDeskService,
+    private readonly deskFees: InPersonDeskFeesService
   ) {}
 
   @Get('locations')
@@ -184,6 +188,22 @@ export class InPersonController {
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<InPersonUndoNoShowResult> {
     return this.deskActions.undoNoShow(id, clinicIdOf(req), actorOf(req));
+  }
+
+  @Get('desk/fees-due')
+  @Roles(Role.RECEPTIONIST, Role.CLINIC_ADMIN, Role.CLINIC_LOCATION_HEAD, Role.SUPER_ADMIN)
+  @ApiOperation({
+    summary: "Reception desk: unpaid desk fees (consultation bills) of the day's in-person visits",
+  })
+  feesDue(
+    @Query('date') date: string | undefined,
+    @Query('locationId') locationId: string | undefined,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<DeskFeesDue> {
+    return this.deskFees.getFeesDue(clinicIdOf(req), actorOf(req), {
+      ...(date ? { date } : {}),
+      ...(locationId ? { locationId } : {}),
+    });
   }
 
   @Get('desk')

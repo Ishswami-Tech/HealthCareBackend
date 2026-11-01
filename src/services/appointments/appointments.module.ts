@@ -65,6 +65,7 @@ import { InPersonController } from './in-person/in-person.controller';
 import { InPersonVisitService } from './in-person/in-person-visit.service';
 import { InPersonCheckInService } from './in-person/in-person-check-in.service';
 import { InPersonDeskService } from './in-person/in-person-desk.service';
+import { InPersonDeskFeesService } from './in-person/in-person-desk-fees.service';
 import { InPersonQueueMaintenanceService } from './in-person/in-person-queue-maintenance.service';
 import { PaymentService } from './plugins/payment/payment.service';
 // VideoService and VideoConsultationTracker are provided by VideoModule (imported below)
@@ -198,6 +199,7 @@ import { EHRModule } from '@services/ehr/ehr.module';
     InPersonVisitService,
     InPersonCheckInService,
     InPersonDeskService,
+    InPersonDeskFeesService,
     // Worker crons (live queue consistency, token counter cleanup, "you're next" notifications).
     InPersonQueueMaintenanceService,
     PaymentService,
