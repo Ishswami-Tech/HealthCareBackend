@@ -1,6 +1,10 @@
 import { describe, expect, it } from '@jest/globals';
+import type { CommunicationChannel } from '../../../src/libs/core/types/communication.types';
 import {
+  CHANNEL_DISABLED_REASON,
   canChannelReach,
+  channelDisabledResult,
+  channelOutcome,
   eligibleChannels,
   initialNotificationState,
 } from '../../../src/libs/communication/services/notification-delivery-plan.util';
@@ -59,6 +63,76 @@ describe('initialNotificationState', () => {
     const state = initialNotificationState([], { userId: 'u1' });
     expect(state.status).toBe('SKIPPED');
     expect(state.channel).toBe('none');
+  });
+});
+
+describe('disabled channel providers', () => {
+  const recipient = { userId: 'u1', email: 'a@example.test', phoneNumber: '+919000000991' };
+  const whatsappOff: ReadonlySet<CommunicationChannel> = new Set<CommunicationChannel>([
+    'whatsapp',
+  ]);
+
+  it('a disabled provider is never the single out-of-app channel: the next one carries it', () => {
+    expect(eligibleChannels(['socket', 'whatsapp', 'email'], recipient, true, whatsappOff)).toEqual(
+      ['socket', 'email']
+    );
+    expect(
+      eligibleChannels(
+        ['whatsapp', 'email'],
+        recipient,
+        true,
+        new Set<CommunicationChannel>(['whatsapp', 'email'])
+      )
+    ).toEqual([]);
+  });
+
+  it('without singleExternal a disabled channel is still attempted (it records SKIPPED)', () => {
+    expect(eligibleChannels(['whatsapp', 'email'], recipient, false, whatsappOff)).toEqual([
+      'whatsapp',
+      'email',
+    ]);
+  });
+
+  it('the inbox row starts on an enabled channel, or SKIPPED "channel disabled"', () => {
+    expect(initialNotificationState(['whatsapp', 'email'], recipient, false, whatsappOff)).toEqual({
+      status: 'PENDING',
+      deliveryStatus: 'PENDING',
+      channel: 'email',
+      failureReason: null,
+    });
+    expect(initialNotificationState(['whatsapp'], recipient, true, whatsappOff)).toEqual({
+      status: 'SKIPPED',
+      deliveryStatus: 'SKIPPED',
+      channel: 'whatsapp',
+      failureReason: CHANNEL_DISABLED_REASON,
+    });
+  });
+});
+
+describe('channelOutcome', () => {
+  it('success is SENT, a plain failure FAILED with its error', () => {
+    expect(channelOutcome({ success: true })).toEqual({ status: 'SENT', reason: null });
+    expect(channelOutcome({ success: false, error: 'provider 500' })).toEqual({
+      status: 'FAILED',
+      reason: 'provider 500',
+    });
+    expect(channelOutcome({ success: false })).toEqual({
+      status: 'FAILED',
+      reason: 'Unknown error',
+    });
+  });
+
+  it('metadata.skipped is SKIPPED with skipReason (disabled provider, no registered device)', () => {
+    const disabled = channelDisabledResult('whatsapp', new Date(0));
+    expect(disabled.success).toBe(false);
+    expect(channelOutcome(disabled)).toEqual({ status: 'SKIPPED', reason: 'channel disabled' });
+    expect(
+      channelOutcome({
+        success: false,
+        error: 'no registered device',
+        metadata: { skipped: true, skipReason: 'no registered device' },
+      })
+    ).toEqual({ status: 'SKIPPED', reason: 'no registered device' });
   });
 });
 

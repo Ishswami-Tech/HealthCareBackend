@@ -4,6 +4,7 @@ import { nowIso } from '@utils/date-time.util';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { EmailService } from '@communication/channels/email/email.service';
+import { CHANNEL_DISABLED_REASON } from '@communication/services/notification-delivery-plan.util';
 import { ConfigService } from '@config/config.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { EventService } from '@infrastructure/events/event.service';
@@ -145,10 +146,7 @@ export class OtpService {
    * the code in every stored copy, and the metadata below carries neither.
    */
   private logDevOtp(identifier: string, otp: string, channel: string, purpose: string): void {
-    const devOtpLoggingEnabled =
-      this.configService.getEnvBoolean('ENABLE_OTP_DEBUG', false) &&
-      this.configService.isDevelopment();
-    if (!devOtpLoggingEnabled) {
+    if (!this.isDevOtpLogEnabled()) {
       return;
     }
 
@@ -158,6 +156,36 @@ export class OtpService {
       `[OTP DEV] channel=${channel} purpose=${purpose} identifier=${identifier} OTP=${otp}`,
       'OtpService',
       { channel, purpose }
+    );
+  }
+
+  private isDevOtpLogEnabled(): boolean {
+    return (
+      this.configService.getEnvBoolean('ENABLE_OTP_DEBUG', false) &&
+      this.configService.isDevelopment()
+    );
+  }
+
+  /**
+   * The channel's provider is switched off in this environment: the OTP is NOT delivered (it
+   * stays in the cache, so login still works with the code from the `[OTP DEV]` log line in
+   * development). Logged as a distinct "not sent" outcome, never as a successful send.
+   */
+  private logOtpChannelDisabled(channel: 'WhatsApp' | 'Email', purpose: string): void {
+    const hint = this.isDevOtpLogEnabled()
+      ? ' (dev: OTP is in the log)'
+      : ' (enable the provider to deliver it)';
+    void this.loggingService.log(
+      LogType.AUTH,
+      LogLevel.INFO,
+      `${channel} disabled — OTP not sent via ${channel}${hint}`,
+      'OtpService',
+      {
+        channel: channel.toLowerCase(),
+        purpose,
+        skipped: true,
+        skipReason: CHANNEL_DISABLED_REASON,
+      }
     );
   }
 
@@ -444,8 +472,12 @@ export class OtpService {
 
       // Send email DIRECTLY (not via queue) - queue workers may not be running in clinic service
       try {
-        const sent = await this.emailService.sendEmail(emailJobData);
-        if (!sent) {
+        const sent = this.emailService.isEnabled()
+          ? await this.emailService.sendEmail(emailJobData)
+          : null;
+        if (sent === null) {
+          this.logOtpChannelDisabled('Email', purpose);
+        } else if (!sent) {
           void this.loggingService.log(
             LogType.ERROR,
             LogLevel.ERROR,
@@ -478,7 +510,7 @@ export class OtpService {
       void this.loggingService.log(
         LogType.AUTH,
         LogLevel.INFO,
-        `OTP sent to ${email} for ${purpose}`,
+        `OTP issued to ${email} for ${purpose}`,
         'OtpService',
         { email: normalizedEmail, purpose }
       );
@@ -649,6 +681,10 @@ export class OtpService {
     clinicId: string | undefined,
     purpose: string
   ): Promise<void> {
+    if (!this.whatsAppService.isEnabled()) {
+      this.logOtpChannelDisabled('WhatsApp', purpose);
+      return;
+    }
     const sent = await this.whatsAppService.sendOTP(
       normalizedPhone,
       otp,

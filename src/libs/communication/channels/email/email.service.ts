@@ -40,6 +40,7 @@ import { CommunicationConfigService } from '@communication/config/communication-
 import { SuppressionListService } from '@communication/adapters/email/suppression-list.service';
 import { EmailUnsubscribeService } from '@communication/adapters/email/email-unsubscribe.service';
 import { ZeptoMailEmailAdapter } from '@communication/adapters/email/zeptomail/zeptomail-email.adapter';
+import { CHANNEL_DISABLED_REASON } from '@communication/services/notification-delivery-plan.util';
 
 /**
  * Email configuration interface
@@ -102,6 +103,31 @@ export class EmailService implements OnModuleInit {
     @Inject(forwardRef(() => EmailUnsubscribeService))
     private readonly unsubscribeService: EmailUnsubscribeService
   ) {}
+
+  /**
+   * ZEPTOMAIL_ENABLED, the master switch of this environment (defaults to on). When off nothing
+   * is sent: sendEmail returns false and sendSimpleEmail a `skipped` result instead of a
+   * simulated success, so callers and the delivery log never record an email that was not sent.
+   */
+  isEnabled(): boolean {
+    return this.configService.getEnvBoolean('ZEPTOMAIL_ENABLED', true);
+  }
+
+  private logDisabled(to: string | string[], subject: string, clinicId?: string): void {
+    void this.loggingService.log(
+      LogType.EMAIL,
+      LogLevel.INFO,
+      'Email disabled (ZEPTOMAIL_ENABLED=false) — email not sent',
+      'EmailService',
+      {
+        to,
+        subject,
+        clinicId: clinicId || null,
+        skipped: true,
+        skipReason: CHANNEL_DISABLED_REASON,
+      }
+    );
+  }
 
   /**
    * Initializes the email service on module startup
@@ -337,15 +363,9 @@ export class EmailService implements OnModuleInit {
     // WhatsAppService.sendTemplateMessage), so this must gate every send path unconditionally,
     // before the clinic-adapter and legacy/global branches below. Defaults to true so existing
     // deployments that never set the var keep sending.
-    if (!this.configService.getEnvBoolean('ZEPTOMAIL_ENABLED', true)) {
-      void this.loggingService.log(
-        LogType.EMAIL,
-        LogLevel.INFO,
-        'Email service is disabled (ZEPTOMAIL_ENABLED=false). Simulating successful send.',
-        'EmailService',
-        { to: options.to, subject: options.subject }
-      );
-      return true;
+    if (!this.isEnabled()) {
+      this.logDisabled(options.to, options.subject, options.clinicId);
+      return false;
     }
 
     // If clinicId is provided, use multi-tenant system (sendSimpleEmail)
@@ -428,19 +448,13 @@ export class EmailService implements OnModuleInit {
       userId?: string; // Optional: for generating unsubscribe links
     },
     clinicId?: string
-  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  ): Promise<{ success: boolean; messageId?: string; error?: string; skipped?: boolean }> {
     // Same unconditional kill switch as sendEmail() above - this is a public entry point other
     // code can call directly, bypassing sendEmail() entirely, so it needs its own check rather
     // than relying on the caller's.
-    if (!this.configService.getEnvBoolean('ZEPTOMAIL_ENABLED', true)) {
-      void this.loggingService.log(
-        LogType.EMAIL,
-        LogLevel.INFO,
-        'Email service is disabled (ZEPTOMAIL_ENABLED=false). Simulating successful send.',
-        'EmailService',
-        { to: options.to, subject: options.subject, clinicId: clinicId || null }
-      );
-      return { success: true, messageId: `simulated:${Date.now()}` };
+    if (!this.isEnabled()) {
+      this.logDisabled(options.to, options.subject, clinicId);
+      return { success: false, error: CHANNEL_DISABLED_REASON, skipped: true };
     }
 
     try {

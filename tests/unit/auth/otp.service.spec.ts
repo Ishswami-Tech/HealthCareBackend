@@ -60,12 +60,14 @@ const createService = () => {
 
   const mockEmail = {
     sendEmail: jest.fn().mockResolvedValue({ success: true }),
+    isEnabled: jest.fn().mockReturnValue(true),
   };
   mockedEmail.mockImplementation(() => mockEmail as unknown as EmailService);
 
   const mockWhatsApp = {
     sendMessage: jest.fn().mockResolvedValue({ success: true }),
     sendOTP: jest.fn().mockResolvedValue(true),
+    isEnabled: jest.fn().mockReturnValue(true),
   };
   mockedWhatsApp.mockImplementation(() => mockWhatsApp as unknown as WhatsAppService);
 
@@ -175,6 +177,60 @@ describe('OtpService', () => {
 
       expect(result.success).toBe(true);
       expect(mockCache.set).toHaveBeenCalled();
+    });
+  });
+
+  describe('disabled channel providers', () => {
+    const logMessages = (): string[] => {
+      const logging = (service as unknown as Record<string, unknown>)['loggingService'] as {
+        log: jest.Mock;
+      };
+      return logging.log.mock.calls.map(call => String(call[2]));
+    };
+    const flush = async (): Promise<void> => {
+      await new Promise(resolve => setImmediate(resolve));
+    };
+
+    beforeEach(() => {
+      mockCache.get.mockResolvedValue(null);
+      mockCache.set.mockResolvedValue(undefined);
+      mockCache.exists.mockResolvedValue(false);
+    });
+
+    it('WhatsApp disabled: the OTP is issued (login still works) but not reported as sent', async () => {
+      (mockWhatsApp.isEnabled as jest.Mock).mockReturnValue(false);
+      const result = await (
+        service as unknown as {
+          sendOtpPhone: (phone: string, purpose?: string) => Promise<OtpResult>;
+        }
+      ).sendOtpPhone('+919000000991', 'login');
+      await flush();
+
+      expect(result.success).toBe(true);
+      expect(mockCache.set).toHaveBeenCalled();
+      expect(mockWhatsApp.sendOTP).not.toHaveBeenCalled();
+      const messages = logMessages();
+      expect(
+        messages.some(m => m.startsWith('WhatsApp disabled — OTP not sent via WhatsApp'))
+      ).toBe(true);
+      expect(messages.some(m => m.includes('OTP sent via WhatsApp'))).toBe(false);
+    });
+
+    it('email disabled: the OTP is issued but no email send is attempted or claimed', async () => {
+      (mockEmail.isEnabled as jest.Mock).mockReturnValue(false);
+      const result = await (
+        service as unknown as {
+          sendOtpEmail: (email: string, name: string, purpose?: string) => Promise<OtpResult>;
+        }
+      ).sendOtpEmail('qa-991@example.test', 'QA', 'login');
+
+      expect(result.success).toBe(true);
+      expect(mockEmail.sendEmail).not.toHaveBeenCalled();
+      const messages = logMessages();
+      expect(messages.some(m => m.startsWith('Email disabled — OTP not sent via Email'))).toBe(
+        true
+      );
+      expect(messages.some(m => m.startsWith('Email OTP sent directly'))).toBe(false);
     });
   });
 

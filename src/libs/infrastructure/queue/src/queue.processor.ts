@@ -784,8 +784,19 @@ export class QueueProcessor {
         throw new Error('WhatsApp service unavailable');
       }
 
-      // Route through clinic adapter — pass clinicId so it bypasses the global
-      // WHATSAPP_ENABLED gate (same pattern as OTP: if !enabled && !clinicId → skip).
+      // WHATSAPP_ENABLED=false gates every send (the clinic adapter too): nothing will be sent,
+      // and retrying cannot change that, so the job completes as skipped instead of failing.
+      if (!whatsAppService.isEnabled()) {
+        void this.loggingService.log(
+          LogType.QUEUE,
+          LogLevel.INFO,
+          `WhatsApp disabled — doctor daily summary not sent for doctor ${payload.doctorId}`,
+          'QueueProcessor',
+          { jobId: safeStringify(job.id), doctorId: payload.doctorId, skipped: true }
+        );
+        return { success: false };
+      }
+
       const success = await whatsAppService.sendDoctorDailySummary(
         phone,
         doctorLastName,
@@ -861,6 +872,19 @@ export class QueueProcessor {
 
     if (!emailService) {
       throw new Error('EmailService not available in QueueProcessor');
+    }
+
+    // ZEPTOMAIL_ENABLED=false: nothing will be sent and a retry cannot change that, so the job
+    // completes as not-sent instead of failing into retries.
+    if (!emailService.isEnabled()) {
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        `Email disabled — email job ${safeStringify(job.id)} not sent`,
+        'QueueProcessor',
+        { jobId: safeStringify(job.id), skipped: true }
+      );
+      return { success: false };
     }
 
     void this.loggingService.log(

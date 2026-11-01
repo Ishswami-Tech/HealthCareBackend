@@ -44,6 +44,8 @@ import {
 } from '@communication/channels/push/push-targets.util';
 import { CommunicationHealthMonitorService } from './communication-health-monitor.service';
 import {
+  channelDisabledResult,
+  channelOutcome,
   eligibleChannels,
   initialNotificationState,
 } from '@communication/services/notification-delivery-plan.util';
@@ -287,6 +289,9 @@ export class CommunicationService implements OnModuleInit {
 
       // Update request with enriched recipients
       request.recipients = enrichedRecipients;
+      // Providers switched off in this environment: never chosen as the single out-of-app
+      // channel, and any attempt on them records SKIPPED ("channel disabled").
+      const disabled = this.disabledChannels();
 
       // Send through each channel and track delivery status
       const results: ChannelDeliveryResult[] = [];
@@ -338,7 +343,8 @@ export class CommunicationService implements OnModuleInit {
             const initialState = initialNotificationState(
               finalChannels,
               recipient,
-              request.singleExternalChannel === true
+              request.singleExternalChannel === true,
+              disabled
             );
             const notification = await this.databaseService.executeWrite(
               async prisma => {
@@ -425,7 +431,8 @@ export class CommunicationService implements OnModuleInit {
             !eligibleChannels(
               finalChannels,
               recipient,
-              request.singleExternalChannel === true
+              request.singleExternalChannel === true,
+              disabled
             ).includes(channel)
           ) {
             const recipientId =
@@ -1098,6 +1105,14 @@ export class CommunicationService implements OnModuleInit {
     }
   }
 
+  /** Channels whose provider is switched off in this environment (WHATSAPP_ENABLED, email). */
+  private disabledChannels(): ReadonlySet<CommunicationChannel> {
+    const disabled = new Set<CommunicationChannel>();
+    if (!this.whatsAppService.isEnabled()) disabled.add('whatsapp');
+    if (!this.emailService.isEnabled()) disabled.add('email');
+    return disabled;
+  }
+
   /**
    * Send message to a specific channel with delivery tracking
    */
@@ -1108,6 +1123,8 @@ export class CommunicationService implements OnModuleInit {
     notificationId?: string
   ): Promise<ChannelDeliveryResult> {
     const result = await this.sendToChannel(channel, request, recipient, notificationId);
+    // SENT, FAILED, or SKIPPED (metadata.skipped: disabled provider, no registered device).
+    const outcome = channelOutcome(result);
 
     // Track delivery status
     if (notificationId && recipient.userId) {
@@ -1147,11 +1164,11 @@ export class CommunicationService implements OnModuleInit {
                   };
                 }) => Promise<unknown>;
                 updateMany: (args: {
-                  where: { id: string; status: { not: string } };
+                  where: { id: string; status: { not: string } | { notIn: string[] } };
                   data: {
                     status: string;
                     deliveryStatus: string;
-                    failedAt: Date;
+                    failedAt?: Date;
                     failureReason: string;
                     channel: string;
                     deliveryReceipt: unknown;
@@ -1163,13 +1180,11 @@ export class CommunicationService implements OnModuleInit {
               data: {
                 notificationId,
                 channel,
-                status: result.success ? 'SENT' : 'FAILED',
+                status: outcome.status,
                 sentAt: result.timestamp,
-                ...(result.success && { deliveredAt: new Date() }),
-                ...(!result.success && {
-                  failedAt: new Date(),
-                  failureReason: result.error || 'Unknown error',
-                }),
+                ...(outcome.status === 'SENT' && { deliveredAt: new Date() }),
+                ...(outcome.status === 'FAILED' && { failedAt: new Date() }),
+                ...(outcome.reason && { failureReason: outcome.reason }),
                 providerResponse: result.metadata || null,
                 retryCount: 0,
               },
@@ -1178,7 +1193,7 @@ export class CommunicationService implements OnModuleInit {
             // Update notification delivery status. One row covers every channel of the request,
             // so a failed channel (e.g. push without a device) must not overwrite a channel that
             // already delivered it (e.g. socket): a failure only lands on a row not yet SENT.
-            if (result.success) {
+            if (outcome.status === 'SENT') {
               await notificationClient.notification.update({
                 where: { id: notificationId },
                 data: {
@@ -1190,6 +1205,19 @@ export class CommunicationService implements OnModuleInit {
                   deliveryReceipt: result.metadata || null,
                 },
               });
+            } else if (outcome.status === 'SKIPPED') {
+              // A skipped channel neither overwrites a channel that delivered (SENT) nor hides
+              // one that really failed (FAILED).
+              await notificationClient.notification.updateMany({
+                where: { id: notificationId, status: { notIn: ['SENT', 'FAILED'] } },
+                data: {
+                  status: 'SKIPPED',
+                  deliveryStatus: 'SKIPPED',
+                  failureReason: outcome.reason ?? 'skipped',
+                  channel,
+                  deliveryReceipt: result.metadata || null,
+                },
+              });
             } else {
               await notificationClient.notification.updateMany({
                 where: { id: notificationId, status: { not: 'SENT' } },
@@ -1197,7 +1225,7 @@ export class CommunicationService implements OnModuleInit {
                   status: 'FAILED',
                   deliveryStatus: 'FAILED',
                   failedAt: new Date(),
-                  failureReason: result.error || 'Unknown error',
+                  failureReason: outcome.reason ?? 'Unknown error',
                   channel,
                   deliveryReceipt: result.metadata || null,
                 },
@@ -1390,6 +1418,7 @@ export class CommunicationService implements OnModuleInit {
     recipient: CommunicationRequest['recipients'][0],
     timestamp: Date
   ): Promise<ChannelDeliveryResult> {
+    if (!this.emailService.isEnabled()) return channelDisabledResult('email', timestamp);
     try {
       if (!recipient.email) {
         return {
@@ -1421,6 +1450,7 @@ export class CommunicationService implements OnModuleInit {
         clinicId
       );
 
+      if (emailResult.skipped) return channelDisabledResult('email', timestamp);
       return {
         channel: 'email',
         success: emailResult.success,
@@ -1505,6 +1535,7 @@ export class CommunicationService implements OnModuleInit {
     recipient: CommunicationRequest['recipients'][0],
     timestamp: Date
   ): Promise<ChannelDeliveryResult> {
+    if (!this.whatsAppService.isEnabled()) return channelDisabledResult('whatsapp', timestamp);
     try {
       if (!recipient.phoneNumber) {
         return {
