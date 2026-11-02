@@ -1,0 +1,5 @@
+Manual trigger for a fresh preprod deploy via Temps CI pipeline.
+Reason: validating today's Temps fixes (health-probe loopback bug, dragonfly-cache
+command generation, external_services is_deleted/node_id drift) by exercising
+a real end-to-end deploy of healthcare-api-test.
+Timestamp: 2026-11-02T18:50:00Z
