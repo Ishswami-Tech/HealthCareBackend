@@ -166,23 +166,34 @@ jobs:
           echo "Dependency audit passed" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
-  # JOB: docker-build — Build and push environment-tagged image to GHCR
+  # JOB: docker-build — Build each platform natively (no QEMU) and push by digest
   # ============================================================================
+  # Building linux/amd64 and linux/arm64 together on one ubuntu-latest runner
+  # used QEMU to emulate arm64, under which Prisma's native query-engine binary
+  # (invoked during `yarn prisma:generate`) would hang for 20+ minutes and starve
+  # the amd64 leg of CPU too — see commit history for the incident. Splitting into
+  # a matrix gives each platform its own native runner (ubuntu-24.04-arm for
+  # arm64), so nothing is emulated and nothing hangs.
   docker-build:
-    name: "Docker Build and Push"
-    runs-on: ubuntu-latest
+    name: "Docker Build and Push (${{ matrix.platform }})"
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     needs: [detect-changes, security]
-    # QEMU-emulated arm64 is much slower than native amd64; 30m was cutting off
-    # a build that was otherwise succeeding (see the yarn --network-timeout fix
-    # right above the Dockerfile's production-stage install).
-    timeout-minutes: 60
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux/amd64, linux/arm64]
     outputs:
-      image_tag: ${{ steps.meta.outputs.tags }}
       image_name: ${{ steps.image.outputs.image }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Set platform pair
+        run: |
+          platform="${{ matrix.platform }}"
+          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -209,11 +220,6 @@ jobs:
             || (echo "Prisma schema validation failed!" && exit 1)
           echo "Prisma schema valid" >> $GITHUB_STEP_SUMMARY
 
-      - name: Set up QEMU (arm64 emulation for the multi-arch image)
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -231,11 +237,76 @@ jobs:
           IMAGE_FULL="ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}"
           echo "image=${IMAGE_FULL}" >> $GITHUB_OUTPUT
 
-      - name: Extract metadata
+      - name: Extract metadata (labels only — tags are decided in the merge job)
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ steps.image.outputs.image }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: devops/docker/Dockerfile
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            GIT_REF=${{ github.ref }}
+            BUILD_TIMESTAMP=${{ github.event.head_commit.timestamp }}
+          cache-from: type=gha,scope=build-${{ env.PLATFORM_PAIR }}
+          cache-to: type=gha,mode=max,ignore-error=true,scope=build-${{ env.PLATFORM_PAIR }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ steps.image.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ============================================================================
+  # JOB: docker-build-merge — Combine per-platform digests into one multi-arch tag
+  # ============================================================================
+  docker-build-merge:
+    name: "Docker Build and Push (Merge Manifest)"
+    runs-on: ubuntu-latest
+    needs: [docker-build]
+    timeout-minutes: 10
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      image_name: ${{ needs.docker-build.outputs.image_name }}
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ needs.docker-build.outputs.image_name }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -243,45 +314,22 @@ jobs:
             type=raw,value=${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }},enable=${{ github.event_name == 'push' }}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: devops/docker/Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            GIT_SHA=${{ github.sha }}
-            GIT_REF=${{ github.ref }}
-            BUILD_TIMESTAMP=${{ github.event.head_commit.timestamp }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,ignore-error=true
-          # amd64 for the Contabo/Coolify VPS, arm64 for Oracle Cloud Ampere (A1) and other ARM hosts
-          platforms: linux/amd64,linux/arm64
-
-      - name: Ensure SHA tag exists
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
         run: |
-          IMAGE_BASE="${{ steps.image.outputs.image }}"
+          IMAGE_BASE="${{ needs.docker-build.outputs.image_name }}"
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${IMAGE_BASE}@sha256:%s " *)
+
+      - name: Inspect merged image + summary
+        run: |
+          IMAGE_BASE="${{ needs.docker-build.outputs.image_name }}"
           EXPECTED_TAG="${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}"
-          EXPECTED_IMAGE="${IMAGE_BASE}:${EXPECTED_TAG}"
-          echo "Expected tag: ${EXPECTED_IMAGE}"
+          docker buildx imagetools inspect "${IMAGE_BASE}:${EXPECTED_TAG}"
           echo "## Docker Image" >> $GITHUB_STEP_SUMMARY
           echo "| Tag | Image |" >> $GITHUB_STEP_SUMMARY
           echo "|-----|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| ${EXPECTED_TAG} | \`${EXPECTED_IMAGE}\` |" >> $GITHUB_STEP_SUMMARY
-
-      - name: Ensure branch tag points to latest image
-        if: github.event_name == 'push'
-        run: |
-          IMAGE_BASE="${{ steps.image.outputs.image }}"
-          SHA_TAG="${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}"
-          BRANCH_TAG="${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}"
-          echo "Ensuring :${BRANCH_TAG} → :${SHA_TAG}"
-          docker buildx imagetools create \
-            --tag "${IMAGE_BASE}:${BRANCH_TAG}" \
-            "${IMAGE_BASE}:${SHA_TAG}"
-          echo "✅ :${BRANCH_TAG} now points to ${IMAGE_BASE}:${SHA_TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "| ${EXPECTED_TAG} | \`${IMAGE_BASE}:${EXPECTED_TAG}\` |" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
   # JOB: ensure-infrastructure-health — Check shared infra (push only)
@@ -289,7 +337,7 @@ jobs:
   ensure-infrastructure-health:
     name: "Ensure Infrastructure Health"
     runs-on: ubuntu-latest
-    needs: [docker-build]
+    needs: [docker-build-merge]
     if: github.event_name == 'push'
     timeout-minutes: 10
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
@@ -364,7 +412,7 @@ jobs:
   deploy:
     name: "Deploy"
     runs-on: ubuntu-latest
-    needs: [docker-build, ensure-infrastructure-health, pre-deployment-backup]
+    needs: [docker-build-merge, ensure-infrastructure-health, pre-deployment-backup]
     if: github.event_name == 'push'
     timeout-minutes: 60
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
@@ -386,7 +434,7 @@ jobs:
         id: deploy
         env:
           DEPLOY_ENV: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
-          IMAGE_FULL: ${{ needs.docker-build.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}
+          IMAGE_FULL: ${{ needs.docker-build-merge.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}
           # Temps project/environment this image deploys into. Only the preprod
           # project exists today — a production Temps project isn't set up yet,
           # so production pushes stay gated off below until one is.
