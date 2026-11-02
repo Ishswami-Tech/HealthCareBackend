@@ -26,7 +26,7 @@
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { INestApplication, Logger, LogLevel } from '@nestjs/common';
-import fastify, { type FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { getEnvBoolean, getEnvWithDefault } from '@config/environment/utils';
 import { dropEmptyJsonContentType } from '@infrastructure/framework/adapters/empty-json-body.util';
 import { REQUEST_ID_HEADER, resolveRequestId } from '@infrastructure/logging/access-log.util';
@@ -133,10 +133,6 @@ export class FastifyFrameworkAdapter implements IFastifyFrameworkAdapter {
     const fastifyAdapterOptions: Record<string, unknown> = {
       // Omit logger option - Fastify will use default no-op logger
       // Custom LoggingService handles all logging via NestJS logger system
-      logController: new fastify.LogController({
-        disableRequestLogging: true, // LoggingInterceptor handles request logging
-        requestIdLogLabel: 'requestId',
-      }),
       // request.id = the caller's own x-request-id when it is a sane token (proxy / client
       // correlation), else a fresh UUID. Fastify's header passthrough would trust any value
       // (newlines, huge strings) and its default ids are a per-process counter that collides
