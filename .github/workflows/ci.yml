@@ -466,7 +466,7 @@ jobs:
               --no-build \
               -p '${TEMPS_PROJECT}' \
               -e '${TEMPS_ENVIRONMENT}' \
-              -y --wait --timeout 600
+              -y --timeout 600
           "
 
           echo "Temps deploy complete for ${DEPLOY_ENV}"
