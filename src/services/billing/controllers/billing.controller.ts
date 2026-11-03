@@ -15,6 +15,7 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  BadGatewayException,
   Request,
 } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
@@ -29,6 +30,7 @@ import {
   UpdateBillingPlanDto,
   CreateSubscriptionDto,
   UpdateSubscriptionDto,
+  SwitchSubscriptionDto,
   CreatePaymentDto,
   UpdatePaymentDto,
   CreateInvoiceDto,
@@ -52,12 +54,24 @@ import { RequiresProfileCompletion } from '@core/decorators/profile-completion.d
 
 import { Cache } from '@core/decorators';
 import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
-import { Role } from '@core/types/enums.types';
+import { InvoiceStatus, Role } from '@core/types/enums.types';
 import type { AuthenticatedRequest } from '@core/types';
 import { PaymentProvider } from '@core/types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { AppointmentType } from '@dtos/appointment.dto';
+import { redactAppointmentResponse } from '@services/appointments/core/appointment-response-redaction.util';
 import { billingScopedCacheKey } from '@services/billing/billing-cache-key.util';
+import {
+  CLINIC_INVOICE_QUERY_KEYS,
+  legacyClinicInvoiceHeaders,
+  parseClinicInvoiceQuery,
+} from '@services/billing/clinic-invoice-list.util';
+import { parseIdempotencyKey } from '@services/billing/idempotency-key.util';
+import {
+  assertReceiptAvailable,
+  assertWhatsAppReceiptAllowed,
+  stripClientSettlement,
+} from '@services/billing/invoice-amount.util';
 
 /** Query parameters that change the clinic payment list / ledger responses. */
 const PAYMENT_LIST_QUERY_KEYS = [
@@ -186,8 +200,6 @@ export class BillingController {
     Role.SUPER_ADMIN,
     Role.CLINIC_ADMIN,
     Role.FINANCE_BILLING,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
     Role.RECEPTIONIST,
     Role.NURSE,
     Role.PHARMACIST,
@@ -219,8 +231,6 @@ export class BillingController {
     Role.SUPER_ADMIN,
     Role.CLINIC_ADMIN,
     Role.FINANCE_BILLING,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
     Role.RECEPTIONIST,
     Role.NURSE,
     Role.PHARMACIST,
@@ -309,15 +319,7 @@ export class BillingController {
   }
 
   @Get('subscriptions/user/:userId')
-  @Roles(
-    Role.SUPER_ADMIN,
-    Role.CLINIC_ADMIN,
-    Role.FINANCE_BILLING,
-    Role.RECEPTIONIST,
-    Role.PATIENT,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR
-  )
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.RECEPTIONIST, Role.PATIENT)
   @RequireResourcePermission('subscriptions', 'read', { requireOwnership: true })
   @Cache({
     customKeyGenerator: billingScopedCacheKey('billing:subscriptions:user', { perCaller: true }),
@@ -358,15 +360,7 @@ export class BillingController {
   }
 
   @Get('subscriptions/:id')
-  @Roles(
-    Role.SUPER_ADMIN,
-    Role.CLINIC_ADMIN,
-    Role.FINANCE_BILLING,
-    Role.RECEPTIONIST,
-    Role.PATIENT,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR
-  )
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.RECEPTIONIST, Role.PATIENT)
   @RequireResourcePermission('subscriptions', 'read')
   @Cache({
     customKeyGenerator: billingScopedCacheKey('billing:subscription', { perCaller: true }),
@@ -410,6 +404,21 @@ export class BillingController {
     );
   }
 
+  @Post('subscriptions/:id/switch')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.RECEPTIONIST, Role.PATIENT)
+  @RequireResourcePermission('subscriptions', 'update')
+  async switchSubscription(
+    @Param('id') id: string,
+    @Body() switchSubscriptionDto: SwitchSubscriptionDto,
+    @Request() req?: ClinicAuthenticatedRequest
+  ) {
+    return this.billingService.switchSubscription(
+      id,
+      switchSubscriptionDto.newPlanId,
+      this.buildBillingAccessContext(req)
+    );
+  }
+
   @Post('subscriptions/:id/renew')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.RECEPTIONIST, Role.PATIENT)
   @RequireResourcePermission('subscriptions', 'update')
@@ -429,7 +438,12 @@ export class BillingController {
     // TENANT ISOLATION: the invoice belongs to the caller's guard-validated clinic. The body used
     // to be trusted, so clinic staff could raise an invoice under another clinic.
     const clinicId = this.resolveInvoiceClinicId(createInvoiceDto.clinicId, req);
-    return this.billingService.createInvoice({ ...createInvoiceDto, clinicId });
+    // A bill raised by hand must charge something: amount > 0 and total > 0. It always starts
+    // PENDING (a client-sent PAID / paidAt is ignored); payment goes through record-payment.
+    return this.billingService.createInvoice(
+      { ...stripClientSettlement(createInvoiceDto), status: InvoiceStatus.PENDING, clinicId },
+      { allowZeroTotal: false }
+    );
   }
 
   /**
@@ -460,8 +474,6 @@ export class BillingController {
     Role.CLINIC_ADMIN,
     Role.FINANCE_BILLING,
     Role.PATIENT,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
     Role.RECEPTIONIST,
     Role.NURSE,
     Role.PHARMACIST,
@@ -501,20 +513,43 @@ export class BillingController {
   )
   @RequireResourcePermission('invoices', 'read')
   @Cache({
-    customKeyGenerator: billingScopedCacheKey('billing:invoices:clinic'),
+    // Every query parameter that changes the response is part of the key (pages never collide).
+    customKeyGenerator: billingScopedCacheKey('billing:invoices:clinic', {
+      queryKeys: CLINIC_INVOICE_QUERY_KEYS,
+    }),
     ttl: 900,
     tags: ['billing', 'invoices', 'clinic:{clinicId}'],
     enableSWR: true,
     containsPHI: true,
   })
   @RateLimitAPI()
-  async getClinicInvoices(@Request() req?: ClinicAuthenticatedRequest) {
+  /**
+   * With `?page=` (limit <= 100; status, q, dateFrom, dateTo): `{ data, total, page, limit,
+   * counts }`, newest first. Without `page` (legacy): the bare array of the newest 200 invoices,
+   * X-Total-Count / X-Truncated headers (a cache hit replays the body only).
+   */
+  async getClinicInvoices(
+    @Request() req?: ClinicAuthenticatedRequest,
+    @Query() rawQuery?: Record<string, string | string[] | undefined>,
+    @Res({ passthrough: true }) reply?: FastifyReply
+  ) {
     const clinicId = req?.clinicContext?.clinicId;
     if (!clinicId) {
       throw new NotFoundException('Clinic context is required');
     }
+    const parsed = parseClinicInvoiceQuery(rawQuery);
+    if (!parsed.ok) {
+      throw new BadRequestException(parsed.message);
+    }
     // PHARMACIST is scoped to pharmacy/prescription invoices inside the service.
-    return this.billingService.getClinicInvoices(clinicId, req?.user?.role);
+    if (parsed.query.mode === 'page') {
+      return this.billingService.getClinicInvoicesPage(clinicId, req?.user?.role, parsed.query);
+    }
+    const list = await this.billingService.getClinicInvoices(clinicId, req?.user?.role);
+    for (const [name, value] of Object.entries(legacyClinicInvoiceHeaders(list))) {
+      reply?.header(name, value);
+    }
+    return list.data;
   }
 
   @Get('invoices/:id')
@@ -523,8 +558,6 @@ export class BillingController {
     Role.CLINIC_ADMIN,
     Role.FINANCE_BILLING,
     Role.PATIENT,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
     Role.RECEPTIONIST,
     Role.NURSE,
     Role.PHARMACIST,
@@ -587,14 +620,7 @@ export class BillingController {
   }
 
   @Post('visits/:visitId/consultation-invoice')
-  @Roles(
-    Role.RECEPTIONIST,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
-    Role.CLINIC_ADMIN,
-    Role.FINANCE_BILLING,
-    Role.SUPER_ADMIN
-  )
+  @Roles(Role.RECEPTIONIST, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.SUPER_ADMIN)
   // NOTE: 'billing:create' (not 'invoices:create') so RECEPTIONIST — which
   // has billing:create but not invoices:create in rbac.service.ts — can
   // reach this route. DOCTOR/ASSISTANT_DOCTOR have invoices:create but not
@@ -650,19 +676,22 @@ export class BillingController {
     @Request() req?: ClinicAuthenticatedRequest
   ) {
     const clinicId = this.requireClinicContext(req);
+    const idempotency = parseIdempotencyKey(req?.headers?.['idempotency-key']);
+    if (idempotency.kind === 'invalid') {
+      throw new BadRequestException('Idempotency-Key header is malformed');
+    }
     return this.billingService.recordInvoicePayment(invoiceId, clinicId, {
       method: dto.method,
       ...(dto.amount !== undefined ? { amount: dto.amount } : {}),
       ...(dto.transactionId ? { transactionId: dto.transactionId } : {}),
       ...(dto.note ? { note: dto.note } : {}),
+      ...(idempotency.kind === 'valid' ? { idempotencyKey: idempotency.key } : {}),
       actor: this.buildVisitActor(req),
     });
   }
 
   @Get('patients/:patientId/bills')
   @Roles(
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
     Role.RECEPTIONIST,
     Role.PHARMACIST,
     Role.NURSE,
@@ -733,8 +762,6 @@ export class BillingController {
     Role.CLINIC_ADMIN,
     Role.FINANCE_BILLING,
     Role.PATIENT,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
     Role.RECEPTIONIST,
     Role.NURSE,
     Role.PHARMACIST,
@@ -879,8 +906,6 @@ export class BillingController {
     Role.CLINIC_ADMIN,
     Role.FINANCE_BILLING,
     Role.PATIENT,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
     Role.RECEPTIONIST,
     Role.NURSE,
     Role.PHARMACIST,
@@ -1073,15 +1098,7 @@ export class BillingController {
    * Supports both basic and detailed responses via query parameter
    */
   @Get('subscriptions/:id/coverage')
-  @Roles(
-    Role.SUPER_ADMIN,
-    Role.CLINIC_ADMIN,
-    Role.FINANCE_BILLING,
-    Role.RECEPTIONIST,
-    Role.PATIENT,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR
-  )
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.RECEPTIONIST, Role.PATIENT)
   @RequireResourcePermission('subscriptions', 'read')
   @Cache({
     customKeyGenerator: billingScopedCacheKey('billing:subscription:coverage', {
@@ -1111,14 +1128,7 @@ export class BillingController {
   }
 
   @Post('subscriptions/:subscriptionId/book-appointment/:appointmentId')
-  @Roles(
-    Role.SUPER_ADMIN,
-    Role.CLINIC_ADMIN,
-    Role.RECEPTIONIST,
-    Role.PATIENT,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR
-  )
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.PATIENT)
   @RequireResourcePermission('subscriptions', 'create')
   async bookAppointmentWithSubscription(
     @Param('subscriptionId') subscriptionId: string,
@@ -1192,7 +1202,7 @@ export class BillingController {
       });
       return {
         success: true,
-        appointment: result.data,
+        appointment: redactAppointmentResponse(result.data, role),
         message: 'In-person appointment booked and linked to subscription',
       };
     } catch (linkError) {
@@ -1209,14 +1219,7 @@ export class BillingController {
   }
 
   @Post('appointments/:appointmentId/cancel-subscription')
-  @Roles(
-    Role.SUPER_ADMIN,
-    Role.CLINIC_ADMIN,
-    Role.RECEPTIONIST,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
-    Role.PATIENT
-  )
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.PATIENT)
   @RequireResourcePermission('subscriptions', 'update')
   async cancelSubscriptionAppointment(
     @Param('appointmentId') appointmentId: string,
@@ -1230,15 +1233,7 @@ export class BillingController {
   }
 
   @Get('subscriptions/user/:userId/active')
-  @Roles(
-    Role.SUPER_ADMIN,
-    Role.CLINIC_ADMIN,
-    Role.FINANCE_BILLING,
-    Role.RECEPTIONIST,
-    Role.PATIENT,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR
-  )
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.RECEPTIONIST, Role.PATIENT)
   @RequireResourcePermission('subscriptions', 'read', { requireOwnership: true })
   @Cache({
     customKeyGenerator: billingScopedCacheKey('billing:subscription:active:user', {
@@ -1317,7 +1312,12 @@ export class BillingController {
     @Request() req?: ClinicAuthenticatedRequest
   ) {
     // Clinic/ownership gate before any work is queued for this invoice id.
-    await this.billingService.getInvoice(invoiceId, this.buildBillingAccessContext(req));
+    const invoice = await this.billingService.getInvoice(
+      invoiceId,
+      this.buildBillingAccessContext(req)
+    );
+    // Product rule: a receipt PDF exists only once the invoice is paid.
+    assertReceiptAvailable(invoice?.status);
     await this.queueService.addJob(
       JobType.INVOICE_PDF,
       'generate_pdf',
@@ -1336,14 +1336,22 @@ export class BillingController {
     @Param('id') invoiceId: string,
     @Request() req?: ClinicAuthenticatedRequest
   ) {
-    await this.billingService.getInvoice(invoiceId, this.buildBillingAccessContext(req));
+    const invoice = await this.billingService.getInvoice(
+      invoiceId,
+      this.buildBillingAccessContext(req)
+    );
+    // 409 for an unpaid bill: use POST /billing-ops/invoices/:id/reminders for those.
+    assertWhatsAppReceiptAllowed(invoice?.status);
     const success = await this.billingService.sendReceiptViaWhatsApp(invoiceId);
-    return {
-      message: success
-        ? 'Receipt sent via WhatsApp successfully'
-        : 'Failed to send receipt via WhatsApp',
-      success,
-    };
+    if (!success) {
+      // The provider (or the patient's number) refused it: a clear failure, never 201 success:false.
+      throw new BadGatewayException({
+        statusCode: HttpStatus.BAD_GATEWAY,
+        code: 'WHATSAPP_SEND_FAILED',
+        message: 'WhatsApp could not be sent — share the PDF instead',
+      });
+    }
+    return { message: 'Receipt sent via WhatsApp successfully', success };
   }
 
   /**
@@ -1360,8 +1368,6 @@ export class BillingController {
     Role.FINANCE_BILLING,
     Role.RECEPTIONIST,
     Role.PATIENT,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
     Role.PHARMACIST
   )
   @RequireResourcePermission('invoices', 'read')
@@ -1379,6 +1385,8 @@ export class BillingController {
     if (!invoice) {
       throw new NotFoundException('Invoice not found');
     }
+    // Product rule: a receipt PDF exists only once the invoice is paid.
+    assertReceiptAvailable(invoice['status'] as string | undefined);
 
     const pdfData = await this.billingService.buildInvoicePDFData(invoiceId, accessContext);
     const { filePath } = await this.invoicePDFService.generateInvoicePDF(pdfData);
@@ -1401,15 +1409,7 @@ export class BillingController {
   }
 
   @Get('invoices/download/:fileName')
-  @Roles(
-    Role.SUPER_ADMIN,
-    Role.CLINIC_ADMIN,
-    Role.FINANCE_BILLING,
-    Role.RECEPTIONIST,
-    Role.PATIENT,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR
-  )
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.RECEPTIONIST, Role.PATIENT)
   @RequireResourcePermission('invoices', 'read')
   async downloadInvoice(
     @Param('fileName') fileName: string,
@@ -1460,17 +1460,74 @@ export class BillingController {
     @Param('id') subscriptionId: string,
     @Request() req?: ClinicAuthenticatedRequest
   ) {
-    const result = await this.billingService.processSubscriptionPayment(
+    return this.runIdempotent(req, 'subscriptions/process-payment', subscriptionId, async () => {
+      const result = await this.billingService.processSubscriptionPayment(
+        subscriptionId,
+        undefined,
+        this.buildBillingAccessContext(req)
+      );
+      if (result.alreadyPaid) {
+        return {
+          success: true,
+          invoice: result.invoice,
+          alreadyPaid: true,
+          message: 'This plan is free - no payment needed.',
+        };
+      }
+      return {
+        success: true,
+        invoice: result.invoice,
+        paymentIntent: result.paymentIntent,
+        message: 'Payment intent created successfully. Redirect user to payment gateway.',
+      };
+    });
+  }
+
+  /**
+   * Desk fallback for a plan purchase: returns the plan bill reception collects cash / UPI-at-
+   * desk against (the open bill of the period, taken over from the online window, or a new
+   * desk-raised bill). Settle it with POST /billing/invoices/:id/record-payment, which starts the
+   * plan. No gateway order is opened. Staff only, own clinic only.
+   */
+  @Post('subscriptions/:id/desk-invoice')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.RECEPTIONIST)
+  @RequireResourcePermission('payments', 'create')
+  async openDeskPlanInvoice(
+    @Param('id') subscriptionId: string,
+    @Request() req?: ClinicAuthenticatedRequest
+  ) {
+    const access = this.buildBillingAccessContext(req);
+    if (access.role !== Role.SUPER_ADMIN) {
+      this.requireClinicContext(req);
+    }
+    const result = await this.billingService.openDeskPlanInvoice(
       subscriptionId,
-      undefined,
-      this.buildBillingAccessContext(req)
+      access,
+      this.buildVisitActor(req)
     );
-    return {
-      success: true,
-      invoice: result.invoice,
-      paymentIntent: result.paymentIntent,
-      message: 'Payment intent created successfully. Redirect user to payment gateway.',
-    };
+    return { success: true, invoice: result.invoice, reused: result.reused };
+  }
+
+  /**
+   * Payment-intent creation honours an `Idempotency-Key` header: a retry with the same key gets
+   * the first response instead of opening another gateway order (see idempotency-key.util).
+   */
+  private runIdempotent<T>(
+    req: ClinicAuthenticatedRequest | undefined,
+    route: string,
+    resourceId: string,
+    run: () => Promise<T>
+  ): Promise<T> {
+    const userId = req?.user?.['sub'] ?? req?.user?.['id'];
+    return this.billingService.runIdempotentPaymentIntent(
+      {
+        userId: typeof userId === 'string' ? userId : undefined,
+        route,
+        resourceId,
+        idempotencyKey: req?.headers?.['idempotency-key'],
+      },
+      run
+    );
   }
 
   private buildBillingAccessContext(req?: ClinicAuthenticatedRequest) {
@@ -1496,18 +1553,20 @@ export class BillingController {
     @Body() body: { appointmentType: 'VIDEO_CALL' | 'IN_PERSON' | 'HOME_VISIT' },
     @Request() req?: ClinicAuthenticatedRequest
   ) {
-    const result = await this.billingService.processAppointmentPayment(
-      appointmentId,
-      body.appointmentType,
-      undefined,
-      this.buildBillingAccessContext(req)
-    );
-    return {
-      success: true,
-      invoice: result.invoice,
-      paymentIntent: result.paymentIntent,
-      message: 'Payment intent created successfully. Redirect user to payment gateway.',
-    };
+    return this.runIdempotent(req, 'appointments/process-payment', appointmentId, async () => {
+      const result = await this.billingService.processAppointmentPayment(
+        appointmentId,
+        body.appointmentType,
+        undefined,
+        this.buildBillingAccessContext(req)
+      );
+      return {
+        success: true,
+        invoice: result.invoice,
+        paymentIntent: result.paymentIntent,
+        message: 'Payment intent created successfully. Redirect user to payment gateway.',
+      };
+    });
   }
 
   @Post('invoices/:id/process-payment')
@@ -1517,21 +1576,23 @@ export class BillingController {
     @Param('id') invoiceId: string,
     @Request() req?: ClinicAuthenticatedRequest
   ) {
-    const result = await this.billingService.processInvoicePayment(
-      invoiceId,
-      undefined,
-      this.buildBillingAccessContext(req)
-    );
-    return {
-      success: true,
-      invoice: result.invoice,
-      paymentIntent: result.paymentIntent,
-      message: 'Invoice payment intent created successfully. Redirect user to payment gateway.',
-    };
+    return this.runIdempotent(req, 'invoices/process-payment', invoiceId, async () => {
+      const result = await this.billingService.processInvoicePayment(
+        invoiceId,
+        undefined,
+        this.buildBillingAccessContext(req)
+      );
+      return {
+        success: true,
+        invoice: result.invoice,
+        paymentIntent: result.paymentIntent,
+        message: 'Invoice payment intent created successfully. Redirect user to payment gateway.',
+      };
+    });
   }
 
   @Get('appointments/:id/payout-status')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.DOCTOR)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
   @RequireResourcePermission('payments', 'read')
   async getAppointmentPayoutStatus(
     @Param('id') appointmentId: string,

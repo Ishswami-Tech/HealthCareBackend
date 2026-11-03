@@ -291,16 +291,23 @@ export function resolvePaidConfirmationExpiresAt(
  *
  *  - DUPLICATE_SETTLEMENT: a second paid gateway order, or a second payment on an already
  *    settled invoice (the same booking charged twice);
- *  - UNDERPAYMENT: completed payments do not cover the invoice / plan amount.
+ *  - UNDERPAYMENT: completed payments do not cover the invoice / plan amount;
+ *  - LATE_SETTLEMENT: the gateway confirmed a payment after its booking / checkout had already
+ *    been released (expired, cancelled): the money was collected, so the payment is recorded
+ *    COMPLETED (without its booking / invoice / plan side effects) and flagged
+ *    `requiredAction: 'REFUND_OR_REBOOK'` for the clinic to decide. Never dropped, never
+ *    auto-refunded.
  *
- * It is data for the clinic admin and finance dashboards only: nothing here refunds, requests a
- * refund or notifies anybody. Late settlements (money for an appointment that was already
- * released) are deliberately NOT recorded: the product has no refunds for visits that never
- * take place, so they only log and emit `billing.payment.late_settlement`.
+ * It is data for the clinic admin and finance dashboards (plus the realtime
+ * `billing.payment.*` event the clinic admins receive): nothing here refunds or requests a
+ * refund.
  */
 
 export type SettlementAnomalyReason = 'LATE_SETTLEMENT' | 'DUPLICATE_SETTLEMENT' | 'UNDERPAYMENT';
-export type SettlementReviewReason = Exclude<SettlementAnomalyReason, 'LATE_SETTLEMENT'>;
+export type SettlementReviewReason = SettlementAnomalyReason;
+
+/** What the clinic has to do about a late settlement (it is never decided automatically). */
+export const LATE_SETTLEMENT_REQUIRED_ACTION = 'REFUND_OR_REBOOK';
 
 export const SETTLEMENT_REVIEW_METADATA_KEY = 'settlementReview';
 const SETTLEMENT_REVIEW_SETTLEMENTS_LIMIT = 10;
@@ -321,10 +328,11 @@ export interface SettlementReviewEntry {
   amount?: number | undefined;
 }
 
+/** Every anomaly is persisted on the payment (late settlements included, see above). */
 export function isPersistedAnomaly(
   reason: SettlementAnomalyReason
 ): reason is SettlementReviewReason {
-  return reason !== 'LATE_SETTLEMENT';
+  return ['LATE_SETTLEMENT', 'DUPLICATE_SETTLEMENT', 'UNDERPAYMENT'].includes(reason);
 }
 
 export function hasSettlementReview(metadata: unknown): boolean {
@@ -357,6 +365,9 @@ export function buildSettlementReviewMetadata(
     const review: JsonRecord = {
       reason: entry.reason,
       status: 'PENDING_REVIEW',
+      ...(entry.reason === 'LATE_SETTLEMENT'
+        ? { requiredAction: LATE_SETTLEMENT_REQUIRED_ACTION }
+        : {}),
       flaggedAt,
       ...(entry.appointmentId ? { appointmentId: entry.appointmentId } : {}),
       ...(entry.invoiceId ? { invoiceId: entry.invoiceId } : {}),
@@ -387,5 +398,38 @@ export function buildSettlementReviewMetadata(
       },
     },
     created: false,
+  };
+}
+
+/**
+ * Metadata of a late settlement being recorded on a released (EXPIRED / CANCELLED) payment: the
+ * settlement review (requiredAction REFUND_OR_REBOOK) plus a finalisation marker that is already
+ * "applied", so no later delivery or repair sweep runs the booking / invoice / plan side effects
+ * for it.
+ */
+export function buildLateSettlementMetadata(
+  current: JsonRecord,
+  entry: Omit<SettlementReviewEntry, 'reason'> & { releasedStatus: string },
+  now: Date
+): JsonRecord {
+  const reviewed =
+    buildSettlementReviewMetadata(current, { ...entry, reason: 'LATE_SETTLEMENT' }, now)?.next ??
+    current;
+  const flaggedAt = now.toISOString();
+  return {
+    ...reviewed,
+    [FINALISATION_METADATA_KEY]: {
+      claimToken: `late-settlement:${flaggedAt}`,
+      claimedAt: flaggedAt,
+      sideEffectsAppliedAt: flaggedAt,
+    },
+    lateSettlement: {
+      recordedAt: flaggedAt,
+      releasedStatus: entry.releasedStatus,
+      requiredAction: LATE_SETTLEMENT_REQUIRED_ACTION,
+      ...(entry.orderId ? { orderId: entry.orderId } : {}),
+      ...(entry.transactionId ? { transactionId: entry.transactionId } : {}),
+      ...(entry.amount !== undefined ? { amount: entry.amount } : {}),
+    },
   };
 }

@@ -547,6 +547,7 @@ export interface ClinicUpdateInput {
   readonly language?: string;
   readonly isActive?: boolean;
   readonly updatedAt?: Date;
+  readonly abdmHipId?: string;
 }
 
 /**
@@ -620,6 +621,8 @@ export interface ClinicResponseDto {
   }>;
   /** Optional clinic settings including appointment settings with videoCallWindow */
   readonly settings?: ClinicSettings;
+  /** ABDM Health Information Provider (HIP) id for this clinic. Scaffolding only. */
+  readonly abdmHipId?: string;
 }
 
 /**
@@ -702,6 +705,7 @@ export interface ClinicLocationUpdateInput {
   readonly workingHours?: string;
   readonly isActive?: boolean;
   readonly updatedAt?: Date;
+  readonly abdmHfrId?: string;
 }
 
 /**
@@ -736,6 +740,8 @@ export interface ClinicLocationResponseDto {
   readonly clinicId: string;
   readonly createdAt: Date;
   readonly updatedAt: Date;
+  /** ABDM Health Facility Registry (HFR) id for this location. Scaffolding only. */
+  readonly abdmHfrId?: string;
 }
 
 /**

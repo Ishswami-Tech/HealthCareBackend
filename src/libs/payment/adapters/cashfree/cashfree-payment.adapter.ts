@@ -27,6 +27,7 @@ import type {
   PaymentProviderConfig,
 } from '@core/types/payment.types';
 import * as crypto from 'crypto';
+import { getProviderOrderExpiry, toIstIsoString } from '@config/payment-window.config';
 
 // Cashfree PG API types (v2025-01-01)
 interface CashfreeOrderRequest {
@@ -51,6 +52,8 @@ interface CashfreeOrderRequest {
   // Custom key/value pairs echoed back on the order and in webhooks (max 10).
   order_tags?: Record<string, string>;
   order_note?: string;
+  // After this time Cashfree refuses any payment for the order (ISO 8601, min 15 min ahead).
+  order_expiry_time?: string;
 }
 
 interface CashfreeOrderResponse {
@@ -384,12 +387,19 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
       const amountInUnits = options.amount / 100;
       const orderId =
         options.orderId || `order_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+      // The app-wide payment window: Cashfree itself stops accepting a payment after it, so a
+      // late payment can never land on a checkout the backend has already expired.
+      const orderExpiryTime = toIstIsoString(getProviderOrderExpiry());
+      // The expiry is part of the key: a repeated create for the same order id with a new expiry
+      // is a NEW request (Cashfree answers 409 and the existing order is fetched below), never a
+      // replay with a different body (which Cashfree rejects with 422).
       const idempotencySource = [
         options.clinicId || '',
         options.appointmentId || '',
         options.subscriptionId || '',
         options.customerId || '',
         orderId,
+        orderExpiryTime,
       ].join('|');
       const idempotencyKey = crypto
         .createHash('sha256')
@@ -474,6 +484,7 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         ...(Object.keys(orderMeta).length > 0 ? { order_meta: orderMeta } : {}),
         ...(Object.keys(orderTags).length > 0 ? { order_tags: orderTags } : {}),
         ...(options.description && { order_note: options.description }),
+        order_expiry_time: orderExpiryTime,
       };
 
       let data: CashfreeOrderResponse | CashfreeOrderStatusResponse | null = null;
@@ -646,6 +657,8 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         provider: this.getProviderName(),
         timestamp: new Date(data.created_at || Date.now()),
         metadata: {
+          // The order Cashfree answered for (the callback binding checks it is the one asked).
+          order_id: data.order_id,
           order_status: data.order_status,
           ...(paymentMethod ? { paymentMethod } : {}),
           // Lets BillingService bind a gateway order that has no local payment

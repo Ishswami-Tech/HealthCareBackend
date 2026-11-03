@@ -436,3 +436,248 @@ describe('with the real AppointmentQueueService', () => {
     });
   });
 });
+
+describe('token series: ONE per location per day, location-prefixed, shared by walk-ins', () => {
+  let cache: FakeQueueCache;
+  let queueService: AppointmentQueueService;
+  let today: string;
+
+  beforeEach(() => {
+    pinClock();
+    today = formatDateKeyInIST(new Date());
+    cache = new FakeQueueCache();
+    const logging = { log: jest.fn(async (..._args: unknown[]) => undefined) };
+    queueService = new AppointmentQueueService(cache as never, logging as never);
+  });
+
+  afterEach(() => {
+    unpinClock();
+  });
+
+  const arrive = (
+    appointmentId: string,
+    locationId: string,
+    extra: { tokenPrefix?: string; isWalkIn?: boolean; priority?: string } = {}
+  ) =>
+    queueService.checkIn(
+      {
+        appointmentId,
+        doctorId: 'doctor-1',
+        patientId: `patient-${appointmentId}`,
+        clinicId: CLINIC,
+        appointmentType: 'IN_PERSON',
+        locationId,
+        ...extra,
+      },
+      'clinic'
+    );
+
+  const entries = async () =>
+    (await cache.lRange(`queue:clinic:${CLINIC}:doctor-1:${today}`, 0, -1)).map(
+      raw =>
+        JSON.parse(raw) as {
+          appointmentId: string;
+          tokenNumber?: number;
+          tokenLabel?: string;
+          isWalkIn?: boolean;
+          priority?: number;
+        }
+    );
+
+  it('numbers each location on its own counter with its own prefix (K-001.., B-001..)', async () => {
+    await arrive('k1', 'loc-kothrud', { tokenPrefix: 'K' });
+    await arrive('b1', 'loc-baner', { tokenPrefix: 'B' });
+    await arrive('k2', 'loc-kothrud', { tokenPrefix: 'K' });
+
+    const byId = new Map((await entries()).map(entry => [entry.appointmentId, entry]));
+    expect(byId.get('k1')).toMatchObject({
+      tokenNumber: 1,
+      tokenLabel: 'K-001',
+    });
+    expect(byId.get('b1')).toMatchObject({
+      tokenNumber: 1,
+      tokenLabel: 'B-001',
+    });
+    expect(byId.get('k2')).toMatchObject({
+      tokenNumber: 2,
+      tokenLabel: 'K-002',
+    });
+    expect([...cache.counters.keys()].sort()).toEqual([
+      `queue:token:${CLINIC}:location:loc-baner:${today}`,
+      `queue:token:${CLINIC}:location:loc-kothrud:${today}`,
+    ]);
+  });
+
+  it('walk-ins share the series (tagged), priority is only an ordering flag', async () => {
+    await arrive('k1', 'loc-kothrud', { tokenPrefix: 'K' });
+    await arrive('w1', 'loc-kothrud', { tokenPrefix: 'K', isWalkIn: true });
+    await arrive('s1', 'loc-kothrud', {
+      tokenPrefix: 'K',
+      priority: 'EMERGENCY',
+    });
+
+    const list = await entries();
+    expect(list.map(entry => entry.tokenLabel)).toEqual(['K-001', 'K-002', 'K-003']);
+    expect(list.find(entry => entry.appointmentId === 'w1')?.isWalkIn).toBe(true);
+    expect(list.find(entry => entry.appointmentId === 'k1')?.isWalkIn).toBeUndefined();
+
+    const queue = await queueService.getDoctorQueue(
+      'doctor-1',
+      CLINIC,
+      today,
+      'clinic',
+      'loc-kothrud'
+    );
+    // the emergency patient is served first but keeps its own number
+    expect(queue.queue.map(entry => entry.tokenLabel)).toEqual(['K-003', 'K-001', 'K-002']);
+  });
+
+  it('without a database or cache counter it fails (retryable) instead of guessing a token', async () => {
+    // Audit P0-2: the old fallback guessed from one doctor's list and handed out duplicates at
+    // a multi-doctor location. No guess: the caller answers 503 and the retry gets a real token.
+    await arrive('k1', 'loc-kothrud', { tokenPrefix: 'K' });
+    jest.spyOn(cache, 'incr').mockRejectedValueOnce(new Error('down'));
+    await expect(arrive('k2', 'loc-kothrud', { tokenPrefix: 'K' })).rejects.toThrow('down');
+    jest.spyOn(cache, 'incr').mockResolvedValueOnce(0);
+    await expect(arrive('k2', 'loc-kothrud', { tokenPrefix: 'K' })).rejects.toThrow(
+      'Token counter unavailable'
+    );
+
+    expect((await entries()).map(entry => entry.appointmentId)).toEqual(['k1']);
+    await arrive('k2', 'loc-kothrud', { tokenPrefix: 'K' });
+    const k2 = (await entries()).find(entry => entry.appointmentId === 'k2');
+    expect(k2).toMatchObject({ tokenNumber: 2, tokenLabel: 'K-002' });
+  });
+
+  it('a token handed in by the check-in transaction is used as is (no cache counter)', async () => {
+    await queueService.checkIn(
+      {
+        appointmentId: 'k9',
+        doctorId: 'doctor-1',
+        patientId: 'patient-k9',
+        clinicId: CLINIC,
+        locationId: 'loc-kothrud',
+        tokenNumber: 9,
+        tokenLabel: 'K-009',
+      },
+      'clinic'
+    );
+
+    expect((await entries())[0]).toMatchObject({ tokenNumber: 9, tokenLabel: 'K-009' });
+    expect(cache.counters.size).toBe(0);
+  });
+
+  it('check-in derives the prefix from the stored location name and tags walk-ins', async () => {
+    const w = buildCheckInServiceWorld({ cache, queue: queueService });
+    const location = w.db.rows('clinicLocation').find(row => row['id'] === 'loc-1');
+    if (!location) throw new Error('loc-1');
+    location['name'] = 'Baner';
+    w.db.insert(
+      'appointment',
+      inPersonRow({ metadata: { isWalkIn: true, bookingSource: 'WALK_IN' } })
+    );
+
+    await w.service.processCheckIn(checkInInput(), CLINIC, desk);
+
+    const [entry] = await entries();
+    expect(entry).toMatchObject({
+      tokenNumber: 1,
+      tokenLabel: 'B-001',
+      isWalkIn: true,
+    });
+  });
+});
+
+describe('durable token from the check-in transaction (audit P0-1 / P0-2)', () => {
+  let cache: FakeQueueCache;
+  let queueService: AppointmentQueueService;
+  let w: ReturnType<typeof buildCheckInServiceWorld<FakeQueueCache>>;
+  let counters: Map<string, number>;
+  let today: string;
+
+  /** The three statements of assignLocationToken against the FakeDb appointment rows. */
+  function attachRawSql(): void {
+    counters = new Map();
+    const rawSql = async (sql: string, ...values: Array<string | number | null>) => {
+      const rows = w.db.rows('appointment');
+      if (sql.includes('FOR UPDATE')) {
+        const row = rows.find(candidate => candidate['id'] === values[0]);
+        if (!row) return [];
+        return [{ tokenNumber: null, tokenLabel: null, tokenDay: null, ...row }];
+      }
+      if (sql.includes('location_token_counters')) {
+        const key = values.slice(0, 3).join('|');
+        const next = (counters.get(key) ?? 0) + 1;
+        counters.set(key, next);
+        return [{ lastValue: next }];
+      }
+      const row = rows.find(candidate => candidate['id'] === values[0]);
+      if (!row || typeof row['tokenNumber'] === 'number') return [];
+      Object.assign(row, { tokenNumber: values[1], tokenLabel: values[2], tokenDay: values[3] });
+      return [{ tokenNumber: values[1] }];
+    };
+    Object.assign(w.db.client as object, { $queryRawUnsafe: rawSql });
+  }
+
+  beforeEach(() => {
+    pinClock();
+    today = formatDateKeyInIST(new Date());
+    cache = new FakeQueueCache();
+    const logging = { log: jest.fn(async (..._args: unknown[]) => undefined) };
+    queueService = new AppointmentQueueService(cache as never, logging as never);
+    w = buildCheckInServiceWorld({ cache, queue: queueService });
+    w.db.insert('appointment', inPersonRow());
+    w.db.insert(
+      'appointment',
+      inPersonRow({
+        id: 'appt-2',
+        patientId: 'patient-2',
+        userId: 'user-other',
+        doctorId: 'doctor-2',
+      })
+    );
+    attachRawSql();
+  });
+
+  afterEach(() => {
+    unpinClock();
+  });
+
+  const listOf = async (doctorId: string) =>
+    (await cache.lRange(`queue:clinic:${CLINIC}:${doctorId}:${today}`, 0, -1)).map(
+      raw => JSON.parse(raw) as { appointmentId: string; tokenNumber?: number; tokenLabel?: string }
+    );
+
+  it('stores the token on the appointment and queues that same token', async () => {
+    await w.service.processCheckIn(checkInInput(), CLINIC, desk);
+
+    expect(w.db.rows('appointment')[0]).toMatchObject({ tokenNumber: 1, tokenLabel: 'K-001' });
+    expect((await listOf('doctor-1'))[0]).toMatchObject({ tokenNumber: 1, tokenLabel: 'K-001' });
+    // the cache counter is no longer the source of truth
+    expect(cache.counters.size).toBe(0);
+  });
+
+  it('a second doctor at the same location continues the ONE location series', async () => {
+    await w.service.processCheckIn(checkInInput(), CLINIC, desk);
+    await w.service.processCheckIn(
+      checkInInput({ appointmentId: 'appt-2', patientId: 'patient-2' }),
+      CLINIC,
+      desk
+    );
+
+    expect((await listOf('doctor-2'))[0]).toMatchObject({ tokenNumber: 2, tokenLabel: 'K-002' });
+  });
+
+  it('after the cache is lost, a retry re-queues the stored token (no new K-001)', async () => {
+    await w.service.processCheckIn(checkInInput(), CLINIC, desk);
+    cache.lists.clear();
+    cache.counters.clear();
+
+    const retry = await w.service.processCheckIn(checkInInput(), CLINIC, desk);
+
+    expect(retry.alreadyCheckedIn).toBe(true);
+    expect(retry.queueRepaired).toBe(true);
+    expect((await listOf('doctor-1'))[0]).toMatchObject({ tokenNumber: 1, tokenLabel: 'K-001' });
+    expect([...counters.values()]).toEqual([1]);
+  });
+});

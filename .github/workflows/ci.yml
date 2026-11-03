@@ -32,6 +32,7 @@ permissions:
   packages: write
   security-events: write
   actions: read
+  pull-requests: read
 
 env:
   NODE_VERSION: "24"
@@ -166,20 +167,34 @@ jobs:
           echo "Dependency audit passed" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
-  # JOB: docker-build — Build and push environment-tagged image to GHCR
+  # JOB: docker-build — Build each platform natively (no QEMU) and push by digest
   # ============================================================================
+  # Building linux/amd64 and linux/arm64 together on one ubuntu-latest runner
+  # used QEMU to emulate arm64, under which Prisma's native query-engine binary
+  # (invoked during `yarn prisma:generate`) would hang for 20+ minutes and starve
+  # the amd64 leg of CPU too — see commit history for the incident. Splitting into
+  # a matrix gives each platform its own native runner (ubuntu-24.04-arm for
+  # arm64), so nothing is emulated and nothing hangs.
   docker-build:
-    name: "Docker Build and Push"
-    runs-on: ubuntu-latest
+    name: "Docker Build and Push (${{ matrix.platform }})"
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     needs: [detect-changes, security]
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux/amd64, linux/arm64]
     outputs:
-      image_tag: ${{ steps.meta.outputs.tags }}
       image_name: ${{ steps.image.outputs.image }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Set platform pair
+        run: |
+          platform="${{ matrix.platform }}"
+          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -223,11 +238,76 @@ jobs:
           IMAGE_FULL="ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}"
           echo "image=${IMAGE_FULL}" >> $GITHUB_OUTPUT
 
-      - name: Extract metadata
+      - name: Extract metadata (labels only — tags are decided in the merge job)
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ steps.image.outputs.image }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: devops/docker/Dockerfile
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            GIT_REF=${{ github.ref }}
+            BUILD_TIMESTAMP=${{ github.event.head_commit.timestamp }}
+          cache-from: type=gha,scope=build-${{ env.PLATFORM_PAIR }}
+          cache-to: type=gha,mode=max,ignore-error=true,scope=build-${{ env.PLATFORM_PAIR }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ steps.image.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ============================================================================
+  # JOB: docker-build-merge — Combine per-platform digests into one multi-arch tag
+  # ============================================================================
+  docker-build-merge:
+    name: "Docker Build and Push (Merge Manifest)"
+    runs-on: ubuntu-latest
+    needs: [docker-build]
+    timeout-minutes: 10
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      image_name: ${{ needs.docker-build.outputs.image_name }}
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ needs.docker-build.outputs.image_name }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -235,44 +315,22 @@ jobs:
             type=raw,value=${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }},enable=${{ github.event_name == 'push' }}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: devops/docker/Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            GIT_SHA=${{ github.sha }}
-            GIT_REF=${{ github.ref }}
-            BUILD_TIMESTAMP=${{ github.event.head_commit.timestamp }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,ignore-error=true
-          platforms: linux/amd64
-
-      - name: Ensure SHA tag exists
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
         run: |
-          IMAGE_BASE="${{ steps.image.outputs.image }}"
+          IMAGE_BASE="${{ needs.docker-build.outputs.image_name }}"
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${IMAGE_BASE}@sha256:%s " *)
+
+      - name: Inspect merged image + summary
+        run: |
+          IMAGE_BASE="${{ needs.docker-build.outputs.image_name }}"
           EXPECTED_TAG="${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}"
-          EXPECTED_IMAGE="${IMAGE_BASE}:${EXPECTED_TAG}"
-          echo "Expected tag: ${EXPECTED_IMAGE}"
+          docker buildx imagetools inspect "${IMAGE_BASE}:${EXPECTED_TAG}"
           echo "## Docker Image" >> $GITHUB_STEP_SUMMARY
           echo "| Tag | Image |" >> $GITHUB_STEP_SUMMARY
           echo "|-----|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| ${EXPECTED_TAG} | \`${EXPECTED_IMAGE}\` |" >> $GITHUB_STEP_SUMMARY
-
-      - name: Ensure branch tag points to latest image
-        if: github.event_name == 'push'
-        run: |
-          IMAGE_BASE="${{ steps.image.outputs.image }}"
-          SHA_TAG="${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}"
-          BRANCH_TAG="${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}"
-          echo "Ensuring :${BRANCH_TAG} → :${SHA_TAG}"
-          docker buildx imagetools create \
-            --tag "${IMAGE_BASE}:${BRANCH_TAG}" \
-            "${IMAGE_BASE}:${SHA_TAG}"
-          echo "✅ :${BRANCH_TAG} now points to ${IMAGE_BASE}:${SHA_TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "| ${EXPECTED_TAG} | \`${IMAGE_BASE}:${EXPECTED_TAG}\` |" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
   # JOB: ensure-infrastructure-health — Check shared infra (push only)
@@ -280,7 +338,7 @@ jobs:
   ensure-infrastructure-health:
     name: "Ensure Infrastructure Health"
     runs-on: ubuntu-latest
-    needs: [docker-build]
+    needs: [docker-build-merge]
     if: github.event_name == 'push'
     timeout-minutes: 10
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
@@ -355,7 +413,7 @@ jobs:
   deploy:
     name: "Deploy"
     runs-on: ubuntu-latest
-    needs: [docker-build, ensure-infrastructure-health, pre-deployment-backup]
+    needs: [docker-build-merge, ensure-infrastructure-health, pre-deployment-backup]
     if: github.event_name == 'push'
     timeout-minutes: 60
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
@@ -373,63 +431,46 @@ jobs:
           printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
-      - name: Sync deploy scripts to VPS
-        env:
-          DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
-        run: |
-          scp ${{ env.SSH_OPTS }} \
-            "$GITHUB_WORKSPACE/devops/scripts/docker-infra/coolify-deploy.sh" \
-            "$GITHUB_WORKSPACE/devops/scripts/docker-infra/health-check.sh" \
-            "$GITHUB_WORKSPACE/devops/scripts/docker-infra/verify.sh" \
-            "$GITHUB_WORKSPACE/devops/scripts/docker-infra/backup.sh" \
-            "$GITHUB_WORKSPACE/devops/scripts/docker-infra/incident-response.sh" \
-            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${DEPLOY_PATH}/devops/scripts/docker-infra/"
-
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "mkdir -p ${DEPLOY_PATH}/devops/config"
-          scp ${{ env.SSH_OPTS }} \
-            "$GITHUB_WORKSPACE/devops/config/coolify-apps.env" \
-            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${DEPLOY_PATH}/devops/config/"
-
-      - name: Deploy via Coolify (GHCR image)
+      - name: Deploy via Temps API
         id: deploy
         env:
           DEPLOY_ENV: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
-          DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
-          COOLIFY_APP_UUID: ${{ github.ref == 'refs/heads/main' && secrets.COOLIFY_PROD_APP_UUID || secrets.COOLIFY_PREPROD_APP_UUID }}
-          IMAGE_FULL: ${{ needs.docker-build.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}
-          INFRA_CHANGED: ${{ needs.detect-changes.outputs.infra-changed }}
-          APP_CHANGED: ${{ needs.detect-changes.outputs.app-changed }}
+          IMAGE_FULL: ${{ needs.docker-build-merge.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}
+          # Temps project/environment this image deploys into. Only the preprod
+          # project exists today — a production Temps project isn't set up yet,
+          # so production pushes stay gated off below until one is.
+          TEMPS_PROJECT: ${{ github.ref == 'refs/heads/main' && vars.TEMPS_PROD_PROJECT || 'healthcare-api-test' }}
+          TEMPS_ENVIRONMENT: production
         run: |
           echo "Deploying to: ${DEPLOY_ENV} (image: ${IMAGE_FULL})"
 
-          # ── Gate: production deploys disabled until preprod is validated ────
+          # ── Gate: production deploys disabled until a Temps prod project exists ──
           if [ "${DEPLOY_ENV}" = "production" ]; then
-            if [ "${{ vars.ENABLE_PROD_DEPLOY || 'true' }}" != "true" ]; then
-              echo "::warning::Production deploys are gated off. Set ENABLE_PROD_DEPLOY=true to enable."
-              echo "Skipping production deploy — preprod not yet validated."
+            if [ "${{ vars.ENABLE_PROD_DEPLOY || 'true' }}" != "true" ] || [ -z "${TEMPS_PROJECT}" ]; then
+              echo "::warning::Production deploys are gated off (no Temps production project configured yet)."
+              echo "Skipping production deploy — preprod not yet validated on Temps."
               exit 0
             fi
             echo "Production deploys are ENABLED."
           fi
 
-          # ── Deploy via Coolify ─────────────────────────────────────────────
-          echo "Triggering Coolify deploy..."
+          # ── Deploy via Temps: pull the image on the control-plane host (it
+          # already holds GHCR credentials), then push it to Temps through the
+          # loopback API context (bypasses Cloudflare's upload-size limit that a
+          # direct `deploy:local-image` from this runner would hit). ──
+          echo "Triggering Temps deploy (project=${TEMPS_PROJECT}, environment=${TEMPS_ENVIRONMENT})..."
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
             set -euo pipefail
-            cd '${DEPLOY_PATH}'
-            DEPLOY_ENV='${DEPLOY_ENV}' \
-            IMAGE_FULL='${IMAGE_FULL}' \
-            COOLIFY_APP_UUID='${COOLIFY_APP_UUID}' \
-            COOLIFY_API_TOKEN='${{ secrets.COOLIFY_API_TOKEN }}' \
-            bash devops/scripts/docker-infra/coolify-deploy.sh \
-              --app api \
+            docker pull '${IMAGE_FULL}'
+            npx -y @temps-sdk/cli --target-context temps-local deploy:local-image \
               --image '${IMAGE_FULL}' \
-              --wait \
-              --force
+              --no-build \
+              -p '${TEMPS_PROJECT}' \
+              -e '${TEMPS_ENVIRONMENT}' \
+              -y --timeout 600
           "
 
-          echo "Coolify deploy complete for ${DEPLOY_ENV}"
+          echo "Temps deploy complete for ${DEPLOY_ENV}"
 
       - name: Record deploy status
         id: status

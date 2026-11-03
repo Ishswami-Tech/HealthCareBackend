@@ -10,6 +10,7 @@
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
+import { isDeterministicDatabaseError } from '@infrastructure/database/internal/retryable-error.util';
 
 export interface RetryOptions {
   maxAttempts?: number;
@@ -111,11 +112,15 @@ export class RetryService {
         const errorName = lastError.name || '';
         const errorMessage = lastError.message || '';
 
-        // Check if error is retryable
-        const isRetryable = retryableErrors.some(
-          retryableError =>
-            errorName.includes(retryableError) || errorMessage.includes(retryableError)
-        );
+        // Check if error is retryable. A deterministic failure (unique/FK violation, record not
+        // found, a 4xx refusal) gives the same answer on every attempt, so it is never retried
+        // even when its name matches the list (every Prisma query error is "PrismaClient...").
+        const isRetryable =
+          !isDeterministicDatabaseError(lastError) &&
+          retryableErrors.some(
+            retryableError =>
+              errorName.includes(retryableError) || errorMessage.includes(retryableError)
+          );
 
         // If not retryable or last attempt, return error
         if (!isRetryable || attempt >= maxAttempts) {
@@ -192,6 +197,7 @@ export class RetryService {
    * Check if an error is retryable
    */
   isRetryableError(error: Error, retryableErrors?: string[]): boolean {
+    if (isDeterministicDatabaseError(error)) return false;
     const errors = retryableErrors ?? this.defaultRetryableErrors;
     const errorName = error.name || '';
     const errorMessage = error.message || '';

@@ -29,13 +29,36 @@ import {
 
 // Channel services
 import { SocketService } from '@communication/channels/socket/socket.service';
+import {
+  NOTIFICATION_SOCKET_EVENT,
+  buildNotificationSocketPayload,
+} from '@communication/channels/socket/socket-room-policy';
 import { PushNotificationService } from '@communication/channels/push/push.service';
 import { EmailService } from '@communication/channels/email/email.service';
 import { EmailTemplatesService } from '@communication/channels/email/email-templates.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { SNSBackupService } from '@communication/channels/push/sns-backup.service';
+import {
+  NO_REGISTERED_DEVICE,
+  isNoDeviceResult,
+} from '@communication/channels/push/push-targets.util';
 import { CommunicationHealthMonitorService } from './communication-health-monitor.service';
-import { formatTimeInIST, IST_TIMEZONE, nowIso } from '../utils/date-time.util';
+import {
+  channelDisabledResult,
+  channelOutcome,
+  eligibleChannels,
+  initialNotificationState,
+} from '@communication/services/notification-delivery-plan.util';
+import {
+  defaultPreferenceFlags,
+  filterChannelsByPreferences,
+  normalizePreferenceFlags,
+  notificationPreferenceView,
+  toUserCommunicationPreferences,
+  type NotificationPreferenceRow,
+  type NotificationPreferenceView,
+} from '@communication/services/notification-channel-preferences.util';
+import { nowIso } from '../utils/date-time.util';
 
 // Types
 import {
@@ -49,6 +72,11 @@ import {
   type CategoryChannelConfig,
   type UserCommunicationPreferences,
 } from '@core/types';
+
+type PlanningPreferences = UserCommunicationPreferences & {
+  smsEnabled?: boolean;
+  explicit?: boolean;
+};
 import type { EnterpriseEventPayload } from '@core/types';
 
 /**
@@ -266,15 +294,16 @@ export class CommunicationService implements OnModuleInit {
           : undefined;
 
       // Filter channels based on preferences (SMS only if user explicitly enabled)
-      const finalChannels = this.filterChannelsByPreferences(
-        channels,
-        preferences,
-        enrichedRecipients,
-        request.category
-      );
+      const finalChannels = filterChannelsByPreferences(channels, preferences, enrichedRecipients, {
+        category: request.category,
+        priority: request.priority,
+      });
 
       // Update request with enriched recipients
       request.recipients = enrichedRecipients;
+      // Providers switched off in this environment: never chosen as the single out-of-app
+      // channel, and any attempt on them records SKIPPED ("channel disabled").
+      const disabled = this.disabledChannels();
 
       // Send through each channel and track delivery status
       const results: ChannelDeliveryResult[] = [];
@@ -321,6 +350,14 @@ export class CommunicationService implements OnModuleInit {
             }
 
             const inboxFields = this.buildInboxFields(request);
+            // Start state from the channels that will really be attempted: a row no channel can
+            // carry is SKIPPED with the reason instead of PENDING forever (INT-03).
+            const initialState = initialNotificationState(
+              finalChannels,
+              recipient,
+              request.singleExternalChannel === true,
+              disabled
+            );
             const notification = await this.databaseService.executeWrite(
               async prisma => {
                 const client = this.databaseService['toTransactionClient'](prisma);
@@ -334,6 +371,7 @@ export class CommunicationService implements OnModuleInit {
                         status: string;
                         deliveryStatus: string;
                         channel: string;
+                        failureReason?: string;
                         clinicId: string | null;
                         title: string | null;
                         category: string;
@@ -346,11 +384,16 @@ export class CommunicationService implements OnModuleInit {
                 return await notificationClient.notification.create({
                   data: {
                     userId: recipient.userId!,
-                    type: this.mapChannelToNotificationType(finalChannels[0] || 'email'),
+                    type: this.mapChannelToNotificationType(
+                      (initialState.channel as CommunicationChannel) || 'socket'
+                    ),
                     message: request.body,
-                    status: 'PENDING',
-                    deliveryStatus: 'PENDING',
-                    channel: finalChannels[0] || 'email',
+                    status: initialState.status,
+                    deliveryStatus: initialState.deliveryStatus,
+                    channel: initialState.channel,
+                    ...(initialState.failureReason
+                      ? { failureReason: initialState.failureReason }
+                      : {}),
                     ...inboxFields,
                     clinicId:
                       request.metadata &&
@@ -394,8 +437,16 @@ export class CommunicationService implements OnModuleInit {
 
       for (const channel of finalChannels) {
         for (const recipient of request.recipients) {
-          // Validate channel can be sent to this recipient (skip if missing required contact info)
-          if (!this.canSendChannel(channel, recipient)) {
+          // Validate channel can be sent to this recipient (skip if missing required contact info,
+          // or not the one out-of-app channel picked for a single-channel request)
+          if (
+            !eligibleChannels(
+              finalChannels,
+              recipient,
+              request.singleExternalChannel === true,
+              disabled
+            ).includes(channel)
+          ) {
             const recipientId =
               recipient.userId || recipient.email || recipient.phoneNumber || 'unknown';
             await this.loggingService.log(
@@ -545,17 +596,6 @@ export class CommunicationService implements OnModuleInit {
   }
 
   /**
-   * Type guard to safely get category channels from preferences
-   */
-  private getCategoryChannels(
-    categoryPreferences: Record<string, CommunicationChannel[]>,
-    categoryKey: string
-  ): CommunicationChannel[] | undefined {
-    const value = categoryPreferences[categoryKey];
-    return Array.isArray(value) ? value : undefined;
-  }
-
-  /**
    * Enrich recipients with phone numbers and email addresses from database
    * Fetches missing contact information to enable all communication channels
    */
@@ -621,239 +661,6 @@ export class CommunicationService implements OnModuleInit {
   }
 
   /**
-   * Check if SMS should be sent (only if user explicitly enabled it)
-   */
-  private shouldSendSMS(
-    channel: CommunicationChannel,
-    userId: string | undefined,
-    preferences: Map<string, UserCommunicationPreferences> | undefined,
-    category?: CommunicationCategory
-  ): boolean {
-    // SMS is only sent if explicitly requested/enabled
-    if (channel !== 'sms') {
-      return true; // Not SMS, proceed normally
-    }
-
-    // If no userId, don't send SMS (can't check preference)
-    if (!userId) {
-      return false;
-    }
-
-    // If no preferences, don't send SMS (opt-in required)
-    if (!preferences || preferences.size === 0) {
-      return false;
-    }
-
-    const userPrefs = preferences.get(userId);
-    if (!userPrefs) {
-      return false; // No preferences = no SMS
-    }
-
-    // Check if SMS is explicitly enabled
-    // Access via type assertion since smsEnabled may not be in the interface
-    const prefs = userPrefs as UserCommunicationPreferences & {
-      smsEnabled?: boolean;
-    };
-
-    // SMS must be explicitly enabled
-    if (prefs.smsEnabled !== true) {
-      return false;
-    }
-
-    // Check category-specific SMS preference
-    if (category && userPrefs.categoryPreferences) {
-      const categoryKey = category.toLowerCase();
-      const categoryChannels = this.getCategoryChannels(userPrefs.categoryPreferences, categoryKey);
-      // If category preferences exist and SMS is not included, don't send
-      if (categoryChannels && categoryChannels.length > 0 && !categoryChannels.includes('sms')) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  /**
-   * Check if a channel can be sent to a recipient based on required contact info
-   * @param channel - Channel to check
-   * @param recipient - Recipient to validate
-   * @returns true if channel can be sent, false otherwise
-   */
-  private canSendChannel(
-    channel: CommunicationChannel,
-    recipient: CommunicationRequest['recipients'][0]
-  ): boolean {
-    switch (channel) {
-      case 'email':
-        return !!recipient.email;
-      case 'whatsapp':
-      case 'sms':
-        return !!recipient.phoneNumber;
-      case 'push':
-        return !!recipient.deviceToken || !!recipient.userId; // Can fetch device token from userId
-      case 'socket':
-        return !!recipient.socketRoom || !!recipient.userId; // Can derive room from userId
-      default:
-        return true; // Unknown channels - allow (will fail gracefully in sendToChannel)
-    }
-  }
-
-  /**
-   * Filter channels based on user preferences
-   */
-  private filterChannelsByPreferences(
-    channels: CommunicationChannel[],
-    preferences: Map<string, UserCommunicationPreferences> | undefined,
-    recipients: CommunicationRequest['recipients'],
-    category?: CommunicationCategory
-  ): CommunicationChannel[] {
-    if (!preferences || preferences.size === 0) {
-      // Even without preferences, SMS should be opt-in only
-      return channels.filter(channel => channel !== 'sms');
-    }
-
-    const filteredChannels = new Set<CommunicationChannel>();
-
-    for (const channel of channels) {
-      let shouldInclude = true;
-
-      for (const recipient of recipients) {
-        if (recipient.userId) {
-          const userPrefs = preferences.get(recipient.userId);
-          if (userPrefs) {
-            // Special handling for SMS: Only send if user explicitly enabled
-            if (channel === 'sms') {
-              if (!this.shouldSendSMS(channel, recipient.userId, preferences, category)) {
-                shouldInclude = false;
-                break;
-              }
-            }
-            // Check quiet hours
-            if (userPrefs.quietHours) {
-              const now = new Date();
-              const currentTime = formatTimeInIST(now, {
-                hour12: false,
-                hour: '2-digit',
-                minute: '2-digit',
-                timeZone: userPrefs.quietHours.timezone || IST_TIMEZONE,
-              });
-
-              const quietStart = userPrefs.quietHours.start || '22:00';
-              const quietEnd = userPrefs.quietHours.end || '08:00';
-
-              // Check if current time is within quiet hours
-              if (this.isInQuietHours(currentTime, quietStart, quietEnd)) {
-                // Skip non-critical notifications during quiet hours
-                shouldInclude = false;
-                break;
-              }
-            }
-
-            // Check category-specific preferences
-            if (category && userPrefs.categoryPreferences) {
-              const categoryKey = category.toLowerCase();
-              const categoryChannels = this.getCategoryChannels(
-                userPrefs.categoryPreferences,
-                categoryKey
-              );
-              if (
-                categoryChannels &&
-                categoryChannels.length > 0 &&
-                !categoryChannels.includes(channel)
-              ) {
-                shouldInclude = false;
-                break;
-              }
-            }
-
-            // Check category enablement (appointment, ehr, billing, system)
-            // Access via type assertion since these properties may not be in the interface
-            const prefs = userPrefs as UserCommunicationPreferences & {
-              appointmentEnabled?: boolean;
-              ehrEnabled?: boolean;
-              billingEnabled?: boolean;
-              systemEnabled?: boolean;
-            };
-            if (category) {
-              const categoryKey = category.toLowerCase();
-              if (categoryKey === 'appointment' && prefs.appointmentEnabled === false) {
-                shouldInclude = false;
-                break;
-              }
-              if (
-                (categoryKey === 'ehr_record' || categoryKey === 'ehr') &&
-                prefs.ehrEnabled === false
-              ) {
-                shouldInclude = false;
-                break;
-              }
-              if (categoryKey === 'billing' && prefs.billingEnabled === false) {
-                shouldInclude = false;
-                break;
-              }
-              if (categoryKey === 'system' && prefs.systemEnabled === false) {
-                shouldInclude = false;
-                break;
-              }
-            }
-
-            // Check if channel is disabled for this user
-            if (userPrefs.disabledChannels.includes(channel)) {
-              shouldInclude = false;
-              break;
-            }
-            // Check if channel is enabled (if enabledChannels is specified)
-            if (
-              userPrefs.enabledChannels.length > 0 &&
-              !userPrefs.enabledChannels.includes(channel)
-            ) {
-              shouldInclude = false;
-              break;
-            }
-          }
-        }
-      }
-
-      if (shouldInclude) {
-        filteredChannels.add(channel);
-      }
-    }
-
-    return Array.from(filteredChannels);
-  }
-
-  /**
-   * Check if current time is within quiet hours
-   */
-  private isInQuietHours(currentTime: string, start: string, end: string): boolean {
-    const [currentHour, currentMin] = currentTime.split(':').map(Number);
-    const [startHour, startMin] = start.split(':').map(Number);
-    const [endHour, endMin] = end.split(':').map(Number);
-
-    if (
-      currentHour === undefined ||
-      currentMin === undefined ||
-      startHour === undefined ||
-      startMin === undefined ||
-      endHour === undefined ||
-      endMin === undefined
-    ) {
-      return false;
-    }
-
-    const currentMinutes = currentHour * 60 + currentMin;
-    const startMinutes = startHour * 60 + startMin;
-    const endMinutes = endHour * 60 + endMin;
-
-    // Handle quiet hours that span midnight
-    if (startMinutes > endMinutes) {
-      return currentMinutes >= startMinutes || currentMinutes <= endMinutes;
-    }
-
-    return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
-  }
-
-  /**
    * Check rate limiting
    */
   private async checkRateLimit(request: CommunicationRequest): Promise<boolean> {
@@ -881,129 +688,49 @@ export class CommunicationService implements OnModuleInit {
   }
 
   /**
-   * Get user communication preferences from database
+   * Notification preferences of the addressed users. Read through CacheService.cache() under the
+   * key NotificationPreferenceService fills, with the same view, so both always agree on the
+   * shape (D2: a plain get() of that key returned the SWR envelope and every channel read as off).
    */
   private async getUserPreferences(
     recipients: CommunicationRequest['recipients']
-  ): Promise<Map<string, UserCommunicationPreferences> | undefined> {
-    const preferences = new Map<string, UserCommunicationPreferences>();
+  ): Promise<Map<string, PlanningPreferences> | undefined> {
+    const preferences = new Map<string, PlanningPreferences>();
 
     for (const recipient of recipients) {
-      if (recipient.userId) {
-        try {
-          const cacheKey = `notification_preferences:${recipient.userId}`;
-          let cached = await this.cacheService.get<{
-            emailEnabled: boolean;
-            smsEnabled: boolean;
-            pushEnabled: boolean;
-            socketEnabled: boolean;
-            whatsappEnabled: boolean;
-            appointmentEnabled: boolean;
-            ehrEnabled: boolean;
-            billingEnabled: boolean;
-            systemEnabled: boolean;
-            quietHours?: { start?: string; end?: string; timezone?: string } | null;
-            categoryPreferences?: Record<string, string[]> | null;
-          }>(cacheKey);
-
-          if (!cached) {
-            // Fetch from database
-            const dbPrefs = await this.databaseService.findNotificationPreferenceByUserIdSafe(
-              recipient.userId
+      const userId = recipient.userId;
+      if (!userId || preferences.has(userId)) continue;
+      try {
+        const view = await this.cacheService.cache<NotificationPreferenceView>(
+          `notification_preferences:${userId}`,
+          async () => {
+            const row = await this.databaseService.findNotificationPreferenceByUserIdSafe(userId);
+            const role = row?.id
+              ? null
+              : ((await this.databaseService.findUserByIdSafe(userId))?.role ?? null);
+            return notificationPreferenceView(
+              userId,
+              row as NotificationPreferenceRow | null,
+              role
             );
-
-            if (dbPrefs) {
-              cached = {
-                emailEnabled: dbPrefs.emailEnabled,
-                smsEnabled: dbPrefs.smsEnabled,
-                pushEnabled: dbPrefs.pushEnabled,
-                socketEnabled: dbPrefs.socketEnabled,
-                whatsappEnabled: dbPrefs.whatsappEnabled,
-                appointmentEnabled: dbPrefs.appointmentEnabled,
-                ehrEnabled: dbPrefs.ehrEnabled,
-                billingEnabled: dbPrefs.billingEnabled,
-                systemEnabled: dbPrefs.systemEnabled,
-                quietHours: dbPrefs.quietHoursStart
-                  ? ({
-                      start: dbPrefs.quietHoursStart,
-                      end: dbPrefs.quietHoursEnd || undefined,
-                      timezone: dbPrefs.quietHoursTimezone || 'UTC',
-                    } as { start?: string; end?: string; timezone?: string } | null)
-                  : null,
-                categoryPreferences: dbPrefs.categoryPreferences
-                  ? (dbPrefs.categoryPreferences as unknown as Record<string, string[]>)
-                  : null,
-              };
-
-              // Cache for 1 hour
-              await this.cacheService.set(cacheKey, cached, 3600);
-            } else {
-              // Use defaults
-              cached = {
-                emailEnabled: true,
-                smsEnabled: true,
-                pushEnabled: true,
-                socketEnabled: true,
-                whatsappEnabled: false,
-                appointmentEnabled: true,
-                ehrEnabled: true,
-                billingEnabled: true,
-                systemEnabled: true,
-                quietHours: null,
-                categoryPreferences: null,
-              };
-            }
+          },
+          { ttl: 3600, tags: [`user_preferences:${userId}`] }
+        );
+        const flags = normalizePreferenceFlags(view);
+        preferences.set(userId, toUserCommunicationPreferences(userId, flags));
+      } catch (error) {
+        // Defaults (everything on but SMS / WhatsApp) rather than no preferences at all.
+        preferences.set(userId, toUserCommunicationPreferences(userId, defaultPreferenceFlags()));
+        void this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Failed to get user communication preferences, using defaults',
+          'CommunicationService',
+          {
+            userId,
+            error: error instanceof Error ? error.message : 'Unknown error',
           }
-
-          if (cached) {
-            // Convert to UserCommunicationPreferences format
-            const enabledChannels: CommunicationChannel[] = [];
-            const disabledChannels: CommunicationChannel[] = [];
-
-            if (cached.emailEnabled) enabledChannels.push('email');
-            else disabledChannels.push('email');
-            if (cached.smsEnabled) enabledChannels.push('sms');
-            else disabledChannels.push('sms');
-            if (cached.pushEnabled) enabledChannels.push('push');
-            else disabledChannels.push('push');
-            if (cached.socketEnabled) enabledChannels.push('socket');
-            else disabledChannels.push('socket');
-            if (cached.whatsappEnabled) enabledChannels.push('whatsapp');
-            else disabledChannels.push('whatsapp');
-
-            preferences.set(recipient.userId, {
-              userId: recipient.userId,
-              enabledChannels,
-              disabledChannels,
-              categoryPreferences: cached.categoryPreferences
-                ? (cached.categoryPreferences as unknown as Record<string, CommunicationChannel[]>)
-                : undefined,
-              quietHours: cached.quietHours
-                ? {
-                    start: cached.quietHours.start || '22:00',
-                    end: cached.quietHours.end || '08:00',
-                    timezone: cached.quietHours.timezone || 'UTC',
-                  }
-                : undefined,
-              appointmentEnabled: cached.appointmentEnabled ?? true,
-              ehrEnabled: cached.ehrEnabled ?? true,
-              billingEnabled: cached.billingEnabled ?? true,
-              systemEnabled: cached.systemEnabled ?? true,
-            } as UserCommunicationPreferences);
-          }
-        } catch (error) {
-          // Log but don't fail
-          void this.loggingService.log(
-            LogType.CACHE,
-            LogLevel.WARN,
-            'Failed to get user communication preferences',
-            'CommunicationService',
-            {
-              userId: recipient.userId,
-              error: error instanceof Error ? error.message : 'Unknown error',
-            }
-          );
-        }
+        );
       }
     }
 
@@ -1091,6 +818,14 @@ export class CommunicationService implements OnModuleInit {
     }
   }
 
+  /** Channels whose provider is switched off in this environment (WHATSAPP_ENABLED, email). */
+  private disabledChannels(): ReadonlySet<CommunicationChannel> {
+    const disabled = new Set<CommunicationChannel>();
+    if (!this.whatsAppService.isEnabled()) disabled.add('whatsapp');
+    if (!this.emailService.isEnabled()) disabled.add('email');
+    return disabled;
+  }
+
   /**
    * Send message to a specific channel with delivery tracking
    */
@@ -1100,7 +835,9 @@ export class CommunicationService implements OnModuleInit {
     recipient: CommunicationRequest['recipients'][0],
     notificationId?: string
   ): Promise<ChannelDeliveryResult> {
-    const result = await this.sendToChannel(channel, request, recipient);
+    const result = await this.sendToChannel(channel, request, recipient, notificationId);
+    // SENT, FAILED, or SKIPPED (metadata.skipped: disabled provider, no registered device).
+    const outcome = channelOutcome(result);
 
     // Track delivery status
     if (notificationId && recipient.userId) {
@@ -1139,40 +876,74 @@ export class CommunicationService implements OnModuleInit {
                     deliveryReceipt: unknown;
                   };
                 }) => Promise<unknown>;
+                updateMany: (args: {
+                  where: { id: string; status: { not: string } | { notIn: string[] } };
+                  data: {
+                    status: string;
+                    deliveryStatus: string;
+                    failedAt?: Date;
+                    failureReason: string;
+                    channel: string;
+                    deliveryReceipt: unknown;
+                  };
+                }) => Promise<{ count: number }>;
               };
             };
             await notificationClient.notificationDeliveryLog.create({
               data: {
                 notificationId,
                 channel,
-                status: result.success ? 'SENT' : 'FAILED',
+                status: outcome.status,
                 sentAt: result.timestamp,
-                ...(result.success && { deliveredAt: new Date() }),
-                ...(!result.success && {
-                  failedAt: new Date(),
-                  failureReason: result.error || 'Unknown error',
-                }),
+                ...(outcome.status === 'SENT' && { deliveredAt: new Date() }),
+                ...(outcome.status === 'FAILED' && { failedAt: new Date() }),
+                ...(outcome.reason && { failureReason: outcome.reason }),
                 providerResponse: result.metadata || null,
                 retryCount: 0,
               },
             });
 
-            // Update notification delivery status
-            await notificationClient.notification.update({
-              where: { id: notificationId },
-              data: {
-                status: result.success ? 'SENT' : 'FAILED',
-                deliveryStatus: result.success ? 'SENT' : 'FAILED',
-                sentAt: result.timestamp,
-                ...(result.success && { deliveredAt: new Date() }),
-                ...(!result.success && {
+            // Update notification delivery status. One row covers every channel of the request,
+            // so a failed channel (e.g. push without a device) must not overwrite a channel that
+            // already delivered it (e.g. socket): a failure only lands on a row not yet SENT.
+            if (outcome.status === 'SENT') {
+              await notificationClient.notification.update({
+                where: { id: notificationId },
+                data: {
+                  status: 'SENT',
+                  deliveryStatus: 'SENT',
+                  sentAt: result.timestamp,
+                  deliveredAt: new Date(),
+                  channel,
+                  deliveryReceipt: result.metadata || null,
+                },
+              });
+            } else if (outcome.status === 'SKIPPED') {
+              // A skipped channel neither overwrites a channel that delivered (SENT) nor hides
+              // one that really failed (FAILED).
+              await notificationClient.notification.updateMany({
+                where: { id: notificationId, status: { notIn: ['SENT', 'FAILED'] } },
+                data: {
+                  status: 'SKIPPED',
+                  deliveryStatus: 'SKIPPED',
+                  failureReason: outcome.reason ?? 'skipped',
+                  channel,
+                  deliveryReceipt: result.metadata || null,
+                },
+              });
+            } else {
+              await notificationClient.notification.updateMany({
+                where: { id: notificationId, status: { not: 'SENT' } },
+                data: {
+                  status: 'FAILED',
+                  deliveryStatus: 'FAILED',
                   failedAt: new Date(),
-                  failureReason: result.error || 'Unknown error',
-                }),
-                channel,
-                deliveryReceipt: result.metadata || null,
-              },
-            });
+                  failureReason: outcome.reason ?? 'Unknown error',
+                  channel,
+                  deliveryReceipt: result.metadata || null,
+                },
+              });
+            }
           },
           {
             userId: 'system',
@@ -1213,14 +984,15 @@ export class CommunicationService implements OnModuleInit {
   private async sendToChannel(
     channel: CommunicationChannel,
     request: CommunicationRequest,
-    recipient: CommunicationRequest['recipients'][0]
+    recipient: CommunicationRequest['recipients'][0],
+    notificationId?: string
   ): Promise<ChannelDeliveryResult> {
     const timestamp = new Date();
 
     try {
       switch (channel) {
         case 'socket':
-          return this.sendSocket(request, recipient, timestamp);
+          return this.sendSocket(request, recipient, timestamp, notificationId);
         case 'push':
           return await this.sendPush(request, recipient, timestamp);
         case 'email':
@@ -1250,12 +1022,14 @@ export class CommunicationService implements OnModuleInit {
   }
 
   /**
-   * Send via Socket.IO
+   * Send via Socket.IO: always the `notification` event with an ids-only payload (category,
+   * inbox row id, routing ids). The client reads title/body from the inbox API.
    */
   private sendSocket(
     request: CommunicationRequest,
     recipient: CommunicationRequest['recipients'][0],
-    timestamp: Date
+    timestamp: Date,
+    notificationId?: string
   ): Promise<ChannelDeliveryResult> {
     try {
       if (!recipient.socketRoom && !recipient.userId) {
@@ -1269,28 +1043,12 @@ export class CommunicationService implements OnModuleInit {
 
       const room =
         recipient.socketRoom || (recipient.userId ? `user:${recipient.userId}` : 'unknown');
-      const socketData: Record<string, string | number | boolean | null> = {
-        type: String(request.category),
-        title: request.title,
-        body: request.body,
-      };
-      if (request.data) {
-        // Convert data to socket-compatible format
-        for (const [key, value] of Object.entries(request.data)) {
-          if (
-            typeof value === 'string' ||
-            typeof value === 'number' ||
-            typeof value === 'boolean' ||
-            value === null
-          ) {
-            socketData[key] = value;
-          } else {
-            socketData[key] = JSON.stringify(value);
-          }
-        }
-      }
+      const socketData = buildNotificationSocketPayload(
+        { category: String(request.category), notificationId, data: request.data },
+        timestamp.toISOString()
+      );
       // SocketService.sendToRoom is synchronous, but we wrap it for consistency
-      this.socketService.sendToRoom(room, request.title, socketData);
+      this.socketService.sendToRoom(room, NOTIFICATION_SOCKET_EVENT, socketData);
 
       return Promise.resolve({
         channel: 'socket',
@@ -1318,25 +1076,29 @@ export class CommunicationService implements OnModuleInit {
     timestamp: Date
   ): Promise<ChannelDeliveryResult> {
     try {
-      if (!recipient.deviceToken) {
+      const notification = {
+        title: request.title,
+        body: request.body,
+        ...(request.data && { data: request.data as Record<string, string> }),
+      };
+
+      // An explicit token targets that device only; most callers know just the user, so push to
+      // every device that user registered. FCM primary and SNS fallback happen inside.
+      const result = recipient.deviceToken
+        ? await this.pushService.sendToDevice(recipient.deviceToken, notification, recipient.userId)
+        : recipient.userId
+          ? await this.pushService.sendToUser(recipient.userId, notification)
+          : { success: false, error: NO_REGISTERED_DEVICE };
+
+      if (isNoDeviceResult(result)) {
         return {
           channel: 'push',
           success: false,
-          error: 'No device token provided',
+          error: NO_REGISTERED_DEVICE,
           timestamp,
+          metadata: { skipped: true, skipReason: NO_REGISTERED_DEVICE },
         };
       }
-
-      // PushNotificationService handles FCM primary and SNS fallback automatically
-      const result = await this.pushService.sendToDevice(
-        recipient.deviceToken,
-        {
-          title: request.title,
-          body: request.body,
-          ...(request.data && { data: request.data as Record<string, string> }),
-        },
-        recipient.userId
-      );
 
       return {
         channel: 'push',
@@ -1369,6 +1131,7 @@ export class CommunicationService implements OnModuleInit {
     recipient: CommunicationRequest['recipients'][0],
     timestamp: Date
   ): Promise<ChannelDeliveryResult> {
+    if (!this.emailService.isEnabled()) return channelDisabledResult('email', timestamp);
     try {
       if (!recipient.email) {
         return {
@@ -1400,6 +1163,7 @@ export class CommunicationService implements OnModuleInit {
         clinicId
       );
 
+      if (emailResult.skipped) return channelDisabledResult('email', timestamp);
       return {
         channel: 'email',
         success: emailResult.success,
@@ -1484,6 +1248,7 @@ export class CommunicationService implements OnModuleInit {
     recipient: CommunicationRequest['recipients'][0],
     timestamp: Date
   ): Promise<ChannelDeliveryResult> {
+    if (!this.whatsAppService.isEnabled()) return channelDisabledResult('whatsapp', timestamp);
     try {
       if (!recipient.phoneNumber) {
         return {
@@ -1552,7 +1317,11 @@ export class CommunicationService implements OnModuleInit {
       // but double-check here for safety
       if (recipient.userId) {
         const preferences = await this.getUserPreferences([recipient]);
-        if (!this.shouldSendSMS('sms', recipient.userId, preferences, request.category)) {
+        const allowed = filterChannelsByPreferences(['sms'], preferences, [recipient], {
+          category: request.category,
+          priority: request.priority,
+        });
+        if (!preferences || allowed.length === 0) {
           return {
             channel: 'sms',
             success: false,

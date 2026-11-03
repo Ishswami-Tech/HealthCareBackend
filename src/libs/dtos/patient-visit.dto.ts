@@ -362,6 +362,11 @@ export interface PatientVisitResponse {
     totalAmount: number;
     status: string;
     paidAmount: number;
+    /**
+     * Set when `collectFee` was requested but record-payment refused it (409 / 400) or failed;
+     * the invoice still exists (PENDING) and the fee can be collected from Billing.
+     */
+    paymentError?: string | null;
   } | null;
 }
 

@@ -6,6 +6,7 @@ import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { TokenPayload, AuthTokens } from '@core/types';
+import { logLevelForError } from '@core/errors/error-severity.util';
 import * as crypto from 'crypto';
 import { SignOptions } from 'jsonwebtoken';
 
@@ -561,17 +562,26 @@ export class JwtAuthService {
   }
 
   /**
-   * Refresh token with enhanced security
+   * Refresh token with enhanced security.
+   *
+   * `assertSessionActive` runs on the VERIFIED payload before any token is minted; it must throw
+   * when the session the refresh token belongs to was revoked, so a logged-out / revoked session
+   * (or a stolen refresh token of one) can no longer obtain new tokens.
    */
   async refreshEnhancedToken(
     refreshToken: string,
     deviceFingerprint?: string,
     userAgent?: string,
-    ipAddress?: string
+    ipAddress?: string,
+    assertSessionActive?: (payload: TokenPayload) => Promise<void>
   ): Promise<AuthTokens> {
     try {
       // Verify refresh token
       const payload = await this.verifyEnhancedToken(refreshToken);
+
+      if (assertSessionActive) {
+        await assertSessionActive(payload);
+      }
 
       // Validate device consistency
       if (
@@ -610,7 +620,7 @@ export class JwtAuthService {
     } catch (_error) {
       void this.loggingService.log(
         LogType.ERROR,
-        LogLevel.ERROR,
+        logLevelForError(_error),
         'Enhanced token refresh failed',
         'JwtAuthService',
         {

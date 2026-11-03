@@ -322,9 +322,11 @@ export class PaymentConfigService implements OnModuleInit {
           };
 
     // Build fallback providers from remaining env-enabled providers
+    // Tagged 'environment': the clinic never chose them, so they may verify existing orders
+    // but never open a new one (see provider-fallback.util).
     const fallback: PaymentProviderConfig[] = envProviderEntries
       .slice(1)
-      .map(entry => ({ ...entry.config }));
+      .map(entry => ({ ...entry.config, source: 'environment' as const }));
 
     return {
       clinicId,
@@ -343,6 +345,17 @@ export class PaymentConfigService implements OnModuleInit {
     config: ClinicPaymentConfig,
     defaults: ClinicPaymentConfig
   ): ClinicPaymentConfig {
+    // `config` is typed as always having `.payment`, but it is built from an untyped JSONB
+    // column (Clinic.settings.paymentSettings) cast straight to ClinicPaymentConfig in
+    // fetchFromDatabase() - a clinic whose stored settings predate the nested `payment: {...}`
+    // shape (flat {currency, autoBilling, paymentMethods} instead) has no `.payment` at runtime,
+    // which threw "Cannot read properties of undefined (reading 'primary')" on every payment.
+    // Treat a missing `.payment` the same as "no clinic-specific config": fall through to
+    // defaults, exactly like fetchFromDatabase already does for a genuinely absent row.
+    if (!config.payment) {
+      return defaults;
+    }
+
     // Every env-enabled provider, keyed by its own name — NOT "whichever provider
     // happens to be the system's first-enabled one". Used only to top up missing
     // credential fields for the SAME provider the clinic actually chose; never to
@@ -389,7 +402,7 @@ export class PaymentConfigService implements OnModuleInit {
         return [];
       }
       configuredProviders.add(entry.provider);
-      return [{ ...entry }];
+      return [{ ...entry, source: 'environment' as const }];
     });
 
     return {

@@ -267,7 +267,8 @@ export class SocialAuthService {
           userid: generateSocialUserId(socialUser.email, socialUser.provider),
           email: socialUser.email,
           name: `${socialUser.firstName || ''} ${socialUser.lastName || ''}`.trim(),
-          age: 12, // Temporary default - MUST be updated with actual DOB during profile completion
+          // No DOB at social sign-up, so age is left unset (not a fabricated value) until
+          // profile completion supplies a real date of birth.
           firstName: socialUser.firstName || '',
           lastName: socialUser.lastName || '',
           profilePicture: socialUser.profilePicture,

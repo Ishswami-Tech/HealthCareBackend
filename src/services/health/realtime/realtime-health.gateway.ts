@@ -22,10 +22,36 @@ import { safeLog, safeLogError } from '@infrastructure/logging/logging.helper';
 import { HealthBroadcasterService } from './services/health-broadcaster.service';
 import { HealthCacheService } from './services/health-cache.service';
 import { getSocketCorsOrigin } from '@communication/channels/socket/socket-cors.util';
+import {
+  SocketAuthMiddleware,
+  type AuthenticatedUser,
+} from '@communication/channels/socket/socket-auth.middleware';
+import { HEALTH_DETAIL_ROLES } from '@communication/channels/socket/socket-room-policy';
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
 import type {
   AggregatedHealthStatus,
   RealtimeHealthStatusPayload,
 } from '@core/types/realtime-health.types';
+
+/** Key under `socket.data` holding the user authenticated by the namespace middleware. */
+const HEALTH_USER_KEY = 'healthUser';
+
+/** Socket.IO namespace middleware signature (kept local: socket.io does not export it). */
+type NamespaceMiddleware = (socket: Socket, next: (err?: Error) => void) => void;
+
+/** Detailed status (services, endpoints, system) is for SUPER_ADMIN / CLINIC_ADMIN only. */
+export function canSeeDetailedHealth(role: string | undefined): boolean {
+  return typeof role === 'string' && HEALTH_DETAIL_ROLES.has(role);
+}
+
+/** What every other authenticated user may get, on demand only: the overall status. */
+export function toMinimalHealthStatus(
+  overall: RealtimeHealthStatusPayload['o'],
+  timestamp: string
+): RealtimeHealthStatusPayload {
+  return { t: timestamp, o: overall, s: {}, u: 0 };
+}
 
 interface SubscribePayload {
   room?: string;
@@ -41,10 +67,13 @@ interface SubscribeResponse {
  * Realtime Health Gateway
  * Provides real-time health status via Socket.IO
  *
- * Security: Public namespace with CORS-only access control
- * - No authentication required (public health monitoring)
+ * Security:
+ * - Authentication required (same JWT/session check as the main namespace). Anonymous clients
+ *   are rejected and should use the public HTTP GET /health instead.
+ * - SUPER_ADMIN / CLINIC_ADMIN join `health:all` and get the detailed status + periodic pushes.
+ * - Any other authenticated user gets only the overall status, on demand (`health:subscribe`),
+ *   and no pushes.
  * - CORS restricted to CORS_ORIGIN environment variable
- * - Rate limiting: Max 3 connections per IP
  */
 @Injectable()
 @WebSocketGateway({
@@ -75,8 +104,39 @@ export class RealtimeHealthGateway
     private readonly cache: HealthCacheService,
     @Optional()
     @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService?: LoggingService
+    private readonly loggingService?: LoggingService,
+    @Optional()
+    @Inject(forwardRef(() => SocketAuthMiddleware))
+    private readonly socketAuth?: SocketAuthMiddleware
   ) {}
+
+  /**
+   * Namespace middleware: authenticate before the connection is accepted. The error messages
+   * match what the web client already treats as auth errors ("jwt expired" triggers a token
+   * refresh + reconnect; "Authentication required" for anonymous / invalid tokens).
+   */
+  private readonly authenticateHealthSocket: NamespaceMiddleware = (socket, next) => {
+    if (!this.socketAuth) {
+      next(new Error('Authentication required'));
+      return;
+    }
+    this.socketAuth
+      .validateConnection(socket)
+      .then(user => {
+        (socket.data as Record<string, unknown>)[HEALTH_USER_KEY] = user;
+        next();
+      })
+      .catch((error: unknown) => {
+        const expired =
+          error instanceof HealthcareError && error.code === ErrorCode.AUTH_TOKEN_EXPIRED;
+        next(new Error(expired ? 'jwt expired' : 'Authentication required'));
+      });
+  };
+
+  private getHealthUser(client: Socket): AuthenticatedUser | undefined {
+    const value = (client.data as Record<string, unknown> | undefined)?.[HEALTH_USER_KEY];
+    return value && typeof value === 'object' ? (value as AuthenticatedUser) : undefined;
+  }
 
   onModuleInit() {
     // Socket server will be initialized in afterInit
@@ -96,11 +156,8 @@ export class RealtimeHealthGateway
           : server;
 
       if (healthNamespace) {
-        // Remove any authentication middleware that might be applied globally
-        // This ensures the health namespace is truly public
-        healthNamespace.use((socket: unknown, next: () => void) => {
-          next();
-        });
+        // System status is not public over sockets: authenticate every connection.
+        healthNamespace.use(this.authenticateHealthSocket);
       }
 
       // Get CORS origins for logging
@@ -115,21 +172,19 @@ export class RealtimeHealthGateway
         this.loggingService,
         LogType.SYSTEM,
         LogLevel.INFO,
-        'Realtime Health Gateway initialized (Public - CORS only)',
+        'Realtime Health Gateway initialized (authenticated; detail for admins only)',
         'RealtimeHealthGateway',
         {
           namespace: '/health',
           corsOrigins: allowedOrigins,
-          authentication: 'none',
-          accessControl: 'CORS only',
+          authentication: 'jwt-or-session',
+          detailRoles: Array.from(HEALTH_DETAIL_ROLES),
         }
       );
 
-      // Set server in broadcaster (pass namespace so broadcaster can emit without calling .of again)
+      // Set server in broadcaster (pass namespace so broadcaster can emit without calling .of again).
+      // The broadcaster only emits to `health:all`, which only admins join.
       this.broadcaster.setSocketServer(healthNamespace as Server);
-
-      // No authentication middleware - health namespace is completely public
-      // Access is controlled only via CORS configuration
     } catch (error) {
       safeLogError(this.loggingService, error, 'RealtimeHealthGateway', {
         operation: 'afterInit',
@@ -142,39 +197,29 @@ export class RealtimeHealthGateway
       const clientId = client.id;
       const clientIP = this.getClientIP(client);
 
-      // Health checks should not have connection limits - they run constantly
-      // Removed rate limiting to allow unlimited health check connections
-      // Security is handled via CORS configuration only
-
-      // Auto-join to health:all room
-      await client.join(this.ROOM_ALL);
-
-      // Send initial health status (cached)
-      const cachedStatus: unknown = await this.cache.getCachedStatus();
-      const validated = this.validateAndGetAggregatedHealthStatus(cachedStatus);
-      if (validated) {
-        const endpointsKeys = Object.keys(validated.endpoints);
-        const hasSystem = validated.system && typeof validated.system === 'object';
-        const realtimeStatus: RealtimeHealthStatusPayload = {
-          t: validated.timestamp,
-          o: validated.overall,
-          s: validated.services,
-          ...(endpointsKeys.length > 0 && { e: validated.endpoints }),
-          ...(hasSystem && { sys: validated.system }),
-          u: validated.uptime,
-        };
-
-        client.emit('health:status', realtimeStatus);
-      } else {
-        // Send default status if no cache
-        const defaultStatus: RealtimeHealthStatusPayload = {
-          t: nowIso(),
-          o: 'healthy',
-          s: {},
-          u: 0,
-        };
-        client.emit('health:status', defaultStatus);
+      // The namespace middleware authenticated the socket; refuse anything that slipped past it.
+      const user = this.getHealthUser(client);
+      if (!user) {
+        client.disconnect(true);
+        return;
       }
+
+      // Non-admins get no pushes: they may ask for the overall status via health:subscribe.
+      if (!canSeeDetailedHealth(user.role)) {
+        safeLog(
+          this.loggingService,
+          LogType.SYSTEM,
+          LogLevel.DEBUG,
+          `Client connected to health gateway (summary only): ${clientId}`,
+          'RealtimeHealthGateway',
+          { clientId, role: user.role }
+        );
+        return;
+      }
+
+      // Admins: join health:all (periodic pushes) and get the cached detailed status now.
+      await client.join(this.ROOM_ALL);
+      client.emit('health:status', await this.getStatusFor(user));
 
       safeLog(
         this.loggingService,
@@ -225,36 +270,18 @@ export class RealtimeHealthGateway
     @MessageBody() payload?: SubscribePayload
   ): Promise<SubscribeResponse> {
     try {
-      // Client is already in health:all room (joined on connection)
-      // Optionally join additional room if specified
-      if (payload?.room) {
-        await client.join(payload.room);
+      const user = this.getHealthUser(client);
+      if (!user) {
+        return { success: false, message: 'Authentication required' };
       }
 
-      // Send current cached status
-      const cachedStatus: unknown = await this.cache.getCachedStatus();
-      const validated = this.validateAndGetAggregatedHealthStatus(cachedStatus);
-      if (validated) {
-        const endpointsKeys = Object.keys(validated.endpoints);
-        const hasSystem = validated.system && typeof validated.system === 'object';
-        const realtimeStatus: RealtimeHealthStatusPayload = {
-          t: validated.timestamp,
-          o: validated.overall,
-          s: validated.services,
-          ...(endpointsKeys.length > 0 && { e: validated.endpoints }),
-          ...(hasSystem && { sys: validated.system }),
-          u: validated.uptime,
-        };
-
-        // Create response with validated status
-        // Use helper to create response safely
-        return this.createSubscribeResponse(realtimeStatus);
+      // Only the push room is joinable, and only by admins (arbitrary room names were accepted
+      // before, letting a client join any room of this namespace).
+      if (canSeeDetailedHealth(user.role) && (!payload?.room || payload.room === this.ROOM_ALL)) {
+        await client.join(this.ROOM_ALL);
       }
 
-      return {
-        success: true,
-        message: 'Subscribed to health updates',
-      };
+      return this.createSubscribeResponse(await this.getStatusFor(user));
     } catch (error) {
       safeLogError(this.loggingService, error, 'RealtimeHealthGateway', {
         operation: 'handleSubscribe',
@@ -284,6 +311,28 @@ export class RealtimeHealthGateway
 
       return { success: false };
     }
+  }
+
+  /** Cached status, detailed for admins and overall-only for everyone else. */
+  private async getStatusFor(user: AuthenticatedUser): Promise<RealtimeHealthStatusPayload> {
+    const cachedStatus: unknown = await this.cache.getCachedStatus();
+    const validated = this.validateAndGetAggregatedHealthStatus(cachedStatus);
+    if (!validated) {
+      return toMinimalHealthStatus('healthy', nowIso());
+    }
+    if (!canSeeDetailedHealth(user.role)) {
+      return toMinimalHealthStatus(validated.overall, validated.timestamp);
+    }
+    const endpointsKeys = Object.keys(validated.endpoints);
+    const hasSystem = validated.system && typeof validated.system === 'object';
+    return {
+      t: validated.timestamp,
+      o: validated.overall,
+      s: validated.services,
+      ...(endpointsKeys.length > 0 && { e: validated.endpoints }),
+      ...(hasSystem && { sys: validated.system }),
+      u: validated.uptime,
+    };
   }
 
   /**

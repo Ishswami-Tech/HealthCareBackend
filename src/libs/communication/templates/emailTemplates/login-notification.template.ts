@@ -33,7 +33,7 @@ export function generateLoginNotificationTemplate(
       </div>
       
       <p>If this was you, no further action is needed.</p>
-      <p>If you don't recognize this login, please secure your account immediately by changing your password.</p>
+      <p>If this wasn't you, contact the clinic.</p>
       
       <p>Best regards,<br>The ${context['appName'] || 'Healthcare App'} Security Team</p>
       ${unsubscribeUrl ? generateUnsubscribeFooter(unsubscribeUrl) : '<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0; font-size: 12px; color: #777;"><p>This is an automated security notification. Please do not reply to this email.</p></div>'}

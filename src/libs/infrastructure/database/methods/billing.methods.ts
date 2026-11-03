@@ -128,6 +128,52 @@ export class BillingMethods extends DatabaseMethodsBase {
     return result;
   }
 
+  /**
+   * Conditional edit of a PENDING invoice: the status check and the write are one statement
+   * (`UPDATE ... WHERE id AND clinicId AND status = 'PENDING'`), so an edit can never land after a
+   * concurrent payment settled (or a void cancelled) the invoice. Returns null when no row matched
+   * (invoice gone, other clinic, or no longer PENDING); the caller maps that to a 409.
+   */
+  async updatePendingInvoiceSafe(
+    id: string,
+    clinicId: string,
+    data: InvoiceUpdateInput
+  ): Promise<InvoiceWithRelations | null> {
+    const result = await this.executeWrite<InvoiceWithRelations | null>(
+      async prisma => {
+        const { count } = await prisma.invoice.updateMany({
+          where: { id, clinicId, status: 'PENDING' },
+          data: data as never,
+        });
+        if (count === 0) {
+          return null;
+        }
+        return await prisma.invoice.findUnique({
+          where: { id },
+          include: {
+            subscription: true,
+            payments: true,
+          },
+        });
+      },
+      {
+        userId: 'system',
+        userRole: 'system',
+        clinicId,
+        operation: 'UPDATE_PENDING_INVOICE',
+        resourceType: 'INVOICE',
+        resourceId: id,
+        timestamp: new Date(),
+      }
+    );
+
+    if (result) {
+      await this.invalidateCache([`invoice:${id}`, 'invoices']);
+    }
+
+    return result;
+  }
+
   // ===== Subscription Methods =====
 
   /**

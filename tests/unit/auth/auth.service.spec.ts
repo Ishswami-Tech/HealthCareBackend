@@ -1,395 +1,359 @@
 /**
  * Unit tests for AuthService public API.
  *
- * AuthService has 15 constructor dependencies. These tests provide
- * all of them as plain mock objects so the service can be instantiated
- * and its public methods tested in isolation.
+ * AuthService has 15 constructor dependencies. These tests provide all of them as plain
+ * mock objects so the service can be instantiated and its guard paths tested in isolation
+ * (the full OTP and password flows have their own suites: otp.service, password.service,
+ * session-routes).
  */
 
 import { AuthService } from '@services/auth/auth.service';
 import type { AuthTokens } from '@core/types';
 
+type Deps = ConstructorParameters<typeof AuthService>;
+
+/** Every HealthcareErrorsService factory returns a tagged Error so tests can assert on it. */
+function createErrors(): Record<string, jest.Mock> {
+  const names = [
+    'validationError',
+    'clinicNotFound',
+    'userNotFound',
+    'invalidCredentials',
+    'accountLocked',
+    'authenticationError',
+    'tokenExpired',
+    'serviceUnavailable',
+    'otpInvalid',
+    'rateLimitExceeded',
+  ];
+  return Object.fromEntries(
+    names.map(name => [
+      name,
+      jest.fn((...args: unknown[]) => {
+        const error = new Error(`${name}: ${args.filter(a => typeof a === 'string').join(' | ')}`);
+        error.name = name;
+        return error;
+      }),
+    ])
+  );
+}
+
+function createHarness() {
+  const databaseService = {
+    executeHealthcareRead: jest.fn(),
+    executeHealthcareWrite: jest.fn(),
+    findClinicByIdSafe: jest.fn(),
+    findUserByEmailForAuth: jest.fn().mockResolvedValue(null),
+    findUserByEmailSafe: jest.fn().mockResolvedValue(null),
+    findUsersSafe: jest.fn().mockResolvedValue([]),
+  };
+  const jwtService = { signAsync: jest.fn(), verifyAsync: jest.fn(), decode: jest.fn() };
+  const configService = {
+    get: jest.fn(),
+    getEnv: jest.fn((_key: string, fallback?: unknown) => fallback),
+    getEnvBoolean: jest.fn((_key: string, fallback = false) => fallback),
+  };
+  const cacheService = {
+    cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
+    get: jest.fn().mockResolvedValue(null),
+    set: jest.fn().mockResolvedValue(undefined),
+    del: jest.fn().mockResolvedValue(undefined),
+    incr: jest.fn().mockResolvedValue(1),
+    expire: jest.fn().mockResolvedValue(undefined),
+    acquireLock: jest.fn().mockResolvedValue(true),
+    releaseLock: jest.fn().mockResolvedValue(undefined),
+  };
+  const logging = { log: jest.fn().mockResolvedValue(undefined) };
+  const eventService = { emit: jest.fn().mockResolvedValue(undefined) };
+  const errors = createErrors();
+  const sessionService = {
+    createSession: jest.fn().mockResolvedValue({ sessionId: 'session-123' }),
+    invalidateSession: jest.fn().mockResolvedValue(true),
+  };
+  const rbacService = {
+    getUserRoles: jest.fn().mockResolvedValue([{ roleId: 'role-1' }, { roleId: 'role-2' }]),
+    getRolePermissions: jest.fn().mockResolvedValue(['users:read', 'users:write']),
+  };
+  const jwtAuthService = {
+    refreshEnhancedToken: jest.fn().mockResolvedValue({
+      accessToken: 'refreshed-access',
+      refreshToken: 'refreshed-refresh',
+      expiresIn: 900,
+      sessionId: 'session-789',
+    } as AuthTokens),
+  };
+  const otpService = {
+    verifyOtp: jest.fn().mockResolvedValue({ success: false, message: 'Invalid OTP' }),
+    generateOtp: jest.fn().mockReturnValue('123456'),
+  };
+
+  const service = new AuthService(
+    databaseService as unknown as Deps[0],
+    jwtService as unknown as Deps[1],
+    configService as unknown as Deps[2],
+    cacheService as unknown as Deps[3],
+    logging as unknown as Deps[4],
+    eventService as unknown as Deps[5],
+    errors as unknown as Deps[6],
+    {} as unknown as Deps[7],
+    {} as unknown as Deps[8],
+    sessionService as unknown as Deps[9],
+    rbacService as unknown as Deps[10],
+    jwtAuthService as unknown as Deps[11],
+    {} as unknown as Deps[12],
+    otpService as unknown as Deps[13],
+    {} as unknown as Deps[14]
+  );
+
+  return {
+    service,
+    databaseService,
+    cacheService,
+    eventService,
+    errors,
+    sessionService,
+    rbacService,
+    jwtAuthService,
+    otpService,
+    configService,
+  };
+}
+
 describe('AuthService', () => {
-  function createService(
-    overrides: {
-      databaseService?: Record<string, jest.Mock>;
-      jwtService?: Record<string, jest.Mock>;
-      configService?: Record<string, jest.Mock>;
-      cacheService?: Record<string, jest.Mock>;
-      logging?: Record<string, jest.Mock>;
-      eventService?: Record<string, jest.Mock>;
-      errors?: Record<string, jest.Mock>;
-      emailService?: Record<string, jest.Mock>;
-      whatsAppService?: Record<string, jest.Mock>;
-      sessionService?: Record<string, jest.Mock>;
-      rbacService?: Record<string, jest.Mock>;
-      jwtAuthService?: Record<string, jest.Mock>;
-      socialAuthService?: Record<string, jest.Mock>;
-      otpService?: Record<string, jest.Mock>;
-      queueService?: Record<string, jest.Mock>;
-    } = {}
-  ) {
-    const databaseService = overrides.databaseService || {
-      executeHealthcareRead: jest.fn(),
-      executeHealthcareWrite: jest.fn(),
-      executeHealthcareWriteTransaction: jest.fn(),
-      findClinicByIdSafe: jest.fn(),
-    };
-
-    const jwtService = overrides.jwtService || {
-      signAsync: jest.fn().mockResolvedValue('mock-jwt-token'),
-      verifyAsync: jest.fn(),
-      decode: jest.fn(),
-    };
-
-    const configService = overrides.configService || {
-      get: jest.fn(),
-    };
-
-    const cacheService = overrides.cacheService || {
-      cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-      get: jest.fn(),
-      set: jest.fn(),
-      del: jest.fn(),
-      getString: jest.fn(),
-      setString: jest.fn(),
-    };
-
-    const logging = overrides.logging || {
-      log: jest.fn(),
-      logError: jest.fn(),
-      logSecurity: jest.fn(),
-    };
-
-    const eventService = overrides.eventService || {
-      emit: jest.fn(),
-    };
-
-    const errors = overrides.errors || {
-      validationError: jest.fn(() => new Error('Validation error')),
-      clinicNotFound: jest.fn(() => new Error('Clinic not found')),
-      userNotFound: jest.fn(() => new Error('Invalid credentials')),
-    };
-
-    const emailService = overrides.emailService || {
-      sendEmail: jest.fn().mockResolvedValue({ success: true }),
-    };
-
-    const whatsAppService = overrides.whatsAppService || {
-      sendOtpSms: jest.fn().mockResolvedValue({ success: true }),
-    };
-
-    const sessionService = overrides.sessionService || {
-      createSession: jest.fn().mockResolvedValue({ sessionId: 'session-123' }),
-      invalidateSession: jest.fn(),
-      getSession: jest.fn(),
-    };
-
-    const rbacService = overrides.rbacService || {
-      checkPermission: jest.fn().mockResolvedValue(true),
-    };
-
-    const jwtAuthService = overrides.jwtAuthService || {
-      generateTokens: jest.fn().mockResolvedValue({
-        accessToken: 'mock-access',
-        refreshToken: 'mock-refresh',
-        tokenType: 'Bearer',
-        expiresIn: 900,
-        sessionId: 'session-123',
-      } as AuthTokens),
-      verifyToken: jest.fn(),
-    };
-
-    const socialAuthService = overrides.socialAuthService || {
-      authenticateWithGoogle: jest.fn(),
-    };
-
-    const otpService = overrides.otpService || {
-      verifyOtp: jest.fn().mockResolvedValue({ success: true }),
-      sendOtpEmail: jest.fn().mockResolvedValue({ success: true }),
-      sendOtpSms: jest.fn().mockResolvedValue({ success: true }),
-      checkOtpStatus: jest.fn(),
-    };
-
-    const queueService = overrides.queueService || {
-      enqueue: jest.fn(),
-    };
-
-    return new AuthService(
-      databaseService as any,
-      jwtService as any,
-      configService as any,
-      cacheService as any,
-      logging as any,
-      eventService as any,
-      errors as any,
-      emailService as any,
-      whatsAppService as any,
-      sessionService as any,
-      rbacService as any,
-      jwtAuthService as any,
-      socialAuthService as any,
-      otpService as any,
-      queueService as any
-    );
-  }
-
   describe('constructor', () => {
-    it('should accept all required dependencies', () => {
-      const service = createService();
-      expect(service).toBeDefined();
+    it('reads the OTP debug flags from config', () => {
+      const h = createHarness();
+
+      expect(h.service).toBeDefined();
+      expect(h.configService.getEnvBoolean).toHaveBeenCalledWith('ENABLE_OTP_DEBUG', false);
     });
   });
 
   describe('register', () => {
-    it('should throw validation error when clinicId is missing', async () => {
-      const errors = {
-        validationError: jest.fn(() => {
-          throw new Error('Clinic ID is required');
-        }),
-        clinicNotFound: jest.fn(() => new Error('Clinic not found')),
-        userNotFound: jest.fn(() => new Error('Invalid credentials')),
-      };
-      const databaseService = {
-        executeHealthcareRead: jest.fn(),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
-        findClinicByIdSafe: jest.fn(),
-      };
-
-      const service = createService({ errors, databaseService });
+    it('rejects a body clinicId that mismatches the header', async () => {
+      const h = createHarness();
 
       await expect(
-        (service as any).register({ email: 'test@example.com', password: 'SecurePass123!' } as any)
-      ).rejects.toThrow();
-    });
-
-    it('should throw validation error when clinicId mismatches header', async () => {
-      const errors = {
-        validationError: jest.fn(() => {
-          throw new Error('Clinic ID mismatch');
-        }),
-        clinicNotFound: jest.fn(() => new Error('Clinic not found')),
-        userNotFound: jest.fn(() => new Error('Invalid credentials')),
-      };
-      const databaseService = {
-        executeHealthcareRead: jest.fn(),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
-        findClinicByIdSafe: jest.fn().mockResolvedValue({
-          id: 'clinic-1',
-          isActive: true,
-        }),
-      };
-
-      const service = createService({ errors, databaseService });
-
-      await expect(
-        (service as any).register(
-          { email: 'test@example.com', password: 'SecurePass123!', clinicId: 'clinic-1' } as any,
+        h.service.register(
+          { email: 'test@example.com', password: 'SecurePass123!', clinicId: 'clinic-1' } as never,
           undefined,
           'clinic-2'
         )
-      ).rejects.toThrow();
+      ).rejects.toThrow('Clinic ID mismatch');
+      expect(h.errors['validationError']).toHaveBeenCalledWith(
+        'clinicId',
+        expect.stringContaining('mismatch'),
+        'AuthService.register'
+      );
     });
   });
 
   describe('login', () => {
-    it('should return auth response with tokens on valid login', async () => {
-      const databaseService = {
-        executeHealthcareRead: jest.fn().mockResolvedValue({
-          id: 'user-123',
-          email: 'test@example.com',
-          password: '$2b$12$hashed',
-          role: 'PATIENT',
-          isActive: true,
-        }),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
-        findClinicByIdSafe: jest.fn().mockResolvedValue({ id: 'clinic-1', isActive: true }),
-      };
-      const cacheService = {
-        cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-        get: jest.fn().mockResolvedValue(null),
-        set: jest.fn(),
-        del: jest.fn(),
-        getString: jest.fn(),
-        setString: jest.fn(),
-      };
-      const jwtAuthService = {
-        generateTokens: jest.fn().mockResolvedValue({
-          accessToken: 'new-access',
-          refreshToken: 'new-refresh',
-          tokenType: 'Bearer',
-          expiresIn: 900,
-          sessionId: 'session-456',
-        } as AuthTokens),
-        verifyToken: jest.fn(),
-      };
-
-      const service = createService({ databaseService, cacheService, jwtAuthService });
-
-      // This test verifies that login returns a structured response
-      // The actual behavior depends on the internal implementation
-      // which involves bcrypt comparison, JWT generation, etc.
-      // We test that the method is callable and produces structured output.
-      const result = await (service as any).login(
-        { email: 'test@example.com', password: 'SecurePass123!' } as any,
-        {}
-      );
-
-      // The result should be an AuthResponse-like object
-      expect(result).toBeDefined();
-    });
-
-    it('should reject login with non-existent email', async () => {
-      const errors = {
-        validationError: jest.fn(() => {
-          throw new Error('Invalid credentials');
-        }),
-        clinicNotFound: jest.fn(() => new Error('Clinic not found')),
-        userNotFound: jest.fn(() => {
-          throw new Error('Invalid credentials');
-        }),
-      };
-      const databaseService = {
-        executeHealthcareRead: jest.fn().mockResolvedValue(null),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
-        findClinicByIdSafe: jest.fn().mockResolvedValue({ id: 'clinic-1', isActive: true }),
-      };
-      const cacheService = {
-        cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-        get: jest.fn().mockResolvedValue(null),
-        set: jest.fn(),
-        del: jest.fn(),
-        getString: jest.fn(),
-        setString: jest.fn(),
-      };
-
-      const service = createService({ errors, databaseService, cacheService });
+    it('rejects an unknown email with invalid credentials and counts the attempt', async () => {
+      const h = createHarness();
 
       await expect(
-        (service as any).login({ email: 'nobody@example.com', password: 'password' } as any, {})
-      ).rejects.toThrow();
+        h.service.login({ email: 'nobody@example.com', password: 'password' } as never, {})
+      ).rejects.toThrow('invalidCredentials');
+      expect(h.databaseService.findUserByEmailForAuth).toHaveBeenCalledWith('nobody@example.com');
+      expect(h.cacheService.incr).toHaveBeenCalledWith('failed_login:nobody@example.com');
+      expect(h.sessionService.createSession).not.toHaveBeenCalled();
+    });
+
+    it('refuses a locked account before looking the user up', async () => {
+      const h = createHarness();
+      const unlockAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+      h.cacheService.get.mockImplementation(async (key: string) =>
+        key === 'account_lock:locked@example.com' ? unlockAt : null
+      );
+
+      await expect(
+        h.service.login({ email: 'locked@example.com', password: 'password' } as never, {})
+      ).rejects.toThrow('accountLocked');
+      expect(h.databaseService.findUserByEmailForAuth).not.toHaveBeenCalled();
+    });
+
+    it('clears an expired lock and continues', async () => {
+      const h = createHarness();
+      const unlockedAt = new Date(Date.now() - 60 * 1000).toISOString();
+      h.cacheService.get.mockImplementation(async (key: string) =>
+        key === 'account_lock:old@example.com' ? unlockedAt : null
+      );
+
+      await expect(
+        h.service.login({ email: 'old@example.com', password: 'password' } as never, {})
+      ).rejects.toThrow('invalidCredentials');
+      expect(h.cacheService.del).toHaveBeenCalledWith('account_lock:old@example.com');
+      expect(h.databaseService.findUserByEmailForAuth).toHaveBeenCalled();
+    });
+
+    it('rejects a user without a password', async () => {
+      const h = createHarness();
+      h.databaseService.findUserByEmailForAuth.mockResolvedValue({
+        id: 'user-123',
+        email: 'otp-only@example.com',
+        password: '',
+        role: 'PATIENT',
+      });
+
+      await expect(
+        h.service.login({ email: 'otp-only@example.com', password: 'password' } as never, {})
+      ).rejects.toThrow('invalidCredentials');
     });
   });
 
   describe('refreshToken', () => {
-    it('should return new tokens with valid refresh token', async () => {
-      const jwtAuthService = {
-        generateTokens: jest.fn().mockResolvedValue({
-          accessToken: 'refreshed-access',
-          refreshToken: 'refreshed-refresh',
-          tokenType: 'Bearer',
-          expiresIn: 900,
-          sessionId: 'session-789',
-        } as AuthTokens),
-        verifyToken: jest.fn().mockResolvedValue({
-          sub: 'user-123',
-          email: 'test@example.com',
-          role: 'PATIENT',
-        }),
-      };
+    it('delegates to the enhanced JWT refresh', async () => {
+      const h = createHarness();
 
-      const service = createService({ jwtAuthService });
+      const result = await h.service.refreshToken(
+        { refreshToken: 'valid-refresh-token', deviceFingerprint: 'fp-1' } as never,
+        { userAgent: 'ua', ipAddress: '10.0.0.1' }
+      );
 
-      // Test that refreshToken method is callable and returns tokens
-      const result = await (service as any).refreshToken('valid-refresh-token', {
-        userId: 'user-123',
-      });
+      expect(result.accessToken).toBe('refreshed-access');
+      expect(h.jwtAuthService.refreshEnhancedToken).toHaveBeenCalledWith(
+        'valid-refresh-token',
+        'fp-1',
+        'ua',
+        '10.0.0.1',
+        // 677e00c9: the refresh is refused unless the token's session is still live.
+        expect.any(Function)
+      );
+    });
 
-      expect(result).toBeDefined();
-      expect(typeof result).toBe('object');
+    it('requires a refresh token', async () => {
+      const h = createHarness();
+
+      // (The real factory returns a HealthcareError, which is rethrown as is; this plain Error
+      // mock goes through the generic classification instead, so only assert the factory call.)
+      await expect(h.service.refreshToken({ refreshToken: '' } as never)).rejects.toThrow();
+      expect(h.errors['authenticationError']).toHaveBeenCalledWith(
+        'Refresh token is required',
+        'AuthService.refreshToken'
+      );
+      expect(h.jwtAuthService.refreshEnhancedToken).not.toHaveBeenCalled();
+    });
+
+    it('maps an expired refresh token to tokenExpired', async () => {
+      const h = createHarness();
+      const expired = new Error('jwt expired');
+      expired.name = 'TokenExpiredError';
+      h.jwtAuthService.refreshEnhancedToken.mockRejectedValue(expired);
+
+      await expect(h.service.refreshToken({ refreshToken: 'old' } as never)).rejects.toThrow(
+        'tokenExpired'
+      );
+    });
+
+    it('maps a revoked refresh token to an authentication error', async () => {
+      const h = createHarness();
+      h.jwtAuthService.refreshEnhancedToken.mockRejectedValue(new Error('Token has been revoked'));
+
+      await expect(h.service.refreshToken({ refreshToken: 'revoked' } as never)).rejects.toThrow(
+        'revoked'
+      );
+    });
+
+    it('maps an infrastructure failure to 503 so the client keeps its session', async () => {
+      const h = createHarness();
+      h.jwtAuthService.refreshEnhancedToken.mockRejectedValue(new Error('ECONNRESET'));
+
+      await expect(h.service.refreshToken({ refreshToken: 'any' } as never)).rejects.toThrow(
+        'serviceUnavailable'
+      );
     });
   });
 
   describe('logout', () => {
-    it('should invalidate session on logout', async () => {
-      const sessionService = {
-        createSession: jest.fn().mockResolvedValue({ sessionId: 'session-123' }),
-        invalidateSession: jest.fn().mockResolvedValue(true),
-        getSession: jest.fn(),
-      };
-      const cacheService = {
-        cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-        get: jest.fn(),
-        set: jest.fn(),
-        del: jest.fn(),
-        getString: jest.fn(),
-        setString: jest.fn(),
-      };
+    it('invalidates the session and emits user.logged_out', async () => {
+      const h = createHarness();
 
-      const service = createService({ sessionService, cacheService });
+      const result = await h.service.logout('session-123');
 
-      const result = await (service as any).logout('session-123');
+      expect(result.success).toBe(true);
+      expect(h.sessionService.invalidateSession).toHaveBeenCalledWith('session-123');
+      expect(h.eventService.emit).toHaveBeenCalledWith('user.logged_out', {
+        sessionId: 'session-123',
+      });
+    });
 
-      expect(result).toBeDefined();
-      expect(typeof result).toBe('object');
+    it('still succeeds when the session store is unavailable', async () => {
+      const h = createHarness();
+      h.sessionService.invalidateSession.mockRejectedValue(new Error('cache down'));
+
+      await expect(h.service.logout('session-123')).resolves.toMatchObject({ success: true });
     });
   });
 
   describe('requestOtp', () => {
-    it('should send OTP to valid email', async () => {
-      const otpService = {
-        verifyOtp: jest.fn().mockResolvedValue({ success: true }),
-        sendOtpEmail: jest.fn().mockResolvedValue({ success: true, message: 'OTP sent' }),
-        sendOtpSms: jest.fn().mockResolvedValue({ success: true }),
-        checkOtpStatus: jest.fn(),
-      };
-      const databaseService = {
-        executeHealthcareRead: jest.fn(),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
-        findClinicByIdSafe: jest.fn().mockResolvedValue({ id: 'clinic-1', isActive: true }),
-      };
+    it('answers a concurrent request without sending a second OTP', async () => {
+      const h = createHarness();
+      h.cacheService.acquireLock.mockResolvedValue(false);
 
-      const service = createService({ otpService, databaseService });
+      const result = await h.service.requestOtp({
+        identifier: 'Test@Example.com ',
+        clinicId: 'clinic-1',
+      } as never);
 
-      const result = await (service as any).requestOtp(
-        { email: 'test@example.com' } as any,
-        'email',
-        'clinic-1'
+      expect(result.success).toBe(false);
+      expect(h.cacheService.acquireLock).toHaveBeenCalledWith(
+        'otp_request_lock:test@example.com',
+        8,
+        expect.any(String)
       );
+      expect(h.otpService.generateOtp).not.toHaveBeenCalled();
+    });
 
-      expect(result).toBeDefined();
+    it('requires a clinic and releases the lock', async () => {
+      const h = createHarness();
+
+      await expect(
+        h.service.requestOtp({ identifier: 'test@example.com' } as never)
+      ).rejects.toThrow('Clinic ID is required for OTP requests');
+      expect(h.cacheService.releaseLock).toHaveBeenCalledWith('otp_request_lock:test@example.com');
     });
   });
 
   describe('verifyOtp', () => {
-    it('should verify OTP successfully', async () => {
-      const otpService = {
-        verifyOtp: jest.fn().mockResolvedValue({ success: true, message: 'OTP verified' }),
-        sendOtpEmail: jest.fn().mockResolvedValue({ success: true }),
-        sendOtpSms: jest.fn().mockResolvedValue({ success: true }),
-        checkOtpStatus: jest.fn(),
-      };
+    it('rejects a wrong code before touching any user', async () => {
+      const h = createHarness();
 
-      const service = createService({ otpService });
+      await expect(
+        h.service.verifyOtp({ identifier: 'test@example.com', otp: '000000' } as never)
+      ).rejects.toThrow('otpInvalid');
+      expect(h.otpService.verifyOtp).toHaveBeenCalledWith('test@example.com', '000000');
+      expect(h.databaseService.findUserByEmailSafe).not.toHaveBeenCalled();
+    });
 
-      const result = await (service as any).verifyOtp({
-        email: 'test@example.com',
-        otp: '123456',
-        type: 'EMAIL_VERIFICATION',
-      } as any);
+    it('surfaces the per-identifier lockout as a rate limit', async () => {
+      const h = createHarness();
+      h.otpService.verifyOtp.mockResolvedValue({
+        success: false,
+        rateLimited: true,
+        message: 'Too many attempts',
+      });
 
-      expect(result).toBeDefined();
+      await expect(
+        h.service.verifyOtp({ identifier: 'test@example.com', otp: '000000' } as never)
+      ).rejects.toThrow('rateLimitExceeded');
     });
   });
 
   describe('getUserPermissions', () => {
-    it('should return permissions for a user', async () => {
-      const rbacService = {
-        checkPermission: jest.fn().mockResolvedValue(true),
-        getUserPermissions: jest.fn().mockResolvedValue(['users:read', 'users:write']),
-      };
+    it('resolves the permissions of the user roles in the clinic, cached per user and clinic', async () => {
+      const h = createHarness();
 
-      const service = createService({ rbacService });
+      const result = await h.service.getUserPermissions('user-123', 'clinic-1');
 
-      const result = await (service as any).getUserPermissions('user-123', 'clinic-1');
-
-      expect(result).toBeDefined();
-      expect(Array.isArray(result)).toBe(true);
+      expect(result).toEqual(['users:read', 'users:write']);
+      expect(h.rbacService.getUserRoles).toHaveBeenCalledWith('user-123', 'clinic-1');
+      expect(h.rbacService.getRolePermissions).toHaveBeenCalledWith(['role-1', 'role-2']);
+      expect(h.cacheService.cache).toHaveBeenCalledWith(
+        'user:user-123:clinic:clinic-1:permissions',
+        expect.any(Function),
+        expect.objectContaining({ tags: expect.arrayContaining(['user:user-123']) })
+      );
     });
   });
 });

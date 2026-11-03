@@ -101,3 +101,24 @@ export function shouldCountFailedAuthAttempt(error: unknown): boolean {
   }
   return COUNTED_AUTH_FAILURE_MESSAGES.has(error.message);
 }
+
+/** Session-store state for a verified access token's session id. */
+export interface SessionStoreState {
+  /** An active, unexpired session is stored under the token's session id. */
+  readonly hasActiveSession: boolean;
+  /** The session id is on the revocation list (logout / revoke / eviction). */
+  readonly revoked: boolean;
+}
+
+/**
+ * What the guard does with a verified token's session:
+ *  - `allow`: an active session is stored and not revoked;
+ *  - `restore`: nothing is stored and the id was never revoked (cold cache after a cache
+ *    restart), so the session may be rebuilt from the still-valid token;
+ *  - `reject`: the session was revoked / logged out. A revoked session is never restored, even
+ *    when a stale copy is still readable.
+ */
+export function decideSessionAccess(state: SessionStoreState): 'allow' | 'restore' | 'reject' {
+  if (state.revoked) return 'reject';
+  return state.hasActiveSession ? 'allow' : 'restore';
+}

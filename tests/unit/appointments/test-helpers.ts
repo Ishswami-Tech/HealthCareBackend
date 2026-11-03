@@ -11,6 +11,7 @@ import { HealthcareErrorsService } from '@core/errors';
 export type Row = Record<string, unknown>;
 
 type TableName =
+  | 'clinic'
   | 'appointment'
   | 'checkIn'
   | 'checkInLocation'
@@ -22,6 +23,7 @@ type TableName =
   | 'videoConsultation';
 
 const TABLES: readonly TableName[] = [
+  'clinic',
   'appointment',
   'checkIn',
   'checkInLocation',
@@ -87,6 +89,7 @@ function matchesWhere(row: Row, where: Row | undefined): boolean {
 
 export class FakeDb {
   tables: Record<TableName, Row[]> = {
+    clinic: [],
     appointment: [],
     checkIn: [],
     checkInLocation: [],
@@ -249,6 +252,7 @@ export function createCacheStub() {
     })),
     invalidateAppointmentCache: jest.fn(async (..._args: unknown[]) => 0),
     invalidateCacheByTag: jest.fn(async (..._args: unknown[]) => 0),
+    invalidateCollectionTags: jest.fn(async (..._args: unknown[]) => 0),
     get: jest.fn(async (..._args: unknown[]) => null),
     set: jest.fn(async (..._args: unknown[]) => undefined),
     acquireLock: jest.fn(async (key: string, _ttl: number) => {

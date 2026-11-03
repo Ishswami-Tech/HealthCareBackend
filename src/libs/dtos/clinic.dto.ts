@@ -267,6 +267,12 @@ export class UpdateClinicLocationDto {
   @IsOptional()
   @IsObject({ message: 'Settings must be an object' })
   settings?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ description: 'ABDM Health Facility Registry (HFR) id for this location' })
+  @IsOptional()
+  @IsString({ message: 'ABDM HFR id must be a string' })
+  @Transform(trimString)
+  abdmHfrId?: string;
 }
 
 /**
@@ -679,11 +685,15 @@ export class UpdateClinicDto {
     example: 'Los Angeles',
     description: 'New clinic city (written to the main location)',
   })
+  // city/state/country/zipCode are blank-to-undefined (not trim-only): the clinic-admin settings
+  // form always resubmits these fields, and an unfilled field arrives here as "" rather than
+  // absent. Without the blank-to-undefined transform, @IsOptional() (which only skips undefined)
+  // never kicks in and the bare "" fails @MinLength, rejecting the whole update.
   @IsOptional()
+  @Transform(blankToUndefined)
   @IsString({ message: 'City must be a string' })
   @MinLength(2, { message: 'City must be at least 2 characters long' })
   @MaxLength(50, { message: 'City cannot exceed 50 characters' })
-  @Transform(trimString)
   city?: string;
 
   @ApiPropertyOptional({
@@ -691,10 +701,10 @@ export class UpdateClinicDto {
     description: 'New clinic state/province (written to the main location)',
   })
   @IsOptional()
+  @Transform(blankToUndefined)
   @IsString({ message: 'State must be a string' })
   @MinLength(2, { message: 'State must be at least 2 characters long' })
   @MaxLength(50, { message: 'State cannot exceed 50 characters' })
-  @Transform(trimString)
   state?: string;
 
   @ApiPropertyOptional({
@@ -702,10 +712,10 @@ export class UpdateClinicDto {
     description: 'New clinic country (written to the main location)',
   })
   @IsOptional()
+  @Transform(blankToUndefined)
   @IsString({ message: 'Country must be a string' })
   @MinLength(2, { message: 'Country must be at least 2 characters long' })
   @MaxLength(50, { message: 'Country cannot exceed 50 characters' })
-  @Transform(trimString)
   country?: string;
 
   @ApiPropertyOptional({
@@ -713,10 +723,10 @@ export class UpdateClinicDto {
     description: 'New clinic zip/postal code (written to the main location)',
   })
   @IsOptional()
+  @Transform(blankToUndefined)
   @IsString({ message: 'Zip code must be a string' })
   @MinLength(3, { message: 'Zip code must be at least 3 characters long' })
   @MaxLength(20, { message: 'Zip code cannot exceed 20 characters' })
-  @Transform(trimString)
   zipCode?: string;
 
   @ApiPropertyOptional({
@@ -737,6 +747,31 @@ export class UpdateClinicDto {
     typeof value === 'string' ? value.toLowerCase().trim() : (value as string)
   )
   email?: string;
+
+  @ApiPropertyOptional({
+    example: '+1987654321',
+    description:
+      'Clinic-set technical/app support phone, shown on the patient Help page (an empty string clears it)',
+  })
+  @IsOptional()
+  @Transform(blankToUndefined)
+  @IsString({ message: 'Support phone must be a string' })
+  @MaxLength(20, { message: 'Support phone cannot exceed 20 characters' })
+  supportPhone?: string;
+
+  @ApiPropertyOptional({
+    example: 'support@clinic.com',
+    description:
+      'Clinic-set technical/app support email, shown on the patient Help page (an empty string clears it)',
+  })
+  @IsOptional()
+  @Transform(({ value }): unknown => {
+    const blanked = blankToUndefined({ value });
+    return typeof blanked === 'string' ? blanked.toLowerCase() : blanked;
+  })
+  @IsString({ message: 'Support email must be a string' })
+  @MaxLength(254, { message: 'Support email cannot exceed 254 characters' })
+  supportEmail?: string;
 
   @ApiPropertyOptional({
     example: 'https://www.newclinic.com',
@@ -881,6 +916,12 @@ export class UpdateClinicDto {
       defaultNumber?: string;
     };
   };
+
+  @ApiPropertyOptional({ description: 'ABDM Health Information Provider (HIP) id for this clinic' })
+  @IsOptional()
+  @IsString({ message: 'ABDM HIP id must be a string' })
+  @Transform(trimString)
+  abdmHipId?: string;
 }
 
 /**
@@ -977,6 +1018,22 @@ export class ClinicResponseDto {
   website?: string;
 
   @ApiPropertyOptional({
+    example: '+1987654321',
+    description: 'Clinic-set technical/app support phone, shown on the patient Help page',
+  })
+  @IsOptional()
+  @IsString({ message: 'Support phone must be a string' })
+  supportPhone?: string;
+
+  @ApiPropertyOptional({
+    example: 'support@clinic.com',
+    description: 'Clinic-set technical/app support email, shown on the patient Help page',
+  })
+  @IsOptional()
+  @IsString({ message: 'Support email must be a string' })
+  supportEmail?: string;
+
+  @ApiPropertyOptional({
     example: 'Mon-Fri 8AM-6PM, Sat 9AM-2PM',
     description: 'Clinic operating hours',
   })
@@ -1014,6 +1071,11 @@ export class ClinicResponseDto {
   @IsOptional()
   @IsString({ message: 'App domain must be a string' })
   appDomain?: string;
+
+  @ApiPropertyOptional({ description: 'ABDM Health Information Provider (HIP) id for this clinic' })
+  @IsOptional()
+  @IsString({ message: 'ABDM HIP id must be a string' })
+  abdmHipId?: string;
 }
 
 /**
@@ -1238,8 +1300,11 @@ export class ClinicStatsResponseDto {
   @ApiProperty({ example: 1250 })
   totalEhrRecords!: number;
 
-  @ApiProperty({ example: 5 })
+  @ApiProperty({ example: 5, description: 'Active medicines with 0 < stock <= reorder level' })
   lowStockAlerts!: number;
+
+  @ApiProperty({ example: 2, description: 'Active medicines out of stock (stock <= 0)' })
+  outOfStockAlerts!: number;
 
   @ApiProperty({ example: 12 })
   todayAppointments!: number;

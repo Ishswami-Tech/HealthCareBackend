@@ -55,19 +55,20 @@ function validateConfigEarly(): void {
   const nodeEnv = process.env[ENV_VARS.NODE_ENV] || 'development';
   const result = validateEnvironmentConfig(nodeEnv, false);
 
-  if (!result.isValid) {
-    if (result.warnings.length > 0 && nodeEnv !== 'test') {
-      console.warn(
-        `Recommended environment variables not set for ${nodeEnv}: ${result.warnings.join(', ')}`
-      );
-    }
+  // Warnings (names only, never values) are printed in every non-test env, so development
+  // shows the production-required secrets it is running without instead of failing.
+  if (result.warnings.length > 0 && nodeEnv !== 'test') {
+    console.warn(
+      `Recommended environment variables not set for ${nodeEnv}: ${result.warnings.join(', ')}`
+    );
+  }
 
-    if (
-      (nodeEnv === 'production' || nodeEnv === 'staging' || nodeEnv === 'local-prod') &&
-      result.missing.length > 0
-    ) {
-      throw new Error(getEnvironmentValidationErrorMessage(nodeEnv, result.missing));
-    }
+  if (
+    !result.isValid &&
+    (nodeEnv === 'production' || nodeEnv === 'staging' || nodeEnv === 'local-prod') &&
+    (result.missing.length > 0 || result.invalid.length > 0)
+  ) {
+    throw new Error(getEnvironmentValidationErrorMessage(nodeEnv, result.missing, result.invalid));
   }
 }
 

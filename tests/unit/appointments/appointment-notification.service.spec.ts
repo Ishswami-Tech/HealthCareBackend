@@ -1,6 +1,8 @@
 import { LogLevel, LogType } from '@core/types';
 import { AppointmentNotificationService } from '@services/appointments/plugins/notifications/appointment-notification.service';
 
+type Deps = ConstructorParameters<typeof AppointmentNotificationService>;
+
 describe('AppointmentNotificationService recipient resolution', () => {
   const createService = (options?: {
     patientUserId?: string | null;
@@ -33,15 +35,17 @@ describe('AppointmentNotificationService recipient resolution', () => {
     };
 
     const service = new AppointmentNotificationService(
-      {},
-      loggingService,
-      {},
-      {},
-      {},
-      {},
-      {},
-      {},
-      databaseService
+      {} as unknown as Deps[0],
+      loggingService as unknown as Deps[1],
+      {} as unknown as Deps[2],
+      {} as unknown as Deps[3],
+      {} as unknown as Deps[4],
+      {} as unknown as Deps[5],
+      {} as unknown as Deps[6],
+      {} as unknown as Deps[7],
+      databaseService as unknown as Deps[8],
+      // notificationPreferenceService (afe19c0e); recipient resolution does not consult it.
+      {} as unknown as Deps[9]
     ) as AppointmentNotificationService;
 
     return { service, loggingService, databaseService };

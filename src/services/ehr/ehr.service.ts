@@ -86,6 +86,7 @@ import {
   BulkEHRImportDto,
   PATIENT_MEDICAL_RECORD_TYPES,
 } from '@dtos/ehr.dto';
+import { publishedPrescriptionStatusFilter } from '@dtos/pharmacy.dto';
 import type {
   MedicalHistoryResponse,
   LabReportResponse,
@@ -252,7 +253,7 @@ export class EHRService {
           const getWhere = (base: Record<string, unknown>) =>
             clinicId ? { ...base, clinicId } : base;
 
-          const results = (await Promise.all([
+          const settledResults = await Promise.allSettled([
             // Use executeHealthcareRead for all queries with full optimization layers
             this.databaseService.executeHealthcareRead<unknown[]>(async client => {
               const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
@@ -349,30 +350,58 @@ export class EHRService {
                 } as PrismaDelegateArgs);
               }
             ),
-          ])) as [
-            MedicalHistoryBase[],
-            LabReportBase[],
-            RadiologyReportBase[],
-            SurgicalRecordBase[],
-            VitalBase[],
-            AllergyBase[],
-            MedicationBase[],
-            ImmunizationBase[],
-            FamilyHistoryBase[],
-            LifestyleAssessmentBase | null,
-          ];
+          ]);
 
-          // Type assertions for the results (using Base types to avoid Prisma type errors)
-          const medicalHistoryRaw = results[0];
-          const labReportsRaw = results[1];
-          const radiologyReportsRaw = results[2];
-          const surgicalRecordsRaw = results[3];
-          const vitalsRaw = results[4];
-          const allergiesRaw = results[5];
-          const medicationsRaw = results[6];
-          const immunizationsRaw = results[7];
-          const familyHistoryRaw = results[8];
-          const lifestyleAssessmentRaw = results[9];
+          // One slow/failed section (e.g. a timed-out query) no longer blocks every other
+          // section: each falls back to empty (or null for the single-row lifestyle
+          // assessment) and is logged, instead of the whole comprehensive record failing.
+          const sectionNames = [
+            'medicalHistory',
+            'labReports',
+            'radiologyReports',
+            'surgicalRecords',
+            'vitals',
+            'allergies',
+            'medications',
+            'immunizations',
+            'familyHistory',
+            'lifestyleAssessment',
+          ] as const;
+          const settledOr = <T>(index: number, fallback: T): T => {
+            const settled = settledResults[index];
+            if (settled && settled.status === 'fulfilled') {
+              return settled.value as T;
+            }
+            void this.loggingService.log(
+              LogType.SYSTEM,
+              LogLevel.WARN,
+              `Comprehensive health record: ${sectionNames[index]} section failed or timed out, returning a partial record`,
+              'EHRService.getComprehensiveHealthRecord',
+              {
+                userId,
+                clinicId,
+                section: sectionNames[index],
+                error:
+                  settled && settled.status === 'rejected'
+                    ? settled.reason instanceof Error
+                      ? settled.reason.message
+                      : String(settled.reason)
+                    : undefined,
+              }
+            );
+            return fallback;
+          };
+
+          const medicalHistoryRaw = settledOr<MedicalHistoryBase[]>(0, []);
+          const labReportsRaw = settledOr<LabReportBase[]>(1, []);
+          const radiologyReportsRaw = settledOr<RadiologyReportBase[]>(2, []);
+          const surgicalRecordsRaw = settledOr<SurgicalRecordBase[]>(3, []);
+          const vitalsRaw = settledOr<VitalBase[]>(4, []);
+          const allergiesRaw = settledOr<AllergyBase[]>(5, []);
+          const medicationsRaw = settledOr<MedicationBase[]>(6, []);
+          const immunizationsRaw = settledOr<ImmunizationBase[]>(7, []);
+          const familyHistoryRaw = settledOr<FamilyHistoryBase[]>(8, []);
+          const lifestyleAssessmentRaw = settledOr<LifestyleAssessmentBase | null>(9, null);
 
           // Transform to response types
           const medicalHistory = medicalHistoryRaw.map(record =>
@@ -466,10 +495,15 @@ export class EHRService {
           return [];
         }
 
+        // The comprehensive record is patient-readable and cached per patient (not per
+        // caller role), so unapproved assistant drafts (DRAFT / RETURNED) are always left
+        // out here; prescribers review drafts through the clinic-ops Rx-draft endpoints.
         const prescriptions = await typedClient.prescription.findMany({
-          where: (clinicId
-            ? { patientId: patient.id, clinicId }
-            : { patientId: patient.id }) as PrismaDelegateArgs,
+          where: {
+            patientId: patient.id,
+            ...(clinicId ? { clinicId } : {}),
+            status: publishedPrescriptionStatusFilter(),
+          } as PrismaDelegateArgs,
           orderBy: { date: 'desc' } as PrismaDelegateArgs,
           include: {
             doctor: { include: { user: { select: { name: true } } } },
@@ -663,6 +697,9 @@ export class EHRService {
       doctorId: data.doctorId || undefined,
       clinicId: data.clinicId || undefined,
       prescriptionId: createdPrescription?.id,
+      // The prescriber, for the clinic audit trail (userId above is the patient's user id).
+      ...(actor?.userId ? { prescribedByUserId: actor.userId } : {}),
+      ...(actor?.role ? { actorRole: actor.role } : {}),
       count: medicationCount,
       medicationsCount: medicationCount,
       diagnosis: data.diagnosis,
@@ -2290,7 +2327,7 @@ export class EHRService {
 
   // ============ Vitals ============
 
-  async createVital(data: CreateVitalDto): Promise<VitalResponse> {
+  async createVital(data: CreateVitalDto & { clinicId?: string }): Promise<VitalResponse> {
     // Use executeHealthcareWrite for create with audit logging
     const vital = await this.databaseService.executeHealthcareWrite(
       async client => {
@@ -2300,15 +2337,18 @@ export class EHRService {
         return await typedClient.vital.create({
           data: {
             userId: data.userId,
+            clinicId: data.clinicId || '',
             type: data.type,
             value: data.value,
+            unit: data.unit,
+            notes: data.notes,
             recordedAt: new Date(data.recordedAt),
           } as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
       },
       {
         userId: data.userId || 'system',
-        clinicId: '',
+        clinicId: data.clinicId || '',
         resourceType: 'VITAL',
         operation: 'CREATE',
         resourceId: '',

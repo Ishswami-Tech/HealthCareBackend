@@ -1,158 +1,109 @@
+/// <reference types="jest" />
 /**
- * Unit tests for BillingService.
+ * Unit tests for BillingService plan / subscription basics, against the current DatabaseService
+ * surface (the `*Safe` convenience methods) and the current DTOs.
  */
 
-import { BillingService } from '@services/billing/billing.service';
-import { Role } from '@core/types/enums.types';
+jest.mock('@payment/payment.service', () => ({ PaymentService: class {} }), { virtual: true });
+jest.mock(
+  '@payment/payment.handoff-token.service',
+  () => ({ PaymentHandoffTokenService: class {} }),
+  { virtual: true }
+);
+jest.mock('@infrastructure/database', () => ({ DatabaseService: class {} }));
+
+import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BillingInterval, Role } from '@core/types/enums.types';
 import type { CreateBillingPlanDto, CreateSubscriptionDto } from '@dtos/billing.dto';
+import { createBillingService } from './billing-test-harness';
+
+const CLINIC_ID = 'clinic-1';
+const DAY_MS = 24 * 3600 * 1000;
+
+function planRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'plan-123',
+    name: 'Basic Plan',
+    amount: 999,
+    currency: 'INR',
+    interval: BillingInterval.MONTHLY,
+    intervalCount: 1,
+    isActive: true,
+    clinicId: CLINIC_ID,
+    isUnlimitedAppointments: false,
+    appointmentsIncluded: 10,
+    trialPeriodDays: 0,
+    ...overrides,
+  };
+}
+
+function subscriptionRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'sub-123',
+    userId: 'user-1',
+    clinicId: CLINIC_ID,
+    planId: 'plan-1',
+    status: 'ACTIVE',
+    createdAt: new Date(),
+    currentPeriodStart: new Date(Date.now() - 3 * DAY_MS),
+    currentPeriodEnd: new Date(Date.now() + 27 * DAY_MS),
+    cancelAtPeriodEnd: false,
+    appointmentsUsed: 5,
+    appointmentsRemaining: 5,
+    plan: planRow({ id: 'plan-1' }),
+    ...overrides,
+  };
+}
 
 describe('BillingService', () => {
-  function createService(
-    overrides: {
-      databaseService?: Record<string, jest.Mock>;
-      cacheService?: Record<string, jest.Mock>;
-      loggingService?: Record<string, jest.Mock>;
-      eventService?: Record<string, jest.Mock>;
-      invoicePDFService?: Record<string, jest.Mock>;
-      whatsAppService?: Record<string, jest.Mock>;
-      paymentService?: Record<string, jest.Mock>;
-      paymentHandoffTokenService?: Record<string, jest.Mock>;
-      configService?: Record<string, jest.Mock>;
-      moduleRef?: Record<string, jest.Mock>;
-      queueService?: Record<string, jest.Mock>;
-    } = {}
-  ) {
-    const databaseService = overrides.databaseService || {
-      executeHealthcareRead: jest.fn(),
-      executeHealthcareWrite: jest.fn(),
-      executeHealthcareWriteTransaction: jest.fn(),
-    };
-
-    const cacheService = overrides.cacheService || {
-      cache: jest.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-      get: jest.fn(),
-      set: jest.fn(),
-      del: jest.fn(),
-      getString: jest.fn(),
-      setString: jest.fn(),
-      invalidateCacheByTag: jest.fn(),
-    };
-
-    const loggingService = overrides.loggingService || {
-      log: jest.fn(),
-      logError: jest.fn(),
-    };
-
-    const eventService = overrides.eventService || {
-      emit: jest.fn(),
-    };
-
-    const invoicePDFService = overrides.invoicePDFService || {
-      generatePDF: jest.fn(),
-    };
-
-    const whatsAppService = overrides.whatsAppService || {
-      sendMessage: jest.fn(),
-    };
-
-    const paymentService = overrides.paymentService || {
-      createPaymentIntent: jest.fn(),
-      confirmPayment: jest.fn(),
-    };
-
-    const paymentHandoffTokenService = overrides.paymentHandoffTokenService || {
-      generateToken: jest.fn(),
-      verifyToken: jest.fn(),
-    };
-
-    const configService = overrides.configService || {
-      get: jest.fn(),
-    };
-
-    const moduleRef = overrides.moduleRef || {
-      get: jest.fn(),
-    };
-
-    const queueService = overrides.queueService || {
-      enqueue: jest.fn(),
-      close: jest.fn(),
-    };
-
-    return new BillingService(
-      databaseService as any,
-      cacheService as any,
-      loggingService as any,
-      eventService as any,
-      invoicePDFService as any,
-      whatsAppService as any,
-      paymentService as any,
-      paymentHandoffTokenService as any,
-      configService as any,
-      moduleRef as any,
-      queueService as any
-    );
-  }
-
   describe('constructor', () => {
     it('should accept all required dependencies', () => {
-      const service = createService();
+      const { service } = createBillingService();
       expect(service).toBeDefined();
     });
   });
 
   describe('createBillingPlan', () => {
-    it('should create a new billing plan', async () => {
+    it('should create a new billing plan from the current DTO', async () => {
       const databaseService = {
-        executeHealthcareRead: jest.fn(),
-        executeHealthcareWrite: jest.fn().mockResolvedValue({
-          id: 'plan-123',
-          name: 'Basic Plan',
-          price: 999,
-          duration: 'MONTHLY',
-          isActive: true,
-          clinicId: 'clinic-1',
-        }),
-        executeHealthcareWriteTransaction: jest.fn(),
+        createBillingPlanSafe: jest.fn().mockResolvedValue(planRow()),
+      };
+      const { service } = createBillingService({ databaseService });
+      const plan: CreateBillingPlanDto = {
+        name: 'Basic Plan',
+        amount: 999,
+        interval: BillingInterval.MONTHLY,
+        clinicId: CLINIC_ID,
+        features: { consultation: true, followup: true },
       };
 
-      const service = createService({ databaseService });
-      const result = await (service as any).createBillingPlan({
-        name: 'Basic Plan',
-        price: 999,
-        duration: 'MONTHLY',
-        clinicId: 'clinic-1',
-        features: ['consultation', 'followup'],
-      } as CreateBillingPlanDto);
+      const result = await service.createBillingPlan(plan);
 
-      expect(result).toBeDefined();
       expect(result.id).toBe('plan-123');
       expect(result.name).toBe('Basic Plan');
+      expect(databaseService.createBillingPlanSafe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'Basic Plan',
+          amount: 999,
+          currency: 'INR',
+          interval: BillingInterval.MONTHLY,
+          intervalCount: 1,
+          clinicId: CLINIC_ID,
+        })
+      );
     });
   });
 
   describe('getBillingPlans', () => {
     it('should return billing plans for a clinic', async () => {
       const databaseService = {
-        executeHealthcareRead: jest.fn().mockResolvedValue([
-          {
-            id: 'plan-1',
-            name: 'Basic Plan',
-            price: 999,
-            duration: 'MONTHLY',
-          },
-          {
-            id: 'plan-2',
-            name: 'Premium Plan',
-            price: 2999,
-            duration: 'MONTHLY',
-          },
-        ]),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
+        findBillingPlansSafe: jest
+          .fn()
+          .mockResolvedValue([planRow({ id: 'plan-1' }), planRow({ id: 'plan-2' })]),
       };
+      const { service } = createBillingService({ databaseService });
 
-      const service = createService({ databaseService });
-      const result = await (service as any).getBillingPlans('clinic-1');
+      const result = await service.getBillingPlans(CLINIC_ID);
 
       expect(result).toHaveLength(2);
     });
@@ -160,234 +111,201 @@ describe('BillingService', () => {
 
   describe('getBillingPlan', () => {
     it('should return a specific billing plan', async () => {
-      const databaseService = {
-        executeHealthcareRead: jest.fn().mockResolvedValue({
-          id: 'plan-123',
-          name: 'Basic Plan',
-          price: 999,
-          duration: 'MONTHLY',
-        }),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
-      };
+      const databaseService = { findBillingPlanByIdSafe: jest.fn().mockResolvedValue(planRow()) };
+      const { service } = createBillingService({ databaseService });
 
-      const service = createService({ databaseService });
-      const result = await (service as any).getBillingPlan('plan-123');
+      const result = await service.getBillingPlan('plan-123');
 
-      expect(result).toBeDefined();
       expect(result.id).toBe('plan-123');
     });
 
     it('should throw when billing plan not found', async () => {
-      const databaseService = {
-        executeHealthcareRead: jest.fn().mockResolvedValue(null),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
-      };
+      const databaseService = { findBillingPlanByIdSafe: jest.fn().mockResolvedValue(null) };
+      const { service } = createBillingService({ databaseService });
 
-      const service = createService({ databaseService });
-
-      await expect((service as any).getBillingPlan('nonexistent')).rejects.toThrow();
+      await expect(service.getBillingPlan('nonexistent')).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 
   describe('updateBillingPlan', () => {
     it('should update billing plan fields', async () => {
-      const updatedPlan = {
-        id: 'plan-123',
-        name: 'Updated Plan',
-        price: 1499,
-      };
       const databaseService = {
-        executeHealthcareRead: jest.fn().mockResolvedValue({ id: 'plan-123' }),
-        executeHealthcareWrite: jest.fn().mockResolvedValue(updatedPlan),
-        executeHealthcareWriteTransaction: jest.fn(),
+        findBillingPlanByIdSafe: jest.fn().mockResolvedValue(planRow()),
+        updateBillingPlanSafe: jest.fn().mockResolvedValue(planRow({ amount: 1499 })),
       };
+      const { service } = createBillingService({ databaseService });
 
-      const service = createService({ databaseService });
-      const result = await (service as any).updateBillingPlan('plan-123', { price: 1499 } as any);
-      expect(result).toBeDefined();
-      expect(result.price).toBeDefined();
+      const result = await service.updateBillingPlan('plan-123', { amount: 1499 });
+
+      expect(result.amount).toBe(1499);
+      expect(databaseService.updateBillingPlanSafe).toHaveBeenCalledWith('plan-123', {
+        amount: 1499,
+      });
     });
 
     it('should throw when updating non-existent plan', async () => {
       const databaseService = {
-        executeHealthcareRead: jest.fn().mockResolvedValue(null),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
+        findBillingPlanByIdSafe: jest.fn().mockResolvedValue(null),
+        updateBillingPlanSafe: jest.fn(),
       };
+      const { service } = createBillingService({ databaseService });
 
-      const service = createService({ databaseService });
       await expect(
-        (service as any).updateBillingPlan('nonexistent', { name: 'Test' } as any)
-      ).rejects.toThrow();
+        service.updateBillingPlan('nonexistent', { name: 'Test' })
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(databaseService.updateBillingPlanSafe).not.toHaveBeenCalled();
     });
   });
 
   describe('deleteBillingPlan', () => {
-    it('should delete a billing plan', async () => {
+    it('should delete a billing plan without active subscriptions', async () => {
       const databaseService = {
-        executeHealthcareRead: jest.fn().mockResolvedValue({ id: 'plan-123' }),
-        executeHealthcareWrite: jest.fn().mockResolvedValue({ count: 1 }),
-        executeHealthcareWriteTransaction: jest.fn(),
+        findBillingPlanByIdSafe: jest.fn().mockResolvedValue(planRow()),
+        findSubscriptionsSafe: jest.fn().mockResolvedValue([]),
+        deleteBillingPlanSafe: jest.fn().mockResolvedValue(planRow()),
       };
+      const { service } = createBillingService({ databaseService });
 
-      const service = createService({ databaseService });
-      await expect((service as any).deleteBillingPlan('plan-123')).resolves.toBeUndefined();
+      await expect(service.deleteBillingPlan('plan-123')).resolves.toBeUndefined();
+      expect(databaseService.deleteBillingPlanSafe).toHaveBeenCalledWith('plan-123');
+    });
+
+    it('refuses (409) to delete a plan that still has active subscriptions', async () => {
+      const databaseService = {
+        findBillingPlanByIdSafe: jest.fn().mockResolvedValue(planRow()),
+        findSubscriptionsSafe: jest.fn().mockResolvedValue([subscriptionRow()]),
+        deleteBillingPlanSafe: jest.fn(),
+      };
+      const { service } = createBillingService({ databaseService });
+
+      await expect(service.deleteBillingPlan('plan-123')).rejects.toBeInstanceOf(ConflictException);
+      expect(databaseService.deleteBillingPlanSafe).not.toHaveBeenCalled();
     });
   });
 
   describe('createSubscription', () => {
-    it('should create a subscription for a user', async () => {
-      const subscription = {
-        id: 'sub-123',
-        userId: 'user-1',
-        billingPlanId: 'plan-1',
-        status: 'ACTIVE',
-        startDate: new Date('2026-10-01'),
-        endDate: new Date('2026-11-01'),
-      };
+    it('should create a subscription for a user from the current DTO', async () => {
+      const created = subscriptionRow({ status: 'INCOMPLETE' });
       const databaseService = {
-        executeHealthcareRead: jest.fn().mockResolvedValue({ id: 'plan-1' }),
-        executeHealthcareWrite: jest.fn().mockResolvedValue(subscription),
-        executeHealthcareWriteTransaction: jest.fn(),
+        findBillingPlanByIdSafe: jest.fn().mockResolvedValue(planRow({ id: 'plan-1' })),
+        // No existing plan in the clinic: the one-plan guard lets the purchase through.
+        findSubscriptionsSafe: jest.fn().mockResolvedValue([]),
+        createSubscriptionSafe: jest.fn().mockResolvedValue(created),
+      };
+      const { service } = createBillingService({ databaseService });
+      const dto: CreateSubscriptionDto = {
+        planId: 'plan-1',
+        userId: 'user-1',
+        clinicId: CLINIC_ID,
       };
 
-      const service = createService({ databaseService });
-      const result = await (service as any).createSubscription(
-        {
-          billingPlanId: 'plan-1',
-          userId: 'user-1',
-        } as CreateSubscriptionDto,
-        { role: Role.PATIENT, userId: 'user-1' }
-      );
+      const result = await service.createSubscription(dto, {
+        role: Role.PATIENT,
+        userId: 'user-1',
+      });
 
-      expect(result).toBeDefined();
       expect(result.id).toBe('sub-123');
-      expect(result.status).toBe('ACTIVE');
+      expect(databaseService.createSubscriptionSafe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user-1',
+          planId: 'plan-1',
+          clinicId: CLINIC_ID,
+          status: 'INCOMPLETE',
+          appointmentsRemaining: 10,
+        })
+      );
     });
   });
 
   describe('getActiveUserSubscription', () => {
     it('should return active subscription for user', async () => {
       const databaseService = {
-        executeHealthcareRead: jest.fn().mockResolvedValue({
-          id: 'sub-123',
-          userId: 'user-1',
-          status: 'ACTIVE',
-          billingPlan: { id: 'plan-1', name: 'Basic Plan' },
-        }),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
+        findSubscriptionsSafe: jest.fn().mockResolvedValue([subscriptionRow()]),
       };
+      const { service } = createBillingService({ databaseService });
 
-      const service = createService({ databaseService });
-      const result = await (service as any).getActiveUserSubscription('user-1', 'clinic-1');
+      const result = await service.getActiveUserSubscription('user-1', CLINIC_ID);
 
-      expect(result).toBeDefined();
-      expect(result.status).toBe('ACTIVE');
+      expect(result?.id).toBe('sub-123');
+      expect(result?.status).toBe('ACTIVE');
     });
 
-    it('should return null when no active subscription', async () => {
+    it('should return undefined when no active subscription', async () => {
       const databaseService = {
-        executeHealthcareRead: jest.fn().mockResolvedValue(null),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
+        findSubscriptionsSafe: jest
+          .fn()
+          .mockResolvedValue([
+            subscriptionRow({ currentPeriodEnd: new Date(Date.now() - DAY_MS) }),
+            subscriptionRow({ id: 'sub-2', status: 'CANCELLED' }),
+          ]),
       };
+      const { service } = createBillingService({ databaseService });
 
-      const service = createService({ databaseService });
-      const result = await (service as any).getActiveUserSubscription(
-        'user-nonexistent',
-        'clinic-1'
-      );
+      const result = await service.getActiveUserSubscription('user-nonexistent', CLINIC_ID);
 
-      expect(result).toBeNull();
+      expect(result).toBeUndefined();
     });
   });
 
   describe('canBookAppointment', () => {
     it('should allow booking when subscription is active and has remaining quota', async () => {
       const databaseService = {
-        executeHealthcareRead: jest
-          .fn()
-          .mockResolvedValueOnce({
-            id: 'sub-123',
-            status: 'ACTIVE',
-            plan: { maxAppointmentsPerMonth: 10 },
-          })
-          .mockResolvedValueOnce({ count: 5 }), // 5 used out of 10
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
+        findSubscriptionByIdSafe: jest.fn().mockResolvedValue(subscriptionRow()),
       };
+      const { service } = createBillingService({ databaseService });
 
-      const service = createService({ databaseService });
-      const result = await (service as any).canBookAppointment('user-1', 'clinic-1');
+      const result = await service.canBookAppointment('sub-123');
 
-      expect(result.canBook).toBe(true);
+      expect(result.allowed).toBe(true);
     });
 
     it('should reject booking when quota is exceeded', async () => {
       const databaseService = {
-        executeHealthcareRead: jest
+        findSubscriptionByIdSafe: jest
           .fn()
-          .mockResolvedValueOnce({
-            id: 'sub-123',
-            status: 'ACTIVE',
-            plan: { maxAppointmentsPerMonth: 10 },
-          })
-          .mockResolvedValueOnce({ count: 10 }), // quota exhausted
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
+          .mockResolvedValue(subscriptionRow({ appointmentsUsed: 10, appointmentsRemaining: 0 })),
       };
+      const { service } = createBillingService({ databaseService });
 
-      const service = createService({ databaseService });
-      const result = await (service as any).canBookAppointment('user-1', 'clinic-1');
+      const result = await service.canBookAppointment('sub-123');
 
-      expect(result.canBook).toBe(false);
+      expect(result.allowed).toBe(false);
+      expect(result.requiresPayment).toBe(true);
     });
   });
 
   describe('cancelSubscription', () => {
-    it('should cancel an active subscription', async () => {
+    it('should cancel an active subscription immediately', async () => {
       const databaseService = {
-        executeHealthcareRead: jest.fn().mockResolvedValue({
-          id: 'sub-123',
-          status: 'ACTIVE',
-        }),
-        executeHealthcareWrite: jest.fn().mockResolvedValue({
-          id: 'sub-123',
-          status: 'CANCELLED',
-          cancelledAt: new Date(),
-        }),
-        executeHealthcareWriteTransaction: jest.fn(),
+        findSubscriptionByIdSafe: jest.fn().mockResolvedValue(subscriptionRow()),
+        updateSubscriptionSafe: jest
+          .fn()
+          .mockResolvedValue(subscriptionRow({ status: 'CANCELLED', cancelledAt: new Date() })),
       };
+      const { service } = createBillingService({ databaseService });
 
-      const service = createService({ databaseService });
-      const result = await (service as any).cancelSubscription(
-        'sub-123',
-        'User requested cancellation',
-        { role: Role.PATIENT, userId: 'user-1' }
-      );
+      const result = await service.cancelSubscription('sub-123', true, {
+        role: Role.PATIENT,
+        userId: 'user-1',
+      });
 
       expect(result.status).toBe('CANCELLED');
+      expect(databaseService.updateSubscriptionSafe).toHaveBeenCalledWith(
+        'sub-123',
+        expect.objectContaining({ status: 'CANCELLED' })
+      );
     });
   });
 
   describe('clinic isolation', () => {
     it('should filter billing plans by clinic', async () => {
-      const databaseService = {
-        executeHealthcareRead: jest.fn().mockResolvedValue([]),
-        executeHealthcareWrite: jest.fn(),
-        executeHealthcareWriteTransaction: jest.fn(),
-      };
+      const databaseService = { findBillingPlansSafe: jest.fn().mockResolvedValue([]) };
+      const { service } = createBillingService({ databaseService });
 
-      const service = createService({ databaseService });
-      await (service as any).getBillingPlans('clinic-1', Role.CLINIC_ADMIN, 'user-1');
+      await service.getBillingPlans(CLINIC_ID, Role.CLINIC_ADMIN, 'user-1');
 
-      expect(databaseService.executeHealthcareRead).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ clinicId: 'clinic-1' }),
-        })
+      expect(databaseService.findBillingPlansSafe).toHaveBeenCalledWith(
+        expect.objectContaining({ clinicId: CLINIC_ID, isActive: true })
       );
     });
   });

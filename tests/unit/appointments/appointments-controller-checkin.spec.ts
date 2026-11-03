@@ -22,8 +22,10 @@ import {
   VIDEO_CHECK_IN_REJECTION_MESSAGE,
 } from '@services/appointments/plugins/therapy/check-in-location.service';
 import { formatDateKeyInIST } from '@utils/date-time.util';
+import { POSTER_LOCATION_REQUIRED_MESSAGE } from '@services/appointments/core/desk-code-presence.util';
 import type { ForceCheckInDto, ScanLocationQRDto } from '@dtos/appointment.dto';
 import { CLINIC, OTHER_CLINIC, buildHarness, rejection, type Row } from './appointments-harness';
+import { createInPersonCheckIn } from './in-person-check-in-world';
 import { createCacheStub } from './test-helpers';
 
 const CLINIC_LAT = 19.076;
@@ -110,8 +112,20 @@ function world() {
   );
 
   const events = { emit: jest.fn(async (..._args: unknown[]) => undefined) };
-  const locationQr = { verifyLocationQR: jest.fn((..._args: unknown[]) => true) };
+  const locationQr = {
+    verifyLocationQR: jest.fn((..._args: unknown[]) => true),
+    inspectLocationQR: jest.fn((..._args: unknown[]) => 'VALID'),
+  };
   const noop = {} as never;
+  // scan-qr is a thin delegate to the shared in-person check-in (same as POST /in-person/check-in).
+  const inPersonCheckIn = createInPersonCheckIn({
+    db: h.db,
+    checkInLocationService,
+    queue,
+    events,
+    logging: h.logging,
+    locationQr,
+  });
   const controller = new AppointmentsController(
     h.service as never,
     h.errors as never,
@@ -124,7 +138,9 @@ function world() {
     events as never,
     noop, // qrService
     locationQr as never,
-    noop // analyticsService
+    noop, // analyticsService
+    undefined, // checkInLog
+    inPersonCheckIn
   );
 
   h.db.insert('patient', { id: 'patient-1', userId: 'user-patient' });
@@ -148,7 +164,7 @@ function world() {
     currentPeriodEnd: new Date(Date.now() + 7 * 24 * 3600 * 1000),
   }));
 
-  return { ...h, controller, queue, queuedAppointments, events, locationQr };
+  return { ...h, controller, queue, queuedAppointments, events, locationQr, inPersonCheckIn };
 }
 
 type World = ReturnType<typeof world>;
@@ -165,9 +181,17 @@ function forceDto(overrides: Partial<ForceCheckInDto> = {}): ForceCheckInDto {
   return { reason: 'Kiosk scan unavailable', ...overrides } as ForceCheckInDto;
 }
 
+/** A typed desk code needs the device position as presence proof: the patient is at the desk. */
 function scanDto(overrides: Partial<ScanLocationQRDto> = {}): ScanLocationQRDto {
-  return { qrCode: 'CHK-MAIN-1234', ...overrides } as ScanLocationQRDto;
+  return {
+    qrCode: 'CHK-MAIN-1234',
+    coordinates: { lat: CLINIC_LAT, lng: CLINIC_LNG },
+    ...overrides,
+  } as ScanLocationQRDto;
 }
+
+/** The signed clinic poster: the scan itself is the presence proof, a position is checked if sent. */
+const POSTER = JSON.stringify({ type: 'LOCATION_CHECK_IN', locationId: 'cil-1', v: 1, sig: 'x' });
 
 function statusOf(w: World, appointmentId = 'appt-1'): unknown {
   return w.db.rows('appointment').find(row => row['id'] === appointmentId)?.['status'];
@@ -184,6 +208,17 @@ function expectCheckedIn(w: World, appointmentId = 'appt-1'): void {
     expect.objectContaining({ appointmentId, doctorId: 'doctor-1', locationId: 'loc-1' }),
     'clinic'
   );
+}
+
+/**
+ * The clinic turned 'Require location for QR check-in' off (opdControls, df4f03ed): a poster
+ * scan then reaches processCheckIn with its coordinates 'if-supplied', the pre-df4f03ed path.
+ */
+function allowPosterScanWithoutPosition(w: World): void {
+  w.db.insert('clinic', {
+    id: CLINIC,
+    settings: { appointmentSettings: { opdControls: { requireLocationForQrCheckIn: false } } },
+  });
 }
 
 function expectNothingRecorded(
@@ -436,7 +471,7 @@ describe('AppointmentsController.forceCheckInAppointment', () => {
   });
 });
 
-describe('AppointmentsController.scanLocationQRAndCheckIn', () => {
+describe('AppointmentsController.scanLocationQRAndCheckIn (deprecated, delegates to POST /in-person/check-in)', () => {
   let w: World;
 
   beforeEach(() => {
@@ -446,17 +481,47 @@ describe('AppointmentsController.scanLocationQRAndCheckIn', () => {
   const scan = (role: string, userId: string, dto: ScanLocationQRDto) =>
     w.controller.scanLocationQRAndCheckIn(dto, req(role, userId));
 
-  it('a patient scanning the clinic QR is CONFIRMED and queued with the doctor of the appointment', async () => {
+  it('is a thin delegate: the same InPersonCheckInService.checkIn call as POST /in-person/check-in', async () => {
+    w.db.insert('appointment', inPersonAppointment());
+    const spy = jest.spyOn(w.inPersonCheckIn, 'checkIn');
+
+    await scan(
+      'PATIENT',
+      'user-patient',
+      scanDto({ appointmentId: 'appt-1', deviceInfo: { platform: 'android' } })
+    );
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith(
+      {
+        qrCode: 'CHK-MAIN-1234',
+        coordinates: { lat: CLINIC_LAT, lng: CLINIC_LNG },
+        appointmentId: 'appt-1',
+        deviceInfo: { platform: 'android' },
+      },
+      CLINIC,
+      { userId: 'user-patient', role: 'PATIENT' }
+    );
+  });
+
+  it('a patient scanning the clinic QR is CONFIRMED and queued; the legacy response shape is kept', async () => {
     w.db.insert('appointment', inPersonAppointment());
 
     const result = await scan('PATIENT', 'user-patient', scanDto());
 
     expect(result.success).toBe(true);
+    expect(result.message).toBe('Checked in successfully');
     expect(result.data).toMatchObject({
       appointmentId: 'appt-1',
-      locationId: 'cil-1',
+      // The appointment's clinic location (the in-person read model), not the poster row id.
+      locationId: 'loc-1',
       doctorId: 'doctor-1',
+      queuePosition: 1,
+      totalInQueue: 1,
+      estimatedWaitTime: 5,
+      alreadyCheckedIn: false,
     });
+    expect(typeof result.data?.checkedInAt).toBe('string');
     expectCheckedIn(w);
   });
 
@@ -486,82 +551,53 @@ describe('AppointmentsController.scanLocationQRAndCheckIn', () => {
     expect(w.queue.checkIn).toHaveBeenCalledTimes(1);
   });
 
-  it('a patient who only has a video visit is not matched by the clinic QR at all', async () => {
+  it('a patient who only has a video visit is not matched by the clinic QR at all (404 NOT_BOOKED)', async () => {
     w.db.insert('appointment', videoAppointment({ locationId: 'loc-1' }));
 
     const error = await rejection(scan('PATIENT', 'user-patient', scanDto()));
 
     expect(error.getStatus()).toBe(404);
+    expect(error.getResponse()).toMatchObject({ code: 'NOT_BOOKED' });
     expect(w.db.rows('checkIn')).toHaveLength(0);
     expect(w.queue.checkIn).not.toHaveBeenCalled();
   });
 
-  it('a patient who names their own video appointment gets the clear 400', async () => {
+  it('naming a video appointment never checks it in', async () => {
     w.db.insert('appointment', videoAppointment({ locationId: 'loc-1' }));
 
     const error = await rejection(
       scan('PATIENT', 'user-patient', scanDto({ appointmentId: 'appt-video' }))
     );
 
-    expect(error).toBeInstanceOf(BadRequestException);
-    expect(error.message).toBe(VIDEO_CHECK_IN_REJECTION_MESSAGE);
-    expect(w.db.rows('checkIn')).toHaveLength(0);
-    expect(w.queue.checkIn).not.toHaveBeenCalled();
-  });
-
-  it('staff path: a video appointment is a 400 with no CheckIn row, status change or queue entry', async () => {
-    w.db.insert('appointment', videoAppointment({ locationId: 'loc-1' }));
-
-    const error = await rejection(
-      scan('RECEPTIONIST', 'user-reception', scanDto({ appointmentId: 'appt-video' }))
-    );
-
-    expect(error).toBeInstanceOf(BadRequestException);
-    expect(error.message).toBe(VIDEO_CHECK_IN_REJECTION_MESSAGE);
+    expect(error.getStatus()).toBe(404);
     expect(w.db.rows('checkIn')).toHaveLength(0);
     expect(statusOf(w, 'appt-video')).toBe('CONFIRMED');
     expect(w.queue.checkIn).not.toHaveBeenCalled();
   });
 
-  it('a receptionist at the right location needs no coordinates: CONFIRMED + queue entry', async () => {
-    w.db.insert('appointment', inPersonAppointment());
-    w.db.insert('receptionist', {
-      userId: 'user-reception',
-      locationId: 'loc-1',
-      location: { clinicId: CLINIC },
-    });
+  it.each([['RECEPTIONIST'], ['DOCTOR'], ['CLINIC_ADMIN']])(
+    '%s: QR scanning is for patients only (400 QR_NOT_FOR_STAFF), nothing recorded',
+    async role => {
+      w.db.insert('appointment', inPersonAppointment());
+      w.db.insert('receptionist', {
+        userId: 'user-staff',
+        locationId: 'loc-1',
+        location: { clinicId: CLINIC },
+      });
 
-    const result = await scan(
-      'RECEPTIONIST',
-      'user-reception',
-      scanDto({ appointmentId: 'appt-1' })
-    );
+      const error = await rejection(scan(role, 'user-staff', scanDto({ appointmentId: 'appt-1' })));
 
-    expect(result.success).toBe(true);
-    expectCheckedIn(w);
-  });
-
-  it('a receptionist assigned to another location is rejected with 403 on the staff scan path', async () => {
-    w.db.insert('appointment', inPersonAppointment());
-    w.db.insert('receptionist', {
-      userId: 'user-reception',
-      locationId: 'loc-2',
-      location: { clinicId: CLINIC },
-    });
-
-    const error = await rejection(
-      scan('RECEPTIONIST', 'user-reception', scanDto({ appointmentId: 'appt-1' }))
-    );
-
-    expect(error).toBeInstanceOf(ForbiddenException);
-    expectNothingRecorded(w);
-  });
+      expect(error.getStatus()).toBe(role === 'DOCTOR' ? 403 : 400);
+      expectNothingRecorded(w);
+    }
+  );
 
   it('keeps the 400 of a bad request instead of turning it into a 500 (error mapping)', async () => {
+    allowPosterScanWithoutPosition(w);
     w.db.insert('appointment', inPersonAppointment());
 
     const error = await rejection(
-      scan('PATIENT', 'user-patient', scanDto({ coordinates: { lat: 0, lng: 0 } }))
+      scan('PATIENT', 'user-patient', scanDto({ qrCode: POSTER, coordinates: { lat: 0, lng: 0 } }))
     );
 
     expect(error).toBeInstanceOf(BadRequestException);
@@ -576,13 +612,14 @@ describe('AppointmentsController.scanLocationQRAndCheckIn', () => {
   ])(
     'a patient scanning with %s coordinates gets 400 and nothing is recorded',
     async (_label, coordinates) => {
+      allowPosterScanWithoutPosition(w);
       w.db.insert('appointment', inPersonAppointment());
 
       const error = await rejection(
         scan(
           'PATIENT',
           'user-patient',
-          scanDto({ coordinates } as unknown as Partial<ScanLocationQRDto>)
+          scanDto({ qrCode: POSTER, coordinates } as unknown as Partial<ScanLocationQRDto>)
         )
       );
 
@@ -591,21 +628,54 @@ describe('AppointmentsController.scanLocationQRAndCheckIn', () => {
     }
   );
 
-  it('a receptionist scanning is never blocked by coordinates: they are ignored, not validated', async () => {
+  it('a typed desk code without a device position is refused (400 LOCATION_REQUIRED), nothing recorded', async () => {
     w.db.insert('appointment', inPersonAppointment());
 
-    const result = await scan(
-      'RECEPTIONIST',
-      'user-reception',
-      scanDto({
-        appointmentId: 'appt-1',
-        coordinates: { lat: 'abc', lng: 'def' },
-      } as unknown as Partial<ScanLocationQRDto>)
+    const error = await rejection(
+      scan('PATIENT', 'user-patient', { qrCode: 'CHK-MAIN-1234' } as ScanLocationQRDto)
     );
+
+    expect(error.getStatus()).toBe(400);
+    expect(error.getResponse()).toMatchObject({ code: 'LOCATION_REQUIRED' });
+    expectNothingRecorded(w);
+  });
+
+  it('a typed desk code from far away is refused (403 TOO_FAR), nothing recorded', async () => {
+    w.db.insert('appointment', inPersonAppointment());
+
+    const error = await rejection(
+      scan('PATIENT', 'user-patient', scanDto({ coordinates: northOfClinic(5_000) }))
+    );
+
+    expect(error.getStatus()).toBe(403);
+    expect(error.getResponse()).toMatchObject({ code: 'TOO_FAR' });
+    expectNothingRecorded(w);
+  });
+
+  it('a signed poster scan without a device position is refused by default (400 LOCATION_REQUIRED), nothing recorded', async () => {
+    // df4f03ed: opdControls.requireLocationForQrCheckIn defaults to on, a poster can be photographed.
+    w.db.insert('appointment', inPersonAppointment());
+
+    const error = await rejection(
+      scan('PATIENT', 'user-patient', { qrCode: POSTER } as ScanLocationQRDto)
+    );
+
+    expect(error.getStatus()).toBe(400);
+    expect(error.getResponse()).toMatchObject({
+      code: 'LOCATION_REQUIRED',
+      message: POSTER_LOCATION_REQUIRED_MESSAGE,
+    });
+    expectNothingRecorded(w);
+  });
+
+  it('the signed poster needs no device position when the clinic turned the requirement off', async () => {
+    allowPosterScanWithoutPosition(w);
+    w.db.insert('appointment', inPersonAppointment());
+
+    const result = await scan('PATIENT', 'user-patient', { qrCode: POSTER } as ScanLocationQRDto);
 
     expect(result.success).toBe(true);
     expectCheckedIn(w);
-    expect(w.db.rows('checkIn')[0]?.['coordinates']).toBeNull();
   });
 
   it('answers a repeated scan with the already-confirmed result and no second arrival', async () => {
@@ -617,6 +687,7 @@ describe('AppointmentsController.scanLocationQRAndCheckIn', () => {
 
     expect(again.success).toBe(true);
     expect(again.message).toBe('Appointment already confirmed and in queue');
+    expect(again.data).toMatchObject({ alreadyCheckedIn: true });
     expect(w.db.rows('checkIn')).toHaveLength(1);
     expect(w.events.emit).not.toHaveBeenCalled();
   });
@@ -640,7 +711,23 @@ describe('AppointmentsController.scanLocationQRAndCheckIn', () => {
     expect(checkedInEvents).toHaveLength(1);
   });
 
-  it('plain HttpExceptions pass through (the shape clients see is the service one)', async () => {
+  it('two bookings at the location: the legacy selection answer (success false, requiresSelection)', async () => {
+    w.db.insert('appointment', inPersonAppointment());
+    w.db.insert('appointment', inPersonAppointment({ id: 'appt-2' }));
+
+    const result = await scan('PATIENT', 'user-patient', scanDto());
+
+    expect(result.success).toBe(false);
+    const data = result.data as unknown as {
+      requiresSelection: boolean;
+      eligibleAppointments: Array<{ id: string; type: string }>;
+    };
+    expect(data.requiresSelection).toBe(true);
+    expect(data.eligibleAppointments.map(a => a.id).sort()).toEqual(['appt-1', 'appt-2']);
+    expectNothingRecorded(w);
+  });
+
+  it('the active plan is still enforced (processCheckIn): no plan is a 400, nothing recorded', async () => {
     w.db.insert(
       'appointment',
       inPersonAppointment({ subscriptionId: null, isSubscriptionBased: false })

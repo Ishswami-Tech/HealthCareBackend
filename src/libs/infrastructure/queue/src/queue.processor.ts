@@ -3,6 +3,7 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { EHRService } from '../../../../services/ehr/ehr.service';
 import { AppointmentQueueService } from './services/appointment-queue.service';
+import { resolveJobPayload } from './job-payload.util';
 import { EmailService } from '@communication/channels/email/email.service';
 
 // Internal imports - Infrastructure
@@ -325,10 +326,6 @@ export class QueueProcessor {
               if (job.name.includes('notification'))
                 return this.processNotification(job as unknown as Job<JobData>);
 
-              if (action === 'APPOINTMENT_PROCESSING') {
-                return { success: true };
-              }
-
               throw new Error(
                 `Unknown job type: ${jobType} (Action: ${action}, Name: ${job.name})`
               );
@@ -356,10 +353,12 @@ export class QueueProcessor {
   // ============ Appointment Module (Unified Queue) ============
 
   async processAppointmentJob(job: Job<JobData>): Promise<unknown> {
-    const rawAction = job.data?.['action'];
+    // The ids live in the envelope's nested `data` (QueueService.addJob), not at the top level.
+    const payload = resolveJobPayload(job.data);
+    const rawAction = payload['action'];
     const action = typeof rawAction === 'string' ? rawAction : job.name;
-    const { clinicId, patientId, doctorId, appointmentId, queueOwnerId } = job.data;
-    const domain = job.data['domain'] || 'clinic';
+    const { clinicId, patientId, doctorId, appointmentId, queueOwnerId } = payload;
+    const domain = payload['domain'] || 'clinic';
     const service = this.moduleRef?.get(AppointmentQueueService, { strict: false });
 
     if (!service) {
@@ -386,11 +385,11 @@ export class QueueProcessor {
               queueOwnerId: (queueOwnerId || doctorId) as string,
               appointmentId: appointmentId as string,
               assignedDoctorId: doctorId as string,
-              queueCategory: (job.data['queueType'] ||
-                job.data['queueCategory'] ||
+              queueCategory: (payload['queueType'] ||
+                payload['queueCategory'] ||
                 'DOCTOR_CONSULTATION') as string,
-              notes: job.data['notes'] as string | undefined,
-              type: (job.data['queueType'] || 'CONSULTATION') as string,
+              notes: payload['notes'] as string | undefined,
+              type: (payload['queueType'] || 'CONSULTATION') as string,
             },
             domain as string
           );
@@ -448,24 +447,21 @@ export class QueueProcessor {
             {
               doctorId: doctorId as string,
               clinicId: clinicId as string,
-              date: job.data['date'] as string,
-              newOrder: job.data['newOrder'] as string[],
+              date: payload['date'] as string,
+              newOrder: payload['newOrder'] as string[],
             },
             domain as string
           );
 
         case 'queue.transfer':
           return await service.transferOperationalQueueItem(
-            (job.data['entryId'] as string) || (appointmentId as string) || (patientId as string),
+            (payload['entryId'] as string) || (appointmentId as string) || (patientId as string),
             clinicId as string,
             domain as string,
-            (job.data['targetQueue'] as string) || 'DOCTOR_CONSULTATION',
-            job.data['treatmentType'] as string | undefined,
-            job.data['notes'] as string | undefined
+            (payload['targetQueue'] as string) || 'DOCTOR_CONSULTATION',
+            payload['treatmentType'] as string | undefined,
+            payload['notes'] as string | undefined
           );
-
-        case 'APPOINTMENT_PROCESSING':
-          return this.processAppointmentProcessing(job as unknown as Job<JobData>);
 
         default:
           throw new Error(`Unsupported appointment queue action: ${action}`);
@@ -491,9 +487,12 @@ export class QueueProcessor {
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
-        `Processing create job ${safeStringify(job.id)} for resource ${safeStringify(job.data['id'])}`,
+        `Processing create job ${safeStringify(job.id)} for resource ${safeStringify(resolveJobPayload(job.data)['id'])}`,
         'QueueProcessor',
-        { jobId: safeStringify(job.id), resourceId: safeStringify(job.data['id']) }
+        {
+          jobId: safeStringify(job.id),
+          resourceId: safeStringify(resolveJobPayload(job.data)['id']),
+        }
       );
       // Ensure this handler is idempotent!
       // ... job logic ...
@@ -531,9 +530,12 @@ export class QueueProcessor {
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
-        `Processing update job ${safeStringify(job.id)} for resource ${safeStringify(job.data['id'])}`,
+        `Processing update job ${safeStringify(job.id)} for resource ${safeStringify(resolveJobPayload(job.data)['id'])}`,
         'QueueProcessor',
-        { jobId: safeStringify(job.id), resourceId: safeStringify(job.data['id']) }
+        {
+          jobId: safeStringify(job.id),
+          resourceId: safeStringify(resolveJobPayload(job.data)['id']),
+        }
       );
 
       // Generic processing logic for service-queue
@@ -568,9 +570,12 @@ export class QueueProcessor {
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
-        `Processing confirm job ${safeStringify(job.id)} for resource ${safeStringify(job.data['id'])}`,
+        `Processing confirm job ${safeStringify(job.id)} for resource ${safeStringify(resolveJobPayload(job.data)['id'])}`,
         'QueueProcessor',
-        { jobId: safeStringify(job.id), resourceId: safeStringify(job.data['id']) }
+        {
+          jobId: safeStringify(job.id),
+          resourceId: safeStringify(resolveJobPayload(job.data)['id']),
+        }
       );
 
       // Generic processing logic for service-queue
@@ -605,9 +610,12 @@ export class QueueProcessor {
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
-        `Processing complete job ${safeStringify(job.id)} for resource ${safeStringify(job.data['id'])}`,
+        `Processing complete job ${safeStringify(job.id)} for resource ${safeStringify(resolveJobPayload(job.data)['id'])}`,
         'QueueProcessor',
-        { jobId: safeStringify(job.id), resourceId: safeStringify(job.data['id']) }
+        {
+          jobId: safeStringify(job.id),
+          resourceId: safeStringify(resolveJobPayload(job.data)['id']),
+        }
       );
 
       // Generic processing logic for service-queue
@@ -642,18 +650,24 @@ export class QueueProcessor {
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
-        `Processing notification job ${safeStringify(job.id)} for resource ${safeStringify(job.data['id'])}`,
+        `Processing notification job ${safeStringify(job.id)} for resource ${safeStringify(resolveJobPayload(job.data)['id'])}`,
         'QueueProcessor',
-        { jobId: safeStringify(job.id), resourceId: safeStringify(job.data['id']) }
+        {
+          jobId: safeStringify(job.id),
+          resourceId: safeStringify(resolveJobPayload(job.data)['id']),
+        }
       );
 
       // Send notification logic for service-queue
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
-        `Sending notification for resource ${safeStringify(job.data['id'])} to user ${safeStringify(job.data['userId'])}`,
+        `Sending notification for resource ${safeStringify(resolveJobPayload(job.data)['id'])} to user ${safeStringify(resolveJobPayload(job.data)['userId'])}`,
         'QueueProcessor',
-        { resourceId: safeStringify(job.data['id']), userId: safeStringify(job.data['userId']) }
+        {
+          resourceId: safeStringify(resolveJobPayload(job.data)['id']),
+          userId: safeStringify(resolveJobPayload(job.data)['userId']),
+        }
       );
 
       // Example of FCM notification (would need to be implemented)
@@ -667,9 +681,9 @@ export class QueueProcessor {
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
-        `Notification sent for resource ${safeStringify(job.data['id'])}`,
+        `Notification sent for resource ${safeStringify(resolveJobPayload(job.data)['id'])}`,
         'QueueProcessor',
-        { resourceId: safeStringify(job.data['id']) }
+        { resourceId: safeStringify(resolveJobPayload(job.data)['id']) }
       );
       return { success: true };
     } catch (_error) {
@@ -770,8 +784,19 @@ export class QueueProcessor {
         throw new Error('WhatsApp service unavailable');
       }
 
-      // Route through clinic adapter — pass clinicId so it bypasses the global
-      // WHATSAPP_ENABLED gate (same pattern as OTP: if !enabled && !clinicId → skip).
+      // WHATSAPP_ENABLED=false gates every send (the clinic adapter too): nothing will be sent,
+      // and retrying cannot change that, so the job completes as skipped instead of failing.
+      if (!whatsAppService.isEnabled()) {
+        void this.loggingService.log(
+          LogType.QUEUE,
+          LogLevel.INFO,
+          `WhatsApp disabled — doctor daily summary not sent for doctor ${payload.doctorId}`,
+          'QueueProcessor',
+          { jobId: safeStringify(job.id), doctorId: payload.doctorId, skipped: true }
+        );
+        return { success: false };
+      }
+
       const success = await whatsAppService.sendDoctorDailySummary(
         phone,
         doctorLastName,
@@ -847,6 +872,19 @@ export class QueueProcessor {
 
     if (!emailService) {
       throw new Error('EmailService not available in QueueProcessor');
+    }
+
+    // ZEPTOMAIL_ENABLED=false: nothing will be sent and a retry cannot change that, so the job
+    // completes as not-sent instead of failing into retries.
+    if (!emailService.isEnabled()) {
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.INFO,
+        `Email disabled — email job ${safeStringify(job.id)} not sent`,
+        'QueueProcessor',
+        { jobId: safeStringify(job.id), skipped: true }
+      );
+      return { success: false };
     }
 
     void this.loggingService.log(
@@ -1007,28 +1045,6 @@ export class QueueProcessor {
     return { success: true };
   }
 
-  processAppointmentProcessing(job: Job<JobData>): { success: boolean } {
-    try {
-      void this.loggingService.log(
-        LogType.QUEUE,
-        LogLevel.INFO,
-        `Processing appointment background job ${safeStringify(job.id)}`,
-        'QueueProcessor',
-        { jobId: safeStringify(job.id), data: safeStringify(job.data) }
-      );
-      return { success: true };
-    } catch (error) {
-      void this.loggingService.log(
-        LogType.QUEUE,
-        LogLevel.ERROR,
-        `Error processing appointment background job`,
-        'QueueProcessor',
-        { jobId: safeStringify(job.id), error: String(error) }
-      );
-      throw error;
-    }
-  }
-
   processAppointmentAnalytics(job: Job<JobData>): { success: boolean } {
     try {
       void this.loggingService.log(
@@ -1067,7 +1083,7 @@ export class QueueProcessor {
       // of actually using this queue, hitting a 10s timeout under load.
       // Now that this job type does real work, webhook handlers can enqueue
       // here and return a fast ack instead of blocking the HTTP response.
-      const jobData = job.data as unknown as PaymentProcessingJobData;
+      const jobData = resolveJobPayload(job.data) as unknown as PaymentProcessingJobData;
       if (jobData?.clinicId && jobData?.paymentId && jobData?.orderId) {
         const billingService = this.getBillingService();
         if (!billingService) {
@@ -1286,7 +1302,13 @@ export class QueueProcessor {
    */
   async processLabReport(job: Job<JobData>): Promise<{ success: boolean }> {
     try {
-      const { reportId, clinicId, userId, action, metadata: _metadata } = job.data;
+      const {
+        reportId,
+        clinicId,
+        userId,
+        action,
+        metadata: _metadata,
+      } = resolveJobPayload(job.data);
 
       if (!reportId || typeof reportId !== 'string') {
         throw new Error('Invalid reportId in job data');
@@ -1408,7 +1430,13 @@ export class QueueProcessor {
    */
   async processImaging(job: Job<JobData>): Promise<{ success: boolean }> {
     try {
-      const { reportId, clinicId, userId, action, metadata: _metadata } = job.data;
+      const {
+        reportId,
+        clinicId,
+        userId,
+        action,
+        metadata: _metadata,
+      } = resolveJobPayload(job.data);
 
       if (!reportId || typeof reportId !== 'string') {
         throw new Error('Invalid reportId in job data');
@@ -1526,7 +1554,7 @@ export class QueueProcessor {
     job: Job<JobData>
   ): Promise<{ success: boolean; imported: number; failed: number }> {
     try {
-      const { userId, clinicId, importId, records, importData } = job.data;
+      const { userId, clinicId, importId, records, importData } = resolveJobPayload(job.data);
 
       if (!userId || !clinicId) {
         throw new Error('Missing userId or clinicId in bulk import job data');
@@ -1760,7 +1788,7 @@ export class QueueProcessor {
    */
   async processBulkInvoice(job: Job<JobData>): Promise<{ success: boolean; created: number }> {
     try {
-      const { batchId, clinicId, userId, action, metadata } = job.data;
+      const { batchId, clinicId, userId, action, metadata } = resolveJobPayload(job.data);
 
       if (!batchId || typeof batchId !== 'string') {
         throw new Error('Invalid batchId in job data');
@@ -1915,7 +1943,7 @@ export class QueueProcessor {
     job: Job<JobData>
   ): Promise<{ success: boolean; reconciled: number }> {
     try {
-      const { reconciliationId, clinicId, userId, action, metadata } = job.data;
+      const { reconciliationId, clinicId, userId, action, metadata } = resolveJobPayload(job.data);
 
       if (!reconciliationId || typeof reconciliationId !== 'string') {
         throw new Error('Invalid reconciliationId in job data');
@@ -2044,7 +2072,8 @@ export class QueueProcessor {
     job: Job<JobData>
   ): Promise<{ success: boolean; transcodedUrl?: string }> {
     try {
-      const { appointmentId, recordingId, recordingUrl, duration, action, metadata } = job.data;
+      const { appointmentId, recordingId, recordingUrl, duration, action, metadata } =
+        resolveJobPayload(job.data);
 
       if (!appointmentId || !recordingId || !recordingUrl) {
         throw new Error('Missing required fields: appointmentId, recordingId, or recordingUrl');
@@ -2278,7 +2307,9 @@ export class QueueProcessor {
     job: Job<JobData>
   ): Promise<{ success: boolean; transcodedUrl?: string }> {
     try {
-      const { appointmentId, recordingId, recordingUrl, action, metadata } = job.data;
+      const { appointmentId, recordingId, recordingUrl, action, metadata } = resolveJobPayload(
+        job.data
+      );
 
       if (!recordingId || !recordingUrl) {
         throw new Error('Missing required fields: recordingId or recordingUrl');
@@ -2429,7 +2460,7 @@ export class QueueProcessor {
     job: Job<JobData>
   ): Promise<{ success: boolean; analytics?: unknown }> {
     try {
-      const { appointmentId, recordingId, action, metadata } = job.data;
+      const { appointmentId, recordingId, action, metadata } = resolveJobPayload(job.data);
 
       if (!appointmentId || !recordingId) {
         throw new Error('Missing required fields: appointmentId or recordingId');

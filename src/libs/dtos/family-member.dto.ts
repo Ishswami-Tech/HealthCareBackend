@@ -6,6 +6,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { OmitType } from '@nestjs/mapped-types';
 import { Transform } from 'class-transformer';
+import { plainTextTransform } from '@utils/plain-text.util';
 import {
   IsDateString,
   IsIn,
@@ -68,16 +69,19 @@ export class CreateFamilyMemberDto {
   @ApiProperty({ example: 'Aarav' })
   @IsString()
   @MaxLength(100)
+  @Transform(plainTextTransform)
   firstName!: string;
 
   @ApiProperty({ example: 'Bhujbal' })
   @IsString()
   @MaxLength(100)
+  @Transform(plainTextTransform)
   lastName!: string;
 
   @ApiProperty({ example: 'Son' })
   @IsString()
   @MaxLength(50)
+  @Transform(plainTextTransform)
   relation!: string;
 
   @ApiPropertyOptional({ example: 'MALE', enum: FAMILY_MEMBER_GENDERS })
@@ -106,6 +110,15 @@ export class CreateFamilyMemberDto {
   @IsString()
   @MaxLength(FAMILY_MEMBER_NOTES_MAX_LENGTH)
   notes?: string;
+
+  @ApiPropertyOptional({
+    example: 'Penicillin, peanuts',
+    description: 'Known allergies, free text',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  allergies?: string;
 }
 
 /**
@@ -117,9 +130,26 @@ export class CreateMyFamilyMemberDto extends OmitType(CreateFamilyMemberDto, [
 ] as const) {}
 
 export class UpdateFamilyMemberDto {
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(100) firstName?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(100) lastName?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(50) relation?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  @Transform(plainTextTransform)
+  firstName?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  @Transform(plainTextTransform)
+  lastName?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  @Transform(plainTextTransform)
+  relation?: string;
 
   @ApiPropertyOptional({ enum: FAMILY_MEMBER_GENDERS })
   @IsOptional()
@@ -140,6 +170,15 @@ export class UpdateFamilyMemberDto {
   @IsString()
   @MaxLength(FAMILY_MEMBER_NOTES_MAX_LENGTH)
   notes?: string;
+
+  @ApiPropertyOptional({
+    example: 'Penicillin, peanuts',
+    description: 'Known allergies, free text',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  allergies?: string;
 }
 
 export interface FamilyMemberResponse {
@@ -155,6 +194,7 @@ export interface FamilyMemberResponse {
   dateOfBirth: string | null;
   phone: string | null;
   notes: string | null;
+  allergies: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;

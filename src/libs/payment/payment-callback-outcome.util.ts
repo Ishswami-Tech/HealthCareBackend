@@ -9,7 +9,9 @@ export type PaymentCallbackCode =
   | 'PAYMENT_FAILED'
   | 'PAYMENT_CANCELLED'
   | 'PAYMENT_EXPIRED'
-  | 'PAYMENT_REFUNDED';
+  | 'PAYMENT_REFUNDED'
+  /** The gateway could not confirm the order (unknown order id, gateway error): nothing was settled. */
+  | 'PAYMENT_VERIFICATION_FAILED';
 
 export interface PaymentCallbackOutcomeFields {
   code: PaymentCallbackCode;

@@ -438,8 +438,9 @@ export interface EnterpriseJobOptions {
   timeout?: number;
   delay?: number;
   attempts?: number;
-  removeOnComplete?: boolean | number;
-  removeOnFail?: boolean | number;
+  /** BullMQ KeepJobs: true / a count / `{ count, age (seconds) }`. */
+  removeOnComplete?: boolean | number | { count: number; age?: number };
+  removeOnFail?: boolean | number | { count: number; age?: number };
   domain?: 'clinic';
 }
 

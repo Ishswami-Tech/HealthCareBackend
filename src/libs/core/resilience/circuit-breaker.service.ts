@@ -186,14 +186,20 @@ export class CircuitBreakerService {
    */
   private open(name: string, timeout: number): void {
     const state = this.getInternalState(name);
+    // half-open -> open (the probe failed) is the same outage continuing, not news.
+    const wasOpen = state.state !== 'closed';
     state.isOpen = true;
     state.state = 'open';
     state.nextAttemptTime = Date.now() + timeout;
 
+    // Logged at INFO on the closed -> open TRANSITION only. Every further failure while open
+    // re-enters here; logging each one at INFO was ~29 lines per 5 minutes from WhatsApp 401s.
     void this.loggingService.log(
       LogType.SYSTEM,
-      LogLevel.INFO,
-      'Circuit breaker opened (expected behavior - protecting system from failures)',
+      wasOpen ? LogLevel.DEBUG : LogLevel.INFO,
+      wasOpen
+        ? 'Circuit breaker still open (failure recorded while open or half-open)'
+        : 'Circuit breaker opened (expected behavior - protecting system from failures)',
       'CircuitBreakerService',
       { name, failures: state.failureCount, nextAttemptTime: new Date(state.nextAttemptTime) }
     );

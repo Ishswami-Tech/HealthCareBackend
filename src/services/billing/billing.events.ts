@@ -849,8 +849,9 @@ export class BillingEventsListener {
    * A COMPLETED payment arrived for an appointment that is already EXPIRED, CANCELLED, COMPLETED
    * or NO_SHOW. The appointment is deliberately left as it is (its slot may have been released
    * and rebooked) and no payout is prepared. There are no refunds for visits that never take
-   * place, so this only logs and emits the event (admin-visible); it never refunds, never
-   * persists a refund flag and never throws.
+   * place automatically: this logs, persists a LATE_SETTLEMENT review on the payment
+   * (requiredAction REFUND_OR_REBOOK, for the clinic to decide) and emits the event broadcast to
+   * the clinic admins; it never refunds and never throws.
    */
   private async flagLateSettlement(details: {
     appointmentId: string;
@@ -873,11 +874,23 @@ export class BillingEventsListener {
           amount: details.amount,
         }
       );
+      // Recorded on the payment (requiredAction REFUND_OR_REBOOK) so the clinic can act on it:
+      // the money was collected for a booking that no longer exists. Never refunded here.
+      // (A visit that already took place - COMPLETED - needs no refund / rebook decision.)
+      if (details.appointmentStatus !== 'COMPLETED') {
+        await this.billingService.persistLateSettlementReview({
+          clinicId: details.clinicId,
+          paymentId: details.paymentId,
+          appointmentId: details.appointmentId,
+          ...(details.amount !== undefined ? { amount: details.amount } : {}),
+        });
+      }
       await this.eventService.emit('billing.payment.late_settlement', {
         clinicId: details.clinicId,
         paymentId: details.paymentId,
         appointmentId: details.appointmentId,
         appointmentStatus: details.appointmentStatus,
+        requiredAction: 'REFUND_OR_REBOOK',
         ...(details.amount !== undefined ? { amount: details.amount } : {}),
         reason: `Completed payment received for an appointment that was already ${details.appointmentStatus}`,
       });
@@ -1090,7 +1103,7 @@ export class BillingEventsListener {
     }
 
     await this.expirePendingPaymentsForAppointment(appointmentId, PaymentStatus.CANCELLED);
-    await this.voidPendingInvoicesForAppointment(appointmentId);
+    await this.voidPendingInvoicesForAppointment(appointmentId, 'APPOINTMENT_CANCELLED');
   }
 
   @OnEvent('appointment.expired')
@@ -1106,39 +1119,46 @@ export class BillingEventsListener {
     // Expire PENDING payments — user didn't complete payment in time
     await this.expirePendingPaymentsForAppointment(appointmentId, PaymentStatus.EXPIRED);
     // VOID PENDING invoices — appointment expired, invoice is no longer valid
-    await this.voidPendingInvoicesForAppointment(appointmentId);
+    await this.voidPendingInvoicesForAppointment(appointmentId, 'APPOINTMENT_EXPIRED');
   }
 
-  private async voidPendingInvoicesForAppointment(appointmentId: string): Promise<void> {
+  private async voidPendingInvoicesForAppointment(
+    appointmentId: string,
+    reason: 'APPOINTMENT_EXPIRED' | 'APPOINTMENT_CANCELLED'
+  ): Promise<void> {
     try {
       // Find PENDING invoices linked to this appointment via metadata
-      const draftInvoices = await this.databaseService.executeHealthcareRead<Array<{ id: string }>>(
-        async client => {
-          return (
-            client as unknown as {
-              invoice: {
-                findMany: (args: {
-                  where: {
-                    status: string;
-                    metadata: { path: string[]; equals: string };
-                  };
-                  select: { id: true };
-                }) => Promise<Array<{ id: string }>>;
-              };
-            }
-          ).invoice.findMany({
-            where: {
-              status: 'PENDING',
-              metadata: { path: ['appointmentId'], equals: appointmentId },
-            },
-            select: { id: true },
-          });
-        }
-      );
+      const draftInvoices = await this.databaseService.executeHealthcareRead<
+        Array<{ id: string; clinicId: string }>
+      >(async client => {
+        return (
+          client as unknown as {
+            invoice: {
+              findMany: (args: {
+                where: {
+                  status: string;
+                  metadata: { path: string[]; equals: string };
+                };
+                select: { id: true; clinicId: true };
+              }) => Promise<Array<{ id: string; clinicId: string }>>;
+            };
+          }
+        ).invoice.findMany({
+          where: {
+            status: 'PENDING',
+            metadata: { path: ['appointmentId'], equals: appointmentId },
+          },
+          select: { id: true, clinicId: true },
+        });
+      });
 
       for (const invoice of draftInvoices) {
         try {
-          await this.billingService.updateInvoice(invoice.id, { status: 'VOID' } as never);
+          // System void: the public PUT guard refuses status changes, so use the internal,
+          // PENDING-guarded write (a PAID invoice is never voided).
+          await this.billingService.voidInvoiceInternal(invoice.id, invoice.clinicId, reason, {
+            appointmentId,
+          });
         } catch (error) {
           await this.loggingService.log(
             LogType.ERROR,

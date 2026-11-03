@@ -36,6 +36,12 @@ import {
   getEnvironment,
 } from '@config/environment/utils';
 import { LoggingInterceptor } from '@infrastructure/logging/logging.interceptor';
+import {
+  buildTrustProxyFn,
+  parseTrustedProxyHops,
+} from '@security/rate-limit/rate-limit-keys.util';
+import { BillingRedactionInterceptor } from '@core/interceptors/billing-redaction.interceptor';
+import { CredentialLeakGuardInterceptor } from '@core/interceptors/credential-leak-guard.interceptor';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import type { Server, ServerOptions } from 'socket.io';
 import cluster from 'cluster';
@@ -50,6 +56,7 @@ import {
 import { createFrameworkAdapter } from '@infrastructure/framework/adapters/fastify.adapter';
 import { ApplicationLifecycleManager } from '@infrastructure/framework/wrappers/application-lifecycle.manager';
 import { ServerConfigurator } from '@infrastructure/framework/wrappers/server-configurator';
+import { isDevCorsOriginAllowed } from '@security/cors-origin.util';
 import type {
   IFrameworkAdapter,
   ApplicationConfig,
@@ -354,22 +361,14 @@ async function _setupWebSocketAdapter(
           // every restart. Accept any http://localhost:<port> origin in development
           // only; see security-config.service.ts's configureCORS() for the HTTP equivalent.
           const isDevelopment = configService?.isDevelopment() ?? false;
-          const localhostOriginPattern = /^http:\/\/localhost:\d+$/;
           const socketCorsOrigin =
             isDevelopment && corsOrigins !== '*'
               ? (
                   origin: string | undefined,
                   callback: (err: Error | null, allow?: boolean) => void
                 ): void => {
-                  if (
-                    !origin ||
-                    (corsOrigins as string[]).includes(origin) ||
-                    localhostOriginPattern.test(origin)
-                  ) {
-                    callback(null, true);
-                    return;
-                  }
-                  callback(new Error(`Origin ${origin} not allowed by CORS`), false);
+                  // Refuse without an error: no CORS headers instead of a 500.
+                  callback(null, isDevCorsOriginAllowed(origin, corsOrigins as string[]));
                 }
               : corsOrigins;
 
@@ -454,7 +453,9 @@ async function _setupWebSocketAdapter(
             });
           }
 
-          const testNamespace = server.of?.('/test');
+          // Unauthenticated echo/heartbeat namespace for local socket debugging only. Never
+          // registered outside development (it accepted anonymous connections in production).
+          const testNamespace = isDevelopment ? server.of?.('/test') : null;
           if (testNamespace && typeof testNamespace.on === 'function') {
             testNamespace.on('connection', (socket: SocketConnection) => {
               logger.log('Client connected to test namespace');
@@ -656,6 +657,21 @@ function setupProductionClustering(): boolean {
   }
 }
 
+/**
+ * Fastify `trustProxy` trusting exactly TRUSTED_PROXY_HOPS proxies (default 1 = Traefik), with
+ * the socket peer required to be a private address. Returns false for tests or an explicit 0
+ * so request.ip is the socket peer. See buildTrustProxyFn for why a plain number is not used.
+ */
+function resolveTrustProxySetting(
+  environment: string
+): ((address: string, hop: number) => boolean) | false {
+  if (environment === 'test') {
+    return false;
+  }
+  const hops = parseTrustedProxyHops(getEnv('TRUSTED_PROXY_HOPS') ?? getEnv('TRUST_PROXY'), 1);
+  return buildTrustProxyFn(hops);
+}
+
 async function bootstrap() {
   // Setup clustering for production
   if (setupProductionClustering()) {
@@ -720,7 +736,10 @@ async function bootstrap() {
       environment,
       isHorizontalScaling,
       instanceId,
-      trustProxy: envConfig.security.trustProxy === 1,
+      // Trust exactly TRUSTED_PROXY_HOPS reverse proxies (Traefik = 1; set 2 if Cloudflare proxies
+      // in front of Traefik). `true` would trust the left-most, client-controlled X-Forwarded-For
+      // entry, letting anyone pick their own rate-limit bucket. Legacy TRUST_PROXY=1 still maps to 1.
+      trustProxy: resolveTrustProxySetting(environment),
       bodyLimit:
         environment === 'production' || environment === 'staging'
           ? 50 * 1024 * 1024
@@ -963,6 +982,17 @@ async function bootstrap() {
         },
       ]);
     }
+
+    // Billing blindness for clinical roles: registered AFTER the logging interceptor and outside the
+    // `loggingService` guard so it always exists. It is a `useGlobalInterceptors` entry, so it wraps
+    // the APP_INTERCEPTOR cache interceptor and also redacts replayed cache hits.
+    middlewareManager.configureInterceptors(app, [{ interceptor: BillingRedactionInterceptor }]);
+
+    // Global backstop against the "raw Prisma include leaks a password hash / db_connection_string"
+    // bug class (5 independent incidents in one day — see
+    // project_healthcarebackend_db_connection_string_leak.md). Per-controller `select` allowlists
+    // remain the real fix at the source; this catches the next one before it ships.
+    middlewareManager.configureInterceptors(app, [{ interceptor: CredentialLeakGuardInterceptor }]);
 
     logger.log('Global pipes, filters, and interceptors configured');
 

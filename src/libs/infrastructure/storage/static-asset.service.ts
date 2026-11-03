@@ -229,7 +229,11 @@ export class StaticAssetService {
   async resolveSignedUrl(
     storedUrl: string,
     ttlSeconds: number = PRIVATE_ASSET_URL_TTL_SECONDS,
-    options: { readonly boundTo?: ReadonlyArray<string | null | undefined> } = {}
+    options: {
+      readonly boundTo?: ReadonlyArray<string | null | undefined>;
+      /** Friendly name the browser saves the file under (presigned Content-Disposition). */
+      readonly fileName?: string;
+    } = {}
   ): Promise<string> {
     if (!storedUrl || !this.s3StorageService.isS3Enabled()) {
       return storedUrl;
@@ -257,6 +261,13 @@ export class StaticAssetService {
     }
 
     try {
+      if (options.fileName) {
+        return await this.s3StorageService.getPresignedDownloadUrl(key, {
+          expiresIn: ttlSeconds,
+          disposition: 'inline',
+          fileName: options.fileName,
+        });
+      }
       return await this.getSignedDownloadUrl(key, ttlSeconds);
     } catch (error) {
       await this.loggingService
@@ -273,6 +284,30 @@ export class StaticAssetService {
         .catch(() => undefined);
       return storedUrl;
     }
+  }
+
+  /**
+   * Own-bucket object key of a stored private file URL (`documents/` or
+   * `medical-records/`), or null when S3 is off or the URL is not ours.
+   */
+  resolvePrivateObjectKey(storedUrl: string): string | null {
+    if (!storedUrl || !this.s3StorageService.isS3Enabled()) {
+      return null;
+    }
+    return this.s3StorageService.resolveOwnedObjectKey(storedUrl, SIGNED_URL_FOLDERS);
+  }
+
+  /** Presigned GET with response-header overrides (see S3StorageService). */
+  async getPresignedDownloadUrl(
+    key: string,
+    options: {
+      expiresIn?: number;
+      contentType?: string;
+      disposition?: 'inline' | 'attachment';
+      fileName?: string;
+    } = {}
+  ): Promise<string> {
+    return await this.s3StorageService.getPresignedDownloadUrl(key, options);
   }
 
   /**

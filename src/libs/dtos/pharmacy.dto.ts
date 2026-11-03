@@ -17,6 +17,10 @@ import {
   ArrayMinSize,
   ArrayMaxSize,
   Max,
+  Matches,
+  IsUUID,
+  IsEmail,
+  ValidateIf,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
@@ -169,6 +173,25 @@ export enum PrescriptionStatus {
   PARTIAL = 'PARTIAL',
   FILLED = 'FILLED',
   CANCELLED = 'CANCELLED',
+  /** Prepared by the assistant doctor, awaiting the doctor's approval (never visible to pharmacy). */
+  DRAFT = 'DRAFT',
+  /** Sent back by the doctor with a change note (never visible to pharmacy). */
+  RETURNED = 'RETURNED',
+}
+
+/**
+ * Statuses of an assistant-doctor draft that is not a prescription yet (awaiting the
+ * doctor's approval, or sent back). They must never reach patients, the pharmacy desk,
+ * pharmacy stats or the batch audit.
+ */
+export const UNPUBLISHED_PRESCRIPTION_STATUSES: readonly PrescriptionStatus[] = Object.freeze([
+  PrescriptionStatus.DRAFT,
+  PrescriptionStatus.RETURNED,
+]);
+
+/** Prisma `status` filter that excludes unpublished drafts (fresh object per call). */
+export function publishedPrescriptionStatusFilter(): { notIn: PrescriptionStatus[] } {
+  return { notIn: [...UNPUBLISHED_PRESCRIPTION_STATUSES] };
 }
 
 /**
@@ -199,63 +222,6 @@ export function normalisePrescriptionStatusInput(value: unknown): unknown {
     .toUpperCase()
     .replace(/[\s-]+/g, '_');
   return PRESCRIPTION_STATUS_ALIASES[key] ?? key;
-}
-
-/** `GET /pharmacy/prescriptions` filters and pagination (D9). */
-export class ListPrescriptionsQueryDto {
-  @ApiPropertyOptional({ description: 'Doctor.id or the doctor User.id (staff only)' })
-  @IsOptional()
-  @IsString()
-  @MaxLength(64)
-  doctorId?: string;
-
-  @ApiPropertyOptional({ description: 'Patient.id or the patient User.id' })
-  @IsOptional()
-  @IsString()
-  @MaxLength(64)
-  patientId?: string;
-
-  @ApiPropertyOptional({
-    enum: PrescriptionStatus,
-    description: 'Also accepts pending/processing/ready/dispensed/completed/cancelled',
-  })
-  @IsOptional()
-  @Transform(({ value }) => normalisePrescriptionStatusInput(value))
-  @IsIn(Object.values(PrescriptionStatus), {
-    message: `status must be one of ${Object.values(PrescriptionStatus).join(', ')} (aliases: pending, processing, ready, dispensed, completed, cancelled)`,
-  })
-  status?: PrescriptionStatus;
-
-  @ApiPropertyOptional({ description: 'Case-insensitive "contains" match on the patient name' })
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  patientName?: string;
-
-  @ApiPropertyOptional({ description: 'Prescribed on/after this date (ISO)' })
-  @IsOptional()
-  @IsDateString()
-  dateFrom?: string;
-
-  @ApiPropertyOptional({ description: 'Prescribed on/before this date (ISO)' })
-  @IsOptional()
-  @IsDateString()
-  dateTo?: string;
-
-  @ApiPropertyOptional({ minimum: 1, maximum: 200, description: 'Page size (default 50)' })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(200)
-  limit?: number;
-
-  @ApiPropertyOptional({ minimum: 0, description: 'Rows to skip (default 0)' })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  offset?: number;
 }
 
 export const INVENTORY_DEFAULT_PAGE_SIZE = 50;
@@ -305,6 +271,185 @@ export class CacheBusterQueryDto {
   @IsString()
   @MaxLength(CACHE_BUSTER_MAX_LENGTH)
   ts?: string;
+}
+
+// ---------------------------------------------------------------------------
+// GET /pharmacy/prescriptions (paged variant) and GET /pharmacy/prescriptions/summary
+// ---------------------------------------------------------------------------
+
+/** Page sizes the paged prescription list accepts. */
+export const PRESCRIPTION_LIST_PAGE_SIZES: readonly number[] = Object.freeze([10, 25, 50, 100]);
+export const PRESCRIPTION_LIST_DEFAULT_PAGE_SIZE = 25;
+export const PRESCRIPTION_LIST_SEARCH_MAX_LENGTH = 100;
+
+/**
+ * Status filter of the paged list. ACTIVE = PENDING + PARTIAL (still at the medicine desk);
+ * COMPLETED (alias of FILLED) = dispensed. The stored PrescriptionStatus values and the M9
+ * aliases (pending, processing, ready, dispensed, ...) stay accepted.
+ */
+export const PRESCRIPTION_LIST_ACTIVE_STATUS = 'ACTIVE' as const;
+export type PrescriptionListStatus = typeof PRESCRIPTION_LIST_ACTIVE_STATUS | PrescriptionStatus;
+export const PRESCRIPTION_LIST_STATUSES: readonly PrescriptionListStatus[] = Object.freeze([
+  PRESCRIPTION_LIST_ACTIVE_STATUS,
+  ...Object.values(PrescriptionStatus),
+]);
+
+/** Where the prescription is at the medicine desk (the PHARMACY pill of the doctor screen). */
+export enum PrescriptionPharmacyStage {
+  PAYMENT_PENDING = 'PAYMENT_PENDING',
+  READY_TO_DISPENSE = 'READY_TO_DISPENSE',
+  DISPENSED = 'DISPENSED',
+  /**
+   * Waiting at the counter: paid (or zero-priced), dispensed (FILLED, or PARTIAL with units
+   * dispensed), has medicines, and never collected (no HANDED_OVER hand-over) - at any age.
+   */
+  READY_TO_COLLECT = 'READY_TO_COLLECT',
+  NOT_SENT = 'NOT_SENT',
+}
+
+export enum PrescriptionListSort {
+  NEWEST = 'newest',
+  OLDEST = 'oldest',
+  PATIENT = 'patient',
+}
+
+const IST_DAY_KEY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+const IST_DAY_KEY_MESSAGE = 'must be an IST calendar day (YYYY-MM-DD)';
+
+function normalisePrescriptionListStatusInput(value: unknown): unknown {
+  if (typeof value === 'string' && value.trim().toUpperCase() === PRESCRIPTION_LIST_ACTIVE_STATUS) {
+    return PRESCRIPTION_LIST_ACTIVE_STATUS;
+  }
+  return normalisePrescriptionStatusInput(value);
+}
+
+const upperQueryToken = ({ value }: { value: unknown }): unknown =>
+  typeof value === 'string' ? value.trim().toUpperCase() : value;
+const lowerQueryToken = ({ value }: { value: unknown }): unknown =>
+  typeof value === 'string' ? value.trim().toLowerCase() : value;
+
+/** `dateFrom` / `dateTo`: IST calendar days, inclusive. Shared by the list and the summary. */
+export class PrescriptionDateRangeQueryDto extends CacheBusterQueryDto {
+  @ApiPropertyOptional({
+    example: '2026-10-01',
+    description: 'First IST calendar day (inclusive, from IST midnight), YYYY-MM-DD',
+  })
+  @IsOptional()
+  @Transform(trimQueryString)
+  @Matches(IST_DAY_KEY_PATTERN, { message: `dateFrom ${IST_DAY_KEY_MESSAGE}` })
+  dateFrom?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-10-21',
+    description: 'Last IST calendar day (inclusive, up to the next IST midnight), YYYY-MM-DD',
+  })
+  @IsOptional()
+  @Transform(trimQueryString)
+  @Matches(IST_DAY_KEY_PATTERN, { message: `dateTo ${IST_DAY_KEY_MESSAGE}` })
+  dateTo?: string;
+}
+
+/**
+ * `GET /pharmacy/prescriptions` with `page`: server-side filtered and paged list,
+ * `{ data, total, page, limit }`. Without `page` the route keeps the legacy bare array and this
+ * DTO is not applied (old apps send unvalidated keys such as `search`).
+ */
+export class ListPrescriptionsQueryDto extends PrescriptionDateRangeQueryDto {
+  @ApiPropertyOptional({
+    minimum: 1,
+    description: '1-based page; omit it for the legacy bare array of every prescription',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @ApiPropertyOptional({
+    enum: PRESCRIPTION_LIST_PAGE_SIZES,
+    default: PRESCRIPTION_LIST_DEFAULT_PAGE_SIZE,
+    description: 'Page size',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsIn(PRESCRIPTION_LIST_PAGE_SIZES, {
+    message: `limit must be one of ${PRESCRIPTION_LIST_PAGE_SIZES.join(', ')}`,
+  })
+  limit?: number;
+
+  @ApiPropertyOptional({
+    maxLength: PRESCRIPTION_LIST_SEARCH_MAX_LENGTH,
+    description:
+      'Case-insensitive "contains" search over patient name / phone, UHID, OPD number, prescription number, medicine name and diagnosis',
+  })
+  @IsOptional()
+  @Transform(trimQueryString)
+  @IsString()
+  @MaxLength(PRESCRIPTION_LIST_SEARCH_MAX_LENGTH)
+  q?: string;
+
+  @ApiPropertyOptional({
+    enum: ['ACTIVE', 'COMPLETED', 'CANCELLED', 'DRAFT', 'RETURNED', 'PENDING', 'PARTIAL', 'FILLED'],
+    description:
+      'ACTIVE = PENDING + PARTIAL, COMPLETED = FILLED. DRAFT / RETURNED only for doctors, assistant doctors and admins. Also accepts pending/processing/ready/dispensed/cancelled',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalisePrescriptionListStatusInput(value))
+  @IsIn(PRESCRIPTION_LIST_STATUSES, {
+    message: `status must be one of ACTIVE, COMPLETED, ${Object.values(PrescriptionStatus).join(', ')}`,
+  })
+  status?: PrescriptionListStatus;
+
+  @ApiPropertyOptional({
+    enum: PrescriptionPharmacyStage,
+    description:
+      'Medicine-desk stage: PAYMENT_PENDING / READY_TO_DISPENSE (PENDING, by payments vs the medicine total; PARTIAL counts as ready), DISPENSED (FILLED), NOT_SENT (DRAFT / RETURNED)',
+  })
+  @IsOptional()
+  @Transform(upperQueryToken)
+  @IsEnum(PrescriptionPharmacyStage)
+  pharmacyStage?: PrescriptionPharmacyStage;
+
+  @ApiPropertyOptional({ format: 'uuid', description: 'Patient.id' })
+  @IsOptional()
+  @IsUUID()
+  patientId?: string;
+
+  @ApiPropertyOptional({
+    enum: PrescriptionListSort,
+    default: PrescriptionListSort.NEWEST,
+    description: 'newest / oldest by prescription date, patient = patient name A-Z',
+  })
+  @IsOptional()
+  @Transform(lowerQueryToken)
+  @IsEnum(PrescriptionListSort)
+  sort?: PrescriptionListSort;
+}
+
+/** `GET /pharmacy/prescriptions/summary` (no dates = all time; `today` is always today, IST). */
+export class PrescriptionSummaryQueryDto extends PrescriptionDateRangeQueryDto {}
+
+export class PrescriptionSummaryDto {
+  @ApiProperty({ description: 'Published prescriptions (no drafts) in the range' })
+  total!: number;
+
+  @ApiProperty({ description: 'PENDING + PARTIAL' })
+  active!: number;
+
+  @ApiProperty({ description: 'FILLED' })
+  completed!: number;
+
+  @ApiProperty({ description: 'CANCELLED' })
+  cancelled!: number;
+
+  @ApiProperty({ description: 'DRAFT + RETURNED (0 for roles that never see drafts)' })
+  drafts!: number;
+
+  @ApiProperty({ description: 'Published prescriptions written today (IST)' })
+  today!: number;
+
+  @ApiProperty({ description: 'Distinct patients among the published prescriptions in the range' })
+  uniquePatients!: number;
 }
 
 /**
@@ -546,10 +691,27 @@ export class CreateMedicineDto {
   instructions?: string;
 }
 
+/** Trims a string body field (other values pass through to the validators). */
+const trimSupplierText = ({ value }: { value: unknown }): unknown =>
+  typeof value === 'string' ? value.trim() : value;
+
+/** Supplier email: blank means "no email"; anything else must be a valid address. */
+const hasSupplierEmail = (_dto: object, value: unknown): boolean =>
+  value !== undefined && value !== null && value !== '';
+
+/** Supplier phone: blank means "no phone"; anything else is 7-15 digits, optional + and spaces / dashes. */
+const hasSupplierPhone = (_dto: object, value: unknown): boolean =>
+  value !== undefined && value !== null && value !== '';
+export const SUPPLIER_PHONE_PATTERN = /^(?=(?:\D*\d){7,15}\D*$)\+?[0-9][0-9 -]*[0-9]$/;
+const SUPPLIER_PHONE_MESSAGE =
+  'phone must be a valid phone number (7-15 digits, optional +, spaces or dashes)';
+
 export class CreateSupplierDto {
-  @ApiProperty({ example: 'PharmaCorp', description: 'Supplier name' })
+  @ApiProperty({ example: 'PharmaCorp', description: 'Supplier name (unique per clinic)' })
+  @Transform(trimSupplierText)
   @IsString()
   @IsNotEmpty()
+  @MaxLength(200)
   name!: string;
 
   @ApiPropertyOptional({ example: 'John Doe', description: 'Contact person' })
@@ -559,12 +721,18 @@ export class CreateSupplierDto {
 
   @ApiPropertyOptional({ example: 'contact@pharmacorp.com', description: 'Email' })
   @IsOptional()
+  @Transform(trimSupplierText)
   @IsString()
+  @ValidateIf(hasSupplierEmail)
+  @IsEmail({}, { message: 'email must be a valid email address' })
   email?: string;
 
-  @ApiPropertyOptional({ example: '+1234567890', description: 'Phone' })
+  @ApiPropertyOptional({ example: '+919876543210', description: 'Phone' })
   @IsOptional()
+  @Transform(trimSupplierText)
   @IsString()
+  @ValidateIf(hasSupplierPhone)
+  @Matches(SUPPLIER_PHONE_PATTERN, { message: SUPPLIER_PHONE_MESSAGE })
   phone?: string;
 
   @ApiPropertyOptional({ example: '123 Supply Lane', description: 'Address' })
@@ -576,7 +744,10 @@ export class CreateSupplierDto {
 export class UpdateSupplierDto {
   @ApiPropertyOptional({ example: 'PharmaCorp Updated' })
   @IsOptional()
+  @Transform(trimSupplierText)
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
   name?: string;
 
   @ApiPropertyOptional({ example: 'Jane Doe' })
@@ -586,12 +757,18 @@ export class UpdateSupplierDto {
 
   @ApiPropertyOptional({ example: 'new@pharmacorp.com' })
   @IsOptional()
+  @Transform(trimSupplierText)
   @IsString()
+  @ValidateIf(hasSupplierEmail)
+  @IsEmail({}, { message: 'email must be a valid email address' })
   email?: string;
 
-  @ApiPropertyOptional({ example: '+0987654321' })
+  @ApiPropertyOptional({ example: '+919876543210' })
   @IsOptional()
+  @Transform(trimSupplierText)
   @IsString()
+  @ValidateIf(hasSupplierPhone)
+  @Matches(SUPPLIER_PHONE_PATTERN, { message: SUPPLIER_PHONE_MESSAGE })
   phone?: string;
 
   @ApiPropertyOptional({ example: '456 Delivery St' })
@@ -1045,12 +1222,46 @@ export class PharmacySalesQueryDto {
   groupBy?: 'day' | 'medicine';
 }
 
+/** GET /pharmacy/inventory/summary: whole-inventory counts, independent of any list filter. */
+export class InventorySummaryDto {
+  @ApiProperty({ example: 40, description: 'Active medicines' })
+  total!: number;
+
+  @ApiProperty({ example: 36, description: 'Active medicines with stock above zero' })
+  inStock!: number;
+
+  @ApiProperty({ example: 2, description: '0 < stock <= reorder level (out of stock excluded)' })
+  lowStock!: number;
+
+  @ApiProperty({ example: 4, description: 'stock <= 0' })
+  outOfStock!: number;
+
+  @ApiProperty({ example: 3, description: 'Expiring within the default window' })
+  expiringSoon!: number;
+
+  @ApiProperty({ example: 48250.5, description: 'Stock on hand x listed price (rupees)' })
+  totalValue!: number;
+}
+
 export class PharmacyStatsDto {
   @ApiProperty({ example: 150, description: 'Total medicines in stock' })
   totalMedicines!: number;
 
-  @ApiProperty({ example: 5, description: 'Medicines low in stock' })
+  @ApiProperty({
+    example: 5,
+    description:
+      'Active medicines low in stock: 0 < stock <= reorder level (out of stock excluded)',
+  })
   lowStock!: number;
+
+  @ApiProperty({ example: 2, description: 'Active medicines out of stock (stock <= 0)' })
+  outOfStock!: number;
+
+  @ApiProperty({
+    example: 48250.5,
+    description: 'Stock on hand x listed price, all active medicines (rupees)',
+  })
+  inventoryValue!: number;
 
   @ApiProperty({ example: 12, description: 'Prescriptions pending today' })
   pendingPrescriptions!: number;

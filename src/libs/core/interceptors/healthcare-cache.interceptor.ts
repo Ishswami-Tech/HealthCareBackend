@@ -10,7 +10,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { Observable, from, of, throwError } from 'rxjs';
+import { Observable, from, lastValueFrom, of, throwError } from 'rxjs';
 import { tap, catchError, concatMap, map } from 'rxjs/operators';
 
 // Internal imports - Infrastructure
@@ -44,6 +44,7 @@ import {
 } from '@core/interceptors/cache-key-scope.util';
 import type { ScopedRequest } from '@core/interceptors/cache-key-scope.util';
 import { CacheInvalidationRunner } from '@core/interceptors/cache-invalidation.runner';
+import { SingleFlight, cloneForFollower } from '@infrastructure/cache/utils/single-flight.util';
 import {
   calculateTTL,
   isCachedEmptyArray,
@@ -52,12 +53,18 @@ import {
 } from '@core/interceptors/cache-value.util';
 
 const HTTP_ERROR_STATUS_FLOOR = 400;
+/** Rolling PHI cache-write trail (the durable HIPAA trail is the DB audit log). */
+const PHI_ACCESS_AUDIT_KEY = 'phi:access:audit';
+const PHI_ACCESS_AUDIT_MAX_ENTRIES = 5000;
+const PHI_ACCESS_AUDIT_TTL_SECONDS = 7 * 24 * 60 * 60;
 const HTTP_SERVER_ERROR_STATUS_FLOOR = 500;
 
 @Injectable()
 export class HealthcareCacheInterceptor implements NestInterceptor {
   /** Tag invalidation (awaited, bounded) and scoped, coalesced background pattern deletes. */
   private readonly invalidationRunner: CacheInvalidationRunner;
+  /** Coalesces concurrent cache misses per key (one handler run per key at a time). */
+  private readonly readFlight = new SingleFlight();
 
   constructor(
     @Inject(forwardRef(() => CacheService)) private readonly cacheService: CacheService,
@@ -178,35 +185,20 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
         await this.cacheService.del(cacheKey).catch(() => {});
       }
 
-      // Cache miss - execute and cache the result
-      return next.handle().pipe(
-        tap(result => {
-          if (result !== null && result !== undefined) {
-            void this.setCacheValue(cacheKey, result, options, context);
-          }
-        }),
-        catchError(error => {
-          // A handler's own HttpException (403, 404, validation, ...) is a normal response
-          // passing through, not a cache failure. Only real backend failures are logged here.
-          if (
-            !(error instanceof HttpException) ||
-            error.getStatus() >= HTTP_SERVER_ERROR_STATUS_FLOOR
-          ) {
-            void this.loggingService.log(
-              LogType.ERROR,
-              LogLevel.ERROR,
-              'Error in healthcare cache operation',
-              'HealthcareCacheInterceptor',
-              {
-                cacheKey,
-                error: error instanceof Error ? error.message : 'Unknown error',
-                stack: error instanceof Error ? error.stack : undefined,
-              }
-            );
-          }
-          return throwError(() => error as Error);
+      // Cache miss. Concurrent misses for the same key in this process share ONE handler run
+      // (stampede protection): the key already carries clinic + caller + query digest, so a
+      // follower is exactly as entitled to the result as it would be to a cache hit. A follower
+      // whose leader failed runs its own handler, so errors are never shared.
+      const isLeader = !this.readFlight.has(cacheKey);
+      const shared = this.readFlight.run(cacheKey, () =>
+        lastValueFrom(this.executeAndCache(cacheKey, next, options, context), {
+          defaultValue: undefined,
         })
       );
+      if (isLeader) {
+        return from(shared);
+      }
+      return from(shared.then(cloneForFollower)).pipe(catchError(() => next.handle()));
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
@@ -221,6 +213,43 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       // Fail gracefully - return next handler instead of throwing
       return next.handle();
     }
+  }
+
+  /** Runs the handler and stores a non-empty result (the leader side of a coalesced miss). */
+  private executeAndCache(
+    cacheKey: string,
+    next: CallHandler,
+    options: UnifiedCacheOptions,
+    context: ExecutionContext
+  ): Observable<unknown> {
+    return next.handle().pipe(
+      tap(result => {
+        if (result !== null && result !== undefined) {
+          void this.setCacheValue(cacheKey, result, options, context);
+        }
+      }),
+      catchError(error => {
+        // A handler's own HttpException (403, 404, validation, ...) is a normal response
+        // passing through, not a cache failure. Only real backend failures are logged here.
+        if (
+          !(error instanceof HttpException) ||
+          error.getStatus() >= HTTP_SERVER_ERROR_STATUS_FLOOR
+        ) {
+          void this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.ERROR,
+            'Error in healthcare cache operation',
+            'HealthcareCacheInterceptor',
+            {
+              cacheKey,
+              error: error instanceof Error ? error.message : 'Unknown error',
+              stack: error instanceof Error ? error.stack : undefined,
+            }
+          );
+        }
+        return throwError(() => error as Error);
+      })
+    );
   }
 
   /**
@@ -289,8 +318,8 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
    *
    * Every templated key is clinic-scoped whenever the request has a clinic
    * context, even if the template forgot `{clinicId}`, so two clinics can never
-   * share an entry. The actor segment (`u-<userId>` for a PATIENT, `r-<ROLE>`
-   * for staff, see resolveActorKeySegment) keeps one caller's response from
+   * share an entry. The actor segment (`u-<userId>` for every authenticated caller, `r-<ROLE>`
+   * for staff routes that opt in with shareAcrossRole, see resolveActorKeySegment) keeps one caller's response from
    * being replayed to another caller whose ownership/role check would be
    * skipped on a hit. The query digest keeps filters (?status=, ?page=, ...)
    * distinct now that the query can no longer supply identity placeholders; it
@@ -308,7 +337,8 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
     const actorSegment = resolveActorKeySegment(
       options.keyTemplate ?? '',
       params,
-      resolveActorScope(request)
+      resolveActorScope(request),
+      options.shareAcrossRole === true
     );
     const handlerAndActor = actorSegment
       ? `${context.getHandler().name}:${actorSegment}`
@@ -506,6 +536,13 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
         // call invalidateCacheByTag() never reach PHI/emergency entries and a
         // create followed by a list read returns the pre-create data.
         const tags = this.resolveTags(effectiveOptions, context);
+        // Collection tags (`appointments`, ...) are additionally indexed under this clinic, so a
+        // write in another clinic never invalidates this entry (tag-scope.util.ts).
+        const tagScopeClinicId = this.resolveKeyClinicId(
+          context.switchToHttp().getRequest<ScopedRequest>(),
+          effectiveOptions
+        );
+        const scope = tagScopeClinicId ? { tagScopeClinicId } : {};
         if (effectiveOptions.containsPHI) {
           // PHI data gets additional security measures — encrypted at rest,
           // not stored as plaintext JSON like the other branches.
@@ -519,7 +556,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
             );
           }
           const encryptedValue = encryptPHIValue(value);
-          await this.cacheService.set(cacheKey, encryptedValue, { ttl: cacheTTL, tags });
+          await this.cacheService.set(cacheKey, encryptedValue, { ttl: cacheTTL, tags, ...scope });
 
           // Track PHI cache access for compliance (fire-and-forget: audit
           // logging must not add latency to the request's critical path;
@@ -528,7 +565,11 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
         } else if (effectiveOptions.emergencyData) {
           // Emergency data uses minimal TTL
           const emergencyTTL = Math.min(ttl, 300); // Max 5 minutes
-          await this.cacheService.set(cacheKey, serializedValue, { ttl: emergencyTTL, tags });
+          await this.cacheService.set(cacheKey, serializedValue, {
+            ttl: emergencyTTL,
+            tags,
+            ...scope,
+          });
         } else {
           // Standard caching with SWR support
           await this.cacheService.cache(cacheKey, () => Promise.resolve(value), {
@@ -546,6 +587,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
             // `user:{userId}` / `clinic:{clinicId}` tag matches the strings
             // services pass to invalidateCacheByTag().
             ...(effectiveOptions.tags !== undefined && { tags }),
+            ...scope,
           });
         }
 
@@ -611,10 +653,11 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
           '',
       };
 
-      // Log PHI access for compliance
-      await this.cacheService.rPush('phi:access:audit', JSON.stringify(auditData));
-
-      // Note: Audit log trimming would be handled by cache service internally
+      // Log PHI access for compliance. Bounded: the list used to grow forever with no TTL
+      // (Dragonfly runs noeviction, so unbounded keys eventually block BullMQ and the queue).
+      await this.cacheService.rPush(PHI_ACCESS_AUDIT_KEY, JSON.stringify(auditData));
+      await this.cacheService.lTrim(PHI_ACCESS_AUDIT_KEY, -PHI_ACCESS_AUDIT_MAX_ENTRIES, -1);
+      await this.cacheService.expire(PHI_ACCESS_AUDIT_KEY, PHI_ACCESS_AUDIT_TTL_SECONDS);
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,

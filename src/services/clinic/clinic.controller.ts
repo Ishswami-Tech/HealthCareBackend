@@ -46,11 +46,12 @@ import {
   AppNameInlineDto,
 } from '@dtos/clinic.dto';
 import { Public } from '@core/decorators/public.decorator';
-import { Cache } from '@core/decorators';
+import { Cache, InvalidateCache } from '@core/decorators';
 import type { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { ClinicStatsResponseDto, ClinicOperatingHoursResponseDto } from '@dtos/clinic.dto';
 import { ClinicLocationService } from './services/clinic-location.service';
+import { toSafeClinicResponse } from '@services/clinic/clinic-response.util';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types/logging.types';
 
@@ -325,7 +326,7 @@ export class ClinicController {
         `Clinic created successfully: ${result.id}`,
         this.contextName
       );
-      return result;
+      return toSafeClinicResponse(result);
     } catch (_error) {
       this.loggingService.log(
         LogType.CLINIC_OPERATIONS,
@@ -421,7 +422,7 @@ export class ClinicController {
         `Retrieved ${Array.isArray(result) ? result.length : 0} clinics for user ${userId}`,
         this.contextName
       );
-      return result;
+      return toSafeClinicResponse(result);
     } catch (_error) {
       this.loggingService.log(
         LogType.CLINIC_OPERATIONS,
@@ -441,12 +442,14 @@ export class ClinicController {
   @Roles(
     Role.PATIENT,
     Role.CLINIC_ADMIN,
+    Role.CLINIC_LOCATION_HEAD,
     Role.DOCTOR,
     Role.ASSISTANT_DOCTOR,
     Role.NURSE,
     Role.THERAPIST,
     Role.COUNSELOR,
-    Role.RECEPTIONIST
+    Role.RECEPTIONIST,
+    Role.PHARMACIST
   )
   @RequireResourcePermission('clinics', 'read')
   @Cache({
@@ -487,10 +490,12 @@ export class ClinicController {
 
       this.logger.log(`Getting clinic for user ${userId}`);
 
-      const result = await this.clinicService.getCurrentUserClinic(userId);
+      const result = await this.clinicService.withExpectedWalkInFee(
+        await this.clinicService.getCurrentUserClinic(userId)
+      );
 
       this.logger.log(`Retrieved clinic for user ${userId} successfully`);
-      return result;
+      return toSafeClinicResponse(result);
     } catch (_error) {
       this.logger.error(
         `Failed to get user clinic: ${(_error as Error).message}`,
@@ -557,10 +562,12 @@ export class ClinicController {
 
       this.logger.log(`Getting clinic ${id} for user ${userId}`);
 
-      const result = await this.clinicService.getClinicById(id, false, userId, role, clinicId);
+      const result = await this.clinicService.withExpectedWalkInFee(
+        await this.clinicService.getClinicById(id, false, userId, role, clinicId)
+      );
 
       this.logger.log(`Retrieved clinic ${id} successfully`);
-      return result;
+      return toSafeClinicResponse(result);
     } catch (_error) {
       // Re-throw ForbiddenException directly
       if (_error instanceof ForbiddenException) {
@@ -655,6 +662,11 @@ export class ClinicController {
   @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @RequireResourcePermission('clinics', 'update', { requireOwnership: true })
+  // GET /my-clinic caches under 'clinic:my:{userId}' (tag 'user_clinic') for 30 min with no
+  // invalidation here before this fix — a policy change (e.g. appointmentSettings.walkInWithoutPlan)
+  // could take up to 30 min to reach every staff member's "my clinic" view. Tag-based: the cache
+  // key is namespaced by caller userId, not clinicId, so a clinicId-scoped pattern can't reach it.
+  @InvalidateCache({ patterns: [], tags: ['user_clinic'] })
   @ApiOperation({
     summary: 'Update a clinic',
     description:
@@ -713,7 +725,7 @@ export class ClinicController {
       });
 
       this.logger.log(`Clinic ${id} updated successfully`);
-      return result;
+      return toSafeClinicResponse(result);
     } catch (_error) {
       this.logger.error(
         `Failed to update clinic ${id}: ${_error instanceof Error ? _error.message : 'Unknown _error'}`,
@@ -830,7 +842,7 @@ export class ClinicController {
       const result = await this.clinicService.assignClinicAdmin(data);
 
       this.logger.log(`Clinic admin assigned successfully`);
-      return result;
+      return toSafeClinicResponse(result);
     } catch (_error) {
       this.logger.error(
         `Failed to assign clinic admin: ${(_error as Error).message}`,
@@ -872,7 +884,7 @@ export class ClinicController {
       const result = await this.clinicService.getClinicByAppName(appName);
 
       this.logger.log(`Retrieved clinic by app name ${appName} successfully`);
-      return result;
+      return toSafeClinicResponse(result);
     } catch (_error) {
       this.logger.error(
         `Failed to get clinic by app name ${appName}: ${(_error as Error).message}`,
@@ -1183,7 +1195,7 @@ export class ClinicController {
       };
 
       this.logger.log(`App name ${data.appName} validated successfully`);
-      return result;
+      return toSafeClinicResponse(result);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       const errorStack = error instanceof Error ? error.stack : undefined;
@@ -1247,7 +1259,7 @@ export class ClinicController {
       });
 
       this.logger.log(`User ${userId} associated with clinic ${data.appName} successfully`);
-      return result;
+      return toSafeClinicResponse(result);
     } catch (_error) {
       this.logger.error(
         `Failed to associate user with clinic: ${_error instanceof Error ? _error.message : 'Unknown _error'}`,

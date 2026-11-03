@@ -1,4 +1,7 @@
-import { Injectable, Optional, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef, OnModuleInit, HttpStatus } from '@nestjs/common';
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
+import { isUnknownUserForeignKeyError } from '@communication/channels/push/device-token-errors.util';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
@@ -189,6 +192,18 @@ export class DeviceTokenService implements OnModuleInit {
             }
           );
         } catch (dbError) {
+          // The user behind this session no longer exists (FK on device_tokens.userId): drop the
+          // in-memory token and tell the app its session is dead instead of reporting success.
+          if (isUnknownUserForeignKeyError(dbError)) {
+            this.tokenStore.delete(tokenData.token);
+            throw new HealthcareError(
+              ErrorCode.AUTH_SESSION_EXPIRED,
+              'Your session is no longer valid. Please sign in again.',
+              HttpStatus.UNAUTHORIZED,
+              { userId: tokenData.userId },
+              'DeviceTokenService.registerDeviceToken'
+            );
+          }
           // Log but don't fail - in-memory storage is primary
           // This handles cases where DeviceToken model doesn't exist yet
           void this.loggingService.log(
@@ -206,6 +221,9 @@ export class DeviceTokenService implements OnModuleInit {
 
       return Promise.resolve(true);
     } catch (error) {
+      if (error instanceof HealthcareError && error.code === ErrorCode.AUTH_SESSION_EXPIRED) {
+        throw error;
+      }
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
@@ -526,6 +544,53 @@ export class DeviceTokenService implements OnModuleInit {
    * @param userId - User ID to get tokens for
    * @returns Array of active device tokens for the user
    */
+  /**
+   * Active tokens for a user, read from the database when it is available. The in-memory map is
+   * per process and only loaded at start-up, so a token the phone registered through the API
+   * after the worker (or another API instance) booted was invisible to it. Falls back to the
+   * in-memory map when the database is unavailable.
+   */
+  async getActiveUserTokens(userId: string): Promise<DeviceTokenData[]> {
+    if (!userId) return [];
+    if (!this.databaseService) return this.getUserTokens(userId);
+
+    try {
+      const rows = await this.databaseService.executeHealthcareRead(async client => {
+        const delegate = (
+          client as unknown as {
+            deviceToken?: { findMany: (args: unknown) => Promise<unknown> };
+          }
+        ).deviceToken;
+        return delegate ? delegate.findMany({ where: { userId, isActive: true } }) : null;
+      });
+
+      if (!Array.isArray(rows)) return this.getUserTokens(userId);
+
+      const persisted = rows
+        .filter(row => this.isPersistedDeviceToken(row))
+        .map(row => this.normalizePersistedToken(row));
+      // The database is the source of truth: a token signed out through another process is
+      // inactive there even if this process still caches it as active.
+      const activeTokens = new Set(persisted.map(token => token.token));
+      for (const cached of this.getUserTokens(userId)) {
+        if (!activeTokens.has(cached.token)) this.tokenStore.delete(cached.token);
+      }
+      for (const token of persisted) {
+        this.tokenStore.set(token.token, token);
+      }
+      return persisted;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'Failed to read device tokens from database; using in-memory cache',
+        'DeviceTokenService',
+        { userId, error: error instanceof Error ? error.message : 'Unknown error' }
+      );
+      return this.getUserTokens(userId);
+    }
+  }
+
   getUserTokens(userId: string): DeviceTokenData[] {
     try {
       const userTokens: DeviceTokenData[] = [];

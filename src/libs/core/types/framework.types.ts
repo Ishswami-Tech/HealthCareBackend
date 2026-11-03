@@ -78,7 +78,7 @@ export interface FrameworkAdapterOptions {
   readonly environment: 'development' | 'production' | 'staging' | 'test' | 'local-prod';
   readonly isHorizontalScaling: boolean;
   readonly instanceId: string;
-  readonly trustProxy: boolean;
+  readonly trustProxy: boolean | number | ((address: string, hop: number) => boolean);
   readonly bodyLimit: number;
   readonly keepAliveTimeout: number;
   readonly connectionTimeout: number;
@@ -231,7 +231,7 @@ export interface ApplicationConfig {
   readonly environment: 'development' | 'production' | 'staging' | 'test' | 'local-prod';
   readonly isHorizontalScaling: boolean;
   readonly instanceId: string;
-  readonly trustProxy: boolean;
+  readonly trustProxy: boolean | number | ((address: string, hop: number) => boolean);
   readonly bodyLimit: number;
   readonly keepAliveTimeout: number;
   readonly connectionTimeout: number;

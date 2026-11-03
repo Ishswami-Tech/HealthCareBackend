@@ -1,94 +1,87 @@
 import PDFDocument from 'pdfkit';
 import { formatDateInIST } from '@utils/date-time.util';
+import type { PrescriptionPdfData } from '@services/pharmacy/services/prescription-pdf.types';
+import {
+  adviceLines,
+  drawBulletSection,
+  drawDiagnosis,
+  drawFollowUp,
+  drawLetterhead,
+  drawMedicines,
+  drawPatientGrid,
+  ensureSpace,
+  investigationLines,
+  pageWidth,
+  RX_PAGE,
+  RX_THEME,
+  type PdfDoc,
+} from '@services/pharmacy/services/prescription-pdf.sections';
+import {
+  buildVerificationQr,
+  decoratePages,
+  drawFooter,
+} from '@services/pharmacy/services/prescription-pdf.footer';
 
-export interface PrescriptionPdfItem {
-  readonly medicineName: string;
-  readonly quantity: number;
-  readonly dosage?: string | null;
-  readonly frequency?: string | null;
-  readonly duration?: string | null;
-  readonly unit?: string | null;
+export type {
+  PrescriptionPdfData,
+  PrescriptionPdfFollowUp,
+  PrescriptionPdfInvestigation,
+  PrescriptionPdfItem,
+} from '@services/pharmacy/services/prescription-pdf.types';
+
+function drawValidUntil(
+  doc: PdfDoc,
+  validUntil: PrescriptionPdfData['validUntil'],
+  y: number
+): number {
+  const date = validUntil ? formatDateInIST(validUntil) : '';
+  if (!date) return y;
+  const top = ensureSpace(doc, y, 14);
+  doc.font('Helvetica-Bold').fontSize(8.5).fillColor(RX_THEME.muted);
+  doc.text(`Valid until ${date}`, RX_PAGE.margin, top, { width: pageWidth(doc) });
+  return doc.y + 8;
 }
 
-export interface PrescriptionPdfData {
-  readonly prescriptionNumber: string;
-  readonly clinicName: string;
-  readonly prescribedAt: Date | string | null;
-  readonly patientName: string;
-  readonly patientAge?: number | null;
-  readonly patientGender?: string | null;
-  readonly patientNumber?: string | null;
-  readonly doctorName: string;
-  /** Registration number of the prescribing doctor (Doctor.licenseNumber). Printed when known. */
-  readonly doctorRegistrationNumber?: string | null;
-  readonly diagnosis?: string | null;
-  readonly notes?: string | null;
-  readonly status: string;
-  readonly items: readonly PrescriptionPdfItem[];
+function drawBody(doc: PdfDoc, data: PrescriptionPdfData): number {
+  let y = drawLetterhead(doc, data, RX_PAGE.margin);
+  y = drawPatientGrid(doc, data, y);
+  y = drawDiagnosis(doc, data.diagnosis, y);
+  y = drawMedicines(doc, data.items, y);
+  y = drawBulletSection(doc, 'Advice', adviceLines(data.notes), y);
+  y = drawBulletSection(doc, 'Investigations', investigationLines(data.investigations), y);
+  y = drawFollowUp(doc, data.followUp, y);
+  return drawValidUntil(doc, data.validUntil, y);
 }
-
-const ACCENT = '#0F766E';
-const MUTED = '#64748B';
 
 /**
- * Minimal prescription PDF (no existing prescription PDF generator in the repo; the
- * invoice generator in billing/invoice-pdf.service.ts is invoice specific, so only the
- * `pdfkit` dependency is shared). Rendered fully in memory, nothing is written to disk.
+ * Prescription PDF on a clinic letterhead (A4 portrait): clinic + doctor header, patient grid,
+ * diagnosis, medicines table (header repeated on every page), advice, investigations, follow-up,
+ * verification QR + prescriber footer (digital prescription: no signature). DRAFT / RETURNED
+ * prescriptions get no QR. Rendered fully in memory; nothing is written to disk.
  */
-export function buildPrescriptionPdf(data: PrescriptionPdfData): Promise<Buffer> {
-  return new Promise<Buffer>((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'A4', margin: 48 });
+export async function buildPrescriptionPdf(data: PrescriptionPdfData): Promise<Buffer> {
+  const qr = await buildVerificationQr(data);
+  const generatedAt = data.generatedAt ?? new Date();
+  return await new Promise<Buffer>((resolve, reject) => {
+    const doc = new PDFDocument({
+      size: 'A4',
+      bufferPages: true,
+      // A small bottom margin so the reference line can sit below the content area; the
+      // content itself stops at contentBottom() (see prescription-pdf.sections.ts).
+      margins: { top: RX_PAGE.margin, left: RX_PAGE.margin, right: RX_PAGE.margin, bottom: 12 },
+      info: { Title: `Prescription ${data.prescriptionNumber}`, Author: data.clinicName },
+    });
     const chunks: Buffer[] = [];
     doc.on('data', (chunk: Buffer) => chunks.push(chunk));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', (error: Error) => reject(error));
-
-    doc.fillColor(ACCENT).fontSize(20).text(data.clinicName, { align: 'left' });
-    doc.fillColor(MUTED).fontSize(10).text('Prescription', { align: 'left' });
-    doc.moveDown(0.5);
-    doc
-      .fillColor('#0F172A')
-      .fontSize(11)
-      .text(`Prescription No: ${data.prescriptionNumber}`)
-      .text(`Date: ${data.prescribedAt ? formatDateInIST(data.prescribedAt) : '-'}`)
-      .text(`Status: ${data.status}`);
-    doc.moveDown(0.5);
-
-    const patientBits = [
-      data.patientName,
-      typeof data.patientAge === 'number' ? `${data.patientAge} yrs` : null,
-      data.patientGender ?? null,
-    ].filter((bit): bit is string => Boolean(bit));
-    doc.text(`Patient: ${patientBits.join(', ')}`);
-    if (data.patientNumber) {
-      doc.text(`Patient No: ${data.patientNumber}`);
+    try {
+      const y = drawBody(doc, data);
+      drawFooter(doc, data, qr, y);
+      decoratePages(doc, data, generatedAt);
+      doc.end();
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error(String(error)));
     }
-    doc.text(`Doctor: ${data.doctorName}`);
-    if (data.doctorRegistrationNumber) {
-      doc.text(`Registration No: ${data.doctorRegistrationNumber}`);
-    }
-    if (data.diagnosis) {
-      doc.moveDown(0.5).text(`Diagnosis: ${data.diagnosis}`);
-    }
-
-    doc.moveDown();
-    doc.fillColor(ACCENT).fontSize(13).text('Medicines');
-    doc.moveDown(0.3).fillColor('#0F172A').fontSize(11);
-    data.items.forEach((item, index) => {
-      const qty = `${item.quantity}${item.unit ? ` ${item.unit}` : ''}`;
-      doc.text(`${index + 1}. ${item.medicineName}  x ${qty}`);
-      const details = [item.dosage, item.frequency, item.duration].filter(Boolean).join(' | ');
-      if (details) {
-        doc.fillColor(MUTED).fontSize(10).text(`    ${details}`);
-        doc.fillColor('#0F172A').fontSize(11);
-      }
-    });
-
-    if (data.notes) {
-      doc.moveDown().fillColor(ACCENT).fontSize(13).text('Notes');
-      doc.moveDown(0.3).fillColor('#0F172A').fontSize(11).text(data.notes);
-    }
-
-    doc.end();
   });
 }

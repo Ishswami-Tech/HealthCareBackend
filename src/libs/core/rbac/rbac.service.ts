@@ -88,9 +88,14 @@ export class RbacService {
         this.checkRolePermission(role.roleName, context.resource, context.action)
       );
 
-      // Fallback: If no RBAC roles found, check user's role field from User table
+      // The account's own `role` field is always checked too, not only when there are no
+      // RBAC role assignments. UserRole rows are meant to grant *additional* roles on top
+      // of it, never to replace it - so a stray or mismatched UserRole row (hand-edited
+      // seed/demo data, or a future "change role" feature that doesn't finish syncing the
+      // assignment table) can only add access, never take away what the account's real
+      // role already grants.
       let userRoleName: string | undefined;
-      if (!hasRolePermission && userRoles.length === 0) {
+      if (!hasRolePermission) {
         const user = await this.databaseService.findUserByIdSafe(context.userId);
         if (user && user.role) {
           userRoleName = user.role;
@@ -103,9 +108,11 @@ export class RbacService {
 
       const hasPermission = hasDirectPermission || hasRolePermission || hasOwnershipAccess;
 
-      // Build roles array - include RBAC roles or fallback to user's role
-      const rolesArray =
-        userRoles.length > 0 ? userRoles.map(r => r.roleName) : userRoleName ? [userRoleName] : [];
+      // Build roles array: RBAC role assignments plus the account's own role field,
+      // whichever of those were actually consulted above (deduplicated).
+      const rolesArray = Array.from(
+        new Set([...userRoles.map(r => r.roleName), ...(userRoleName ? [userRoleName] : [])])
+      );
 
       const result: PermissionCheck = {
         hasPermission,
@@ -617,6 +624,8 @@ export class RbacService {
         'profile:read',
         'profile:update',
         'reports:*',
+        // Contract §11: the clinic admin owns the reports page (/analytics/* reads, clinic-scoped).
+        'analytics:read',
         'settings:*',
         'therapy:*',
       ],
@@ -637,7 +646,6 @@ export class RbacService {
         'users:create',
         'users:update',
         'clinics:read',
-        'billing:read',
         'inventory:read',
         'video:read',
         'video:create',
@@ -652,10 +660,6 @@ export class RbacService {
         'medications:*',
         'ayurveda:*',
         'therapy:*',
-        'invoices:read',
-        'invoices:create',
-        'payments:read',
-        'billing:create',
         'notifications:read',
         'notifications:create',
         'analytics:read',
@@ -676,7 +680,6 @@ export class RbacService {
         'profile:update',
         'users:update',
         'clinics:read',
-        'billing:read',
         'inventory:read',
         'video:read',
         'video:create',
@@ -693,10 +696,6 @@ export class RbacService {
         'notifications:create',
         'ayurveda:*',
         'therapy:*',
-        'invoices:read',
-        'invoices:create',
-        'payments:read',
-        'billing:create',
         'analytics:read',
       ],
       NURSE: [
@@ -762,6 +761,13 @@ export class RbacService {
         'profile:read',
         'profile:update',
         'analytics:read',
+        // POST /vitals and PUT /vitals/:id already @Roles-allow RECEPTIONIST (front desk
+        // records height/weight/BP at check-in) — these were missing here, so
+        // RequireResourcePermission('vitals', ...) 403'd every one of those calls despite the
+        // route decorator saying yes. No 'vitals:read': GET /vitals/:userId does not list
+        // RECEPTIONIST in its own @Roles either, so this only grants what the routes already do.
+        'vitals:create',
+        'vitals:update',
       ],
       PATIENT: [
         // Consent ledger and own identifiers: the routes verify the record is the caller's own
@@ -828,6 +834,8 @@ export class RbacService {
         'medications:*',
         'payments:create',
         'invoices:read',
+        // GET /clinics/my-clinic only (other clinic reads do not list PHARMACIST in @Roles).
+        'clinics:read',
         'profile:read',
         'profile:update',
         'notifications:read',

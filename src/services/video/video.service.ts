@@ -1269,6 +1269,19 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  /** Whether the visit's join window (scheduled start minus early-join allowance) has opened. Fails closed. */
+  private hasJoinWindowOpened(appointment: {
+    date?: Date | string | null;
+    time?: string | null;
+  }): boolean {
+    const window = this.resolveAppointmentVideoWindow(appointment);
+    if (!window?.startTime) {
+      return false;
+    }
+    const opensAt = window.startTime.getTime() - VideoService.VIDEO_EARLY_JOIN_MINUTES * 60_000;
+    return Date.now() >= opensAt;
+  }
+
   private resolveAppointmentVideoWindow(appointment: {
     date?: Date | string | null;
     time?: string | null;
@@ -2132,6 +2145,14 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       if (
         appointmentStatus !== String(AppointmentStatus.IN_PROGRESS) &&
         appointmentStatus !== String(AppointmentStatus.CONFIRMED)
+      ) {
+        throw VideoService.consultationNotEndableError(appointmentStatus);
+      }
+      // A CONFIRMED visit can only be ended once its join window has opened (same rule as
+      // AppointmentsService.completeAppointment), so a later visit is never completed and billed early.
+      if (
+        appointmentStatus === String(AppointmentStatus.CONFIRMED) &&
+        !this.hasJoinWindowOpened(appointment)
       ) {
         throw VideoService.consultationNotEndableError(appointmentStatus);
       }
@@ -4555,13 +4576,14 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
       const consultation = await this.getConsultationSession(resolvedAppointmentId);
       if (!consultation) {
-        throw new HealthcareError(
-          ErrorCode.DATABASE_RECORD_NOT_FOUND,
-          `Consultation session not found for appointment ${resolvedAppointmentId}`,
-          undefined,
-          { appointmentId: resolvedAppointmentId },
-          'VideoService.getSessionParticipants'
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.DEBUG,
+          `No active consultation session for appointment ${resolvedAppointmentId}; returning empty participant list`,
+          'VideoService.getSessionParticipants',
+          { appointmentId: resolvedAppointmentId }
         );
+        return [];
       }
 
       const activeProvider = provider as unknown as {
@@ -4635,13 +4657,23 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
       const consultation = await this.getConsultationSession(resolvedAppointmentId);
       if (!consultation) {
-        throw new HealthcareError(
-          ErrorCode.DATABASE_RECORD_NOT_FOUND,
-          `Consultation session not found for appointment ${resolvedAppointmentId}`,
-          undefined,
-          { appointmentId: resolvedAppointmentId },
-          'VideoService.getSessionAnalytics'
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.DEBUG,
+          `No active consultation session for appointment ${resolvedAppointmentId}; returning empty session analytics`,
+          'VideoService.getSessionAnalytics',
+          { appointmentId: resolvedAppointmentId }
         );
+        return {
+          sessionId: '',
+          duration: 0,
+          numberOfParticipants: 0,
+          numberOfConnections: 0,
+          recordingCount: 0,
+          recordingTotalDuration: 0,
+          recordingTotalSize: 0,
+          connections: [],
+        };
       }
 
       const activeProvider = provider as unknown as {

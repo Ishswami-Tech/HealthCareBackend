@@ -1,6 +1,12 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { isSameIstDay } from '@utils/clock.util';
 import { parseIstDateTime } from '@utils/date-time.util';
+import {
+  QR_WINDOW_CLOSES_AFTER_MINUTES,
+  QR_WINDOW_OPENS_BEFORE_MINUTES,
+  scanFailureMessage,
+  type CheckInWindow,
+} from '@utils/in-person-flow.util';
 
 /**
  * Presence ("is the patient physically at the clinic") helpers shared by every check-in path.
@@ -148,18 +154,19 @@ export function createOutsideClinicRadiusException(): ForbiddenException {
 // Check-in timing (same rule for every entry point)
 // ---------------------------------------------------------------------------------------------
 
-/** Check-in opens this long before the appointment time. */
-export const CHECK_IN_WINDOW_BEFORE_MINUTES = 30;
+/** Check-in opens this long before the appointment time (same constant as the QR rule). */
+export const CHECK_IN_WINDOW_BEFORE_MINUTES = QR_WINDOW_OPENS_BEFORE_MINUTES;
 
-/** Check-in closes this long after the appointment time. */
-export const CHECK_IN_WINDOW_AFTER_MINUTES = 180;
+/** Check-in closes this long after the appointment time (same constant as the QR rule). */
+export const CHECK_IN_WINDOW_AFTER_MINUTES = QR_WINDOW_CLOSES_AFTER_MINUTES;
 
 const MS_PER_MINUTE = 60_000;
 
 /** Same code the scan-qr controller already answers when the window is closed. */
 export const CHECK_IN_WINDOW_CLOSED_CODE = 'CHECKIN_TIME_WINDOW_EXPIRED';
 
-export const CHECK_IN_WINDOW_CLOSED_MESSAGE = `Check-in is only available from ${CHECK_IN_WINDOW_BEFORE_MINUTES} minutes before until ${CHECK_IN_WINDOW_AFTER_MINUTES / 60} hours after the appointment time.`;
+/** V2: a patient's own check-in is open from 20 min before until 45 min after the slot start. */
+export const CHECK_IN_WINDOW_CLOSED_MESSAGE = `Self check-in is open from ${CHECK_IN_WINDOW_BEFORE_MINUTES} minutes before until ${CHECK_IN_WINDOW_AFTER_MINUTES} minutes after your appointment time. If you are at the clinic, show your booking or ask the reception desk to check you in.`;
 
 export const CHECK_IN_NOT_TODAY_CODE = 'CHECKIN_NOT_TODAY';
 
@@ -173,7 +180,7 @@ export interface CheckInTimingAssessment {
   readonly appointmentAt: Date;
   /** The appointment is on the same IST calendar day as `now` (the live queue is keyed by it). */
   readonly isSameIstDay: boolean;
-  /** `now` is inside [appointment - 30 min, appointment + 3 h]. */
+  /** `now` is inside [appointment - 20 min, appointment + 45 min] (both edges inclusive). */
   readonly isWithinWindow: boolean;
 }
 
@@ -206,13 +213,22 @@ export function assessCheckInTiming(
   };
 }
 
-/** 400 for a patient outside the check-in window. */
-export function createCheckInWindowClosedException(): BadRequestException {
+/**
+ * 400 for a patient outside the check-in window. With the slot's window the message names the
+ * opening time (too early) or the closing time (too late, go to reception).
+ */
+export function createCheckInWindowClosedException(
+  window?: CheckInWindow | null,
+  now: Date = new Date()
+): BadRequestException {
+  const message = window
+    ? scanFailureMessage(now.getTime() < window.opensAt.getTime() ? 'TOO_EARLY' : 'EXPIRED', window)
+    : CHECK_IN_WINDOW_CLOSED_MESSAGE;
   return new BadRequestException({
     statusCode: 400,
     error: 'Bad Request',
     code: CHECK_IN_WINDOW_CLOSED_CODE,
-    message: CHECK_IN_WINDOW_CLOSED_MESSAGE,
+    message,
   });
 }
 

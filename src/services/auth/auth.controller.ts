@@ -33,6 +33,8 @@ import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { Public } from '@core/decorators/public.decorator';
 import { SessionManagementService } from '@core/session/session-management.service';
 import { JwtAuthService } from './core/jwt.service';
+import { pickLogoutSessionId } from '@services/auth/core/refresh-session.util';
+import { resolveVerifiedSessionId } from '@core/guards/jwt-auth-guard.util';
 import { RecordClaimService } from './core/record-claim.service';
 import { ClaimRecordDto } from './core/record-claim.dto';
 import {
@@ -508,13 +510,24 @@ export class AuthController {
         [key: string]: unknown;
       };
 
-      // Priority: 1. Request body, 2. Fastify session, 3. JWT payload sessionId, 4. Extract from token
-      let sessionId = logoutDto.sessionId || req.session?.sessionId || user?.sessionId;
-
-      // If still no sessionId, try to extract from token payload using bracket notation
-      if (!sessionId && user && typeof user === 'object') {
-        sessionId = (user as { sessionId?: string }).sessionId;
-      }
+      // `req.session.sessionId` is Fastify's own cookie-session id, not the app session id: using
+      // it revoked nothing, leaving the session (and its refresh token) alive after logout. The
+      // signed session claim of the authenticating token is used; a session named in the body is
+      // revoked only when it is the caller's own.
+      const verifiedSessionId = resolveVerifiedSessionId(user);
+      const requestedSessionId = logoutDto.sessionId?.trim() || undefined;
+      const requestedSession =
+        requestedSessionId && requestedSessionId !== verifiedSessionId
+          ? await this.sessionService.getSession(requestedSessionId)
+          : null;
+      const serverSessionId = (req.session as { healthcareSessionId?: unknown } | undefined)
+        ?.healthcareSessionId;
+      const sessionId = pickLogoutSessionId({
+        verifiedSessionId,
+        requestedSessionId,
+        requestedIsOwn: requestedSession !== null && requestedSession.userId === user.sub,
+        serverSessionId: typeof serverSessionId === 'string' ? serverSessionId : undefined,
+      });
 
       // Invalidate Fastify session if available
       if (req.session) {

@@ -208,6 +208,10 @@ export class EasebuzzPaymentAdapter extends BasePaymentAdapter {
       // Validate options
       this.validatePaymentIntentOptions(options);
 
+      // Order expiry: the initiate-payment request used here has no expiry parameter, so
+      // Easebuzz cannot refuse a late payment. The payment-window sweeps ask Easebuzz for the
+      // merchant_txnid status after window + buffer and expire the attempt when unpaid; a later
+      // payment is flagged as a late settlement by the finaliser.
       // Generate unique transaction ID
       const merchantTxnId =
         options.orderId || `TXN_${Date.now()}_${Math.random().toString(36).substring(7)}`;

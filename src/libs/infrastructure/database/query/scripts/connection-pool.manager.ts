@@ -522,11 +522,10 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
             // Event emission will be handled by DatabaseService if needed
           }
 
-          // Log success periodically (every 5 minutes) to confirm database connection
+          // Log the connected state once (on first success and on recovery), not periodically
           // Use DEBUG level for routine checks to reduce log noise
           const now = Date.now();
-          const shouldLogInfo =
-            !this.lastHealthCheckSuccessLog || now - this.lastHealthCheckSuccessLog > 300000; // 5 minutes
+          const shouldLogInfo = !this.lastHealthCheckSuccessLog; // INFO only on first success / recovery (state change)
 
           if (shouldLogInfo) {
             this.lastHealthCheckSuccessLog = now;
@@ -555,6 +554,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
           }
         } catch (error) {
           this.metrics.isHealthy = false;
+          this.lastHealthCheckSuccessLog = 0; // next success is a recovery -> INFO
           this.handleCircuitBreakerFailure();
           const errorMessage = (error as Error).message;
           // Suppress Prisma "Invalid invocation" errors - they're expected during startup

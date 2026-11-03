@@ -59,6 +59,7 @@ interface Setup {
     preparePayoutForAppointmentPayment: jest.Mock;
     syncAppointmentAfterPayment: jest.Mock;
     markPayoutReadyForCompletedAppointment: jest.Mock;
+    persistLateSettlementReview: jest.Mock;
   };
   eventService: { emit: jest.Mock };
   loggingService: { log: jest.Mock };
@@ -96,6 +97,7 @@ function setup(
     preparePayoutForAppointmentPayment: jest.fn().mockResolvedValue(undefined),
     syncAppointmentAfterPayment: jest.fn().mockResolvedValue(undefined),
     markPayoutReadyForCompletedAppointment: jest.fn().mockResolvedValue(undefined),
+    persistLateSettlementReview: jest.fn().mockResolvedValue(undefined),
   };
   const eventService = { emit: jest.fn().mockResolvedValue(undefined) };
   const loggingService = { log: jest.fn().mockResolvedValue(undefined) };
@@ -275,7 +277,22 @@ describe('BillingEventsListener.handlePaymentCompleted - late settlement', () =>
           appointmentId: APPOINTMENT_ID,
           appointmentStatus: status,
           amount: 500,
+          requiredAction: 'REFUND_OR_REBOOK',
         });
+
+        // Recorded on the payment for the clinic to decide (refund or rebook), except for a
+        // visit that already took place.
+        if (status === 'COMPLETED') {
+          expect(billingService.persistLateSettlementReview).not.toHaveBeenCalled();
+        } else {
+          expect(billingService.persistLateSettlementReview).toHaveBeenCalledWith(
+            expect.objectContaining({
+              clinicId: CLINIC_ID,
+              paymentId: PAYMENT_ID,
+              appointmentId: APPOINTMENT_ID,
+            })
+          );
+        }
 
         // And a WARN in the log.
         expect(loggingService.log).toHaveBeenCalledWith(

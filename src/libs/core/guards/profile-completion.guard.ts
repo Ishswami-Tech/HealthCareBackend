@@ -20,6 +20,18 @@ function isNonEmptyTrimmedString(value: unknown): boolean {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+/**
+ * A patient's contact is "verified" once their account identity is verified through ANY channel
+ * they actually used to log in (email OTP, phone OTP, Google) — `isVerified` already carries that.
+ * Requiring `phoneVerified` specifically, regardless of login channel, locked the large majority
+ * of real (email-OTP) patients out of their own dashboard/queue view even while checked in and
+ * waiting in the clinic (found 2026-10-27: 507/579 seeded users are `isVerified=true` but
+ * `phoneVerified=false` — logged in fine, just never did the separate phone-verify step).
+ */
+function hasVerifiedContact(user: Record<string, unknown>): boolean {
+  return user['phoneVerified'] === true || user['isVerified'] === true;
+}
+
 function hasCompleteLoginProfileFields(user: Record<string, unknown>): boolean {
   const phone = user['phone'] ?? user['mobile'];
   const roleValue = user['role'];
@@ -32,11 +44,11 @@ function hasCompleteLoginProfileFields(user: Record<string, unknown>): boolean {
       isNonEmptyTrimmedString(firstName) &&
       isNonEmptyTrimmedString(lastName) &&
       isNonEmptyTrimmedString(phone) &&
-      user['phoneVerified'] === true
+      hasVerifiedContact(user)
     );
   }
 
-  return isNonEmptyTrimmedString(phone) && user['phoneVerified'] === true;
+  return isNonEmptyTrimmedString(phone) && hasVerifiedContact(user);
 }
 
 /**
@@ -165,7 +177,7 @@ export class ProfileCompletionGuard implements CanActivate {
         if (!isNonEmptyTrimmedString(firstName)) missingFields.push('firstName');
         if (!isNonEmptyTrimmedString(lastName)) missingFields.push('lastName');
         if (!isNonEmptyTrimmedString(phone)) missingFields.push('phone');
-        if (dbUserRecord['phoneVerified'] !== true) missingFields.push('phoneVerified');
+        if (!hasVerifiedContact(dbUserRecord)) missingFields.push('phoneVerified');
 
         await this.logging.log(
           LogType.AUDIT,

@@ -72,6 +72,12 @@ export interface PaymentFinaliserPorts {
   updatePaymentAfterClaim: (paymentId: string, data: UpdatePaymentDto) => Promise<unknown>;
   settleInvoice: (payment: PaymentRow, clinicId: string) => Promise<InvoiceSettlement>;
   isPlanAmountCovered: (subscriptionId: string, payment: PaymentRow) => Promise<boolean>;
+  /**
+   * The plan period this payment was issued for has already been paid by another payment (one
+   * paid period at a time). Such a payment is flagged for a refund decision, never used to
+   * extend the plan again. Optional: without it every covered payment renews.
+   */
+  isDuplicatePlanPayment?: (subscriptionId: string, payment: PaymentRow) => Promise<boolean>;
   renewSubscription: (
     subscriptionId: string,
     payment: PaymentRow,
@@ -666,6 +672,20 @@ export class BillingPaymentFinaliser {
           userId: payment.userId,
           ...(payment.appointmentId ? { appointmentId: payment.appointmentId } : {}),
         });
+        await this.stampApplied(ctx);
+        return {};
+      }
+      if (await this.ports.isDuplicatePlanPayment?.(subscriptionId, payment)) {
+        await this.ports.flagSettlement({
+          paymentId: payment.id,
+          clinicId,
+          reason: 'DUPLICATE_SETTLEMENT',
+          orderId: ctx.orderId,
+          amount: payment.amount,
+          userId: payment.userId,
+          ...(payment.invoiceId ? { invoiceId: payment.invoiceId } : {}),
+        });
+        // Money received for a period that is already paid: no second period, no revenue.
         await this.stampApplied(ctx);
         return {};
       }

@@ -11,9 +11,19 @@ import {
   Request,
   Res,
   ForbiddenException,
+  ValidationPipe,
 } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiExtraModels,
+  ApiOkResponse,
+  ApiQuery,
+} from '@nestjs/swagger';
+import { ValidationPipeConfig } from '@config/validation-pipe.config';
+import { legacyPrescriptionListHeaders } from '@services/pharmacy/services/prescription-legacy-list.util';
 import {
   PharmacyService,
   type InventoryPage,
@@ -34,11 +44,19 @@ import {
   ReversePrescriptionDispenseDto,
   PharmacyBatchAuditQueryDto,
   PharmacyStatsDto,
+  InventorySummaryDto,
   PharmacyStatsQueryDto,
   PharmacySalesQueryDto,
   CreateSupplierDto,
   UpdateSupplierDto,
   RecordCashPaymentDto,
+  ListPrescriptionsQueryDto,
+  PrescriptionSummaryQueryDto,
+  PrescriptionSummaryDto,
+  PrescriptionListSort,
+  PrescriptionPharmacyStage,
+  PRESCRIPTION_LIST_DEFAULT_PAGE_SIZE,
+  PRESCRIPTION_LIST_PAGE_SIZES,
 } from '@dtos/pharmacy.dto';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
@@ -53,7 +71,14 @@ import { Role } from '@core/types/enums.types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import type { Medicine } from '@core/types/database.types';
 
+/**
+ * Validates the query of the paged prescription list. The legacy (no `page`) call is not
+ * validated at all, exactly as before, so old apps sending ignored keys (`search`, ...) keep working.
+ */
+const PRESCRIPTION_LIST_QUERY_PIPE = new ValidationPipe(ValidationPipeConfig.getOptions());
+
 @ApiTags('pharmacy')
+@ApiExtraModels(PrescriptionSummaryDto)
 @Controller('pharmacy')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
@@ -165,6 +190,29 @@ export class PharmacyController {
   }
 
   /**
+   * @endpoint GET /pharmacy/inventory/summary
+   * @access PHARMACIST, CLINIC_ADMIN, SUPER_ADMIN, DOCTOR, ASSISTANT_DOCTOR
+   * @frontend pharmacy.server.ts (getInventoryCounts)
+   * @status ACTIVE
+   * @description Whole-inventory stock tiles of the clinic in one read: total, in stock,
+   * low (0 < stock <= reorder level), out (stock <= 0), expiring soon and stock value. Not cached
+   * so the tiles agree with the list right after a dispense or restock.
+   */
+  @Get('inventory/summary')
+  @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.DOCTOR, Role.ASSISTANT_DOCTOR)
+  @RequireResourcePermission('inventory', 'read')
+  @RateLimitAPI()
+  @ApiOperation({ summary: 'Whole-inventory stock counts (low / out separately) and value' })
+  @ApiOkResponse({ type: InventorySummaryDto })
+  async getInventorySummary(
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<InventorySummaryDto> {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
+    return this.pharmacyService.getInventorySummary(clinicId);
+  }
+
+  /**
    * @endpoint GET /pharmacy/inventory/low-stock
    * @access PHARMACIST, CLINIC_ADMIN
    * @description Active medicines at or below their reorder level, lowest stock first, capped
@@ -202,25 +250,136 @@ export class PharmacyController {
 
   /**
    * @endpoint GET /pharmacy/prescriptions
-   * @access PHARMACIST
-   * @frontend pharmacy.server.ts
+   * @access PHARMACIST, CLINIC_ADMIN, DOCTOR (own prescriptions only)
+   * @frontend prescriptions.server.ts, pharmacy.server.ts
    * @status ACTIVE
-   * @description Get all prescriptions for pharmacist review
+   * @description Without `page`: the legacy bare array of the most recent 200 prescriptions
+   * (drafts excluded), newest first, query ignored; `X-Total-Count` / `X-Truncated` headers. With `page`: `{ data, total, page, limit }`, filtered / searched / sorted in
+   * the database (`q`, `status`, `pharmacyStage`, `dateFrom` / `dateTo` IST days, `patientId`,
+   * `sort`), rows in the legacy row shape. Cached per caller + full query (tags pharmacy,
+   * prescriptions); every prescription write / dispense / payment / draft transition busts it.
    */
   @Get('prescriptions')
   @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN, Role.DOCTOR)
   @RequireResourcePermission('prescriptions', 'read')
   @Cache({ ttl: 300, tags: ['pharmacy', 'prescriptions'], priority: 'normal', containsPHI: true })
   @RateLimitAPI()
-  @ApiOperation({ summary: 'Get all prescriptions' })
-  async getPrescriptions(@Request() req: ClinicAuthenticatedRequest) {
+  @ApiOperation({
+    summary: 'List prescriptions (legacy array, or a filtered page when `page` is given)',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number, description: '1-based; enables paging' })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    enum: PRESCRIPTION_LIST_PAGE_SIZES,
+    description: `Page size (default ${PRESCRIPTION_LIST_DEFAULT_PAGE_SIZE})`,
+  })
+  @ApiQuery({
+    name: 'q',
+    required: false,
+    description:
+      'Search: patient name / phone, UHID, OPD number, prescription number, medicine, diagnosis',
+  })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: ['ACTIVE', 'COMPLETED', 'CANCELLED', 'DRAFT', 'RETURNED', 'PENDING', 'PARTIAL', 'FILLED'],
+  })
+  @ApiQuery({ name: 'pharmacyStage', required: false, enum: PrescriptionPharmacyStage })
+  @ApiQuery({ name: 'dateFrom', required: false, description: 'IST day YYYY-MM-DD (inclusive)' })
+  @ApiQuery({ name: 'dateTo', required: false, description: 'IST day YYYY-MM-DD (inclusive)' })
+  @ApiQuery({ name: 'patientId', required: false, description: 'Patient.id (uuid)' })
+  @ApiQuery({ name: 'sort', required: false, enum: PrescriptionListSort })
+  @ApiOkResponse({
+    description:
+      'Legacy: Prescription[]. With `page`: { data: Prescription[], total, page, limit } (same row shape)',
+    schema: {
+      oneOf: [
+        { type: 'array', items: { type: 'object' } },
+        {
+          type: 'object',
+          properties: {
+            data: { type: 'array', items: { type: 'object' } },
+            total: { type: 'number' },
+            page: { type: 'number' },
+            limit: { type: 'number' },
+          },
+        },
+      ],
+    },
+  })
+  async getPrescriptions(
+    @Request() req: ClinicAuthenticatedRequest,
+    @Query() rawQuery: Record<string, string | string[] | undefined>,
+    @Res({ passthrough: true }) reply: FastifyReply
+  ) {
     // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
     const clinicId = req.clinicContext?.clinicId;
+    if (rawQuery?.['page'] !== undefined) {
+      const query = (await PRESCRIPTION_LIST_QUERY_PIPE.transform(rawQuery, {
+        type: 'query',
+        metatype: ListPrescriptionsQueryDto,
+      })) as ListPrescriptionsQueryDto;
+      return this.pharmacyService.findPrescriptionsPage(
+        clinicId,
+        {
+          page: query.page ?? 1,
+          limit: query.limit ?? PRESCRIPTION_LIST_DEFAULT_PAGE_SIZE,
+          ...(query.q ? { q: query.q } : {}),
+          ...(query.status ? { status: query.status } : {}),
+          ...(query.pharmacyStage ? { pharmacyStage: query.pharmacyStage } : {}),
+          ...(query.dateFrom ? { dateFrom: query.dateFrom } : {}),
+          ...(query.dateTo ? { dateTo: query.dateTo } : {}),
+          ...(query.patientId ? { patientId: query.patientId } : {}),
+          ...(query.sort ? { sort: query.sort } : {}),
+        },
+        { role: req.user?.role, userId: req.user?.sub }
+      );
+    }
     // DOCTOR: only their own prescriptions. PHARMACIST / CLINIC_ADMIN keep the whole clinic.
+    // Bounded: the most recent LEGACY_PRESCRIPTION_LIST_LIMIT rows, newest first; the headers say
+    // how many exist and whether the window was cut (cache hits replay the body only).
     const doctorUserId = req.user?.role === Role.DOCTOR ? req.user.sub : undefined;
-    return this.pharmacyService.findAllPrescriptions(
+    // PHARMACIST: medicine prescriptions only (a note-only / advice prescription is never dispensed).
+    const medicinesOnly = req.user?.role === Role.PHARMACIST;
+    const list = await this.pharmacyService.findRecentPrescriptions(
       clinicId,
-      doctorUserId ? { doctorUserId } : undefined
+      doctorUserId ? { doctorUserId } : medicinesOnly ? { medicinesOnly } : undefined
+    );
+    for (const [name, value] of Object.entries(legacyPrescriptionListHeaders(list))) {
+      reply.header(name, value);
+    }
+    return list.data;
+  }
+
+  /**
+   * @endpoint GET /pharmacy/prescriptions/summary
+   * @access PHARMACIST, CLINIC_ADMIN, DOCTOR (own prescriptions only)
+   * @frontend prescriptions.server.ts
+   * @status ACTIVE
+   * @description `{ total, active, completed, cancelled, drafts, today, uniquePatients }` for
+   * `dateFrom` .. `dateTo` (IST days, inclusive; none = all time). `today` is always today (IST).
+   * Computed with groupBy / count, no rows loaded.
+   */
+  @Get('prescriptions/summary')
+  @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN, Role.DOCTOR)
+  @RequireResourcePermission('prescriptions', 'read')
+  @Cache({ ttl: 300, tags: ['pharmacy', 'prescriptions'], priority: 'normal', containsPHI: true })
+  @RateLimitAPI()
+  @ApiOperation({ summary: 'Prescription counters (status, today, distinct patients)' })
+  @ApiOkResponse({ type: PrescriptionSummaryDto })
+  async getPrescriptionSummary(
+    @Request() req: ClinicAuthenticatedRequest,
+    @Query() query: PrescriptionSummaryQueryDto
+  ): Promise<PrescriptionSummaryDto> {
+    const clinicId = req.clinicContext?.clinicId;
+    return this.pharmacyService.getPrescriptionSummary(
+      clinicId,
+      {
+        ...(query.dateFrom ? { dateFrom: query.dateFrom } : {}),
+        ...(query.dateTo ? { dateTo: query.dateTo } : {}),
+      },
+      { role: req.user?.role, userId: req.user?.sub }
     );
   }
 
@@ -231,6 +390,28 @@ export class PharmacyController {
   async getMedicineDeskQueue(@Request() req: ClinicAuthenticatedRequest) {
     const clinicId = req.clinicContext?.clinicId;
     return this.pharmacyService.getMedicineDeskQueue(clinicId);
+  }
+
+  /**
+   * @endpoint GET /pharmacy/patients/:patientId/allergy-summary
+   * @access DOCTOR, ASSISTANT_DOCTOR
+   * @description Known allergies for a warning banner on the prescribing screen, before any
+   * medicine is picked (structured Allergy records + the visit's free-text allergy notes).
+   */
+  @Get('patients/:patientId/allergy-summary')
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR)
+  @RequireResourcePermission('prescriptions', 'create')
+  @ApiOperation({
+    summary: "Known allergies for a patient, for the prescribing screen's warning banner",
+  })
+  async getAllergySummaryForPrescribing(
+    @Param('patientId') patientId: string,
+    @Request() req: ClinicAuthenticatedRequest,
+    @Query('visitId') visitId?: string
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new ForbiddenException('Clinic context required');
+    return this.pharmacyService.getAllergySummaryForPrescribing(patientId, clinicId, visitId);
   }
 
   /**
@@ -250,18 +431,26 @@ export class PharmacyController {
   ) {
     // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
     const clinicId = req.clinicContext?.clinicId;
-    return this.pharmacyService.createPrescription(dto, clinicId, this.actorOf(req));
+    // A retried request (flaky connection, double tap) with the same Idempotency-Key header
+    // returns the first response instead of creating a second, independently dispensable
+    // prescription (see idempotency-key.util).
+    return this.pharmacyService.createPrescription(dto, clinicId, this.actorOf(req), {
+      idempotencyKey: req.headers?.['idempotency-key'],
+    });
   }
 
   /**
    * @endpoint PATCH /pharmacy/prescriptions/:id
-   * @access DOCTOR (the prescribing doctor, same clinic)
+   * @access DOCTOR (the prescribing doctor, same clinic); ASSISTANT_DOCTOR for their own DRAFT / RETURNED draft
    * @description Edit items / notes / diagnosis while the prescription is not yet dispensed
    */
   @Patch('prescriptions/:id')
-  @Roles(Role.DOCTOR)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR)
   @RequireResourcePermission('prescriptions', 'update')
-  @ApiOperation({ summary: 'Edit a not-yet-dispensed prescription (prescribing doctor only)' })
+  @ApiOperation({
+    summary:
+      'Edit a not-yet-dispensed prescription (prescribing doctor; the assistant only their own DRAFT / RETURNED draft)',
+  })
   async updatePrescription(
     @Param('id') id: string,
     @Body() dto: UpdatePharmacyPrescriptionDto,
@@ -378,14 +567,7 @@ export class PharmacyController {
   }
 
   @Get('prescriptions/:id/payment-summary')
-  @Roles(
-    Role.PATIENT,
-    Role.PHARMACIST,
-    Role.CLINIC_ADMIN,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
-    Role.RECEPTIONIST
-  )
+  @Roles(Role.PATIENT, Role.PHARMACIST, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
   @RequireResourcePermission('prescriptions', 'read', { requireOwnership: true })
   @ApiOperation({ summary: 'Get prescription payment summary' })
   async getPrescriptionPaymentSummary(
@@ -552,7 +734,7 @@ export class PharmacyController {
    * @note Fixed dashboard redirect loop issue
    */
   @Get('prescriptions/patient/:userId')
-  @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN, Role.DOCTOR, Role.PATIENT)
+  @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.PATIENT)
   @UseGuards(PatientSelfAccessGuard)
   @RequireResourcePermission('prescriptions', 'read', { requireOwnership: true })
   @Cache({

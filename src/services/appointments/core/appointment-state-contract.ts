@@ -3,7 +3,9 @@ import { BadRequestException } from '@nestjs/common';
 
 export const APPOINTMENT_STATUS_TRANSITIONS: Record<string, string[]> = {
   PENDING: ['SCHEDULED', 'CANCELLED', 'EXPIRED', 'RESCHEDULED'],
-  SCHEDULED: ['CONFIRMED', 'CANCELLED', 'EXPIRED', 'RESCHEDULED'],
+  // NO_SHOW: a booked patient who never came (the most common no-show, B5). Only once the slot
+  // time has passed (see getGenericStatusChangeRefusal / BOOKED_NO_SHOW_TOO_EARLY_MESSAGE).
+  SCHEDULED: ['CONFIRMED', 'CANCELLED', 'EXPIRED', 'RESCHEDULED', 'NO_SHOW'],
   // COMPLETED is deliberately absent here. The one sanctioned shortcut, a CONFIRMED *video* visit
   // whose join window has opened, lives in AppointmentsService.completeAppointment (and the video
   // end route), so the doctor's complete flow owns it and the generic update / scheduler cannot
@@ -73,6 +75,26 @@ export const CONSULTATION_START_MESSAGE =
   'A consultation is started by clinic staff from a checked-in appointment. Use the start-consultation flow.';
 export const SYSTEM_ONLY_EXPIRY_MESSAGE =
   'Only the system can expire a consultation that is in progress.';
+export const BOOKED_NO_SHOW_TOO_EARLY_MESSAGE =
+  'A booked visit can be marked no-show only after its slot time has passed.';
+
+/** SCHEDULED -> NO_SHOW is allowed only once the slot start is in the past (B5). */
+export function isBookedNoShowTooEarly(input: {
+  currentStatus: string;
+  targetStatus: string;
+  slotStartsAt?: Date | null | undefined;
+  now?: Date | undefined;
+}): boolean {
+  if (
+    String(input.currentStatus).toUpperCase() !== 'SCHEDULED' ||
+    String(input.targetStatus).toUpperCase() !== 'NO_SHOW'
+  ) {
+    return false;
+  }
+  const slot = input.slotStartsAt;
+  if (!slot || Number.isNaN(slot.getTime())) return true;
+  return (input.now ?? new Date()).getTime() < slot.getTime();
+}
 
 export function normalizeAppointmentRole(role: string | null | undefined): string {
   return String(role ?? '')
@@ -159,12 +181,20 @@ export function getGenericStatusChangeRefusal(input: {
   targetStatus: string;
   appointmentType?: string | null | undefined;
   role: string | null | undefined;
+  /** Slot start (IST date + time) of the appointment; needed for SCHEDULED -> NO_SHOW. */
+  slotStartsAt?: Date | null | undefined;
+  now?: Date | undefined;
 }): GenericStatusChangeRefusal | null {
   const current = String(input.currentStatus).toUpperCase();
   const target = String(input.targetStatus).toUpperCase();
 
-  if (isAppointmentSystemRole(input.role) || target === current) {
+  if (target === current) {
     return null;
+  }
+  // Even the scheduler never marks a booked visit no-show before its slot (B5).
+  const noShowTooEarly = isBookedNoShowTooEarly(input);
+  if (isAppointmentSystemRole(input.role)) {
+    return noShowTooEarly ? { httpStatus: 400, message: BOOKED_NO_SHOW_TOO_EARLY_MESSAGE } : null;
   }
 
   if (!isAppointmentStaffRole(input.role)) {
@@ -173,6 +203,9 @@ export function getGenericStatusChangeRefusal(input: {
 
   if (isSystemOnlyStatusTransition(current, target)) {
     return { httpStatus: 403, message: SYSTEM_ONLY_EXPIRY_MESSAGE };
+  }
+  if (noShowTooEarly) {
+    return { httpStatus: 400, message: BOOKED_NO_SHOW_TOO_EARLY_MESSAGE };
   }
 
   switch (target) {

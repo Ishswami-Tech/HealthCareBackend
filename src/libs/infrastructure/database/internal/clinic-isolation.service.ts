@@ -118,11 +118,11 @@ export class ClinicIsolationService implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      // Clear existing caches
-      this.clinicCache.clear();
-      this.userClinicCache.clear();
-      this.locationClinicCache.clear();
-      this.clinicCodeCache.clear();
+      // Build fresh maps and swap them in once complete: lookups never see an empty / half-built
+      // cache during the reload, and a failed reload keeps the previous maps.
+      const nextClinicCache = new Map<string, ClinicContext>();
+      const nextLocationClinicCache = new Map<string, string>();
+      const nextClinicCodeCache = new Map<string, string>();
 
       // Load all active clinics - use safe delegate access to avoid Prisma validation errors
       // CRITICAL: Use getDelegateSafely() to access delegate without triggering validation
@@ -131,7 +131,6 @@ export class ClinicIsolationService implements OnModuleInit, OnModuleDestroy {
           where: { isActive: boolean };
           include: {
             locations: { select: { id: boolean } };
-            _count: { select: { users: boolean; appointments: boolean } };
           };
         }) => Promise<
           Array<{
@@ -142,7 +141,6 @@ export class ClinicIsolationService implements OnModuleInit, OnModuleDestroy {
             app_name: string;
             isActive: boolean;
             locations: Array<{ id: string }>;
-            _count: { users: number; appointments: number };
           }>
         >;
       }>('clinic');
@@ -157,12 +155,6 @@ export class ClinicIsolationService implements OnModuleInit, OnModuleDestroy {
           locations: {
             select: {
               id: true,
-            },
-          },
-          _count: {
-            select: {
-              users: true,
-              appointments: true,
             },
           },
         },
@@ -205,22 +197,29 @@ export class ClinicIsolationService implements OnModuleInit, OnModuleDestroy {
           }),
         };
 
-        this.clinicCache.set(clinic.id, clinicContext);
+        nextClinicCache.set(clinic.id, clinicContext);
 
         // Cache subdomain/code mapping
         if (clinic.subdomain) {
-          this.clinicCodeCache.set(clinic.subdomain.toLowerCase(), clinic.id);
+          nextClinicCodeCache.set(clinic.subdomain.toLowerCase(), clinic.id);
         }
         // Also cache clinicId (e.g., "CL0002") to UUID mapping
         if (clinic.clinicId) {
-          this.clinicCodeCache.set(clinic.clinicId.toLowerCase(), clinic.id);
+          nextClinicCodeCache.set(clinic.clinicId.toLowerCase(), clinic.id);
         }
 
         // Cache location to clinic mappings
         for (const location of clinic.locations) {
-          this.locationClinicCache.set(location.id, clinic.id);
+          nextLocationClinicCache.set(location.id, clinic.id);
         }
       }
+
+      // Atomic swap (single synchronous block). userId -> clinics is filled lazily on lookup,
+      // so it restarts empty, as the old clear() did.
+      this.clinicCache = nextClinicCache;
+      this.locationClinicCache = nextLocationClinicCache;
+      this.clinicCodeCache = nextClinicCodeCache;
+      this.userClinicCache = new Map<string, string[]>();
     } catch (error) {
       if (!this.isShuttingDown) {
         void this.loggingService.log(

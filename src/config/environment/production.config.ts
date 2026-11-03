@@ -19,7 +19,11 @@ function validateProductionConfig(): void {
   const result = validateEnvironmentConfig('production', false);
 
   if (!result.isValid) {
-    const errorMessage = getEnvironmentValidationErrorMessage('production', result.missing);
+    const errorMessage = getEnvironmentValidationErrorMessage(
+      'production',
+      result.missing,
+      result.invalid
+    );
     throw new Error(errorMessage);
   }
 }

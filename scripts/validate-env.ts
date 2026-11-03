@@ -17,6 +17,9 @@ const PRODUCTION_REQUIRED = [
   'COOKIE_SECRET',
   'COMMUNICATION_ENCRYPTION_KEY',
   'CORS_ORIGIN',
+  // Mirrors the runtime boot check in src/config/environment/validation.ts (no dev fallbacks).
+  'QR_SECRET_KEY',
+  'PHI_CACHE_ENCRYPTION_KEY',
 ];
 
 // Required environment variables for staging
@@ -103,14 +106,17 @@ function validateEnvironment(): void {
 
   // Check required variables
   for (const varName of requiredVars) {
-    if (!process.env[varName]) {
+    const legacyQrKey = varName === 'QR_SECRET_KEY' && process.env['QR_ENCRYPTION_KEY'];
+    if (!process.env[varName] && !legacyQrKey) {
       missing.push(varName);
     }
   }
 
   const isProdLike =
     NODE_ENV === 'production' || NODE_ENV === 'staging' || NODE_ENV === 'local-prod';
-  const bullBoardEnabled = isProdLike && isTruthy(process.env['ENABLE_BULL_BOARD']);
+  // The dashboard only mounts in production-like envs with QUEUE_DASHBOARD_ENABLED=true
+  // (src/libs/security/queue-dashboard-auth.ts); it then needs Basic-auth credentials.
+  const bullBoardEnabled = isProdLike && isTruthy(process.env['QUEUE_DASHBOARD_ENABLED']);
 
   if (bullBoardEnabled) {
     for (const varName of ['QUEUE_DASHBOARD_USER', 'QUEUE_DASHBOARD_PASSWORD']) {

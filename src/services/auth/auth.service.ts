@@ -1,5 +1,6 @@
+import { hasUsablePassword } from '@services/auth/core/has-password.util';
 import { nowIso } from '@utils/date-time.util';
-import { Inject, Injectable, UnauthorizedException, forwardRef } from '@nestjs/common';
+import { HttpStatus, Inject, Injectable, UnauthorizedException, forwardRef } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@config/config.service';
 import { DatabaseService } from '@infrastructure/database/database.service';
@@ -8,6 +9,8 @@ import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { EventService } from '@infrastructure/events/event.service';
 import { HealthcareError, HealthcareErrorsService } from '@core/errors';
+import { logLevelForError } from '@core/errors/error-severity.util';
+import { isUniqueViolation } from '@services/compliance/utils/db-errors.util';
 import { LogType, LogLevel } from '@core/types';
 import { EmailService } from '@communication/channels/email/email.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
@@ -17,9 +20,15 @@ import { QueueService, JobPriority } from '@infrastructure/queue';
 import { JobType } from '@core/types/queue.types';
 import { JwtAuthService } from './core/jwt.service';
 import { classifyRefreshFailure } from './core/refresh-failure.util';
+import {
+  REFRESH_SESSION_REFUSALS,
+  decideRefreshSessionAccess,
+} from '@services/auth/core/refresh-session.util';
+import { resolveVerifiedSessionId } from '@core/guards/jwt-auth-guard.util';
+import { ErrorCode } from '@core/errors/error-codes.enum';
 import { SocialAuthService } from './core/social-auth.service';
 import { OtpService } from './core/otp.service';
-import { normalizeAuthPhoneNumber } from './core/phone-normalizer.util';
+import { normalizeAuthPhoneNumber, authPhoneLookupCandidates } from './core/phone-normalizer.util';
 import {
   LoginDto,
   RegisterDto,
@@ -530,7 +539,9 @@ export class AuthService {
       const hashedPassword = await bcrypt.hash(registerDto.password, 12);
       // Age handling for registration (profile completion happens after login)
       // - If DOB is provided during registration, calculate age and validate
-      // - If DOB is not provided, use safe default (will be updated during profile completion)
+      // - If DOB is not provided, leave age unset: a fabricated number here (the previous
+      //   code wrote a flat 12) gets persisted and displayed as this person's real age
+      //   everywhere in the app, not just a backend placeholder.
       const age = registerDto.dateOfBirth
         ? (() => {
             const calculatedAge = Math.floor(
@@ -547,7 +558,7 @@ export class AuthService {
             }
             return calculatedAge;
           })()
-        : 12; // Safe default - will be updated during profile completion with actual DOB
+        : undefined;
 
       const requestedRole = (registerDto.role as Role) ?? Role.PATIENT;
       if (requestedRole !== Role.PATIENT && !allowPrivilegedRoleAssignment) {
@@ -563,9 +574,11 @@ export class AuthService {
       const user = await this.databaseService.createUserSafe({
         email: registerDto.email,
         password: hashedPassword,
+        // The holder chose this password (hasUsablePassword): "Change password" is offered.
+        passwordChangedAt: new Date(),
         userid,
         name: `${registerDto.firstName} ${registerDto.lastName}`,
-        age,
+        ...(age !== undefined && { age }),
         firstName: registerDto.firstName,
         lastName: registerDto.lastName,
         ...(registerDto.phone && { phone: normalizeAuthPhoneNumber(registerDto.phone) }),
@@ -640,6 +653,21 @@ export class AuthService {
           error: error instanceof Error ? error.message : String(error),
         }
       );
+      // An account that already holds this phone/email is a 409, never a 500.
+      const alreadyClientError = error instanceof HealthcareError && error.getStatus() < 500;
+      if (!alreadyClientError && isUniqueViolation(error)) {
+        const detail = error instanceof Error ? error.message : '';
+        if (registerDto.phone && /phone/i.test(detail)) {
+          throw this.errors.phoneAlreadyExists(
+            normalizeAuthPhoneNumber(registerDto.phone),
+            'AuthService.register'
+          );
+        }
+        if (/email/i.test(detail)) {
+          throw this.errors.emailAlreadyExists(registerDto.email, 'AuthService.register');
+        }
+        throw this.errors.userAlreadyExists(undefined, 'AuthService.register');
+      }
       throw error;
     }
   }
@@ -881,12 +909,14 @@ export class AuthService {
         );
       }
 
-      // Use enhanced JWT refresh with security validation
+      // Use enhanced JWT refresh with security validation. The session the refresh token
+      // belongs to must still be live (same rule JwtAuthGuard applies to every request).
       return await this.jwtAuthService.refreshEnhancedToken(
         refreshTokenDto.refreshToken,
         refreshTokenDto.deviceFingerprint,
         sessionMetadata?.userAgent || refreshTokenDto.userAgent,
-        sessionMetadata?.ipAddress || refreshTokenDto.ipAddress
+        sessionMetadata?.ipAddress || refreshTokenDto.ipAddress,
+        payload => this.assertRefreshSessionActive(payload)
       );
     } catch (_error) {
       // Errors raised above (e.g. a missing refresh token) already carry the right code.
@@ -935,6 +965,50 @@ export class AuthService {
           throw this.errors.serviceUnavailable('token refresh', context);
       }
     }
+  }
+
+  /**
+   * Refuse a refresh whose session was revoked (logout, DELETE /auth/sessions/:id, eviction) or
+   * whose token names no session. Uses the session store and revocation list JwtAuthGuard uses,
+   * so a refresh can never mint tokens the very next request would reject as revoked.
+   */
+  private async assertRefreshSessionActive(payload: TokenPayload): Promise<void> {
+    const context = 'AuthService.refreshToken';
+    const sessionId = resolveVerifiedSessionId({
+      sub: payload.sub,
+      sessionId: payload.sessionId,
+    });
+    const session = sessionId ? await this.sessionService.getSession(sessionId) : null;
+    // getSession() returns null for a revoked id, so the revocation list is read only when
+    // nothing usable is stored (same order as JwtAuthGuard).
+    const decision = decideRefreshSessionAccess({
+      sessionId,
+      hasActiveSession: session !== null,
+      belongsToAnotherUser: session !== null && session.userId !== payload.sub,
+      revoked:
+        sessionId !== undefined &&
+        session === null &&
+        (await this.sessionService.isSessionRevoked(sessionId)),
+    });
+    if (decision === 'allow') {
+      return;
+    }
+
+    const refusal = REFRESH_SESSION_REFUSALS[decision];
+    await this.logging.log(
+      LogType.SECURITY,
+      LogLevel.WARN,
+      `Refresh refused: ${refusal.reason}`,
+      context,
+      { userId: payload.sub, sessionId: sessionId ?? 'MISSING', reason: refusal.reason }
+    );
+    throw new HealthcareError(
+      ErrorCode.AUTH_SESSION_EXPIRED,
+      refusal.message,
+      HttpStatus.UNAUTHORIZED,
+      { reason: refusal.reason },
+      context
+    );
   }
 
   /**
@@ -1313,10 +1387,12 @@ export class AuthService {
       if (isEmail) {
         user = await this.databaseService.findUserByEmailSafe(requestDto.identifier);
       } else {
-        // Find by phone
-        const normalizedPhoneIdentifier = normalizeAuthPhoneNumber(requestDto.identifier);
+        // Find by phone — try every stored format the same number could be saved as (see
+        // authPhoneLookupCandidates), not just the E.164 form, or an existing account whose
+        // phone is stored as bare digits is missed and a new ghost account gets auto-registered.
+        const phoneCandidates = authPhoneLookupCandidates(requestDto.identifier);
         const users = await this.databaseService.findUsersSafe(
-          { phone: normalizedPhoneIdentifier },
+          { phone: { in: phoneCandidates } },
           { take: 1 }
         );
         user = users[0] || null;
@@ -1468,7 +1544,8 @@ export class AuthService {
     } catch (_error) {
       await this.logging.log(
         LogType.SYSTEM,
-        LogLevel.ERROR,
+        // "A code was just sent, wait" (429) is expected traffic, not a failure of ours.
+        logLevelForError(_error),
         `OTP request failed for ${requestDto.identifier}`,
         'AuthService.requestOtp',
         {
@@ -1537,6 +1614,10 @@ export class AuthService {
           timestamp: nowIso(),
         }
       );
+      if (verificationResult.rateLimited) {
+        // Per-identifier OTP lockout (5 wrong codes): surface as 429, not "invalid code".
+        throw this.errors.rateLimitExceeded(verificationResult.message, 'AuthService.verifyOtp');
+      }
       throw this.errors.otpInvalid('AuthService.verifyOtp', verificationResult.message);
     }
 
@@ -1546,9 +1627,10 @@ export class AuthService {
     if (isEmail) {
       user = await this.databaseService.findUserByEmailSafe(verifyDto.identifier);
     } else {
-      // Find user by phone number
+      // Find user by phone number — match every format the number could be stored as (see
+      // authPhoneLookupCandidates), not just the E.164 form `normalizedIdentifier` carries.
       const usersByPhone = await this.databaseService.findUsersSafe(
-        { phone: normalizedIdentifier },
+        { phone: { in: authPhoneLookupCandidates(verifyDto.identifier) } },
         { take: 1 }
       );
       user = usersByPhone[0] ?? null;
@@ -2221,6 +2303,10 @@ export class AuthService {
       phoneVerified?: boolean | null;
       phoneVerifiedAt?: Date | string | null;
       profilePicture?: string | null;
+      /** Only read to derive hasPassword; the hash never leaves this method. */
+      password?: string | null;
+      /** Set once the holder chose a password (see hasUsablePassword). */
+      passwordChangedAt?: Date | string | null;
     },
     options: {
       clinicId?: string | undefined;
@@ -2273,6 +2359,16 @@ export class AuthService {
       profileComplete: options.profileComplete,
       requiresProfileCompletion: options.requiresProfileCompletion,
       ...(options.loginMethod ? { loginMethod: options.loginMethod } : {}),
+      // Only when the row was loaded with its password column (absent != "no password").
+      ...('password' in user
+        ? {
+            hasPassword: hasUsablePassword({
+              password: user.password,
+              passwordChangedAt: user.passwordChangedAt,
+              role: String(user.role),
+            }),
+          }
+        : {}),
     };
   }
 
@@ -2428,10 +2524,14 @@ export class AuthService {
     const firstName = profileRecord['firstName'] ?? profileRecord['first_name'];
     const lastName = profileRecord['lastName'] ?? profileRecord['last_name'];
     const phone = profileRecord['phone'] ?? profileRecord['mobile'];
+    // Accept the account's own login-identity verification (isVerified, set true for any
+    // successful OTP login regardless of channel), not phoneVerified specifically — see
+    // profile-completion.guard.ts's hasVerifiedContact for the same fix and why it matters
+    // (most real patients log in via email OTP and never separately verify a phone).
     const hasVerifiedPhone =
       typeof phone === 'string' &&
       phone.trim().length > 0 &&
-      profileRecord['phoneVerified'] === true;
+      (profileRecord['phoneVerified'] === true || profileRecord['isVerified'] === true);
 
     if (normalizedRole !== 'PATIENT') {
       return profileRecord['isProfileComplete'] === true;
@@ -2447,8 +2547,11 @@ export class AuthService {
   }
 
   private calculateProfileCompletionFromUser(user: Record<string, unknown>, role: Role): boolean {
+    // Same fix as isProfileComplete() above and profile-completion.guard.ts's hasVerifiedContact:
+    // accept isVerified (set for any successful OTP login) as well as phoneVerified specifically.
     const hasVerifiedPhone =
-      this.isProfileFieldPresent(user['phone']) && user['phoneVerified'] === true;
+      this.isProfileFieldPresent(user['phone']) &&
+      (user['phoneVerified'] === true || user['isVerified'] === true);
 
     if (role !== Role.PATIENT) {
       return true;

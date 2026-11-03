@@ -19,7 +19,7 @@ COPY package.json yarn.lock ./
 # Skip postinstall during install - source files (including prisma.config.js) aren't copied yet
 # Prisma generate is called manually after COPY . . below
 # --ignore-engines suppresses warnings about invalid engine specifications
-RUN yarn install --frozen-lockfile --ignore-scripts --ignore-engines
+RUN yarn install --frozen-lockfile --ignore-scripts --ignore-engines --network-timeout 600000
 
 # Copy all source files including SWC configuration
 # .swcrc and nest-cli.json are required for SWC compiler (20x faster than tsc)
@@ -172,7 +172,7 @@ WORKDIR /app
 COPY package.json yarn.lock ./
 # Skip postinstall script in production - Prisma client is already generated in builder stage
 # Prisma Client is in src/libs/infrastructure/database/prisma/generated (app-local directory), not in node_modules
-RUN yarn install --production --frozen-lockfile --ignore-scripts --ignore-engines && yarn cache clean
+RUN yarn install --production --frozen-lockfile --ignore-scripts --ignore-engines --network-timeout 600000 && yarn cache clean
 
 # Remove yarn-installed @prisma packages to avoid conflicts
 # We'll copy only the necessary @prisma packages from builder stage
@@ -252,13 +252,23 @@ RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
   echo '  exit 1' >> /app/entrypoint.sh && \
   echo 'fi' >> /app/entrypoint.sh && \
   echo '' >> /app/entrypoint.sh && \
-  echo '# Ensure @prisma/client symlink points to app-local location' >> /app/entrypoint.sh && \
-  echo 'mkdir -p /app/node_modules/@prisma' >> /app/entrypoint.sh && \
-  echo 'if [ -L /app/node_modules/@prisma/client ]; then' >> /app/entrypoint.sh && \
-  echo '  rm /app/node_modules/@prisma/client' >> /app/entrypoint.sh && \
+  echo '# Ensure @prisma/client points to the app-local client. It is created at build time and' >> /app/entrypoint.sh && \
+  echo '# only repaired here, so the non-root runtime user does not normally need to write it.' >> /app/entrypoint.sh && \
+  echo 'PRISMA_CLIENT_TARGET=/app/src/libs/infrastructure/database/prisma/generated' >> /app/entrypoint.sh && \
+  echo 'if [ "$(readlink /app/node_modules/@prisma/client 2>/dev/null)" != "$PRISMA_CLIENT_TARGET" ]; then' >> /app/entrypoint.sh && \
+  echo '  rm -f /app/node_modules/@prisma/client 2>/dev/null || true' >> /app/entrypoint.sh && \
+  echo '  ln -sf "$PRISMA_CLIENT_TARGET" /app/node_modules/@prisma/client || { echo "[ERROR] Could not create @prisma/client symlink"; exit 1; }' >> /app/entrypoint.sh && \
   echo 'fi' >> /app/entrypoint.sh && \
-  echo 'ln -sf /app/src/libs/infrastructure/database/prisma/generated /app/node_modules/@prisma/client' >> /app/entrypoint.sh && \
-  echo 'echo "[OK] @prisma/client symlink created to app-local location"' >> /app/entrypoint.sh && \
+  echo 'echo "[OK] @prisma/client symlink points to app-local location"' >> /app/entrypoint.sh && \
+  echo '' >> /app/entrypoint.sh && \
+  echo '# Optional deploy-time migrations (P0-3). OFF by default. Set RUN_MIGRATIONS=true on ONE api' >> /app/entrypoint.sh && \
+  echo '# service only. deploy-migrate.js runs prisma migrate status first and refuses to apply on' >> /app/entrypoint.sh && \
+  echo '# failed or drifted history. migrate deploy holds a Postgres advisory lock, so replicas that' >> /app/entrypoint.sh && \
+  echo '# start together cannot apply the same migration twice. The worker never migrates.' >> /app/entrypoint.sh && \
+  echo 'if [ "${RUN_MIGRATIONS:-false}" = "true" ] && [ "${APP_MODE:-api}" != "worker" ]; then' >> /app/entrypoint.sh && \
+  echo '  echo "[INFO] RUN_MIGRATIONS=true: applying Prisma migrations before start"' >> /app/entrypoint.sh && \
+  echo '  node /app/scripts/deploy-migrate.js || { echo "[ERROR] Migrations failed - refusing to start this release"; exit 1; }' >> /app/entrypoint.sh && \
+  echo 'fi' >> /app/entrypoint.sh && \
   echo '' >> /app/entrypoint.sh && \
   echo 'echo "=========================================="' >> /app/entrypoint.sh && \
   echo 'echo "Starting application..."' >> /app/entrypoint.sh && \
@@ -297,6 +307,15 @@ ENV NODE_OPTIONS="--max-old-space-size=6144 --max-http-header-size=16384 --expos
 ENV ENABLE_GC=true
 ENV GC_INTERVAL=10800
 
+# Run as the unprivileged `node` user (uid/gid 1000) that ships with the base image (P0-5).
+# Writable runtime paths: logs, tmp, the local storage fallback (storage/assets,
+# storage/invoices) and the @prisma dir so the entrypoint can repair the client symlink.
+# Any host bind mount on these paths must be writable by uid 1000 (chown 1000:1000 on the host).
+RUN mkdir -p /app/logs /app/tmp /app/storage/assets /app/storage/invoices && \
+  chown -R node:node /app/logs /app/tmp /app/storage && \
+  chown node:node /app/node_modules/@prisma
+USER node
+
 EXPOSE 8088
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
@@ -307,7 +326,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
 # Only regenerates if missing (should not happen in normal operation)
 ENTRYPOINT ["/app/entrypoint.sh"]
 
-# Container startup should never run migrations.
-# Deploy-time orchestration handles Prisma migrations exactly once per release.
+# Migrations run once per release from the deploy pipeline (one-shot container in
+# coolify-deploy.sh, see docs/DEPLOY_MIGRATIONS.md), or from the entrypoint only when
+# RUN_MIGRATIONS=true.
 CMD ["node", "dist/main.js"]
 

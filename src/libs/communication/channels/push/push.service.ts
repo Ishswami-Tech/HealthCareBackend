@@ -7,6 +7,10 @@ import { SNSBackupService } from '@communication/channels/push/sns-backup.servic
 import { DeviceTokenService } from '@communication/channels/push/device-token.service';
 import type { PushNotificationData, PushNotificationResult } from '@core/types/notification.types';
 import { FirebaseGoogleClient } from '@communication/channels/firebase/firebase-google-client';
+import {
+  resolvePushTargets,
+  summarizePushResults,
+} from '@communication/channels/push/push-targets.util';
 
 /** Upper bound for a single Expo Push API call so a slow provider cannot stall callers. */
 const EXPO_REQUEST_TIMEOUT_MS = 10_000;
@@ -153,6 +157,38 @@ export class PushNotificationService implements OnModuleInit {
     };
   }
 
+  /**
+   * Send to every active device the user registered (the phone's FCM token on Android, an Expo
+   * token where one was registered). A user with no device returns `NO_REGISTERED_DEVICE`, which
+   * callers record as SKIPPED rather than a delivery failure.
+   */
+  async sendToUser(
+    userId: string,
+    notification: PushNotificationData
+  ): Promise<PushNotificationResult> {
+    const userTokens = this.deviceTokenService
+      ? await this.deviceTokenService.getActiveUserTokens(userId)
+      : [];
+    const targets = resolvePushTargets(userTokens);
+
+    if (targets.length === 0) {
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.DEBUG,
+        'Skipping push notification - user has no registered device',
+        'PushNotificationService',
+        { userId, title: notification.title }
+      );
+      return summarizePushResults([]);
+    }
+
+    const results: PushNotificationResult[] = [];
+    for (const token of targets) {
+      results.push(await this.sendToDevice(token, notification, userId));
+    }
+    return summarizePushResults(results);
+  }
+
   private isExpoPushToken(deviceToken: string): boolean {
     return deviceToken.startsWith('ExponentPushToken[') || deviceToken.startsWith('ExpoPushToken[');
   }
@@ -251,9 +287,9 @@ export class PushNotificationService implements OnModuleInit {
         },
         data,
         android: {
+          priority: 'high' as const,
           notification: {
             channelId: 'default',
-            priority: 'high' as const,
           },
         },
         apns: {
@@ -485,9 +521,9 @@ export class PushNotificationService implements OnModuleInit {
         },
         data,
         android: {
+          priority: 'high' as const,
           notification: {
             channelId: 'default',
-            priority: 'high' as const,
           },
         },
         apns: {

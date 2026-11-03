@@ -21,6 +21,7 @@ import { safeLog, safeLogError } from '@infrastructure/logging/logging.helper';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
+import { canJoinRoom, resolveUserRooms } from '@communication/channels/socket/socket-room-policy';
 
 interface ConnectionSuccessData {
   clientId: string;
@@ -377,25 +378,11 @@ export class BaseSocket
    */
   protected async autoJoinRooms(client: Socket, user: AuthenticatedUser): Promise<void> {
     try {
-      const rooms: string[] = [];
-
-      // User-specific room
-      if (user.userId) {
-        await this.joinRoom(client, `user:${user.userId}`);
-        rooms.push(`user:${user.userId}`);
-      }
-
-      // Clinic room
-      if (user.clinicId) {
-        await this.joinRoom(client, `clinic:${user.clinicId}`);
-        rooms.push(`clinic:${user.clinicId}`);
-
-        // Role-based room within clinic
-        if (user.role) {
-          const roleRoom = `clinic:${user.clinicId}:role:${user.role}`;
-          await this.joinRoom(client, roleRoom);
-          rooms.push(roleRoom);
-        }
+      // Staff join clinic + role rooms; patients only their own user room and the clinic's
+      // PHI-free public room (see resolveUserRooms). Clinic rooms carry other patients' events.
+      const rooms = resolveUserRooms(user);
+      for (const room of rooms) {
+        await this.joinRoom(client, room);
       }
 
       safeLog(
@@ -532,21 +519,13 @@ export class BaseSocket
   }
 
   /**
-   * A connected client may only join rooms scoped to their own identity —
-   * their own user room, their own clinic's room, or a role room within
-   * their own clinic. Without this check, any connected client could join
-   * `user:<other-id>`/`clinic:<other-id>` verbatim via the generic
-   * 'joinRoom' event and receive PHI broadcast to that room, bypassing the
-   * scoping autoJoinRooms() already applies on connection.
+   * A connected client may only join the rooms autoJoinRooms() would give it: their own user
+   * room, and for staff their own clinic room / role room, for patients their clinic's public
+   * room. Without this check any client could join `user:<other-id>` / `clinic:<id>` via the
+   * generic 'joinRoom' event and receive events broadcast to that room.
    */
   private isRoomOwnedByUser(room: string, user: AuthenticatedUser | undefined): boolean {
-    if (!user) return false;
-    if (room === `user:${user.userId}`) return true;
-    if (user.clinicId) {
-      if (room === `clinic:${user.clinicId}`) return true;
-      if (user.role && room === `clinic:${user.clinicId}:role:${user.role}`) return true;
-    }
-    return false;
+    return canJoinRoom(room, user);
   }
 
   @SubscribeMessage('leaveRoom')
@@ -594,7 +573,13 @@ export class BaseSocket
       const user = await this.authMiddleware.validateConnection(client);
       this.clientMetadata.set(client.id, user);
 
-      // Re-join rooms with updated user context
+      // Drop rooms the refreshed identity no longer allows (e.g. a role change), then re-join.
+      const allowedRooms = new Set(resolveUserRooms(user));
+      for (const room of Array.from(this.roomsByClient.get(client.id) ?? [])) {
+        if (!allowedRooms.has(room)) {
+          await this.leaveRoom(client, room);
+        }
+      }
       await this.autoJoinRooms(client, user);
 
       safeLog(

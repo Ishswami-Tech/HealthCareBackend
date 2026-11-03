@@ -46,6 +46,7 @@ interface FamilyMemberRow {
   dateOfBirth: Date | null;
   phone: string | null;
   notes: string | null;
+  allergies?: string | null;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -173,6 +174,7 @@ export class FamilyMembersService {
               dateOfBirth,
               phone: this.cleanText(dto.phone),
               notes: this.cleanText(dto.notes),
+              allergies: this.cleanText(dto.allergies),
               createdByUserId: actor.userId ?? null,
             } as PrismaDelegateArgs,
           } as PrismaDelegateArgs);
@@ -383,6 +385,7 @@ export class FamilyMembersService {
     }
     if (dto.phone !== undefined) data['phone'] = this.cleanText(dto.phone);
     if (dto.notes !== undefined) data['notes'] = this.cleanText(dto.notes);
+    if (dto.allergies !== undefined) data['allergies'] = this.cleanText(dto.allergies);
 
     const result = await this.databaseService.executeHealthcareWrite<{
       member: FamilyMemberRow;
@@ -552,6 +555,7 @@ export class FamilyMembersService {
       dateOfBirth: row.dateOfBirth ? new Date(row.dateOfBirth).toISOString() : null,
       phone: row.phone ?? null,
       notes: row.notes ?? null,
+      allergies: row.allergies ?? null,
       isActive: row.isActive,
       createdAt: new Date(row.createdAt).toISOString(),
       updatedAt: new Date(row.updatedAt).toISOString(),

@@ -148,6 +148,8 @@ export interface UserProfile {
   readonly emailVerified?: boolean;
   /** Whether the profile is complete */
   readonly profileComplete?: boolean;
+  /** Whether the account has a password set (never the hash). Drives password management UI. */
+  readonly hasPassword?: boolean;
   /** Whether the user still needs profile completion */
   readonly requiresProfileCompletion?: boolean;
   /** Optional avatar URL */

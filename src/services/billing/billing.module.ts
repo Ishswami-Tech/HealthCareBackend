@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { BillingService } from './billing.service';
+import { BillingSchedulerService } from './billing-scheduler.service';
 import { InvoicePDFModule } from './invoice-pdf.module';
 import { BillingEventsListener } from './billing.events';
 import { BillingController } from './controllers/billing.controller';
@@ -42,6 +43,9 @@ import { QueueModule } from '@queue/src/queue.module';
       provide: 'BILLING_SERVICE',
       useExisting: BillingService,
     },
+    // Billing @Cron jobs: kept off BillingService, whose alias above made @nestjs/schedule
+    // register every job twice (see billing-scheduler.service.ts).
+    BillingSchedulerService,
   ],
   exports: [BillingService, 'BILLING_SERVICE', InvoicePDFModule],
 })

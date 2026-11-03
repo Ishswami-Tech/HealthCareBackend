@@ -89,7 +89,10 @@ export class ExpiryAlertService {
       where: {
         clinicId,
         quantityOnHand: { gt: 0 },
-        expiryDate: { gt: new Date(), lte: cutoffDate },
+        // No lower bound: a batch that is ALREADY expired is the most urgent case this scan
+        // exists for (it needs a CRITICAL alert and a write-off, not silence), so it must stay
+        // in the window rather than be filtered out for having passed `now`.
+        expiryDate: { lte: cutoffDate },
       },
       orderBy: { expiryDate: 'asc' },
       select: {

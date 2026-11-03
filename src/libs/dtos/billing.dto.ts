@@ -84,6 +84,10 @@ export class CreateBillingPlanDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  allowFamilyBooking?: boolean;
 }
 
 export class UpdateBillingPlanDto {
@@ -124,6 +128,10 @@ export class UpdateBillingPlanDto {
   @IsOptional()
   @IsObject()
   appointmentTypes?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsBoolean()
+  allowFamilyBooking?: boolean;
 }
 
 export class CreateSubscriptionDto {
@@ -174,6 +182,11 @@ export class UpdateSubscriptionDto {
   @IsOptional()
   @IsObject()
   metadata?: Record<string, unknown>;
+}
+
+export class SwitchSubscriptionDto {
+  @IsUUID('4', { message: 'New plan ID must be a valid UUID' })
+  newPlanId!: string;
 }
 
 export class CreatePaymentDto {
@@ -262,8 +275,9 @@ export class CreateInvoiceDto {
   @IsString()
   subscriptionId?: string;
 
+  /** Must be > 0 on `POST /billing/invoices`; the service also refuses discount > amount + tax. */
   @IsNumber()
-  @Min(0)
+  @IsPositive({ message: 'Invoice amount must be greater than zero' })
   amount!: number;
 
   @IsOptional()
@@ -521,10 +535,14 @@ export class CreateInPersonSubscriptionAppointmentDto {
   @IsDateString({}, { message: 'Appointment date must be a valid date-time string' })
   appointmentDate!: string;
 
-  @IsNotEmpty({ message: 'Duration is required' })
+  /**
+   * Optional and ignored: the server sets the visit length from the clinic setting
+   * (appointmentSettings.inPersonDurationMinutes, default 3). Still validated for older clients.
+   */
+  @IsOptional()
   @IsNumber({}, { message: 'Duration must be a number' })
   @IsPositive({ message: 'Duration must be positive' })
-  duration!: number;
+  duration?: number;
 
   @IsOptional()
   @IsEnum(TreatmentType, { message: 'Treatment type must be valid' })

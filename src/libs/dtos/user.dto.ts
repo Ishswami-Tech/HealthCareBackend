@@ -21,6 +21,7 @@ import { Transform, Type } from 'class-transformer';
 import { PartialType, OmitType } from '@nestjs/mapped-types';
 import { ValidateNested } from 'class-validator';
 import { IsClinicId } from '@core/decorators/clinic-id.validator';
+import { plainTextTransform } from '@utils/plain-text.util';
 
 /**
  * Gender enumeration
@@ -62,6 +63,7 @@ export class EmergencyContactDto {
   })
   @IsString()
   @IsNotEmpty()
+  @Transform(plainTextTransform)
   name!: string;
 
   @ApiProperty({
@@ -94,6 +96,7 @@ export class EmergencyContactDto {
   })
   @IsOptional()
   @IsString()
+  @Transform(plainTextTransform)
   address?: string;
 }
 
@@ -308,7 +311,7 @@ export class SimpleCreateUserDto {
   @IsNotEmpty({ message: 'First name is required' })
   @MinLength(2, { message: 'First name must be at least 2 characters long' })
   @MaxLength(50, { message: 'First name cannot exceed 50 characters' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   firstName: string = '';
 
   @ApiProperty({
@@ -321,7 +324,7 @@ export class SimpleCreateUserDto {
   @IsNotEmpty({ message: 'Last name is required' })
   @MinLength(2, { message: 'Last name must be at least 2 characters long' })
   @MaxLength(50, { message: 'Last name cannot exceed 50 characters' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   lastName: string = '';
 
   @ApiProperty({
@@ -378,7 +381,7 @@ export class SimpleCreateUserDto {
   })
   @IsOptional()
   @IsString({ message: 'Address must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   address?: string;
 
   @ApiPropertyOptional({
@@ -387,7 +390,7 @@ export class SimpleCreateUserDto {
   })
   @IsOptional()
   @IsString({ message: 'City must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   city?: string;
 
   @ApiPropertyOptional({
@@ -396,7 +399,7 @@ export class SimpleCreateUserDto {
   })
   @IsOptional()
   @IsString({ message: 'State must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   state?: string;
 
   @ApiPropertyOptional({
@@ -405,7 +408,7 @@ export class SimpleCreateUserDto {
   })
   @IsOptional()
   @IsString({ message: 'Country must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   country?: string;
 
   @ApiPropertyOptional({
@@ -414,25 +417,25 @@ export class SimpleCreateUserDto {
   })
   @IsOptional()
   @IsString({ message: 'Zip code must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   zipCode?: string;
 
   @ApiPropertyOptional({ example: 'Kothrud', description: 'Locality / area' })
   @IsOptional()
   @IsString({ message: 'Area must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   area?: string;
 
   @ApiPropertyOptional({ example: 'Pune', description: 'District' })
   @IsOptional()
   @IsString({ message: 'District must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   district?: string;
 
   @ApiPropertyOptional({ example: 'Teacher', description: 'Occupation' })
   @IsOptional()
   @IsString({ message: 'Occupation must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   occupation?: string;
 
   @ApiPropertyOptional({
@@ -456,7 +459,7 @@ export class SimpleCreateUserDto {
   @ApiPropertyOptional({ example: 'Sunrise School', description: 'Organization / employer' })
   @IsOptional()
   @IsString({ message: 'Organization must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   organization?: string;
 
   @ApiPropertyOptional({
@@ -687,6 +690,17 @@ export class UserResponseDto extends OmitType(CreateUserDto, ['password'] as con
   @IsUUID('4', { message: 'User ID must be a valid UUID' })
   id!: string;
 
+  // `users.name` is the canonical display name (always set at registration / staff creation).
+  // firstName/lastName can be empty for staff created with a single name, so clients should
+  // prefer this over joining the two parts.
+  @ApiPropertyOptional({
+    example: 'Dr. Asha Rao',
+    description: 'Full display name (users.name)',
+  })
+  @IsOptional()
+  @IsString({ message: 'Name must be a string' })
+  name?: string;
+
   @ApiProperty({
     example: '2024-01-01T00:00:00.000Z',
     description: 'User creation timestamp',
@@ -759,6 +773,14 @@ export class UserResponseDto extends OmitType(CreateUserDto, ['password'] as con
   isProfileComplete?: boolean;
 
   @ApiPropertyOptional({
+    example: true,
+    description: 'Whether the account has a password set (the hash is never returned)',
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Has password must be a boolean' })
+  hasPassword?: boolean;
+
+  @ApiPropertyOptional({
     example: false,
     description: 'Whether the user requires profile completion',
   })
@@ -773,6 +795,62 @@ export class UserResponseDto extends OmitType(CreateUserDto, ['password'] as con
   @IsOptional()
   @IsUUID('4', { message: 'Patient ID must be a valid UUID' })
   patientId?: string;
+
+  // `locationId` (inherited) is the staff member's allotted clinic location (staff profile);
+  // absent for patients and unassigned staff.
+  @ApiPropertyOptional({ description: 'Name of the allotted location (staff)', nullable: true })
+  @IsOptional()
+  @IsString()
+  locationName?: string | null;
+
+  // Doctor-record professional fields (for a DOCTOR-role user). `specialization`/`experience`
+  // are inherited from CreateUserDto above; these were missing from this response entirely, not
+  // just from a mapper — the profile screen's Professional tab reads them from here and they
+  // never persisted across a reload for lack of anywhere in the response to carry them.
+  @ApiPropertyOptional({
+    description: 'Medical license / registration number (doctors)',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString()
+  licenseNumber?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Primary qualification, e.g. "MBBS, MD" (doctors)',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString()
+  qualification?: string | null;
+
+  @ApiPropertyOptional({ description: 'Free-text education history (doctors)', nullable: true })
+  @IsOptional()
+  @IsString()
+  education?: string | null;
+
+  @ApiPropertyOptional({ description: 'Certifications (doctors)', type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  certifications?: string[];
+
+  @ApiPropertyOptional({ description: 'Languages spoken (doctors)', type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  languages?: string[];
+
+  @ApiPropertyOptional({ description: 'Localized public profile text, by locale (doctors)' })
+  @IsOptional()
+  localizedProfile?: unknown;
+
+  @ApiPropertyOptional({
+    description: 'ABDM Health Professional Registry (HPR) id (doctors)',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString()
+  abdmHprId?: string | null;
 }
 
 /**
@@ -900,7 +978,7 @@ export class UpdateUserProfileDto {
   @IsString({ message: 'First name must be a string' })
   @MinLength(2, { message: 'First name must be at least 2 characters long' })
   @MaxLength(50, { message: 'First name cannot exceed 50 characters' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   firstName?: string;
 
   @ApiPropertyOptional({
@@ -911,7 +989,7 @@ export class UpdateUserProfileDto {
   @IsString({ message: 'Last name must be a string' })
   @MinLength(2, { message: 'Last name must be at least 2 characters long' })
   @MaxLength(50, { message: 'Last name cannot exceed 50 characters' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   lastName?: string;
 
   @ApiPropertyOptional({
@@ -983,7 +1061,7 @@ export class UpdateUserProfileDto {
   })
   @IsOptional()
   @IsString({ message: 'Address must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   address?: string;
 
   @ApiPropertyOptional({
@@ -992,7 +1070,7 @@ export class UpdateUserProfileDto {
   })
   @IsOptional()
   @IsString({ message: 'City must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   city?: string;
 
   @ApiPropertyOptional({
@@ -1001,7 +1079,7 @@ export class UpdateUserProfileDto {
   })
   @IsOptional()
   @IsString({ message: 'State must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   state?: string;
 
   @ApiPropertyOptional({
@@ -1010,7 +1088,7 @@ export class UpdateUserProfileDto {
   })
   @IsOptional()
   @IsString({ message: 'Country must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   country?: string;
 
   @ApiPropertyOptional({
@@ -1019,25 +1097,25 @@ export class UpdateUserProfileDto {
   })
   @IsOptional()
   @IsString({ message: 'Zip code must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   zipCode?: string;
 
   @ApiPropertyOptional({ example: 'Kothrud', description: 'Locality / area' })
   @IsOptional()
   @IsString({ message: 'Area must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   area?: string;
 
   @ApiPropertyOptional({ example: 'Pune', description: 'District' })
   @IsOptional()
   @IsString({ message: 'District must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   district?: string;
 
   @ApiPropertyOptional({ example: 'Teacher', description: 'Occupation' })
   @IsOptional()
   @IsString({ message: 'Occupation must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   occupation?: string;
 
   @ApiPropertyOptional({
@@ -1061,7 +1139,7 @@ export class UpdateUserProfileDto {
   @ApiPropertyOptional({ example: 'Sunrise School', description: 'Organization / employer' })
   @IsOptional()
   @IsString({ message: 'Organization must be a string' })
-  @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  @Transform(plainTextTransform)
   organization?: string;
 
   @ApiPropertyOptional({

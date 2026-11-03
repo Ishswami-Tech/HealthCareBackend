@@ -17,6 +17,11 @@ import type {
   CategoryPreferencesDto,
   QuietHoursDto,
 } from '@dtos/notification.dto';
+import {
+  QUIET_HOURS_DEFAULT_TIMEZONE,
+  notificationPreferenceView,
+  type NotificationPreferenceRow,
+} from '@communication/services/notification-channel-preferences.util';
 
 @Injectable()
 export class NotificationPreferenceService {
@@ -41,65 +46,17 @@ export class NotificationPreferenceService {
       cacheKey,
       async () => {
         const pref = await this.databaseService.findNotificationPreferenceByUserIdSafe(userId);
-
-        if (!pref) {
-          // Default: doctors get WhatsApp enabled (opt-out model),
-          // other roles keep it disabled (opt-in model).
-          let whatsappDefault = false;
+        // No stored row: the defaults (doctors get WhatsApp on, opt-out; others opt-in). The
+        // view is shared with CommunicationService, which plans channels from this same key.
+        let role: string | null = null;
+        if (!pref?.id) {
           try {
-            const user = await this.databaseService.findUserByIdSafe(userId);
-            if (user?.role === 'DOCTOR') {
-              whatsappDefault = true;
-            }
+            role = (await this.databaseService.findUserByIdSafe(userId))?.role ?? null;
           } catch {
-            // If user lookup fails, fall back to false (safe default)
+            // If user lookup fails, fall back to the non-doctor defaults (safe default)
           }
-
-          // Return default preferences if not found
-          return {
-            id: '',
-            userId,
-            emailEnabled: true,
-            smsEnabled: true,
-            pushEnabled: true,
-            socketEnabled: true,
-            whatsappEnabled: whatsappDefault,
-            appointmentEnabled: true,
-            ehrEnabled: true,
-            billingEnabled: true,
-            systemEnabled: true,
-            quietHours: undefined,
-            categoryPreferences: undefined,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          };
         }
-
-        return {
-          id: pref.id,
-          userId: pref.userId,
-          emailEnabled: pref.emailEnabled,
-          smsEnabled: pref.smsEnabled,
-          pushEnabled: pref.pushEnabled,
-          socketEnabled: pref.socketEnabled,
-          whatsappEnabled: pref.whatsappEnabled,
-          appointmentEnabled: pref.appointmentEnabled,
-          ehrEnabled: pref.ehrEnabled,
-          billingEnabled: pref.billingEnabled,
-          systemEnabled: pref.systemEnabled,
-          quietHours: pref.quietHoursStart
-            ? {
-                start: pref.quietHoursStart,
-                end: pref.quietHoursEnd || undefined,
-                timezone: pref.quietHoursTimezone || 'UTC',
-              }
-            : undefined,
-          categoryPreferences: pref.categoryPreferences
-            ? (pref.categoryPreferences as unknown as CategoryPreferencesDto)
-            : undefined,
-          createdAt: pref.createdAt,
-          updatedAt: pref.updatedAt,
-        };
+        return notificationPreferenceView(userId, pref as NotificationPreferenceRow | null, role);
       },
       {
         ttl: 3600, // 1 hour
@@ -142,7 +99,7 @@ export class NotificationPreferenceService {
       systemEnabled: data.systemEnabled ?? true,
       quietHoursStart: data.quietHours?.start || null,
       quietHoursEnd: data.quietHours?.end || null,
-      quietHoursTimezone: data.quietHours?.timezone || 'UTC',
+      quietHoursTimezone: data.quietHours?.timezone || QUIET_HOURS_DEFAULT_TIMEZONE,
       categoryPreferences: data.categoryPreferences
         ? (data.categoryPreferences as unknown as Record<string, unknown>)
         : null,
@@ -180,7 +137,7 @@ export class NotificationPreferenceService {
         quietHours: {
           start: preferences.quietHoursStart,
           end: preferences.quietHoursEnd || undefined,
-          timezone: preferences.quietHoursTimezone || 'UTC',
+          timezone: preferences.quietHoursTimezone || QUIET_HOURS_DEFAULT_TIMEZONE,
         } as QuietHoursDto,
       }),
       ...(preferences.categoryPreferences && {
@@ -237,7 +194,7 @@ export class NotificationPreferenceService {
     if (data.quietHours) {
       updateData.quietHoursStart = data.quietHours.start || null;
       updateData.quietHoursEnd = data.quietHours.end || null;
-      updateData.quietHoursTimezone = data.quietHours.timezone || 'UTC';
+      updateData.quietHoursTimezone = data.quietHours.timezone || QUIET_HOURS_DEFAULT_TIMEZONE;
     }
 
     if (data.categoryPreferences) {
@@ -284,7 +241,7 @@ export class NotificationPreferenceService {
         quietHours: {
           start: preferences.quietHoursStart,
           end: preferences.quietHoursEnd || undefined,
-          timezone: preferences.quietHoursTimezone || 'UTC',
+          timezone: preferences.quietHoursTimezone || QUIET_HOURS_DEFAULT_TIMEZONE,
         } as QuietHoursDto,
       }),
       ...(preferences.categoryPreferences && {

@@ -5,6 +5,7 @@
 import { jest, expect } from '@jest/globals';
 import { HttpException } from '@nestjs/common';
 import { AppointmentsService } from '@services/appointments/appointments.service';
+import { AppointmentsSchedulerService } from '@services/appointments/appointments-scheduler.service';
 import { formatDateKeyInIST } from '@utils/date-time.util';
 import { FakeDb, createCacheStub, createErrors, createLoggingStub, type Row } from './test-helpers';
 
@@ -173,4 +174,17 @@ export function buildHarness(options: { db?: FakeDb } = {}) {
     core,
     rbac,
   };
+}
+
+/** The @Cron entry points (AppointmentsSchedulerService) over a harness's service, cache and logger. */
+export function schedulerFor(harness: {
+  service: AppointmentsService;
+  cache: unknown;
+  logging: unknown;
+}): AppointmentsSchedulerService {
+  return new AppointmentsSchedulerService(
+    harness.service,
+    harness.cache as never,
+    harness.logging as never
+  );
 }

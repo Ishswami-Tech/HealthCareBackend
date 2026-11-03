@@ -27,6 +27,7 @@ import {
 import type { PrismaDelegateArgs } from '@core/types/prisma.types';
 
 import { AsyncLocalStorage } from 'async_hooks';
+import { redactLogMetadata, redactText } from '@infrastructure/logging/log-redaction.util';
 import { PaginationMetaDto } from '@dtos/common-response.dto';
 import { calculatePagination } from '@infrastructure/database/query/query.utils';
 
@@ -60,6 +61,7 @@ type LoggingCacheServiceLike = {
   rPush: (key: string, ...values: string[]) => Promise<number>;
   lTrim: (key: string, start: number, stop: number) => Promise<unknown>;
   lRange: (key: string, start: number, stop: number) => Promise<string[]>;
+  expire?: (key: string, seconds: number) => Promise<number>;
 };
 
 type LogEntryLike = {
@@ -186,6 +188,8 @@ export class LoggingService implements OnApplicationShutdown {
   private logWriteTimer: NodeJS.Timeout | null = null;
   private readonly logWriteBatchSize = 200;
   private readonly logWriteFlushDelayMs = 250;
+  /** TTL of the `logs` ring buffer key (matches generalLogRetentionMs, 72h). */
+  private static readonly LOG_LIST_TTL_SECONDS = 72 * 60 * 60;
 
   private enqueueLogWrite(logJson: string): void {
     this.logWriteBuffer.push(logJson);
@@ -216,6 +220,8 @@ export class LoggingService implements OnApplicationShutdown {
     try {
       await cacheService.rPush('logs', ...batch);
       await cacheService.lTrim('logs', -10000, -1);
+      // Every cache key needs a TTL (Dragonfly runs noeviction); refreshed on each flush.
+      await cacheService.expire?.('logs', LoggingService.LOG_LIST_TTL_SECONDS);
       await this.cleanupExpiredLogCache();
     } catch (_cacheError: unknown) {
       const errorMessage = _cacheError instanceof Error ? _cacheError.message : String(_cacheError);
@@ -692,27 +698,43 @@ export class LoggingService implements OnApplicationShutdown {
   /**
    * Log a message with type, level, context, and metadata
    *
-   * CRITICAL: ALL logs are ALWAYS stored in cache for UI dashboard visibility,
-   * regardless of level or type. The Logger UI shows everything.
-   *
-   * Level filtering only applies to:
-   * - Terminal console output (reduce noise in production)
-   * - Metrics buffer (avoid metric pollution from DEBUG/VERBOSE)
-   * - External notification triggers (email/SMS alerts)
+   * Every sink receives the line after central redaction (phones, emails, OTPs, tokens; see
+   * log-redaction.util.ts). Sinks:
+   * - Terminal: level-gated per environment.
+   * - Dragonfly ring buffer (Logger UI): WARN/ERROR and audit types always, INFO sampled
+   *   (LOG_CACHE_INFO_SAMPLE_RATE, default 0.1 in production, 1 elsewhere), never DEBUG.
+   * - DB audit rows: audit types only (AUDIT_LOG_TYPES).
    */
   async log(
     type: LogType,
     level: LogLevel,
     message: string,
     context: string,
-    metadata: Record<string, unknown> = {}
+    rawMetadata: Record<string, unknown> = {}
   ): Promise<void> {
     const timestamp = new Date();
 
-    // Check if this log passes the configured level filter.
+    // `[OTP DEV]` lines carry a live OTP for local testing. They exist in development only
+    // (staging / test / production drop them), and even there only the TERMINAL copy is verbatim:
+    // local test tooling greps `identifier=<phone> ... OTP=<code>` from `docker logs`. Every stored
+    // copy (Logger UI ring buffer, DB) goes through the normal redaction below.
+    const isDevOtpLine = message.startsWith(LoggingService.DEV_OTP_LINE_PREFIX);
+    if (isDevOtpLine && !(this.configService?.isDevelopment() ?? false)) {
+      return;
+    }
+    // Check if this log passes the configured level filter. A filtered line reaches no sink,
+    // so it returns before paying for redaction and serialisation.
     // Cache lookups are per-call so a runtime LOG_LEVEL reload takes effect immediately.
     const configuredLevel = this.getConfiguredLogLevel();
     const passesLevelFilter = this.shouldLog(level, configuredLevel);
+    if (!passesLevelFilter) {
+      return;
+    }
+
+    // Central PII/secret redaction (phones, emails, OTPs, tokens) before ANY sink.
+    const metadata = redactLogMetadata(rawMetadata || {});
+    const safeMessage = redactText(message);
+    const terminalMessage = isDevOtpLine ? message : safeMessage;
 
     // Enterprise-grade unique ID generation for 1M+ users
     const id = `${timestamp.getTime()}-${this.serviceName}-${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`;
@@ -721,7 +743,7 @@ export class LoggingService implements OnApplicationShutdown {
       id,
       type,
       level,
-      message,
+      message: safeMessage,
       context,
       metadata: {
         ...(metadata || {}),
@@ -738,15 +760,16 @@ export class LoggingService implements OnApplicationShutdown {
       timestamp: timestamp.toISOString(),
     };
 
-    // CRITICAL: Store ALL logs in cache — this is what feeds the Logger UI.
-    // No filtering here — every log call is persisted for dashboard visibility.
+    // Cache sink (feeds the Logger UI), filtered by shouldPersistToCache.
     // Fire-and-forget: this used to be awaited here, meaning every single
     // log() call (and log() is called 4-8 times per DB query by the query
     // middlewares) blocked its caller on 2 sequential cache round-trips
     // before the level filter below even ran. The cache write itself still
     // happens (dashboard visibility is unchanged) - it just no longer holds
     // up whoever called log().
-    if (this.cacheService) {
+    // Only WARN/ERROR, audit-relevant types and a sample of INFO reach the Dragonfly ring
+    // buffer; DEBUG/VERBOSE never do (every line used to be written, at 6-10 lines/s idle).
+    if (this.cacheService && passesLevelFilter && this.shouldPersistToCache(type, level)) {
       this.enqueueLogWrite(this.safeStringify(logEntry));
     }
 
@@ -788,8 +811,8 @@ export class LoggingService implements OnApplicationShutdown {
         // WARN/ERROR lines used to print only the message, so the `error` a caller put in
         // metadata (the actual JWT / database / provider failure) never reached the container
         // log and survived only in the dashboard store. Append it here.
-        const errorDetail = this.formatErrorDetail(metadata, message);
-        const coloredMessage = `${levelColor}[${level}]${resetColor} ${contextColor}[${context}]${resetColor} ${message}${errorDetail}`;
+        const errorDetail = this.formatErrorDetail(metadata, safeMessage);
+        const coloredMessage = `${levelColor}[${level}]${resetColor} ${contextColor}[${context}]${resetColor} ${terminalMessage}${errorDetail}`;
         // Terminal output - using console.warn which is allowed by ESLint config
         // This provides visibility in both development and production (with reduced noise in production)
         console.warn(coloredMessage);
@@ -798,14 +821,14 @@ export class LoggingService implements OnApplicationShutdown {
       // Intelligent database logging with noise filtering
       // CRITICAL: Skip database logging for timeout/connection errors to prevent infinite loops
       const isTimeoutOrConnectionError =
-        (message.includes('timeout') ||
-          message.includes('TIMEOUT') ||
-          message.includes('Query timeout') ||
-          message.includes('too many clients') ||
-          message.includes('connection')) &&
+        (safeMessage.includes('timeout') ||
+          safeMessage.includes('TIMEOUT') ||
+          safeMessage.includes('Query timeout') ||
+          safeMessage.includes('too many clients') ||
+          safeMessage.includes('connection')) &&
         (context.includes('Database') || context.includes('HealthcareDatabaseClient'));
 
-      const isNoisyLog = this.isNoisyLog(message, context, level);
+      const isNoisyLog = this.isNoisyLog(safeMessage, context, level);
 
       // Every HTTP request writes exactly two of these (LoggingInterceptor logs
       // one on entry, one on completion, for literally every route including
@@ -823,7 +846,10 @@ export class LoggingService implements OnApplicationShutdown {
       // ALWAYS store logs in cache (even if noisy) for dashboard visibility
       // CRITICAL: ERROR and WARN level logs are NEVER filtered as noisy - they must always appear
       // Only skip database logging for noisy/timeout logs (but still store in cache)
-      if (!isNoisyLog && !isTimeoutOrConnectionError && !isRequestTracingLog) {
+      // DB audit rows are for audit events only (auth, access control, PHI, compliance, ...);
+      // operational lines (SYSTEM, CACHE, QUEUE, DATABASE, ...) used to become rows too.
+      const isAuditEvent = LoggingService.AUDIT_LOG_TYPES.has(type);
+      if (isAuditEvent && !isNoisyLog && !isTimeoutOrConnectionError && !isRequestTracingLog) {
         try {
           // Enhanced database logging with better error handling
           // CRITICAL: Skip database logging if we're in a recursive loop or connection pool is exhausted
@@ -923,6 +949,56 @@ export class LoggingService implements OnApplicationShutdown {
   ): Promise<void> {
     const { context, payload } = this.normalizeLegacyLogArgs(contextOrMetadata, metadata);
     return this.log(LogType.SYSTEM, LogLevel.ERROR, message, context, payload);
+  }
+
+  /** Prefix of the local-testing OTP line written by OtpService. */
+  private static readonly DEV_OTP_LINE_PREFIX = '[OTP DEV]';
+
+  /** Log types that are HIPAA / security audit events: always persisted (cache + DB row). */
+  private static readonly AUDIT_LOG_TYPES: ReadonlySet<LogType> = new Set<LogType>([
+    LogType.AUDIT,
+    LogType.AUTH,
+    LogType.LOGIN,
+    LogType.LOGOUT,
+    LogType.SECURITY,
+    LogType.ACCESS_CONTROL,
+    LogType.PHI_ACCESS,
+    LogType.MEDICAL_RECORD_ACCESS,
+    LogType.PATIENT_DATA_EXPORT,
+    LogType.CONSENT_MANAGEMENT,
+    LogType.DATA_MINIMIZATION,
+    LogType.ENCRYPTION_EVENT,
+    LogType.BREACH_NOTIFICATION,
+    LogType.COMPLIANCE_VIOLATION,
+    LogType.TENANT_ISOLATION,
+    LogType.EMERGENCY,
+    LogType.CRITICAL_ALERT,
+    LogType.INCIDENT,
+  ]);
+
+  /** Sample rate for INFO lines into the cache ring buffer (LOG_CACHE_INFO_SAMPLE_RATE). */
+  private cacheInfoSampleRate: number | null = null;
+
+  private getCacheInfoSampleRate(): number {
+    if (this.cacheInfoSampleRate !== null) return this.cacheInfoSampleRate;
+    const fallback = this.configService?.isProduction() ? 0.1 : 1;
+    const raw = this.configService?.getEnv('LOG_CACHE_INFO_SAMPLE_RATE', '') ?? '';
+    const parsed = raw.trim() === '' ? Number.NaN : Number(raw);
+    this.cacheInfoSampleRate =
+      Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : fallback;
+    return this.cacheInfoSampleRate;
+  }
+
+  /**
+   * Which lines the dashboard ring buffer keeps: WARN/ERROR and audit events always, INFO
+   * sampled (default 10% in production, all elsewhere), DEBUG/VERBOSE/TRACE never.
+   */
+  private shouldPersistToCache(type: LogType, level: LogLevel): boolean {
+    if (level === LogLevel.ERROR || level === LogLevel.WARN) return true;
+    if (level !== LogLevel.INFO) return false;
+    if (LoggingService.AUDIT_LOG_TYPES.has(type)) return true;
+    const rate = this.getCacheInfoSampleRate();
+    return rate >= 1 || (rate > 0 && Math.random() < rate);
   }
 
   private isNoisyLog(message: string, context: string, level: LogLevel): boolean {
@@ -1446,56 +1522,21 @@ export class LoggingService implements OnApplicationShutdown {
   }
 
   /**
-   * Clear logs from cache and optionally from database
-   * @param clearDatabase - Whether to clear database logs (audit trail). Default: false
+   * Clear the cached (non-audit) log buffer. The database audit trail is NEVER deleted: audit
+   * rows are a compliance record (HIPAA), so `clearDatabase` is accepted for API compatibility
+   * but ignored (it used to `auditLog.deleteMany({ where: {} })`, wiping every audit row).
+   * @param clearDatabase - Ignored; the audit trail is always preserved.
    * @returns Success status and message
    */
   async clearLogs(clearDatabase = false): Promise<{ success: boolean; message: string }> {
     try {
-      // Always clear cache
+      // Only the cache buffer of recent logs is cleared.
       await this.cacheService?.del('logs');
-
-      // Optionally clear database logs (audit trail)
-      if (clearDatabase && this.databaseService) {
-        try {
-          await this.databaseService.executeHealthcareWrite(
-            async client => {
-              const auditLog = (
-                client as {
-                  auditLog: {
-                    deleteMany: (args: unknown) => Promise<{ count: number }>;
-                  };
-                }
-              ).auditLog;
-              return await auditLog.deleteMany({
-                where: {}, // Delete all audit logs
-              });
-            },
-            {
-              userId: 'system',
-              userRole: 'system',
-              clinicId: '',
-              operation: 'CLEAR_LOGS',
-              resourceType: 'AUDIT_LOG',
-              resourceId: 'all',
-              timestamp: new Date(),
-            }
-          );
-        } catch (dbError) {
-          // Track error but don't fail - cache is cleared
-          this.trackError('clearLogs_database_error', dbError);
-          return {
-            success: true,
-            message:
-              'Cache logs cleared successfully, but database clear failed (audit trail may remain)',
-          };
-        }
-      }
 
       return {
         success: true,
         message: clearDatabase
-          ? 'Logs cleared successfully from cache and database'
+          ? 'Logs cleared from cache; the database audit trail cannot be deleted and was preserved'
           : 'Logs cleared successfully from cache (database audit trail preserved)',
       };
     } catch (error) {

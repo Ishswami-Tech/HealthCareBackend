@@ -217,8 +217,8 @@ describe('settlement review (admin-visible data, never a refund)', () => {
     });
   });
 
-  it('late settlements are never persisted (no refunds for visits that never take place)', () => {
-    expect(isPersistedAnomaly('LATE_SETTLEMENT')).toBe(false);
+  it('every anomaly is persisted, late settlements included (flagged, never auto-refunded)', () => {
+    expect(isPersistedAnomaly('LATE_SETTLEMENT')).toBe(true);
     expect(isPersistedAnomaly('DUPLICATE_SETTLEMENT')).toBe(true);
     expect(isPersistedAnomaly('UNDERPAYMENT')).toBe(true);
   });

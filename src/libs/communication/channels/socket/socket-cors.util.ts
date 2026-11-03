@@ -1,3 +1,5 @@
+import { isDevCorsOriginAllowed } from '@security/cors-origin.util';
+
 const LOCALHOST_ORIGINS = [
   'http://localhost:3000',
   'http://localhost:8088',
@@ -72,13 +74,8 @@ export function getSocketCorsOrigin(): string | string[] | SocketCorsOriginValid
   // every restart. Accept any http://localhost:<port> origin in non-production
   // only; see security-config.service.ts's configureCORS() for the HTTP equivalent.
   const allowedOrigins = explicitOrigins.length > 0 ? explicitOrigins : LOCALHOST_ORIGINS;
-  const localhostOriginPattern = /^http:\/\/localhost:\d+$/;
-
+  // Refuse without an error: no CORS headers instead of a 500.
   return (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || localhostOriginPattern.test(origin)) {
-      callback(null, true);
-      return;
-    }
-    callback(new Error(`Origin ${origin} not allowed by CORS`), false);
+    callback(null, isDevCorsOriginAllowed(origin, allowedOrigins));
   };
 }

@@ -5,6 +5,7 @@
  * and the visit-scoped case-sheet aggregate.
  */
 
+import { visitPaymentErrorMessage } from '@services/patient-visits/utils/visit-payment-error.util';
 import { randomUUID } from 'crypto';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
@@ -349,6 +350,18 @@ export class PatientVisitsService {
     return this.createVisit({ appointmentId, skipConsultationInvoice: true }, clinicId, actor);
   }
 
+  /**
+   * The visit already linked to an appointment, or `null`. Check-in uses it to open the case sheet
+   * only when none is linked yet, so one appointment never gets two visits.
+   */
+  async findVisitForAppointment(
+    appointmentId: string,
+    clinicId: string
+  ): Promise<PatientVisitResponse | null> {
+    const row = await this.findVisitByAppointment(appointmentId, clinicId);
+    return row ? this.toResponse(row) : null;
+  }
+
   private async findVisitByAppointment(
     appointmentId: string,
     clinicId: string
@@ -446,14 +459,37 @@ export class PatientVisitsService {
         actor: billingActor,
       });
 
+      let paymentError: string | null = null;
       if (dto.collectFee) {
-        const result = await billingService.recordInvoicePayment(invoice.id, clinicId, {
-          method: dto.collectFee.method,
-          ...(dto.collectFee.transactionId ? { transactionId: dto.collectFee.transactionId } : {}),
-          ...(dto.collectFee.note ? { note: dto.collectFee.note } : {}),
-          actor: billingActor,
-        });
-        invoice = result.invoice;
+        // record-payment may refuse (409 already paid / in flight, 400 bad amount): keep the
+        // created invoice and tell the desk instead of dropping the whole bill from the response.
+        try {
+          const result = await billingService.recordInvoicePayment(invoice.id, clinicId, {
+            method: dto.collectFee.method,
+            ...(dto.collectFee.transactionId
+              ? { transactionId: dto.collectFee.transactionId }
+              : {}),
+            ...(dto.collectFee.note ? { note: dto.collectFee.note } : {}),
+            actor: billingActor,
+          });
+          invoice = result.invoice;
+        } catch (paymentFailure) {
+          paymentError = visitPaymentErrorMessage(
+            paymentFailure instanceof Error ? paymentFailure : null
+          );
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            'Consultation fee not recorded at visit registration — invoice kept, visit registered',
+            'PatientVisitsService',
+            {
+              visitId: row.id,
+              clinicId,
+              invoiceId: invoice.id,
+              error: paymentFailure instanceof Error ? paymentFailure.message : 'unknown',
+            }
+          );
+        }
       }
 
       const paidAmount =
@@ -469,6 +505,7 @@ export class PatientVisitsService {
         totalAmount: invoice.totalAmount,
         status: invoice.status,
         paidAmount,
+        ...(dto.collectFee ? { paymentError } : {}),
       };
     } catch (error) {
       await this.loggingService.log(

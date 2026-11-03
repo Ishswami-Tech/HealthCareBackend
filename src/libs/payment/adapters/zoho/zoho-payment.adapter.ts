@@ -13,6 +13,8 @@ import { HttpService } from '@infrastructure/http';
 import { LoggingService } from '@logging';
 import { LogType, LogLevel } from '@core/types';
 import { BasePaymentAdapter } from '../base/base-payment-adapter';
+import { buildProviderOrderExpiry } from '@payment/provider-order-expiry.util';
+import { PaymentProvider } from '@core/types/payment.types';
 import type {
   PaymentIntentOptions,
   PaymentResult,
@@ -279,9 +281,13 @@ export class ZohoPaymentAdapter extends BasePaymentAdapter {
       }
     });
 
+    // The app-wide payment window (+ provider buffer), as `expires_in` seconds (Zoho accepts
+    // 300..900): Zoho closes the session itself, so no payment lands after the sweep expired it.
+    const expiry = buildProviderOrderExpiry(PaymentProvider.ZOHO);
     const payload: Record<string, unknown> = {
       amount: this.toZohoAmount(options.amount),
       currency: options.currency.toUpperCase(),
+      ...expiry.requestFields,
       configurations: {
         hosted_checkout_parameters: hostedCheckoutParameters,
       },

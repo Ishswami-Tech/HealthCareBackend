@@ -47,6 +47,7 @@ export {
   InvalidateCache,
   InvalidatePatientCache,
   InvalidateAppointmentCache,
+  InvalidateAppointmentCacheByTags,
   InvalidateClinicCache,
   PatientId,
   DoctorId,

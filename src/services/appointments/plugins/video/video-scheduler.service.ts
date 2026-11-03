@@ -4,6 +4,7 @@ import { DatabaseService } from '@infrastructure/database/database.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { ConfigService } from '@config/config.service';
 import { getVideoActiveWindowMinutes } from '@config/video.config';
+import { PROVIDER_EXPIRY_BUFFER_SECONDS } from '@config/payment-window.config';
 import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
 import type { EnterpriseEventPayload } from '@core/types/event.types';
 import { EventService } from '@infrastructure/events/event.service';
@@ -25,6 +26,7 @@ import {
   ParticipantStatus,
 } from '@services/video/video-consultation-tracker.service';
 import { AppointmentsService } from '@services/appointments/appointments.service';
+import { BillingService } from '@services/billing/billing.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { parseIstDateTime, formatDateTimeInIST } from '../../../../libs/utils/date-time.util';
 
@@ -101,7 +103,9 @@ export class VideoAppointmentSchedulerService {
     @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
     @Inject(forwardRef(() => EventService))
-    private readonly eventService: EventService
+    private readonly eventService: EventService,
+    @Inject(forwardRef(() => BillingService))
+    private readonly billingService: BillingService
   ) {}
 
   // ─────────────────────────────────────────────────────────────
@@ -634,6 +638,9 @@ export class VideoAppointmentSchedulerService {
   async handleExpiredPaymentWindows(): Promise<void> {
     try {
       const now = new Date();
+      // The provider keeps the order open a short buffer past the window (see
+      // payment-window.config): expire only once it has stopped accepting payment too.
+      const expiredBefore = new Date(now.getTime() - PROVIDER_EXPIRY_BUFFER_SECONDS * 1000);
 
       const expired = await this.databaseService.executeHealthcareRead<
         Array<{ id: string; clinicId: string; paymentExpiresAt: Date | null }>
@@ -659,7 +666,7 @@ export class VideoAppointmentSchedulerService {
           where: {
             type: 'VIDEO_CALL',
             status: AppointmentStatus.PENDING,
-            paymentExpiresAt: { not: null, lt: now },
+            paymentExpiresAt: { not: null, lt: expiredBefore },
           },
           select: {
             id: true,
@@ -676,6 +683,29 @@ export class VideoAppointmentSchedulerService {
 
       for (const row of expired) {
         try {
+          // Ask the gateway first (same check as the invoice payment-window sweep): a payment
+          // whose callback was lost, or that was confirmed inside the provider buffer, is
+          // finalised and the booking confirmed instead of expired. When the gateway cannot be
+          // asked the booking is retried next run (expired anyway once far past its window).
+          const resolution = await this.billingService.resolveLapsedAppointmentPayment({
+            clinicId: row.clinicId,
+            appointmentId: row.id,
+            paymentExpiresAt: row.paymentExpiresAt ?? now,
+            now,
+          });
+          if (resolution !== 'unpaid') {
+            await this.loggingService.log(
+              LogType.BUSINESS,
+              resolution === 'paid' ? LogLevel.WARN : LogLevel.INFO,
+              resolution === 'paid'
+                ? `Video appointment ${row.id} was paid at the gateway: confirmed, not expired`
+                : `Video appointment ${row.id} payment could not be verified with the gateway: retrying next run`,
+              'VideoAppointmentSchedulerService.handleExpiredPaymentWindows',
+              { appointmentId: row.id, clinicId: row.clinicId, resolution }
+            );
+            continue;
+          }
+
           // Update the linked Payment row BEFORE flipping the appointment to
           // EXPIRED (not after). The two writes aren't in one DB transaction
           // (updateStatus() below owns its own internal writes/events/cache
@@ -692,21 +722,34 @@ export class VideoAppointmentSchedulerService {
           // the original bug (dashboards/ledgers showing "Pending" forever).
           // The PENDING guard also means a payment that completed in a race
           // right before this cron tick is never clobbered.
-          await this.databaseService.executeHealthcareWrite(async client => {
-            await (
-              client as unknown as {
-                payment: {
-                  updateMany: (args: {
-                    where: Record<string, unknown>;
-                    data: Record<string, unknown>;
-                  }) => Promise<{ count: number }>;
-                };
-              }
-            ).payment.updateMany({
-              where: { appointmentId: row.id, status: PaymentStatus.PENDING },
-              data: { status: PaymentStatus.EXPIRED },
-            });
-          }, this.buildSystemAudit());
+          const completedMeanwhile = await this.databaseService.executeHealthcareWrite(
+            async client => {
+              const paymentClient = (
+                client as unknown as {
+                  payment: {
+                    updateMany: (args: {
+                      where: Record<string, unknown>;
+                      data: Record<string, unknown>;
+                    }) => Promise<{ count: number }>;
+                    count: (args: { where: Record<string, unknown> }) => Promise<number>;
+                  };
+                }
+              ).payment;
+              await paymentClient.updateMany({
+                where: { appointmentId: row.id, status: PaymentStatus.PENDING },
+                data: { status: PaymentStatus.EXPIRED },
+              });
+              // A payment completed between the gateway check and this write: leave the booking
+              // for the next run, which confirms it.
+              return paymentClient.count({
+                where: { appointmentId: row.id, status: PaymentStatus.COMPLETED },
+              });
+            },
+            this.buildSystemAudit()
+          );
+          if (completedMeanwhile > 0) {
+            continue;
+          }
 
           await this.appointmentsService.updateStatus(
             row.id,

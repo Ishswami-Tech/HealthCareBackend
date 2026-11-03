@@ -48,7 +48,11 @@ const CATEGORY_LABELS: Record<AppointmentServiceCategory, string> = {
   [AppointmentServiceCategory.THERAPY]: 'Therapy',
 };
 
-export const DEFAULT_APPOINTMENT_DURATION_MINUTES = 30;
+/**
+ * Catalogue fallback only. The visit length a booking actually gets is the clinic setting
+ * (appointmentSettings.inPersonDurationMinutes / videoDurationMinutes, see visit-duration.util).
+ */
+export const DEFAULT_APPOINTMENT_DURATION_MINUTES = 10;
 
 export const APPOINTMENT_SERVICE_CATALOG: readonly TreatmentCatalogEntry[] = [
   {
@@ -309,6 +313,19 @@ export const APPOINTMENT_SERVICE_CATALOG: readonly TreatmentCatalogEntry[] = [
     assistantDoctorEligible: false,
     active: true,
   },
+] as const;
+
+/**
+ * Services a patient can pick in the booking dialog when the clinic has not configured its own
+ * list (`Clinic.settings.appointmentSettings.bookableTreatmentTypes`, see bookable-services.util).
+ * The catalog above stays complete: queue boards, follow-up templates and staff flows use every
+ * entry; this only drives the `bookable` flag of GET /appointments/services/catalog.
+ */
+export const DEFAULT_PATIENT_BOOKABLE_TREATMENT_TYPES: readonly TreatmentType[] = [
+  TreatmentType.GENERAL_CONSULTATION,
+  TreatmentType.FOLLOW_UP,
+  TreatmentType.SPECIAL_CASE,
+  TreatmentType.GERIATRIC_CARE,
 ] as const;
 
 export function cloneTreatmentCatalogEntry(entry: TreatmentCatalogEntry): TreatmentCatalogEntry {

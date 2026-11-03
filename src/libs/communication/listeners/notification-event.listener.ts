@@ -33,6 +33,30 @@ import {
 import { findTreatmentCatalogEntryOrUndefined } from '@core/types/treatment-catalog.types';
 import type { NotificationData } from '@core/types/appointment.types';
 import type { EnterpriseEventPayload } from '@core/types';
+import {
+  APPOINTMENT_COMPLETED_EVENT,
+  AppointmentNotificationDedup,
+  appointmentCompletedChannels,
+} from '@communication/listeners/appointment-notification-dedup.util';
+import {
+  QUEUE_PATIENT_ALERT_EVENT,
+  isQueuePatientAlertEvent,
+  queuePatientAlertContent,
+  queuePatientAlertRecipientUserId,
+} from '@communication/listeners/queue-patient-alert.util';
+import {
+  isQueueBoardEventWithoutPatient,
+  recipientUserIds,
+  remapRecipientUserIds,
+  type NotificationRecipient,
+} from '@communication/listeners/recipient-user-id.util';
+import { loginAlertContent } from '@communication/listeners/login-alert-content.util';
+import {
+  MilestoneDedup,
+  medicineDeskMilestone,
+  medicineDeskMilestoneContent,
+  type MedicineDeskDetails,
+} from '@communication/listeners/medicine-desk-notification.util';
 
 function resolveText(value: unknown, fallback = ''): string {
   if (typeof value === 'string') {
@@ -112,6 +136,48 @@ interface CommunicationRule {
     socketRoom?: string;
   }>;
   shouldNotify: (_payload: EnterpriseEventPayload) => boolean;
+  /** In-app plus only the first reachable out-of-app channel of `channels` (one message). */
+  singleExternalChannel?: boolean;
+  /** The emitter already sends at most one message per happening (its own idempotency key). */
+  skipRateLimit?: boolean;
+}
+
+const DESK_MILESTONE_DEDUP_TTL_MS = 30 * 60_000;
+/** Repeats of the same appointment event inside this window are one notification. */
+const APPOINTMENT_NOTIFICATION_DEDUP_TTL_MS = 30_000;
+/** A booking and a check-in of one appointment this close together (a walk-in) notify once. */
+const APPOINTMENT_FIRST_CONTACT_WINDOW_MS = 2 * 60_000;
+
+/**
+ * A field of a medicine-desk event. The simple `emit` wraps the data in an envelope: routing ids
+ * are lifted into `metadata`, everything else (action, prescriptionId) stays in `payload`.
+ */
+function deskPayloadValue(payload: EnterpriseEventPayload, key: string): string {
+  const root = payload as unknown as Record<string, unknown>;
+  const inner = root['payload'];
+  const innerValue =
+    inner && typeof inner === 'object' ? (inner as Record<string, unknown>)[key] : undefined;
+  const value = payload.metadata?.[key] ?? root[key] ?? innerValue ?? '';
+  return typeof value === 'string' ? value : '';
+}
+
+/** A numeric field of a medicine-desk payload (0 when missing / not a number). */
+function deskPayloadNumber(payload: EnterpriseEventPayload, key: string): number {
+  const root = payload as unknown as Record<string, unknown>;
+  const inner = root['payload'];
+  const innerValue =
+    inner && typeof inner === 'object' ? (inner as Record<string, unknown>)[key] : undefined;
+  const value = Number(payload.metadata?.[key] ?? root[key] ?? innerValue ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+/** Prescription facts of a medicine-desk payload the patient message is built from. */
+function deskDetails(payload: EnterpriseEventPayload): MedicineDeskDetails {
+  return {
+    medicationCount: deskPayloadNumber(payload, 'medicationCount'),
+    pendingAmount: deskPayloadNumber(payload, 'pendingAmount'),
+    doctorName: deskPayloadValue(payload, 'doctorName'),
+  };
 }
 
 @Injectable()
@@ -365,51 +431,32 @@ export class NotificationEventListener implements OnModuleInit {
       },
       shouldNotify: () => true,
     },
-    // Pharmacy Medicine Desk Queue Updates
+    // Pharmacy Medicine Desk Queue Updates: the patient is told when the prescription reaches
+    // the pharmacy (ready, amount to pay) and when medicines are ready to collect (dispensed),
+    // once per prescription and milestone, in-app plus ONE out-of-app channel in preference
+    // order. Staff screens refresh from the socket broadcaster.
     {
       eventPattern: /^pharmacy\.medicine_desk\.updated$/,
       category: CommunicationCategory.PRESCRIPTION,
-      channels: ['socket', 'push', 'email', 'whatsapp'],
+      channels: ['socket', 'push', 'whatsapp', 'email'],
+      singleExternalChannel: true,
       priority: CommunicationPriority.NORMAL,
       template: 'pharmacy_medicine_desk_update',
       recipients: payload => {
-        const recipients: Array<{
-          userId?: string;
-          email?: string;
-          deviceToken?: string;
-          socketRoom?: string;
-        }> = [];
         const patientId =
-          (payload.metadata?.['patientId'] as string | undefined) ||
-          ((payload as unknown as Record<string, unknown>)['patientId'] as string | undefined);
-        const doctorId =
-          (payload.metadata?.['doctorId'] as string | undefined) ||
-          ((payload as unknown as Record<string, unknown>)['doctorId'] as string | undefined);
-
-        if (patientId) {
-          recipients.push({
-            userId: patientId,
-            socketRoom: `user:${patientId}`,
-          });
-        }
-        if (doctorId) {
-          recipients.push({
-            userId: doctorId,
-            socketRoom: `user:${doctorId}`,
-          });
-        }
-        if (payload.clinicId) {
-          // The medicine desk screens listen as PHARMACIST; sockets join
-          // `clinic:<id>:role:<ROLE>` on connect. The payload carries patient and medication
-          // details, so it must NOT go to a clinic-wide DOCTOR room: the prescribing doctor is
-          // already reached through `user:<doctorId>` above.
-          recipients.push({
-            socketRoom: `clinic:${payload.clinicId}:role:PHARMACIST`,
-          });
-        }
-        return recipients;
+          deskPayloadValue(payload, 'patientUserId') || deskPayloadValue(payload, 'patientId');
+        return patientId ? [{ userId: patientId, socketRoom: `user:${patientId}` }] : [];
       },
-      shouldNotify: () => true,
+      shouldNotify: payload => {
+        const milestone = medicineDeskMilestone(
+          deskPayloadValue(payload, 'action'),
+          deskDetails(payload)
+        );
+        if (!milestone) return false;
+        const prescriptionId =
+          deskPayloadValue(payload, 'prescriptionId') || deskPayloadValue(payload, 'entryId');
+        return this.deskMilestoneDedup.firstTime(`${prescriptionId}:${milestone}`, Date.now());
+      },
     },
     // Ayurveda: Prakriti Assessment Completed
     {
@@ -792,6 +839,20 @@ export class NotificationEventListener implements OnModuleInit {
       },
       shouldNotify: () => true,
     },
+    // Live queue "2 ahead" / "you're next": built and deduplicated (once per appointment and
+    // threshold) by QueuePatientAlertService on queue mutations; recipient = the patient's User.id.
+    {
+      eventPattern: QUEUE_PATIENT_ALERT_EVENT,
+      category: CommunicationCategory.APPOINTMENT,
+      channels: ['socket', 'push'],
+      priority: CommunicationPriority.HIGH,
+      skipRateLimit: true,
+      recipients: payload => {
+        const userId = queuePatientAlertRecipientUserId(payload);
+        return userId ? [{ userId, socketRoom: `user:${userId}` }] : [];
+      },
+      shouldNotify: () => true,
+    },
     // Queue Position Updates
     {
       eventPattern: /^appointment\.queue\.(position\.updated|updated|reordered)$/,
@@ -1038,13 +1099,50 @@ export class NotificationEventListener implements OnModuleInit {
       },
       shouldNotify: () => true,
     },
+    // Overdue-invoice reminder (billing-ops.service.ts sendReminder): staff picks WhatsApp or
+    // SMS in the DTO, but SMS has no working adapter — send on WhatsApp, the only live channel.
+    {
+      eventPattern: /^billing\.invoice\.reminder\.requested$/,
+      category: CommunicationCategory.BILLING,
+      channels: ['whatsapp'],
+      priority: CommunicationPriority.NORMAL,
+      template: 'invoice_reminder',
+      recipients: payload => {
+        if (payload.userId) {
+          return [{ userId: payload.userId }];
+        }
+        return [];
+      },
+      shouldNotify: () => true,
+    },
+    // Staff moves a home lab booking to CONFIRMED / SAMPLE_COLLECTED / COMPLETED / CANCELLED
+    // (patient-ops.service.ts setLabBookingStatus) — the patient otherwise only finds out by
+    // pulling to refresh app/lab-booking.tsx.
+    {
+      eventPattern: /^clinic-ops\.lab-booking\.status-changed$/,
+      category: CommunicationCategory.APPOINTMENT,
+      channels: ['push', 'whatsapp', 'socket'],
+      priority: CommunicationPriority.NORMAL,
+      template: 'lab_booking_status',
+      recipients: payload => {
+        if (payload.userId) {
+          return [{ userId: payload.userId }];
+        }
+        return [];
+      },
+      shouldNotify: () => true,
+    },
   ];
 
   private typedEventService?: IEventService;
   private typedCommunicationService?: CommunicationService;
   private appointmentNotificationService?: AppointmentNotificationService | undefined;
-  private readonly appointmentNotificationDedup = new Map<string, number>();
-  private readonly appointmentNotificationDedupTtlMs = 30_000;
+  // One notification per appointment happening: see appointment-notification-dedup.util.
+  private readonly appointmentNotificationDedup = new AppointmentNotificationDedup(
+    APPOINTMENT_NOTIFICATION_DEDUP_TTL_MS,
+    APPOINTMENT_FIRST_CONTACT_WINDOW_MS
+  );
+  private readonly deskMilestoneDedup = new MilestoneDedup(DESK_MILESTONE_DEDUP_TTL_MS);
 
   constructor(
     @Inject(forwardRef(() => EventService))
@@ -1215,7 +1313,26 @@ export class NotificationEventListener implements OnModuleInit {
         return;
       }
 
-      if (normalizedEventType.startsWith('appointment.')) {
+      // Queue-board refreshes name no patient by design (see isQueueBoardEventWithoutPatient).
+      if (
+        isQueueBoardEventWithoutPatient(
+          normalizedEventType,
+          eventPayload as unknown as Readonly<Record<string, object | string | null>>
+        )
+      ) {
+        await this.loggingService.log(
+          LogType.NOTIFICATION,
+          LogLevel.INFO,
+          `No patient notification for queue event ${normalizedEventType} (live refresh, no patient)`,
+          'NotificationEventListener'
+        );
+        return;
+      }
+
+      if (
+        normalizedEventType.startsWith('appointment.') &&
+        !isQueuePatientAlertEvent(normalizedEventType)
+      ) {
         const notificationData = this.buildAppointmentConfirmationNotificationData(eventPayload);
         const notificationService = this.resolveAppointmentNotificationService();
         if (notificationData && notificationService) {
@@ -1240,8 +1357,11 @@ export class NotificationEventListener implements OnModuleInit {
             Boolean(rawPayloadRecord['paymentStatus']) ||
             Boolean(nestedPayload?.['paymentStatus']);
 
+          // Both events of a check-in (checked_in + confirmed) are one "confirmed" notification;
+          // whichever arrives first sends it and the dedup drops the other.
+          const isCheckInEvent = normalizedEventType === 'appointment.checked_in';
           const nextType =
-            normalizedEventType === 'appointment.confirmed'
+            normalizedEventType === 'appointment.confirmed' || isCheckInEvent
               ? 'confirmation'
               : normalizedEventType === 'appointment.cancelled'
                 ? 'cancellation'
@@ -1252,7 +1372,9 @@ export class NotificationEventListener implements OnModuleInit {
                     ? 'reschedule'
                     : normalizedEventType === 'appointment.created'
                       ? 'created'
-                      : 'updated';
+                      : normalizedEventType === APPOINTMENT_COMPLETED_EVENT
+                        ? 'completed'
+                        : 'updated';
 
           const nextChannels: NotificationData['channels'] =
             normalizedEventType === 'appointment.confirmed'
@@ -1263,7 +1385,11 @@ export class NotificationEventListener implements OnModuleInit {
                   normalizedEventType === 'appointment.rescheduled' ||
                   nextType === 'expired'
                 ? ['email', 'push', 'socket']
-                : ['push', 'socket'];
+                : nextType === 'completed'
+                  ? appointmentCompletedChannels(
+                      await this.hasPrescriptionWithMedicines(notificationData.appointmentId)
+                    )
+                  : ['push', 'socket'];
 
           notificationData.type = nextType as NotificationData['type'];
           notificationData.channels = nextChannels;
@@ -1324,6 +1450,7 @@ export class NotificationEventListener implements OnModuleInit {
         body,
         recipients,
         ...(rule.channels && rule.channels.length > 0 && { channels: rule.channels }),
+        ...(rule.singleExternalChannel ? { singleExternalChannel: true } : {}),
         priority: rule.priority,
         data: {
           eventType: normalizedEventType,
@@ -1335,7 +1462,7 @@ export class NotificationEventListener implements OnModuleInit {
           }),
         },
         respectPreferences: true,
-        applyRateLimit: true,
+        applyRateLimit: !rule.skipRateLimit,
       };
       if (!this.typedCommunicationService) {
         throw new Error('CommunicationService is not available');
@@ -1375,7 +1502,9 @@ export class NotificationEventListener implements OnModuleInit {
     eventType: string,
     payload: EnterpriseEventPayload | Record<string, unknown>
   ): boolean {
-    if (!eventType.startsWith('appointment.')) {
+    // Queue alerts carry their own per appointment + threshold key (NEAR then NEXT can be seconds
+    // apart and both must be delivered).
+    if (!eventType.startsWith('appointment.') || isQueuePatientAlertEvent(eventType)) {
       return false;
     }
 
@@ -1391,26 +1520,18 @@ export class NotificationEventListener implements OnModuleInit {
     const paymentId = resolveText(
       metadata?.['paymentId'] ?? record['paymentId'] ?? nestedPayload?.['paymentId'] ?? ''
     ).trim();
-    const dedupKey = [eventType, appointmentId || 'no-appointment', paymentId || 'no-payment'].join(
-      '|'
+    const checkInMarker =
+      record['checkInMethod'] ??
+      record['checkedInAt'] ??
+      metadata?.['checkInMethod'] ??
+      metadata?.['checkedInAt'] ??
+      nestedPayload?.['checkInMethod'] ??
+      nestedPayload?.['checkedInAt'];
+    return this.appointmentNotificationDedup.shouldSkip(
+      eventType,
+      { appointmentId, paymentId, fromCheckIn: Boolean(checkInMarker) },
+      Date.now()
     );
-    const now = Date.now();
-    const lastSeen = this.appointmentNotificationDedup.get(dedupKey);
-    if (lastSeen && now - lastSeen < this.appointmentNotificationDedupTtlMs) {
-      return true;
-    }
-
-    this.appointmentNotificationDedup.set(dedupKey, now);
-
-    if (this.appointmentNotificationDedup.size > 500) {
-      for (const [key, timestamp] of this.appointmentNotificationDedup.entries()) {
-        if (now - timestamp >= this.appointmentNotificationDedupTtlMs) {
-          this.appointmentNotificationDedup.delete(key);
-        }
-      }
-    }
-
-    return false;
   }
 
   /**
@@ -1488,8 +1609,13 @@ export class NotificationEventListener implements OnModuleInit {
   > {
     const rawRecipients = rule.recipients(payload);
 
-    if (!eventType.startsWith('appointment.')) {
+    // Already the patient's User.id (resolved by the emitter in its one batched read).
+    if (isQueuePatientAlertEvent(eventType)) {
       return rawRecipients;
+    }
+
+    if (!eventType.startsWith('appointment.')) {
+      return await this.mapDoctorProfileRecipients(rawRecipients);
     }
 
     const appointmentId = payload.metadata?.['appointmentId'] as string | undefined;
@@ -1542,6 +1668,89 @@ export class NotificationEventListener implements OnModuleInit {
   }
 
   /**
+   * True when the visit has a prescription with at least one medicine that reached the pharmacy
+   * (not a draft, returned or cancelled one): its "Prescription ready" push stands in for the
+   * completion push. A failed lookup reads as false, so the patient still gets one push.
+   */
+  private async hasPrescriptionWithMedicines(appointmentId: string): Promise<boolean> {
+    if (!appointmentId) return false;
+    try {
+      const count = await this.databaseService.executeHealthcareRead<number>(async client => {
+        const prescriptionClient = client as unknown as {
+          prescription: { count: (args: object) => Promise<number> };
+        };
+        return prescriptionClient.prescription.count({
+          where: {
+            appointmentId,
+            status: { notIn: ['DRAFT', 'RETURNED', 'CANCELLED'] },
+            items: { some: {} },
+          },
+        });
+      });
+      return count > 0;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.WARN,
+        'Prescription lookup for the completion push failed; sending the push',
+        'NotificationEventListener',
+        { appointmentId, error: error instanceof Error ? error.message : String(error) }
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Non-appointment events (doctor availability, prescriptions, queue ...) often name the doctor
+   * by Doctor.id or the patient by Patient.id; the recipient must be the User.id or the
+   * notification is dropped as "user not found". One lookup per profile table per event; a
+   * failure keeps the recipients unchanged.
+   */
+  private async mapDoctorProfileRecipients<Recipient extends NotificationRecipient>(
+    recipients: Recipient[]
+  ): Promise<Recipient[]> {
+    const ids = recipientUserIds(recipients);
+    if (ids.length === 0) return recipients;
+    try {
+      const profiles = await this.databaseService.executeHealthcareRead<
+        Array<{ id: string; userId: string }>
+      >(async client => {
+        const profileClient = client as unknown as Record<
+          'doctor' | 'patient',
+          {
+            findMany: (args: {
+              where: { id: { in: string[] } };
+              select: { id: true; userId: true };
+            }) => Promise<Array<{ id: string; userId: string }>>;
+          }
+        >;
+        const query = { where: { id: { in: ids } }, select: { id: true, userId: true } } as const;
+        const [doctors, patients] = await Promise.all([
+          profileClient.doctor.findMany(query),
+          profileClient.patient.findMany(query),
+        ]);
+        return [...doctors, ...patients];
+      });
+      const profileToUser = new Map(
+        profiles
+          .filter(profile => profile.userId && profile.userId !== profile.id)
+          .map(profile => [profile.id, profile.userId])
+      );
+      if (profileToUser.size === 0) return recipients;
+      return remapRecipientUserIds(recipients, profileToUser);
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.WARN,
+        'Could not resolve doctor / patient recipients to their user ids',
+        'NotificationEventListener',
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+      return recipients;
+    }
+  }
+
+  /**
    * Type guard for EnterpriseEventPayload
    */
   private isEnterpriseEventPayload(payload: unknown): payload is EnterpriseEventPayload {
@@ -1584,6 +1793,13 @@ export class NotificationEventListener implements OnModuleInit {
     payload: EnterpriseEventPayload,
     _rule: CommunicationRule
   ): { title: string; body: string } {
+    // Queue patient alerts are `appointment.queue.patient_alert`: they must be handled before the
+    // generic `appointment.` branch below, which would otherwise swallow them and leave the
+    // default "You have a new notification" text on the push.
+    if (isQueuePatientAlertEvent(eventType)) {
+      return queuePatientAlertContent(payload);
+    }
+
     // Default content
     let title = 'Notification';
     let body = 'You have a new notification';
@@ -1626,23 +1842,48 @@ export class NotificationEventListener implements OnModuleInit {
           payload.metadata?.['clinicName'] ||
           payload.metadata?.['appName'],
         'Healthcare App'
-      ).toUpperCase();
+      );
       if (eventType.includes('.created')) {
-        title = 'APPOINTMENT SCHEDULED';
-        body = `YOUR APPOINTMENT HAS BEEN SUCCESSFULLY SCHEDULED AT ${displayName}.`;
+        title = 'Appointment scheduled';
+        body = `Your appointment has been successfully scheduled at ${displayName}.`;
       } else if (eventType.includes('.confirmed')) {
-        title = 'APPOINTMENT CONFIRMED';
-        body = `YOUR APPOINTMENT HAS BEEN CONFIRMED AT ${displayName}.`;
+        title = 'Appointment confirmed';
+        body = `Your appointment has been confirmed at ${displayName}.`;
       } else if (eventType.includes('.cancelled')) {
-        title = 'APPOINTMENT CANCELLED';
-        body = `YOUR APPOINTMENT HAS BEEN CANCELLED AT ${displayName}.`;
+        title = 'Appointment cancelled';
+        body = `Your appointment has been cancelled at ${displayName}.`;
       } else if (eventType.includes('.expired')) {
-        title = 'APPOINTMENT EXPIRED';
-        body = `YOUR APPOINTMENT HAS EXPIRED AT ${displayName}.`;
+        title = 'Appointment expired';
+        body = `Your appointment has expired at ${displayName}.`;
       } else if (eventType.includes('.rescheduled')) {
-        title = 'APPOINTMENT RESCHEDULED';
-        body = `YOUR APPOINTMENT HAS BEEN RESCHEDULED AT ${displayName}.`;
+        title = 'Appointment rescheduled';
+        body = `Your appointment has been rescheduled at ${displayName}.`;
       }
+    } else if (eventType === 'billing.invoice.reminder.requested') {
+      // billing-ops.service.ts already composed the full, localized reminder text
+      // (sendReminder's DEFAULT_MESSAGES or the staff's own custom message) — use it verbatim
+      // rather than re-deriving generic copy.
+      const nested = asRecord((payload as unknown as Record<string, unknown>)['payload']);
+      title = 'Payment reminder';
+      body = resolveText(
+        nested?.['message'],
+        'You have an unpaid invoice. Please complete your payment.'
+      );
+    } else if (eventType === 'clinic-ops.lab-booking.status-changed') {
+      const nested = asRecord((payload as unknown as Record<string, unknown>)['payload']);
+      const packageName = resolveText(nested?.['packageName'], 'Your lab test');
+      const status = resolveText(nested?.['status'], '').toUpperCase();
+      title = 'Lab booking update';
+      body =
+        status === 'CONFIRMED'
+          ? `${packageName} is confirmed. The phlebotomist will call before arriving.`
+          : status === 'SAMPLE_COLLECTED'
+            ? `${packageName}: your sample has been collected.`
+            : status === 'COMPLETED'
+              ? `${packageName}: your results are ready. Check the app for your report.`
+              : status === 'CANCELLED'
+                ? `${packageName} was cancelled by the clinic.`
+                : `${packageName} status: ${status || 'updated'}.`;
     } else if (eventType.startsWith('diet.plan.')) {
       const goal = resolveText(
         payload.metadata?.['goal'] || (payload as unknown as Record<string, unknown>)['goal'],
@@ -1663,43 +1904,11 @@ export class NotificationEventListener implements OnModuleInit {
           ? `Your ${goal} diet plan has been generated for ${durationDays} days.`
           : `Your ${goal} diet plan has been generated.`;
     } else if (eventType.startsWith('pharmacy.medicine_desk.')) {
-      const action = resolveText(
-        payload.metadata?.['action'] || (payload as unknown as Record<string, unknown>)['action'],
-        'UPDATED'
-      ).toUpperCase();
-      const status = resolveText(
-        payload.metadata?.['status'] || (payload as unknown as Record<string, unknown>)['status'],
-        ''
-      ).toUpperCase();
-      const queuePosition = Number(
-        payload.metadata?.['queuePosition'] ??
-          (payload as unknown as Record<string, unknown>)['queuePosition'] ??
-          0
-      );
-      const totalInQueue = Number(
-        payload.metadata?.['totalInQueue'] ??
-          (payload as unknown as Record<string, unknown>)['totalInQueue'] ??
-          0
-      );
-      const readyForHandover =
-        Boolean(payload.metadata?.['readyForHandover']) ||
-        Boolean((payload as unknown as Record<string, unknown>)['readyForHandover']);
-      const pendingAmount = Number(
-        payload.metadata?.['pendingAmount'] ??
-          (payload as unknown as Record<string, unknown>)['pendingAmount'] ??
-          0
-      );
-
-      title = 'Pharmacy Update';
-      if (readyForHandover || action === 'DISPENSED' || status === 'READY_FOR_HANDOVER') {
-        body = 'Your medicines are ready at the pharmacy counter.';
-      } else if (pendingAmount > 0) {
-        body = `Your prescription is queued in pharmacy. Pending amount: ${pendingAmount}.`;
-      } else if (queuePosition > 0) {
-        body = `Your prescription is in the pharmacy queue at position ${queuePosition}${totalInQueue > 0 ? ` of ${totalInQueue}` : ''}.`;
-      } else {
-        body = 'Your pharmacy request has been updated.';
-      }
+      const details = deskDetails(payload);
+      const milestone = medicineDeskMilestone(deskPayloadValue(payload, 'action'), details);
+      ({ title, body } = milestone
+        ? medicineDeskMilestoneContent(milestone, details)
+        : { title: 'Pharmacy Update', body: 'Your pharmacy request has been updated.' });
     } else if (eventType.startsWith('ayurveda.')) {
       if (eventType.includes('.prakriti.assessed')) {
         const prakritiType = resolveText(
@@ -1736,7 +1945,12 @@ export class NotificationEventListener implements OnModuleInit {
         body = 'You have a new Ayurveda-related notification.';
       }
     } else if (eventType.startsWith('user.')) {
-      if (eventType.includes('.logged_in')) {
+      // Matches the same three event names the rule above is registered for (user.logged_in,
+      // user.otp_logged_in, user.google_oauth_logged_in) — `.includes('.logged_in')` missed the
+      // otp/google_oauth variants (no literal dot before "logged_in" in those), so every OTP
+      // login — the only login method this app uses — fell through to the generic
+      // "You have a new notification" instead of the real login-alert copy below.
+      if (eventType.endsWith('logged_in')) {
         const clinicName = resolveText(
           (payload as unknown as Record<string, unknown>)['clinicName'] ||
             payload.metadata?.['clinicName']
@@ -1746,41 +1960,32 @@ export class NotificationEventListener implements OnModuleInit {
             payload.metadata?.['appName'],
           'Healthcare App'
         );
-        const displayName = resolveText(clinicName || appName, 'Healthcare App').toUpperCase();
+        const displayName = resolveText(clinicName || appName, 'Healthcare App');
         const isFirstLogin =
           Boolean((payload as unknown as Record<string, unknown>)['isFirstLogin']) ||
           Boolean(payload.metadata?.['isFirstLogin']);
         const loginMethod =
-          typeof payload.metadata?.['loginMethod'] === 'string' &&
-          payload.metadata['loginMethod'].trim().length > 0
+          typeof payload.metadata?.['loginMethod'] === 'string'
             ? payload.metadata['loginMethod']
-            : 'account';
-        const loginTime = formatTimeInIST(payload.timestamp);
-        if (isFirstLogin) {
-          title = `WELCOME TO ${displayName}`;
-          body = `YOUR ACCOUNT IS NEW AND YOU HAVE NOW LOGGED IN SUCCESSFULLY TO ${displayName} VIA ${loginMethod.replace(
-            /_/g,
-            ' '
-          )} AT ${loginTime}. IF THIS WAS NOT YOU, PLEASE CHANGE YOUR PASSWORD IMMEDIATELY.`;
-        } else {
-          title = `${displayName} Login Alert`;
-          body = `You have been logged in to ${displayName} via ${loginMethod.replace(
-            /_/g,
-            ' '
-          )} at ${loginTime}. If this was not you, please change your password immediately.`;
-        }
+            : null;
+        ({ title, body } = loginAlertContent({
+          displayName,
+          loginMethod,
+          loginTime: formatTimeInIST(payload.timestamp),
+          isFirstLogin,
+        }));
       } else if (eventType.includes('.created')) {
         const displayName = resolveText(
           (payload as unknown as Record<string, unknown>)['clinicName'] ||
             payload.metadata?.['clinicName'] ||
             payload.metadata?.['appName'],
           'Healthcare App'
-        ).toUpperCase();
-        title = `ACCOUNT CREATED AT ${displayName}`;
-        body = `YOUR ACCOUNT HAS BEEN CREATED SUCCESSFULLY FOR ${displayName}.`;
+        );
+        title = `Account created at ${displayName}`;
+        body = `Your account has been created successfully for ${displayName}.`;
       } else if (eventType.includes('.updated')) {
-        title = 'ACCOUNT UPDATED';
-        body = 'YOUR ACCOUNT INFORMATION HAS BEEN UPDATED';
+        title = 'Account updated';
+        body = 'Your account information has been updated.';
       }
     } else if (eventType.startsWith('billing.')) {
       title = 'Billing Update';

@@ -1,4 +1,11 @@
-import { Injectable, NotFoundException, Inject, forwardRef, Optional } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+  Inject,
+  forwardRef,
+  Optional,
+} from '@nestjs/common';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events/event.service';
@@ -23,24 +30,68 @@ import type {
   QueueMetricsResponse,
 } from '@core/types/appointment.types';
 import { formatDateKeyInIST, nowIso } from '../../../../utils/date-time.util';
+import { formatQueueToken } from '../../../../utils/in-person-flow.util';
+import { endOfIstDay, startOfIstDay } from '../../../../utils/clock.util';
+import { DatabaseService } from '@infrastructure/database/database.service';
+import { assignLocationToken, supportsRawSql } from './location-token.allocator';
+import { QUEUE_LOCK_RETRY, acquireWithRetry } from './queue-lock-retry.util';
+import {
+  LIVE_QUEUE_DB_STATUSES,
+  LIVE_QUEUE_REBUILD_MAX_ROWS,
+  compareLiveQueueEntries,
+  queuePriorityWeight,
+  dedupeQueueEntries,
+  groupRebuildRowsByDoctor,
+  reconcileLiveEntries,
+  toRebuiltEntry,
+  type LiveQueueRebuildRow,
+} from './live-queue-rebuild.util';
+import {
+  LIVE_QUEUE_INDEX_SENTINEL,
+  isLiveQueueIndexBackfilled,
+  liveQueueDayPattern,
+  liveQueueIndexKey,
+  liveQueueKeysOfIndex,
+  parseLiveQueueKey,
+} from './live-queue-index.util';
 
 // Re-export types for backward compatibility
 export type { QueueEntry, QueueEntryData, AppointmentQueueStats as QueueStats };
 
-const PRIORITY_WEIGHTS: Record<string, number> = {
-  EMERGENCY: 100,
-  URGENT: 80,
-  HIGH: 50,
-  MEDIUM: 30,
-  NORMAL: 20,
-  LOW: 10,
-  ROUTINE: 0,
-};
+/** Domain of the in-person doctor queue (the only one rebuilt from the database). */
+const IN_PERSON_QUEUE_DOMAIN = 'clinic';
+/** A clinic/day was checked against the database this recently: skip the check. */
+const REBUILD_CHECK_TTL_SECONDS = 20;
+/** Distributed lock of one clinic/day rebuild (one replica rebuilds, the others wait). */
+const REBUILD_LOCK_TTL_SECONDS = 15;
+const REBUILD_WAIT_ATTEMPTS = 10;
+const REBUILD_WAIT_MS = 100;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+interface RebuildReadClient {
+  appointment: { findMany: (args: unknown) => Promise<LiveQueueRebuildRow[]> };
+}
+
+/** The persisted token handed to check-in (allocated in the check-in transaction). */
+interface ResolvedToken {
+  tokenNumber: number;
+  tokenLabel: string | null;
+}
+
+/** Thrown when the visit is already in today's queue (a repeated or concurrent check-in). */
+const ALREADY_CHECKED_IN_MESSAGE = 'Appointment arrival is already confirmed';
+
+/** Tag set of one location's cached queue metrics (every period). */
+function queueMetricsTag(clinicId: string, locationId: string, domain: string): string {
+  return `queue_metrics:${clinicId}:${locationId}:${domain}`;
+}
 
 @Injectable()
 export class AppointmentQueueService {
   private readonly QUEUE_CACHE_TTL = 3600; // 1 hour
   private readonly METRICS_CACHE_TTL = 300; // 5 minutes
+  /** The raw per doctor/day live list (`queue:<domain>:<clinic>:<owner>:<day>`), same as the token counter. */
+  private readonly LIVE_QUEUE_LIST_TTL = 48 * 3600;
   private typedEventService?: IEventService;
 
   constructor(
@@ -50,7 +101,10 @@ export class AppointmentQueueService {
     private readonly loggingService: LoggingService,
     @Optional()
     @Inject(forwardRef(() => EventService))
-    private readonly eventService?: unknown
+    private readonly eventService?: unknown,
+    @Optional()
+    @Inject(forwardRef(() => DatabaseService))
+    private readonly databaseService?: DatabaseService
   ) {
     // Type guard ensures type safety when using the service
     if (this.eventService && isEventService(this.eventService)) {
@@ -67,32 +121,509 @@ export class AppointmentQueueService {
   }
 
   /**
-   * Ticket number for an in-person check-in: a per doctor/day/clinic counter that only moves
-   * forward, so a patient's token never changes when earlier patients leave the list. Falls back
-   * to (highest token already in the list + 1) when the counter is unavailable.
+   * Records a live list in its clinic / domain / day index (see live-queue-index.util.ts). Called
+   * after every write that can create a list; best effort (a missed add is recovered by the
+   * one-time SCAN backfill only while the index has no sentinel, so failures are logged).
    */
-  private async nextTokenNumber(
-    counterKey: string,
-    existingEntries: readonly string[]
-  ): Promise<number> {
+  private async trackLiveQueueList(queueKey: string): Promise<void> {
+    const parts = parseLiveQueueKey(queueKey);
+    if (!parts) return;
+    const indexKey = liveQueueIndexKey(parts.domain, parts.clinicId, parts.day);
     try {
-      const next = await this.cacheService.incr(counterKey);
-      if (Number.isInteger(next) && next > 0) {
-        await this.cacheService.expire(counterKey, 48 * 3600);
-        return next;
-      }
-    } catch {
-      // fall through to the list-derived token below
+      await this.cacheService.sAdd(indexKey, queueKey);
+      await this.cacheService.expire(indexKey, this.LIVE_QUEUE_LIST_TTL);
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.WARN,
+        `Live queue index update failed: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentQueueService',
+        { queueKey }
+      );
     }
-    const highest = existingEntries.reduce((max, raw) => {
-      try {
-        const token = (JSON.parse(raw) as QueueEntryData).tokenNumber;
-        return typeof token === 'number' && token > max ? token : max;
-      } catch {
-        return max;
+  }
+
+  /**
+   * Every live list key of a clinic / domain / day, from the SET index. The keyspace SCAN only
+   * runs when the index was never backfilled (lists written before it existed, or it was lost),
+   * and then backfills it, or when the index itself cannot be read.
+   */
+  private async listDayQueueKeys(clinicId: string, domain: string, day: string): Promise<string[]> {
+    const indexKey = liveQueueIndexKey(domain, clinicId, day);
+    let members: string[];
+    try {
+      members = await this.cacheService.sMembers(indexKey);
+    } catch {
+      return await this.cacheService.keys(liveQueueDayPattern(domain, clinicId, day));
+    }
+    if (isLiveQueueIndexBackfilled(members)) return liveQueueKeysOfIndex(members);
+
+    const scanned = await this.cacheService.keys(liveQueueDayPattern(domain, clinicId, day));
+    try {
+      await this.cacheService.sAdd(indexKey, LIVE_QUEUE_INDEX_SENTINEL, ...scanned);
+      await this.cacheService.expire(indexKey, this.LIVE_QUEUE_LIST_TTL);
+    } catch {
+      // Next read scans again; correctness does not depend on the backfill.
+    }
+    return liveQueueKeysOfIndex([...members, ...scanned]);
+  }
+
+  /**
+   * Counter of the token series. ONE series per clinic location per day (booked and walk-in
+   * patients share it); entries without a location keep the older per doctor/day series.
+   */
+  private tokenCounterKey(
+    clinicId: string,
+    date: string,
+    locationId: string | undefined,
+    ownerId: string
+  ): string {
+    return locationId
+      ? `queue:token:${clinicId}:location:${locationId}:${date}`
+      : `queue:token:${clinicId}:${ownerId}:${date}`;
+  }
+
+  /**
+   * Cache-only token counter: the fallback for callers without a database client (operational
+   * consultation-lane items, unit worlds). It only moves forward; when the counter is unavailable
+   * the call FAILS (callers answer 503) instead of guessing a number from one doctor's list, which
+   * handed out duplicate tokens at a multi-doctor location (audit P0-2).
+   */
+  private async nextCacheTokenNumber(counterKey: string): Promise<number> {
+    const next = await this.cacheService.incr(counterKey);
+    if (!Number.isInteger(next) || next <= 0) {
+      throw new Error(`Token counter unavailable, please retry: ${counterKey}`);
+    }
+    await this.cacheService.expire(counterKey, this.LIVE_QUEUE_LIST_TTL);
+    return next;
+  }
+
+  /**
+   * Token of an in-person arrival. The database is the source of truth (audit P0-1): the token
+   * handed in by the check-in transaction, else the one stored on the appointment / allocated now
+   * from `location_token_counters` (same atomic upsert), else (no database client) the cache
+   * counter of the location/day.
+   */
+  private async resolveCheckInToken(params: {
+    appointmentId: string;
+    clinicId: string;
+    doctorId: string;
+    date: string;
+    locationId?: string | undefined;
+    tokenNumber?: number | undefined;
+    tokenLabel?: string | undefined;
+    tokenPrefix?: string | undefined;
+  }): Promise<ResolvedToken> {
+    if (typeof params.tokenNumber === 'number' && params.tokenNumber > 0) {
+      return {
+        tokenNumber: params.tokenNumber,
+        tokenLabel:
+          params.tokenLabel ||
+          formatQueueToken(params.tokenNumber, params.tokenPrefix || undefined),
+      };
+    }
+    if (this.databaseService) {
+      const persisted = await this.databaseService.executeInTransaction(async client =>
+        supportsRawSql(client)
+          ? await assignLocationToken(client, params.appointmentId, { prefix: params.tokenPrefix })
+          : null
+      );
+      if (persisted) {
+        return { tokenNumber: persisted.tokenNumber, tokenLabel: persisted.tokenLabel };
       }
-    }, 0);
-    return Math.max(highest, existingEntries.length) + 1;
+    }
+    const tokenNumber = await this.nextCacheTokenNumber(
+      this.tokenCounterKey(params.clinicId, params.date, params.locationId, params.doctorId)
+    );
+    return {
+      tokenNumber,
+      tokenLabel: formatQueueToken(tokenNumber, params.tokenPrefix || undefined),
+    };
+  }
+
+  /** Token of a consultation-lane operational item; no token (never a guessed one) on failure. */
+  private async operationalTokenNumber(queueData: {
+    entryId: string;
+    appointmentId?: string | undefined;
+    clinicId: string;
+    queueOwnerId: string;
+    locationId?: string | undefined;
+  }): Promise<number | undefined> {
+    try {
+      const token = await this.resolveCheckInToken({
+        appointmentId: queueData.appointmentId || queueData.entryId,
+        clinicId: queueData.clinicId,
+        doctorId: queueData.queueOwnerId,
+        date: this.getQueueDate(),
+        locationId: queueData.locationId,
+      });
+      return token.tokenNumber;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        `Operational queue item enqueued without a token: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentQueueService',
+        { entryId: queueData.entryId, clinicId: queueData.clinicId }
+      );
+      return undefined;
+    }
+  }
+
+  /**
+   * Live queue durability (audit P0-1). The per doctor/day lists live only in Dragonfly; when a
+   * doctor's list for the day is missing or empty while the database still has that doctor's
+   * arrivals of the day (checked in today, CONFIRMED / IN_PROGRESS), the list is rebuilt from the
+   * database in serving order with the tokens stored at check-in. Runs before every in-person
+   * queue read and mutation; one bounded query per clinic/day at most every
+   * REBUILD_CHECK_TTL_SECONDS per replica, and a short distributed lock so only one replica
+   * rebuilds while the others wait briefly. Never fails the caller (logged as WARN).
+   */
+  async ensureLiveQueueHydrated(clinicId: string, domain: string, date?: string): Promise<void> {
+    if (domain !== IN_PERSON_QUEUE_DOMAIN || !this.databaseService || !clinicId) return;
+    const day = this.getQueueDate(date);
+    const checkedKey = `queue-rebuild:checked:${domain}:${clinicId}:${day}`;
+    try {
+      if (await this.cacheService.get<string>(checkedKey)) return;
+      const lockKey = `lock:queue-rebuild:${domain}:${clinicId}:${day}`;
+      if (!(await this.cacheService.acquireLock(lockKey, REBUILD_LOCK_TTL_SECONDS))) {
+        // Another request is running the periodic check. Only a clinic/day whose lists are ALL
+        // gone (cache flush) waits for that rebuild; otherwise the lists are served as they are
+        // (M6: every reader used to wait up to 1 s each time the 20 s check came due).
+        if (!(await this.hasAnyLiveList(clinicId, domain, day))) {
+          await this.waitForRebuild(checkedKey);
+        }
+        return;
+      }
+      try {
+        const rebuilt = await this.rebuildMissingLists(clinicId, domain, day);
+        await this.cacheService.set(checkedKey, '1', REBUILD_CHECK_TTL_SECONDS);
+        if (rebuilt > 0) {
+          void this.loggingService.log(
+            LogType.APPOINTMENT,
+            LogLevel.WARN,
+            'Live queue rebuilt from the database (cache entries were missing)',
+            'AppointmentQueueService',
+            { clinicId, date: day, rebuiltEntries: rebuilt }
+          );
+        }
+      } finally {
+        await this.cacheService.releaseLock(lockKey);
+      }
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        `Live queue rebuild check failed: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentQueueService',
+        { clinicId, date: day }
+      );
+    }
+  }
+
+  /** True when at least one live list of the clinic/day exists. */
+  private async hasAnyLiveList(clinicId: string, domain: string, day: string): Promise<boolean> {
+    try {
+      // The index may still name a list that has since emptied (an empty list does not exist,
+      // which is what the SCAN used to see), so only a non-empty list counts.
+      for (const key of await this.listDayQueueKeys(clinicId, domain, day)) {
+        if ((await this.cacheService.lLen(key)) > 0) return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  private async waitForRebuild(checkedKey: string): Promise<void> {
+    for (let attempt = 0; attempt < REBUILD_WAIT_ATTEMPTS; attempt++) {
+      await new Promise<void>(resolve => setTimeout(resolve, REBUILD_WAIT_MS));
+      if (await this.cacheService.get<string>(checkedKey)) return;
+    }
+  }
+
+  /** Arrivals of the day that belong in a live list (one bounded, indexed query). */
+  private async loadLiveArrivals(
+    clinicId: string,
+    day: string,
+    doctorId?: string
+  ): Promise<LiveQueueRebuildRow[]> {
+    const from = startOfIstDay(day);
+    const to = endOfIstDay(day);
+    if (!from || !to || !this.databaseService) return [];
+    return await this.databaseService.executeHealthcareRead(async client =>
+      (client as unknown as RebuildReadClient).appointment.findMany({
+        where: {
+          clinicId,
+          ...(doctorId ? { doctorId } : {}),
+          type: { not: 'VIDEO_CALL' },
+          status: { in: [...LIVE_QUEUE_DB_STATUSES] },
+          // The slot day is within a day of the arrival (cross-midnight window), which lets the
+          // (clinicId, date, status) index drive the query. checkedInAt is widened the same way:
+          // a patient checked in late yesterday (or whose visit simply ran past midnight before
+          // the doctor saw them) is still CONFIRMED/IN_PROGRESS, not COMPLETED, so the status
+          // filter is what actually bounds this query — restricting checkedInAt to today's IST
+          // day alone dropped their position/ETA from the live queue the moment the calendar day
+          // rolled over, even though they were still genuinely waiting (found 2026-10-27).
+          date: { gte: new Date(from.getTime() - DAY_MS), lte: new Date(to.getTime() + DAY_MS) },
+          checkedInAt: {
+            gte: new Date(from.getTime() - DAY_MS),
+            lte: new Date(to.getTime() + DAY_MS),
+          },
+        },
+        select: {
+          id: true,
+          doctorId: true,
+          patientId: true,
+          clinicId: true,
+          locationId: true,
+          type: true,
+          status: true,
+          priority: true,
+          metadata: true,
+          checkedInAt: true,
+          startedAt: true,
+          tokenNumber: true,
+          tokenLabel: true,
+        },
+        orderBy: [{ checkedInAt: 'asc' }],
+        take: LIVE_QUEUE_REBUILD_MAX_ROWS,
+      })
+    );
+  }
+
+  /** Rebuild every doctor list of the day that is missing / empty; returns the entries written. */
+  private async rebuildMissingLists(
+    clinicId: string,
+    domain: string,
+    day: string
+  ): Promise<number> {
+    const rows = await this.loadLiveArrivals(clinicId, day);
+    if (rows.length === 0) return 0;
+    let written = 0;
+    for (const [doctorId, doctorRows] of groupRebuildRowsByDoctor(rows)) {
+      const queueKey = this.buildQueueKey(domain, clinicId, doctorId, day);
+      if ((await this.cacheService.lLen(queueKey)) > 0) continue;
+      written += await this.rebuildDoctorList(queueKey, doctorRows);
+      for (const locationId of new Set(doctorRows.map(row => row.locationId ?? undefined))) {
+        await this.invalidateQueueReadCaches({ clinicId, domain, doctorId, date: day, locationId });
+      }
+    }
+    return written;
+  }
+
+  /**
+   * Consistency pass over every live list of a clinic/day (worker cron, see
+   * InPersonQueueMaintenanceService): missing lists are rebuilt, and every list is reconciled
+   * with the database (reconcileLiveEntries). Each list is rewritten under its queue lock and only
+   * when something changed. Returns the totals for the log.
+   */
+  async reconcileLiveQueue(
+    clinicId: string,
+    domain: string = IN_PERSON_QUEUE_DOMAIN,
+    date?: string
+  ): Promise<{ lists: number; added: number; removed: number; updated: number }> {
+    const totals = { lists: 0, added: 0, removed: 0, updated: 0 };
+    if (domain !== IN_PERSON_QUEUE_DOMAIN || !this.databaseService || !clinicId) return totals;
+    const day = this.getQueueDate(date);
+    const rows = await this.loadLiveArrivals(clinicId, day);
+    const byDoctor = groupRebuildRowsByDoctor(rows);
+    const listKeys = new Set(await this.listDayQueueKeys(clinicId, domain, day));
+    for (const doctorId of byDoctor.keys()) {
+      listKeys.add(this.buildQueueKey(domain, clinicId, doctorId, day));
+    }
+    for (const queueKey of listKeys) {
+      const doctorId = this.extractOwnerIdFromQueueKey(queueKey);
+      const outcome = await this.reconcileList(queueKey, byDoctor.get(doctorId) ?? []);
+      if (!outcome) continue;
+      totals.lists += 1;
+      totals.added += outcome.added;
+      totals.removed += outcome.removed;
+      totals.updated += outcome.updated;
+      if (outcome.added + outcome.removed + outcome.updated > 0) {
+        for (const locationId of outcome.locationIds) {
+          await this.invalidateQueueReadCaches({
+            clinicId,
+            domain,
+            doctorId,
+            date: day,
+            locationId,
+          });
+        }
+        await this.invalidateQueueReadCaches({ clinicId, domain, doctorId, date: day });
+      }
+    }
+    return totals;
+  }
+
+  /** One list reconciled under its lock; null when the list is busy right now (next run). */
+  private async reconcileList(
+    queueKey: string,
+    liveRows: readonly LiveQueueRebuildRow[]
+  ): Promise<{ added: number; removed: number; updated: number; locationIds: Set<string> } | null> {
+    try {
+      return await this.withQueueLock(queueKey, async () => {
+        const raw = await this.cacheService.lRange(queueKey, 0, -1);
+        const current = raw.flatMap(entry => {
+          try {
+            return [JSON.parse(entry) as QueueEntryData];
+          } catch {
+            return [];
+          }
+        });
+        const liveIds = new Set(liveRows.map(row => row.id));
+        const otherIds = current
+          .map(entry => entry.appointmentId)
+          .filter((id): id is string => Boolean(id) && !liveIds.has(id));
+        const known = await this.loadAppointmentStatuses(otherIds);
+        const result = reconcileLiveEntries(current, liveRows, known, type =>
+          this.resolveDisplayLabel(AppointmentQueueCategory.DOCTOR_CONSULTATION, type)
+        );
+        if (result.added + result.removed + result.updated > 0) {
+          await this.rewriteQueueList(
+            queueKey,
+            result.entries.map(entry => JSON.stringify(entry)),
+            raw.length
+          );
+        }
+        const locationIds = new Set(
+          result.entries.map(entry => entry.locationId).filter((id): id is string => Boolean(id))
+        );
+        return {
+          added: result.added,
+          removed: result.removed,
+          updated: result.updated,
+          locationIds,
+        };
+      });
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.APPOINTMENT,
+        LogLevel.WARN,
+        `Live queue reconcile skipped a list: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentQueueService',
+        { queueKey }
+      );
+      return null;
+    }
+  }
+
+  /** Database status of the given appointment ids (ids that are not appointments are absent). */
+  private async loadAppointmentStatuses(ids: readonly string[]): Promise<Map<string, string>> {
+    if (ids.length === 0 || !this.databaseService) return new Map();
+    const rows = await this.databaseService.executeHealthcareRead(async client =>
+      (
+        client as unknown as {
+          appointment: {
+            findMany: (args: unknown) => Promise<Array<{ id: string; status: string }>>;
+          };
+        }
+      ).appointment.findMany({
+        where: { id: { in: [...new Set(ids)] } },
+        select: { id: true, status: true },
+      })
+    );
+    return new Map(rows.map(row => [row.id, String(row.status)]));
+  }
+
+  /**
+   * One doctor's list, under its queue lock. A list someone holds the lock of right now is
+   * skipped for this pass and logged: the holder (a check-in) refills an empty list itself under
+   * that lock (see refillEmptyListUnderHeldLock), and the next check / worker reconcile retries.
+   */
+  private async rebuildDoctorList(
+    queueKey: string,
+    doctorRows: readonly LiveQueueRebuildRow[]
+  ): Promise<number> {
+    const lockKey = `lock:${queueKey}`;
+    if (!(await this.cacheService.acquireLock(lockKey, 10))) {
+      void this.loggingService.log(
+        LogType.APPOINTMENT,
+        LogLevel.WARN,
+        'Live queue rebuild skipped a list: its queue lock is held by another operation',
+        'AppointmentQueueService',
+        { queueKey, pendingEntries: doctorRows.length }
+      );
+      return 0;
+    }
+    try {
+      return await this.writeRebuiltList(queueKey, doctorRows);
+    } finally {
+      await this.cacheService.releaseLock(lockKey);
+    }
+  }
+
+  /**
+   * Check-in path: the caller already HOLDS `lock:${queueKey}`. When the list is empty, this
+   * doctor's arrivals of the day are written from the database first (the arriving visit itself
+   * excluded: check-in pushes its own entry), so the arrival never becomes the only entry of a
+   * list that should hold the whole morning, even when the clinic-wide hydration was skipped or
+   * still running elsewhere. Never fails the check-in (logged as WARN).
+   */
+  private async refillEmptyListUnderHeldLock(params: {
+    queueKey: string;
+    clinicId: string;
+    doctorId: string;
+    domain: string;
+    day: string;
+    excludeAppointmentId: string;
+  }): Promise<number> {
+    const { queueKey, clinicId, doctorId, domain, day, excludeAppointmentId } = params;
+    if (domain !== IN_PERSON_QUEUE_DOMAIN || !this.databaseService) return 0;
+    try {
+      if ((await this.cacheService.lLen(queueKey)) > 0) return 0;
+      const rows = (await this.loadLiveArrivals(clinicId, day, doctorId)).filter(
+        row => row.id !== excludeAppointmentId
+      );
+      const doctorRows = groupRebuildRowsByDoctor(rows).get(doctorId) ?? [];
+      if (doctorRows.length === 0) return 0;
+      const written = await this.writeRebuiltList(queueKey, doctorRows);
+      for (const locationId of new Set(doctorRows.map(row => row.locationId ?? undefined))) {
+        await this.invalidateQueueReadCaches({ clinicId, domain, doctorId, date: day, locationId });
+      }
+      if (written > 0) {
+        void this.loggingService.log(
+          LogType.APPOINTMENT,
+          LogLevel.WARN,
+          'Live queue list rebuilt from the database at check-in (cache entries were missing)',
+          'AppointmentQueueService',
+          { clinicId, date: day, doctorId, rebuiltEntries: written }
+        );
+      }
+      return written;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        `Live queue refill at check-in failed: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentQueueService',
+        { clinicId, date: day, doctorId }
+      );
+      return 0;
+    }
+  }
+
+  /** Writes the rebuilt entries into an EMPTY list; the caller holds the list's queue lock. */
+  private async writeRebuiltList(
+    queueKey: string,
+    doctorRows: readonly LiveQueueRebuildRow[]
+  ): Promise<number> {
+    if ((await this.cacheService.lLen(queueKey)) > 0) return 0;
+    const entries = doctorRows.map(row =>
+      JSON.stringify(
+        toRebuiltEntry(row, type =>
+          this.resolveDisplayLabel(AppointmentQueueCategory.DOCTOR_CONSULTATION, type)
+        )
+      )
+    );
+    if (entries.length === 0) return 0;
+    const length = await this.cacheService.rPush(queueKey, ...entries);
+    if (length < entries.length) {
+      throw new Error(`Queue rebuild write failed: ${queueKey}`);
+    }
+    await this.cacheService.expire(queueKey, this.LIVE_QUEUE_LIST_TTL);
+    await this.trackLiveQueueList(queueKey);
+    return entries.length;
   }
 
   private normalizeQueueLabel(value?: string): string {
@@ -121,13 +652,24 @@ export class AppointmentQueueService {
       .join(' ');
   }
 
+  /**
+   * Read caches are written with `cacheService.set`, which stores the VERSIONED key
+   * (`<key>:v1`), and `cacheService.del(key)` versions the key again. So an exact key is deleted
+   * as given (keys() on the unversioned name matched nothing, which left the doctor / desk
+   * queue views stale for the whole 1 h TTL), and a wildcard match from keys() is stripped of
+   * its version suffix before del().
+   */
   private async deleteCacheKeys(patterns: string[]): Promise<void> {
     const keysToDelete = new Set<string>();
 
     for (const pattern of patterns) {
+      if (!pattern.includes('*')) {
+        keysToDelete.add(pattern);
+        continue;
+      }
       const keys = await this.cacheService.keys(pattern);
       for (const key of keys) {
-        keysToDelete.add(key);
+        keysToDelete.add(key.replace(/:v\d+$/u, ''));
       }
     }
 
@@ -136,8 +678,53 @@ export class AppointmentQueueService {
     }
   }
 
+  /**
+   * `appointment.consultation_started` for a visit started straight in the database by the queue
+   * routes (call-next / status IN_PROGRESS). The queue job that follows runs in the worker and only
+   * reshuffles the live list, so without this the start reached no socket and no listener.
+   */
+  async emitConsultationStarted(params: {
+    appointmentId: string;
+    clinicId: string;
+    doctorId: string;
+    startedAt: Date;
+    actorUserId?: string;
+    source: string;
+  }): Promise<void> {
+    const startedAt = params.startedAt.toISOString();
+    try {
+      await this.emitAppointmentQueueEvent('appointment.consultation_started', {
+        eventId: `appointment-consultation-started-${params.appointmentId}-${params.startedAt.getTime()}`,
+        priority: EventPriority.HIGH,
+        appointmentId: params.appointmentId,
+        payload: {
+          id: params.appointmentId,
+          appointmentId: params.appointmentId,
+          clinicId: params.clinicId,
+          doctorId: params.doctorId,
+          status: 'IN_PROGRESS',
+          startedAt,
+          updatedAt: startedAt,
+          ...(params.actorUserId ? { userId: params.actorUserId } : {}),
+          source: params.source,
+        },
+      });
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.WARN,
+        `Failed to emit consultation started event: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentQueueService',
+        { appointmentId: params.appointmentId, clinicId: params.clinicId }
+      );
+    }
+  }
+
   private async emitAppointmentQueueEvent(
-    eventType: 'appointment.queue.updated' | 'appointment.queue.position.updated',
+    eventType:
+      | 'appointment.queue.updated'
+      | 'appointment.queue.position.updated'
+      | 'appointment.consultation_started',
     params: {
       eventId: string;
       priority?: EventPriority;
@@ -146,6 +733,12 @@ export class AppointmentQueueService {
     }
   ): Promise<void> {
     if (!this.typedEventService) {
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.WARN,
+        `emitAppointmentQueueEvent(${eventType}) skipped: no typedEventService (eventService present=${!!this.eventService})`,
+        'AppointmentQueueService'
+      );
       return;
     }
 
@@ -162,11 +755,30 @@ export class AppointmentQueueService {
     } as EnterpriseEventPayload);
   }
 
-  private async rewriteQueueList(queueKey: string, entries: string[]): Promise<void> {
-    await this.cacheService.del(queueKey);
-    for (const entry of entries) {
-      await this.cacheService.rPush(queueKey, entry);
+  /**
+   * Replace the snapshot the caller read (the first `readLength` items of the raw live list) with
+   * `entries`. The list is a raw (unversioned) key: `cacheService.del()` versions keys
+   * (`<key>:v1`), so it never removed the list and every rewrite appended a full copy (the list
+   * doubled on each call-next / start / priority / reorder). New items are appended first and the
+   * old snapshot is trimmed off the head afterwards, so a check-in rPush that lands meanwhile
+   * (check-in does not take the queue lock) is kept instead of being wiped by a delete.
+   */
+  private async rewriteQueueList(
+    queueKey: string,
+    entries: string[],
+    readLength: number
+  ): Promise<void> {
+    if (entries.length > 0) {
+      const length = await this.cacheService.rPush(queueKey, ...entries);
+      if (length < entries.length) {
+        throw new Error(`Queue write failed, please retry: ${queueKey}`);
+      }
     }
+    if (readLength > 0) {
+      await this.cacheService.lTrim(queueKey, readLength, -1);
+    }
+    await this.cacheService.expire(queueKey, this.LIVE_QUEUE_LIST_TTL);
+    if (entries.length > 0) await this.trackLiveQueueList(queueKey);
   }
 
   /**
@@ -180,9 +792,14 @@ export class AppointmentQueueService {
    */
   private async withQueueLock<T>(queueKey: string, fn: () => Promise<T>): Promise<T> {
     const lockKey = `lock:${queueKey}`;
-    const acquired = await this.cacheService.acquireLock(lockKey, 10);
+    // L2: a lock held for a few ms by a concurrent rewrite is waited for (short retries with
+    // jitter, ~300 ms in total) before the caller gets a retryable 409.
+    const acquired = await acquireWithRetry(
+      () => this.cacheService.acquireLock(lockKey, 10),
+      QUEUE_LOCK_RETRY
+    );
     if (!acquired) {
-      throw new Error(`Queue is busy, please retry: ${queueKey}`);
+      throw new ConflictException(`Queue is busy, please retry: ${queueKey}`);
     }
     try {
       return await fn();
@@ -211,25 +828,30 @@ export class AppointmentQueueService {
           `queue:doctor:${params.clinicId}:${params.doctorId}:${normalizedDate}:${params.domain}:${params.locationId}`
         );
       }
-      patterns.push(
-        `queue:status:${params.domain}:${params.clinicId}:${params.doctorId}:${normalizedDate}`
-      );
+      // `queue:status:...` is the doctor's PAUSE flag (pauseQueue / resumeQueue), not a read
+      // cache: it must survive check-ins and status changes, so it is not invalidated here.
     }
 
+    // Exact keys only (no keyspace SCAN on every check-in / status change): the position is
+    // cached per (clinic, appointment, domain) and the legacy check-in key, both listed here.
     if (params.appointmentId) {
       patterns.push(`queue:position:${params.clinicId}:${params.appointmentId}:${params.domain}`);
       patterns.push(`queue:position:${params.appointmentId}:${params.clinicId}`);
-      patterns.push(`queue:position:${params.clinicId}:${params.appointmentId}:*`);
     }
 
     if (params.locationId) {
       patterns.push(
         `queue:stats:location:${params.clinicId}:${params.locationId}:${params.domain}`
       );
-      patterns.push(`queue:metrics:${params.clinicId}:${params.locationId}:${params.domain}:*`);
     }
 
     await this.deleteCacheKeys(patterns);
+    if (params.locationId) {
+      // Every period of the location's metrics, through its tag set (see getQueueMetrics).
+      await this.cacheService.invalidateCacheByTag(
+        queueMetricsTag(params.clinicId, params.locationId, params.domain)
+      );
+    }
   }
 
   async enqueueOperationalItem(
@@ -279,10 +901,7 @@ export class AppointmentQueueService {
       // Only consultation-lane entries get a token (they are in-person arrivals).
       const tokenNumber =
         queueData.queueCategory === String(AppointmentQueueCategory.DOCTOR_CONSULTATION)
-          ? await this.nextTokenNumber(
-              `queue:token:${queueData.clinicId}:${queueData.queueOwnerId}:${this.getQueueDate()}`,
-              existingEntries
-            )
+          ? await this.operationalTokenNumber(queueData)
           : undefined;
 
       const queueEntry: QueueEntryData = {
@@ -317,6 +936,9 @@ export class AppointmentQueueService {
       };
 
       await this.cacheService.rPush(queueKey, JSON.stringify(queueEntry));
+      // Every per-day list expires (the medicine-desk list had no TTL and stayed forever).
+      await this.cacheService.expire(queueKey, this.LIVE_QUEUE_LIST_TTL);
+      await this.trackLiveQueueList(queueKey);
       await this.invalidateQueueReadCaches({
         clinicId: queueData.clinicId,
         domain,
@@ -371,17 +993,15 @@ export class AppointmentQueueService {
     domain: string,
     date?: string
   ): Promise<QueueEntryData[]> {
+    await this.ensureLiveQueueHydrated(clinicId, domain, date);
     const queueKey = this.buildQueueKey(domain, clinicId, queueOwnerId, date);
     const entries = await this.cacheService.lRange(queueKey, 0, -1);
-    const parsedEntries = entries.map(entry => JSON.parse(entry) as QueueEntryData);
+    const parsedEntries = dedupeQueueEntries(
+      entries.map(entry => JSON.parse(entry) as QueueEntryData)
+    );
 
-    // Sort by priority (desc) then by check-in time (asc)
-    const sortedEntries = parsedEntries.sort((a, b) => {
-      const pA = a.priority ?? 0;
-      const pB = b.priority ?? 0;
-      if (pA !== pB) return pB - pA;
-      return new Date(a.checkedInAt || 0).getTime() - new Date(b.checkedInAt || 0).getTime();
-    });
+    // Priority (desc), then token at the same location, then check-in time
+    const sortedEntries = [...parsedEntries].sort(compareLiveQueueEntries);
 
     return sortedEntries.map((entry, index) => ({
       ...entry,
@@ -391,8 +1011,8 @@ export class AppointmentQueueService {
 
   async getClinicQueue(clinicId: string, date: string, domain: string): Promise<QueueEntryData[]> {
     const normalizedDate = this.getQueueDate(date);
-    const queuePattern = `queue:${domain}:${clinicId}:*:${normalizedDate}`;
-    const queueKeys = await this.cacheService.keys(queuePattern);
+    await this.ensureLiveQueueHydrated(clinicId, domain, normalizedDate);
+    const queueKeys = await this.listDayQueueKeys(clinicId, domain, normalizedDate);
     const clinicEntries: QueueEntryData[] = [];
 
     for (const queueKey of queueKeys) {
@@ -414,17 +1034,9 @@ export class AppointmentQueueService {
       });
     }
 
-    clinicEntries.sort((left, right) => {
-      const leftPriority = left.priority || 0;
-      const rightPriority = right.priority || 0;
-      if (leftPriority !== rightPriority) return rightPriority - leftPriority;
+    const ordered = [...clinicEntries].sort(compareLiveQueueEntries);
 
-      const leftCheckedIn = new Date(left.checkedInAt || 0).getTime();
-      const rightCheckedIn = new Date(right.checkedInAt || 0).getTime();
-      return leftCheckedIn - rightCheckedIn;
-    });
-
-    return clinicEntries.map((entry, index) => ({
+    return dedupeQueueEntries(ordered).map((entry, index) => ({
       ...entry,
       position: index + 1,
     }));
@@ -448,10 +1060,7 @@ export class AppointmentQueueService {
       return { success: false, message: 'Queue item not found' };
     }
 
-    await this.cacheService.del(queueKey);
-    for (const entry of remainingEntries) {
-      await this.cacheService.rPush(queueKey, entry);
-    }
+    await this.rewriteQueueList(queueKey, remainingEntries, entries.length);
 
     const queueCategory =
       remainingEntries.length > 0
@@ -491,6 +1100,7 @@ export class AppointmentQueueService {
     const nextQueueCategory = this.mapTargetQueueToCategory(normalizedTargetQueue);
     const nextType = this.resolveQueueEntryType(nextQueueCategory, treatmentType);
     const today = this.getQueueDate();
+    await this.ensureLiveQueueHydrated(clinicId, domain, today);
 
     const searchPatterns = [
       `queue:${domain}:${clinicId}:*:${today}`,
@@ -544,10 +1154,7 @@ export class AppointmentQueueService {
 
       if (!updated) continue;
 
-      await this.cacheService.del(queueKey);
-      for (const entry of nextEntries) {
-        await this.cacheService.rPush(queueKey, entry);
-      }
+      await this.rewriteQueueList(queueKey, nextEntries, entries.length);
 
       await this.invalidateQueueReadCaches({
         clinicId,
@@ -617,6 +1224,23 @@ export class AppointmentQueueService {
       notes?: string;
       locationId?: string;
       priority?: string | number;
+      priorityLabel?: string;
+      priorityReason?: string;
+      /** Location token prefix ("K", "B"): the stored display token is `${prefix}-nnn`. */
+      tokenPrefix?: string;
+      /** Walk-in tag (same series and ordering as booked patients; priority stays a flag). */
+      isWalkIn?: boolean;
+      /**
+       * Token allocated in the check-in transaction (stored on the appointment). Omitted: the
+       * stored token is read / allocated from the database here (never a second number).
+       */
+      tokenNumber?: number;
+      tokenLabel?: string;
+      /**
+       * Arrival recorded on the appointment. A re-queue (undo no-show, queue repair) keeps the
+       * original arrival, so the patient goes back to their place, not to the back (M4).
+       */
+      checkedInAt?: string;
     },
     domain: string
   ): Promise<OperationResponse> {
@@ -627,60 +1251,101 @@ export class AppointmentQueueService {
     const cacheKey = `queue:${domain}:${clinicId}:${doctorId}:${date}`;
 
     try {
-      // Check if already in queue
-      const existingEntries = await this.cacheService.lRange(cacheKey, 0, -1);
-      const exists = existingEntries.some(entry => {
-        const data = JSON.parse(entry) as QueueEntryData;
-        return data.appointmentId === appointmentId;
-      });
+      // The existing-entry check and the push below are a read-modify-write on the same list a
+      // double-tap, a QR double-scan, or a retried request can race: both calls read the list
+      // before either has pushed, both see `exists=false`, and both push — the same patient ends
+      // up as two separate queue entries. Serialized with the same per-doctor-list lock every
+      // other read-modify-write on this cache key already uses (see withQueueLock).
+      //
+      // A list lost with the cache is rebuilt BEFORE the lock is taken: the clinic-wide rebuild
+      // takes each doctor's queue lock itself (non-reentrant), so running it under this lock made
+      // it skip this very list and the arrival became its only entry (regression of af14d157).
+      await this.ensureLiveQueueHydrated(clinicId, domain, date);
+      const { existingLength } = await this.withQueueLock(cacheKey, async () => {
+        // The hydration above can be skipped (another replica's rebuild still running and its
+        // wait timed out, or this list's lock was busy during that rebuild). Whichever check-in
+        // takes this lock first refills an empty list from the database before adding its own
+        // arrival, so concurrent arrivals after a flush all land in the rebuilt list once.
+        await this.refillEmptyListUnderHeldLock({
+          queueKey: cacheKey,
+          clinicId,
+          doctorId,
+          domain,
+          day: date,
+          excludeAppointmentId: appointmentId,
+        });
+        // Check if already in queue
+        const entries = await this.cacheService.lRange(cacheKey, 0, -1);
+        const alreadyIn = entries.some(entry => {
+          const data = JSON.parse(entry) as QueueEntryData;
+          return data.appointmentId === appointmentId;
+        });
 
-      if (exists) {
-        throw new Error('Appointment arrival is already confirmed');
-      }
+        if (alreadyIn) {
+          throw new Error(ALREADY_CHECKED_IN_MESSAGE);
+        }
 
-      const tokenNumber = await this.nextTokenNumber(
-        `queue:token:${clinicId}:${doctorId}:${date}`,
-        existingEntries
-      );
+        const { tokenNumber, tokenLabel } = await this.resolveCheckInToken({
+          appointmentId,
+          clinicId,
+          doctorId,
+          date,
+          locationId,
+          tokenNumber: checkInData.tokenNumber,
+          tokenLabel: checkInData.tokenLabel,
+          tokenPrefix: checkInData.tokenPrefix,
+        });
 
-      const queueEntry: QueueEntryData = {
-        appointmentId,
-        patientId,
-        doctorId,
-        clinicId,
-        status: 'WAITING',
-        checkedInAt: nowIso(),
-        tokenNumber,
-        priority:
-          typeof checkInData.priority === 'number'
-            ? checkInData.priority
-            : (PRIORITY_WEIGHTS[String(checkInData.priority).toUpperCase()] ?? 0),
-      };
+        const queueEntry: QueueEntryData = {
+          appointmentId,
+          patientId,
+          doctorId,
+          clinicId,
+          status: 'WAITING',
+          checkedInAt: checkInData.checkedInAt || nowIso(),
+          tokenNumber,
+          ...(tokenLabel ? { tokenLabel } : {}),
+          ...(checkInData.isWalkIn ? { isWalkIn: true } : {}),
+          // One scale for every arrival (M3 / B6): NORMAL / MEDIUM (staff DTO default) are 0.
+          priority: queuePriorityWeight(checkInData.priority),
+        };
 
-      if (appointmentType) {
-        queueEntry.type = appointmentType;
-        queueEntry.displayLabel = this.resolveDisplayLabel(
-          AppointmentQueueCategory.DOCTOR_CONSULTATION,
-          appointmentType
-        );
-      }
-      if (!queueEntry.displayLabel) {
-        queueEntry.displayLabel = this.resolveDisplayLabel(
-          AppointmentQueueCategory.DOCTOR_CONSULTATION,
-          appointmentType
-        );
-      }
-      if (notes) queueEntry.notes = notes;
-      if (locationId) queueEntry.locationId = locationId;
+        if (appointmentType) {
+          queueEntry.type = appointmentType;
+          queueEntry.displayLabel = this.resolveDisplayLabel(
+            AppointmentQueueCategory.DOCTOR_CONSULTATION,
+            appointmentType
+          );
+        }
+        if (!queueEntry.displayLabel) {
+          queueEntry.displayLabel = this.resolveDisplayLabel(
+            AppointmentQueueCategory.DOCTOR_CONSULTATION,
+            appointmentType
+          );
+        }
+        if (notes) queueEntry.notes = notes;
+        if (locationId) queueEntry.locationId = locationId;
+        if (checkInData.priorityLabel) queueEntry.priorityLabel = checkInData.priorityLabel;
+        if (checkInData.priorityReason) queueEntry.priorityReason = checkInData.priorityReason;
 
-      await this.cacheService.rPush(cacheKey, JSON.stringify(queueEntry));
-      await this.invalidateQueueReadCaches({
-        clinicId,
-        domain,
-        doctorId,
-        date,
-        appointmentId,
-        locationId,
+        // The cache client answers 0 instead of throwing on a failed write: never report
+        // "Checked in" without a queue entry (the caller maps this to a retryable 503).
+        const pushedLength = await this.cacheService.rPush(cacheKey, JSON.stringify(queueEntry));
+        if (!Number.isInteger(pushedLength) || pushedLength < 1) {
+          throw new Error(`Queue write failed, please retry: ${cacheKey}`);
+        }
+        await this.cacheService.expire(cacheKey, this.LIVE_QUEUE_LIST_TTL);
+        await this.trackLiveQueueList(cacheKey);
+        await this.invalidateQueueReadCaches({
+          clinicId,
+          domain,
+          doctorId,
+          date,
+          appointmentId,
+          locationId,
+        });
+
+        return { existingLength: entries.length };
       });
 
       // Emit WebSocket event
@@ -710,18 +1375,23 @@ export class AppointmentQueueService {
         {
           appointmentId,
           doctorId,
-          queueLength: exists ? existingEntries.length : existingEntries.length + 1,
+          queueLength: existingLength + 1,
         }
       );
 
       return { success: true, message: 'Checked in successfully' };
     } catch (error) {
+      // A repeated scan / double tap of a visit already in the queue is expected, not a fault.
+      const duplicate = error instanceof Error && error.message === ALREADY_CHECKED_IN_MESSAGE;
       void this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Check-in failed: ${error instanceof Error ? error.message : String(error)}`,
+        duplicate ? LogType.APPOINTMENT : LogType.ERROR,
+        duplicate ? LogLevel.WARN : LogLevel.ERROR,
+        `Check-in ${duplicate ? 'skipped' : 'failed'}: ${error instanceof Error ? error.message : String(error)}`,
         'AppointmentQueueService',
-        { appointmentId, error: error instanceof Error ? error.stack : undefined }
+        {
+          appointmentId,
+          ...(duplicate ? {} : { error: error instanceof Error ? error.stack : undefined }),
+        }
       );
       throw error;
     }
@@ -739,6 +1409,9 @@ export class AppointmentQueueService {
     const cacheKey = `queue:doctor:${clinicId}:${doctorId}:${date}:${domain}${locationId ? `:${locationId}` : ''}`;
 
     try {
+      // A lost live list is rebuilt (and the read caches dropped) before any cached view is
+      // served, so an empty view cached while the list was missing never outlives the rebuild.
+      await this.ensureLiveQueueHydrated(clinicId, domain, date);
       // Try to get from cache first
       const cached = await this.cacheService.get<DoctorQueueResponse>(cacheKey);
       if (cached) {
@@ -752,7 +1425,7 @@ export class AppointmentQueueService {
         return cached;
       }
 
-      // Get queue from Redis with clinic isolation
+      // Get queue from Redis with clinic isolation (rebuilt from the database above when lost)
       const queueKey = `queue:${domain}:${clinicId}:${doctorId}:${date}`;
       const queueEntries = await this.cacheService.lRange(queueKey, 0, -1);
 
@@ -765,15 +1438,12 @@ export class AppointmentQueueService {
         });
       }
 
-      const parsedEntries = filteredEntries.map(entry => JSON.parse(entry) as QueueEntryData);
+      const parsedEntries = dedupeQueueEntries(
+        filteredEntries.map(entry => JSON.parse(entry) as QueueEntryData)
+      );
 
-      // Sort by priority (desc) then by check-in time (asc)
-      const sortedEntries = parsedEntries.sort((a, b) => {
-        const pA = a.priority ?? 0;
-        const pB = b.priority ?? 0;
-        if (pA !== pB) return pB - pA;
-        return new Date(a.checkedInAt || 0).getTime() - new Date(b.checkedInAt || 0).getTime();
-      });
+      // Priority (desc), then token at the same location, then check-in time
+      const sortedEntries = [...parsedEntries].sort(compareLiveQueueEntries);
 
       const queue: QueueEntryData[] = sortedEntries.map((entry, index) => {
         return {
@@ -837,6 +1507,7 @@ export class AppointmentQueueService {
     const cacheKey = `queue:position:${clinicId}:${appointmentId}:${domain}`;
 
     try {
+      await this.ensureLiveQueueHydrated(clinicId, domain);
       // Try to get from cache first
       const cached = await this.cacheService.get<PatientQueuePositionResponse>(cacheKey);
       if (cached) {
@@ -950,6 +1621,7 @@ export class AppointmentQueueService {
     try {
       // Find and update appointment in queue
       // Strict isolation: only look in this clinic's queues
+      await this.ensureLiveQueueHydrated(clinicId, domain);
       const pattern = `queue:${domain}:${clinicId}:*`;
       const queueKeys = await this.cacheService.keys(pattern);
 
@@ -970,7 +1642,7 @@ export class AppointmentQueueService {
           entryData.confirmedAt = nowIso();
           const updatedEntries = [...entries];
           updatedEntries[foundIndex] = JSON.stringify(entryData);
-          await this.rewriteQueueList(key, updatedEntries);
+          await this.rewriteQueueList(key, updatedEntries, entries.length);
           return entryData;
         });
 
@@ -1043,6 +1715,7 @@ export class AppointmentQueueService {
 
     try {
       // P1 FIX: Include clinicId in key
+      await this.ensureLiveQueueHydrated(clinicId, domain);
       const queueKey = `queue:${domain}:${clinicId}:${doctorId}:${formatDateKeyInIST(new Date())}`;
       const entryData = await this.withQueueLock(queueKey, async () => {
         const entries = await this.cacheService.lRange(queueKey, 0, -1);
@@ -1064,7 +1737,7 @@ export class AppointmentQueueService {
         );
         const updatedEntries = [...entries];
         updatedEntries[entryIndex] = JSON.stringify(parsedEntryData);
-        await this.rewriteQueueList(queueKey, updatedEntries);
+        await this.rewriteQueueList(queueKey, updatedEntries, entries.length);
         return parsedEntryData;
       });
 
@@ -1164,6 +1837,7 @@ export class AppointmentQueueService {
 
     try {
       const { doctorId, clinicId, date, newOrder } = reorderData;
+      await this.ensureLiveQueueHydrated(clinicId, domain, date);
       // P1 FIX: Include clinicId
       const queueKey = `queue:${domain}:${clinicId}:${doctorId}:${date}`;
 
@@ -1184,7 +1858,8 @@ export class AppointmentQueueService {
         // Clear and repopulate queue
         await this.rewriteQueueList(
           queueKey,
-          reordered.map(entry => entry as string)
+          reordered.map(entry => entry as string),
+          entries.length
         );
         return reordered;
       });
@@ -1293,6 +1968,7 @@ export class AppointmentQueueService {
     const cacheKey = `queue:stats:location:${clinicId}:${locationId}:${domain}`;
 
     try {
+      await this.ensureLiveQueueHydrated(clinicId, domain);
       // Try to get from cache first
       const cached = await this.cacheService.get<LocationQueueStatsResponse>(cacheKey);
       if (cached) {
@@ -1405,7 +2081,12 @@ export class AppointmentQueueService {
       };
 
       // Cache the result (CacheService handles serialization internally)
-      await this.cacheService.set(cacheKey, metrics as unknown as string, this.METRICS_CACHE_TTL);
+      // Registered in a per location / domain tag set, so a check-in drops every period's entry
+      // with SMEMBERS + DEL instead of a keyspace SCAN (invalidateQueueReadCaches).
+      await this.cacheService.set(cacheKey, metrics as unknown as string, {
+        ttl: this.METRICS_CACHE_TTL,
+        tags: [queueMetricsTag(clinicId, locationId, domain)],
+      });
 
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -1443,6 +2124,7 @@ export class AppointmentQueueService {
 
     try {
       // Find the appointment in queue (scoped by clinic)
+      await this.ensureLiveQueueHydrated(clinicId, domain);
       const pattern = `queue:${domain}:${clinicId}:*`;
       const queueKeys = await this.cacheService.keys(pattern);
 
@@ -1514,6 +2196,94 @@ export class AppointmentQueueService {
     }
   }
 
+  /**
+   * Raises (or clears) the priority of a patient who is already in the live queue, in place:
+   * the entry keeps its token and status, only `priority` / `priorityLabel` / `priorityReason`
+   * change. Reads sort by priority (highest first) then check-in time, so the patient moves ahead
+   * of normal-priority waiters on the next read. Returns `updated: false` when the appointment is
+   * not in any queue of the clinic (not checked in yet) - the caller still stores the priority on
+   * the appointment so check-in applies it.
+   */
+  async setEntryPriority(
+    appointmentId: string,
+    change: { priority: number; label: string | null; reason: string | null },
+    clinicId: string,
+    domain: string
+  ): Promise<{ updated: boolean; queueKey?: string }> {
+    await this.ensureLiveQueueHydrated(clinicId, domain);
+    const keys = await this.cacheService.keys(`queue:${domain}:${clinicId}:*`);
+    for (const key of keys) {
+      const entries = await this.cacheService.lRange(key, 0, -1);
+      const hit = entries.some(entry => {
+        try {
+          return (JSON.parse(entry) as QueueEntryData).appointmentId === appointmentId;
+        } catch {
+          return false;
+        }
+      });
+      if (!hit) continue;
+
+      let touched: QueueEntryData | undefined;
+      await this.withQueueLock(key, async () => {
+        const fresh = await this.cacheService.lRange(key, 0, -1);
+        const next = fresh.map(entry => {
+          try {
+            const parsed = JSON.parse(entry) as QueueEntryData;
+            if (parsed.appointmentId !== appointmentId) return entry;
+            parsed.priority = change.priority;
+            if (change.label) {
+              parsed.priorityLabel = change.label;
+            } else {
+              delete parsed.priorityLabel;
+            }
+            if (change.reason) {
+              parsed.priorityReason = change.reason;
+            } else {
+              delete parsed.priorityReason;
+            }
+            touched = parsed;
+            return JSON.stringify(parsed);
+          } catch {
+            return entry;
+          }
+        });
+        await this.rewriteQueueList(key, next, fresh.length);
+      });
+
+      if (touched) {
+        const doctorId = touched.doctorId || touched.queueOwnerId;
+        await this.invalidateQueueReadCaches({
+          clinicId,
+          domain,
+          doctorId,
+          date: key.split(':')[4] || this.getQueueDate(),
+          locationId: touched.locationId,
+          appointmentId,
+        });
+        // Emit WebSocket event — a priority change reorders who staff/doctor see as next, so it
+        // needs the same live push as check-in/call-next/reorder (was previously silent: the
+        // cache updated but connected clients only saw it on their next poll).
+        await this.emitAppointmentQueueEvent('appointment.queue.updated', {
+          eventId: `queue-priority-${appointmentId}-${Date.now()}`,
+          priority: EventPriority.NORMAL,
+          appointmentId,
+          payload: {
+            doctorId,
+            domain,
+            action: 'PRIORITY_CHANGED',
+            appointmentId,
+            clinicId,
+            queueOwnerId: doctorId,
+            locationId: touched.locationId,
+            queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
+          },
+        });
+        return { updated: true, queueKey: key };
+      }
+    }
+    return { updated: false };
+  }
+
   // Helper methods
   private calculateEstimatedWaitTime(position: number, domain: string): number {
     const baseWaitTime = domain === 'healthcare' ? 15 : 10; // minutes
@@ -1562,6 +2332,7 @@ export class AppointmentQueueService {
     const queueKey = `queue:${domain}:${clinicId}:${doctorId}:${date}`;
 
     try {
+      await this.ensureLiveQueueHydrated(clinicId, domain, date);
       const removedEntry = await this.withQueueLock(queueKey, async () => {
         const entries = await this.cacheService.lRange(queueKey, 0, -1);
         const newEntries = entries.filter(entry => {
@@ -1573,7 +2344,7 @@ export class AppointmentQueueService {
           return undefined;
         }
 
-        await this.rewriteQueueList(queueKey, newEntries);
+        await this.rewriteQueueList(queueKey, newEntries, entries.length);
         return entries
           .map(entry => JSON.parse(entry) as QueueEntryData)
           .find(entry => entry.appointmentId === appointmentId);
@@ -1632,6 +2403,7 @@ export class AppointmentQueueService {
     const queueKey = `queue:${domain}:${clinicId}:${doctorId}:${date}`;
 
     try {
+      await this.ensureLiveQueueHydrated(clinicId, domain, date);
       const entryData = await this.withQueueLock(queueKey, async () => {
         const entries = await this.cacheService.lRange(queueKey, 0, -1);
 
@@ -1653,7 +2425,7 @@ export class AppointmentQueueService {
         entries[nextIndex] = JSON.stringify(parsedEntryData);
 
         // Replace list in Redis
-        await this.rewriteQueueList(queueKey, entries);
+        await this.rewriteQueueList(queueKey, entries, entries.length);
         return parsedEntryData;
       });
 

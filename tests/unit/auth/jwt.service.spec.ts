@@ -1,58 +1,46 @@
 /**
  * Unit tests for JwtAuthService
+ *
+ * Built against the current service surface: signAsync/verifyAsync/decode on the
+ * Nest JwtService, cache access through get/set/delete, and the jwt:* cache keys.
  */
 
 import { JwtAuthService } from '@services/auth/core/jwt.service';
-import { LogType, LogLevel } from '@core/types';
-import type { TokenPayload, AuthTokens } from '@core/types';
-import { JwtService } from '@nestjs/jwt';
-import { CacheService } from '@infrastructure/cache/cache.service';
-import { LoggingService } from '@infrastructure/logging/logging.service';
-import { ConfigService } from '@config/config.service';
+import type { TokenPayload } from '@core/types';
 
-jest.mock('@nestjs/jwt');
-jest.mock('@infrastructure/cache/cache.service');
-jest.mock('@infrastructure/logging/logging.service');
-jest.mock('@config/config.service');
+type Deps = ConstructorParameters<typeof JwtAuthService>;
 
-const MockedJwtService = JwtService as jest.MockedClass<typeof JwtService>;
-const MockedCache = CacheService as jest.MockedClass<typeof CacheService>;
-const MockedLogging = LoggingService as jest.MockedClass<typeof LoggingService>;
-const MockedConfig = ConfigService as jest.MockedClass<typeof ConfigService>;
+interface Mocks {
+  jwt: { signAsync: jest.Mock; verifyAsync: jest.Mock; decode: jest.Mock };
+  cache: { get: jest.Mock; set: jest.Mock; delete: jest.Mock };
+  logging: { log: jest.Mock };
+  config: { getEnv: jest.Mock };
+}
 
-function createService() {
-  const mockJwt: Partial<Record<keyof jest.Mocked<JwtService>, jest.Mock>> = {
-    sign: jest.fn().mockResolvedValue('mock-token'),
-    verify: jest.fn(),
+function createService(): { service: JwtAuthService } & Mocks {
+  const jwt = {
+    signAsync: jest.fn().mockResolvedValue('mock-token'),
+    verifyAsync: jest.fn(),
     decode: jest.fn(),
   };
-
-  const mockCache: Record<string, jest.Mock> = {
-    get: jest.fn(),
-    set: jest.fn(),
-    del: jest.fn(),
-    exists: jest.fn(),
-    ttl: jest.fn(),
+  const cache = {
+    get: jest.fn().mockResolvedValue(null),
+    set: jest.fn().mockResolvedValue(undefined),
+    delete: jest.fn().mockResolvedValue(undefined),
   };
-
-  const mockLogging = { log: jest.fn() };
-
-  const mockConfig = {
-    get: jest.fn(),
-    getEnv: jest.fn(),
-    getAppConfig: jest.fn(),
-    isDevelopment: jest.fn().mockReturnValue(false),
-    isProduction: jest.fn().mockReturnValue(true),
+  const logging = { log: jest.fn().mockResolvedValue(undefined) };
+  const config = {
+    getEnv: jest.fn((_key: string, fallback?: unknown) => fallback),
   };
 
   const service = new JwtAuthService(
-    mockJwt as any,
-    mockConfig as any,
-    mockCache as any,
-    mockLogging as any
+    jwt as unknown as Deps[0],
+    config as unknown as Deps[1],
+    cache as unknown as Deps[2],
+    logging as unknown as Deps[3]
   );
 
-  return { service, mockJwt, mockCache, mockLogging, mockConfig };
+  return { service, jwt, cache, logging, config };
 }
 
 describe('JwtAuthService', () => {
@@ -63,148 +51,224 @@ describe('JwtAuthService', () => {
     clinicId: 'clinic-1',
   };
 
-  describe('generateTokens', () => {
-    it('should generate access and refresh tokens', async () => {
-      const { service, mockJwt } = createService();
-      mockJwt.sign.mockResolvedValueOnce('access-token').mockResolvedValueOnce('refresh-token');
+  beforeEach(() => {
+    // The constructor schedules an hourly cleanup interval; keep it off the real clock.
+    jest.useFakeTimers();
+  });
 
-      const result = await (service as any).generateTokens(payload);
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  describe('generateTokens', () => {
+    it('signs an access and a refresh token', async () => {
+      const { service, jwt } = createService();
+      jwt.signAsync.mockResolvedValueOnce('access-token').mockResolvedValueOnce('refresh-token');
+
+      const result = await service.generateTokens({ ...payload, sessionId: 'session-1' });
 
       expect(result.accessToken).toBe('access-token');
       expect(result.refreshToken).toBe('refresh-token');
-      expect(mockJwt.sign).toHaveBeenCalledTimes(2);
+      expect(result.sessionId).toBe('session-1');
+      expect(jwt.signAsync).toHaveBeenCalledTimes(2);
     });
 
-    it('should cache the refresh token', async () => {
-      const { service, mockCache } = createService();
-      mockCache.set.mockResolvedValue(undefined);
+    it('uses the configured expiries, defaulting to 15m / 7d', async () => {
+      const { service, jwt, config } = createService();
 
-      await (service as any).generateTokens(payload);
+      await service.generateTokens(payload);
 
-      expect(mockCache.set).toHaveBeenCalledWith(
-        expect.stringContaining('refresh_token'),
-        'refresh-token',
-        expect.any(Number)
-      );
+      expect(config.getEnv).toHaveBeenCalledWith('JWT_ACCESS_EXPIRES_IN', '15m');
+      expect(config.getEnv).toHaveBeenCalledWith('JWT_REFRESH_EXPIRES_IN', '7d');
+      expect(jwt.signAsync).toHaveBeenCalledWith(payload, { expiresIn: '15m' });
+      expect(jwt.signAsync).toHaveBeenCalledWith(payload, { expiresIn: '7d' });
+    });
+
+    it('turns a numeric expiry into seconds', async () => {
+      const { service, jwt, config } = createService();
+      config.getEnv.mockReturnValue(900);
+
+      await service.generateAccessToken(payload);
+
+      expect(jwt.signAsync).toHaveBeenCalledWith(payload, { expiresIn: '900s' });
+    });
+
+    it('rethrows a signing failure', async () => {
+      const { service, jwt } = createService();
+      jwt.signAsync.mockRejectedValue(new Error('no secret'));
+
+      await expect(service.generateTokens(payload)).rejects.toThrow('no secret');
     });
   });
 
   describe('verifyToken', () => {
-    it('should verify a valid token', async () => {
-      const { service, mockJwt, mockCache } = createService();
-      mockJwt.verify.mockResolvedValue({
-        sub: 'user-123',
-        email: 'test@example.com',
-        role: 'PATIENT',
-        clinicId: 'clinic-1',
-      });
-      mockCache.get.mockResolvedValue(null);
+    it('returns the verified payload', async () => {
+      const { service, jwt } = createService();
+      jwt.verifyAsync.mockResolvedValue(payload);
 
-      const result = await (service as any).verifyToken('valid-token');
-
-      expect(result).not.toBeNull();
-      expect(result?.sub).toBe('user-123');
+      await expect(service.verifyToken('valid-token')).resolves.toEqual(payload);
     });
 
-    it('should return null for a blacklisted token', async () => {
-      const { service, mockCache } = createService();
-      mockCache.get.mockResolvedValue('blacklisted');
+    it('rethrows for an invalid token', async () => {
+      const { service, jwt } = createService();
+      jwt.verifyAsync.mockRejectedValue(new Error('Invalid token'));
 
-      const result = await (service as any).verifyToken('blacklisted-token');
+      await expect(service.verifyToken('invalid-token')).rejects.toThrow('Invalid token');
+    });
+  });
 
-      expect(result).toBeNull();
+  describe('verifyEnhancedToken', () => {
+    it('rejects a blacklisted token', async () => {
+      const { service, jwt, cache } = createService();
+      jwt.decode.mockReturnValue({ ...payload, jti: 'jti-1' });
+      cache.get.mockImplementation(async (key: string) =>
+        key === 'jwt:blacklist:jti-1' ? { reason: 'logout' } : null
+      );
+
+      await expect(service.verifyEnhancedToken('revoked-token')).rejects.toThrow(
+        'Token has been revoked'
+      );
+      expect(jwt.verifyAsync).not.toHaveBeenCalled();
     });
 
-    it('should return null for an invalid token', async () => {
-      const { service, mockJwt, mockCache } = createService();
-      mockJwt.verify.mockRejectedValue(new Error('Invalid token'));
-      mockCache.get.mockResolvedValue(null);
+    it('verifies and caches a valid token', async () => {
+      const { service, jwt, cache } = createService();
+      jwt.decode.mockReturnValue({ ...payload, jti: 'jti-2' });
+      jwt.verifyAsync.mockResolvedValue(payload);
 
-      const result = await (service as any).verifyToken('invalid-token');
+      await expect(service.verifyEnhancedToken('valid-token')).resolves.toEqual(payload);
+      expect(cache.set).toHaveBeenCalledWith(
+        expect.stringMatching(/^jwt:payload:/),
+        payload,
+        expect.any(Number)
+      );
+    });
 
-      expect(result).toBeNull();
+    it('still verifies when the cache is down', async () => {
+      const { service, jwt, cache } = createService();
+      jwt.decode.mockReturnValue({ ...payload, jti: 'jti-3' });
+      jwt.verifyAsync.mockResolvedValue(payload);
+      cache.get.mockRejectedValue(new Error('cache not ready'));
+      cache.set.mockRejectedValue(new Error('cache not ready'));
+
+      await expect(service.verifyEnhancedToken('valid-token')).resolves.toEqual(payload);
     });
   });
 
   describe('decodeToken', () => {
-    it('should decode a token without verification', () => {
-      const { service, mockJwt } = createService();
-      mockJwt.decode.mockReturnValue({
-        sub: 'user-123',
-        email: 'test@example.com',
-      });
+    it('decodes a token without verification', () => {
+      const { service, jwt } = createService();
+      jwt.decode.mockReturnValue({ sub: 'user-123', email: 'test@example.com' });
 
-      const result = (service as any).decodeToken('token');
-
-      expect(result).not.toBeNull();
-      expect(result?.sub).toBe('user-123');
+      expect(service.decodeToken('token')?.sub).toBe('user-123');
     });
 
-    it('should return null for undecodable token', () => {
-      const { service, mockJwt } = createService();
-      mockJwt.decode.mockReturnValue(null);
+    it('returns null for an undecodable token', () => {
+      const { service, jwt } = createService();
+      jwt.decode.mockReturnValue(null);
 
-      const result = (service as any).decodeToken('bad-token');
+      expect(service.decodeToken('bad-token')).toBeNull();
+    });
 
-      expect(result).toBeNull();
+    it('returns null when decode throws', () => {
+      const { service, jwt } = createService();
+      jwt.decode.mockImplementation(() => {
+        throw new Error('malformed');
+      });
+
+      expect(service.decodeToken('bad-token')).toBeNull();
     });
   });
 
   describe('isTokenExpired', () => {
-    it('should return false for a non-expired token', () => {
-      const future = Math.floor(Date.now() / 1000) + 3600;
-      const { service, mockJwt } = createService();
-      mockJwt.decode.mockReturnValue({ exp: future });
+    it('is false for a non-expired token', () => {
+      const { service, jwt } = createService();
+      jwt.decode.mockReturnValue({ exp: Math.floor(Date.now() / 1000) + 3600 });
 
-      const result = (service as any).isTokenExpired('valid-token');
-
-      expect(result).toBe(false);
+      expect(service.isTokenExpired('valid-token')).toBe(false);
     });
 
-    it('should return true for an expired token', () => {
-      const past = Math.floor(Date.now() / 1000) - 3600;
-      const { service, mockJwt } = createService();
-      mockJwt.decode.mockReturnValue({ exp: past });
+    it('is true for an expired token', () => {
+      const { service, jwt } = createService();
+      jwt.decode.mockReturnValue({ exp: Math.floor(Date.now() / 1000) - 3600 });
 
-      const result = (service as any).isTokenExpired('expired-token');
-
-      expect(result).toBe(true);
+      expect(service.isTokenExpired('expired-token')).toBe(true);
     });
 
-    it('should return false for token without expiration', () => {
-      const { service, mockJwt } = createService();
-      mockJwt.decode.mockReturnValue({ sub: 'user-123' });
+    it('treats a token without an expiry as expired (fail closed)', () => {
+      const { service, jwt } = createService();
+      jwt.decode.mockReturnValue({ sub: 'user-123' });
 
-      const result = (service as any).isTokenExpired('no-exp-token');
-
-      expect(result).toBe(false);
+      expect(service.isTokenExpired('no-exp-token')).toBe(true);
     });
   });
 
   describe('blacklistToken', () => {
-    it('should add token to blacklist', async () => {
-      const { service, mockCache } = createService();
-      mockCache.set.mockResolvedValue(undefined);
+    it('stores the jti on the blacklist and drops the cached token', async () => {
+      const { service, jwt, cache } = createService();
+      jwt.decode.mockReturnValue({ ...payload, jti: 'jti-9' });
 
-      await (service as any).blacklistToken('token-to-blacklist', 'user-logout');
+      await service.blacklistToken('token-to-blacklist', 'user-logout');
 
-      expect(mockCache.set).toHaveBeenCalledWith(
-        expect.stringContaining('blacklist'),
-        expect.any(String),
-        expect.any(Number)
+      expect(cache.set).toHaveBeenCalledWith(
+        'jwt:blacklist:jti-9',
+        expect.objectContaining({ reason: 'user-logout' }),
+        24 * 60 * 60
       );
+      expect(cache.delete).toHaveBeenCalledWith(expect.stringMatching(/^jwt:token:/));
+      expect(cache.delete).toHaveBeenCalledWith(expect.stringMatching(/^jwt:payload:/));
+    });
+
+    it('does nothing for a token without a jti', async () => {
+      const { service, jwt, cache } = createService();
+      jwt.decode.mockReturnValue({ ...payload });
+
+      await service.blacklistToken('no-jti-token');
+
+      expect(cache.set).not.toHaveBeenCalled();
+    });
+
+    it('never throws when the cache fails', async () => {
+      const { service, jwt, cache } = createService();
+      jwt.decode.mockReturnValue({ ...payload, jti: 'jti-10' });
+      cache.set.mockRejectedValue(new Error('down'));
+      cache.delete.mockRejectedValue(new Error('down'));
+
+      await expect(service.blacklistToken('token')).resolves.toBeUndefined();
     });
   });
 
   describe('revokeAllUserTokens', () => {
-    it('should revoke all active tokens for a user', async () => {
-      const { service, mockCache } = createService();
-      mockCache.del.mockResolvedValue(1);
-      mockCache.set.mockResolvedValue(undefined);
+    it('blacklists every tracked token and clears the user token list', async () => {
+      const { service, jwt, cache } = createService();
+      cache.get.mockImplementation(async (key: string) =>
+        key === 'jwt:user_tokens:user-123' ? ['token-a', 'token-b'] : null
+      );
+      jwt.decode.mockImplementation((token: string) => ({ ...payload, jti: `jti-${token}` }));
 
-      await (service as any).revokeAllUserTokens('user-123');
+      await service.revokeAllUserTokens('user-123');
 
-      expect(mockCache.del).toHaveBeenCalled();
+      expect(cache.set).toHaveBeenCalledWith(
+        'jwt:blacklist:jti-token-a',
+        expect.objectContaining({ reason: 'Security incident' }),
+        expect.any(Number)
+      );
+      expect(cache.set).toHaveBeenCalledWith(
+        'jwt:blacklist:jti-token-b',
+        expect.any(Object),
+        expect.any(Number)
+      );
+      expect(cache.delete).toHaveBeenCalledWith('jwt:user_tokens:user-123');
+    });
+  });
+
+  describe('getUserActiveTokensCount', () => {
+    it('counts the tracked tokens', async () => {
+      const { service, cache } = createService();
+      cache.get.mockResolvedValue(['a', 'b', 'c']);
+
+      await expect(service.getUserActiveTokensCount('user-123')).resolves.toBe(3);
     });
   });
 });

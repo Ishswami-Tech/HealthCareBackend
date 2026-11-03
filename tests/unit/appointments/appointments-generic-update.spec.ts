@@ -17,6 +17,7 @@ import {
   CLINIC,
   OTHER_CLINIC,
   appointmentRow,
+  fixtureDate,
   paidVideoRow,
   rejection,
 } from './appointments-harness';
@@ -643,7 +644,7 @@ describe('PATCH /appointments/:id/status: the real updateStatus (finding 1)', ()
       expect(harness.checkInPlugin.process).not.toHaveBeenCalled();
     });
 
-    it.each(STAFF)('%s may start it', async role => {
+    it('the doctor may start it', async () => {
       seedCheckedIn();
 
       const result = (await harness.service.startConsultation(
@@ -651,12 +652,34 @@ describe('PATCH /appointments/:id/status: the real updateStatus (finding 1)', ()
         { doctorId: 'doctor-1' },
         'user-x',
         CLINIC,
-        role
+        Role.DOCTOR
       )) as { success: boolean };
 
       expect(result.success).toBe(true);
       expect(harness.checkInPlugin.process).toHaveBeenCalledTimes(1);
     });
+
+    // Product rule: only the doctor starts a consultation. The assistant, the front desk, the
+    // nurse and the clinic admin are refused even though they work at the clinic.
+    it.each([Role.RECEPTIONIST, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.NURSE])(
+      '%s may NOT start it: 403',
+      async role => {
+        seedCheckedIn();
+
+        const error = await rejection(
+          harness.service.startConsultation(
+            'appt-1',
+            { doctorId: 'doctor-1' },
+            'user-x',
+            CLINIC,
+            role
+          )
+        );
+
+        expect(error.getStatus()).toBe(403);
+        expect(harness.checkInPlugin.process).not.toHaveBeenCalled();
+      }
+    );
   });
 
   it('completing through PATCH COMPLETED is still the complete flow (a patient is refused first)', async () => {
@@ -748,26 +771,58 @@ describe('updateStatus step 2 only guards IN_PROGRESS and COMPLETED for in-perso
     expect(result.success).toBe(true);
   });
 
-  it.each([AppointmentStatus.NO_SHOW, AppointmentStatus.EXPIRED])(
-    'staff %s on a SCHEDULED in-person visit works',
-    async status => {
-      const harness = scheduled();
+  it('staff EXPIRED on a SCHEDULED in-person visit works', async () => {
+    const harness = scheduled();
 
-      const result = (await harness.service.updateStatus(
+    const result = (await harness.service.updateStatus(
+      'appt-1',
+      { status: AppointmentStatus.EXPIRED } as never,
+      'user-reception',
+      CLINIC,
+      Role.RECEPTIONIST
+    )) as { success: boolean };
+
+    expect(result.success).toBe(true);
+    expect(harness.db.rows('appointment')[0]?.['status']).toBe('EXPIRED');
+  });
+
+  // B5: a booked patient who never came is a no-show, but only once the slot time has passed.
+  it('staff NO_SHOW on a SCHEDULED visit whose slot is still ahead is 400 (too early)', async () => {
+    const harness = scheduled();
+
+    const error = await rejection(
+      harness.service.updateStatus(
         'appt-1',
-        { status } as never,
+        { status: AppointmentStatus.NO_SHOW } as never,
         'user-reception',
         CLINIC,
         Role.RECEPTIONIST
-      )) as { success: boolean };
+      )
+    );
 
-      // NO_SHOW is not allowed from SCHEDULED by the table; EXPIRED is.
-      expect(result.success).toBe(status === AppointmentStatus.EXPIRED);
-      expect(harness.db.rows('appointment')[0]?.['status']).toBe(
-        status === AppointmentStatus.EXPIRED ? 'EXPIRED' : 'SCHEDULED'
-      );
-    }
-  );
+    expect(error.getStatus()).toBe(400);
+    expect(error.message).toContain('only after its slot time');
+    expect(harness.db.rows('appointment')[0]?.['status']).toBe('SCHEDULED');
+  });
+
+  it('staff NO_SHOW on a SCHEDULED visit after its slot time works (never checked in)', async () => {
+    const harness = buildRealCoreHarness();
+    harness.db.insert(
+      'appointment',
+      appointmentRow({ status: 'SCHEDULED', checkedInAt: null, date: fixtureDate(-1) })
+    );
+
+    const result = (await harness.service.updateStatus(
+      'appt-1',
+      { status: AppointmentStatus.NO_SHOW } as never,
+      'user-reception',
+      CLINIC,
+      Role.RECEPTIONIST
+    )) as { success: boolean };
+
+    expect(result.success).toBe(true);
+    expect(harness.db.rows('appointment')[0]?.['status']).toBe('NO_SHOW');
+  });
 
   it.each([AppointmentStatus.IN_PROGRESS, AppointmentStatus.COMPLETED])(
     '%s on a SCHEDULED in-person visit is still 400 "not confirmed"',

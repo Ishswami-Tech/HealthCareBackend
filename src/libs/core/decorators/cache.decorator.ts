@@ -403,7 +403,31 @@ export const InvalidateAppointmentCache = (
       'clinic:{clinicId}:appointment:*',
       'clinic:{clinicId}:appointments:*',
     ],
-    tags: options.tags ? [...options.tags, 'appointment_data'] : ['appointment_data'],
+    // 'appointments' + 'list': GET /appointments caches under these two tags (see its @Cache on
+    // appointments.controller.ts), which neither this pattern (different key shape — the list
+    // cache key is per caller+clinic+filter-hash, not under clinic:{clinicId}:appointment(s):*)
+    // nor the old tag alone reached — a completion/check-in/cancel left list-driven dashboard
+    // tiles (e.g. a "completed today" count) stale for the cache's full TTL.
+    tags: [...new Set([...(options.tags ?? []), 'appointment_data', 'appointments', 'list'])],
+  });
+};
+
+/**
+ * Hot-path variant of {@link InvalidateAppointmentCache}: TAGS ONLY, no pattern deletes.
+ *
+ * Every pattern delete walks the whole Dragonfly keyspace with SCAN (thousands of keys per
+ * check-in / walk-in under load). Every cached appointment read registers its key in tag sets
+ * (`appointments` scoped to the clinic, `my_appointments`, `appointment:<id>`, ...), so the tag
+ * invalidation (SMEMBERS + DEL per tag set) already reaches them; the `clinic:<id>:appointment(s):*`
+ * globs only matched the same, already tagged entries. Use on frequent writes (check-in, walk-in).
+ */
+export const InvalidateAppointmentCacheByTags = (tags: readonly string[]) => {
+  return InvalidateCache({
+    patterns: [],
+    // 'list': same gap as InvalidateAppointmentCache above — GET /appointments is tagged
+    // 'appointments' AND 'list', and missing the second tag left list-driven dashboard tiles
+    // stale after a check-in/walk-in.
+    tags: [...new Set([...tags, 'appointments', 'list', 'appointment_data'])],
   });
 };
 

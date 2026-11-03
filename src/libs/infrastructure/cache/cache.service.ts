@@ -36,6 +36,16 @@ import { CacheOptionsBuilder } from '@infrastructure/cache/builders/cache-option
 import { CacheProviderFactory } from '@infrastructure/cache/providers/cache-provider.factory';
 import { canClearProtectedPatterns } from '@infrastructure/cache/utils/protected-keys.util';
 import { escapeGlobLiteral } from '@infrastructure/cache/utils/pattern-delete.util';
+import { SingleFlight } from '@infrastructure/cache/utils/single-flight.util';
+import { scopeInvalidationTags } from '@infrastructure/cache/utils/tag-scope.util';
+import {
+  BoundedIdSet,
+  CACHE_INVALIDATION_CHANNEL,
+  buildInvalidationMessage,
+  l1ActionFor,
+  parseInvalidationMessage,
+} from '@infrastructure/cache/utils/cache-invalidation-broadcast.util';
+import { randomUUID } from 'crypto';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 
@@ -60,6 +70,14 @@ import type { LoggerLike } from '@core/types';
  * - Follows SOLID principles
  */
 /** One independent step of a multi-part invalidation (a failure must not stop the others). */
+/** Options object accepted by CacheService.set() (a bare number is the TTL in seconds). */
+interface SetOptions {
+  readonly ttl?: number;
+  readonly tags?: readonly string[];
+  /** See CacheOperationOptions.tagScopeClinicId. */
+  readonly tagScopeClinicId?: string;
+}
+
 interface InvalidationStep {
   readonly label: string;
   readonly run: () => Promise<number>;
@@ -67,12 +85,26 @@ interface InvalidationStep {
 
 @Injectable()
 export class CacheService implements OnModuleInit, OnModuleDestroy {
-  private static readonly CACHE_INVALIDATION_CHANNEL = 'cache:invalidation';
+  private static readonly INVALIDATION_SUBSCRIBE_MAX_ATTEMPTS = 30;
+  private static readonly INVALIDATION_SUBSCRIBE_RETRY_MS = 2000;
+  private static readonly INVALIDATION_SUBSCRIBE_RETRY_MAX_MS = 30000;
+  private static readonly INVALIDATION_SEEN_IDS_MAX = 2000;
+  /** Identifies this process's broadcasts (it ignores its own). */
+  private readonly cacheProcessId = randomUUID();
+  private readonly seenInvalidationIds = new BoundedIdSet(CacheService.INVALIDATION_SEEN_IDS_MAX);
+  private pendingInvalidationPingId: string | null = null;
   private config!: HealthcareCacheConfig;
   private advancedProvider!: IAdvancedCacheProvider;
 
   private enableL1: boolean;
   private l1TTL: number;
+  /** In-process single-flight for cache() misses (see SingleFlight). */
+  private readonly readFlight = new SingleFlight();
+  /** Distributed fill lock lifetime; longer than any sane cache fill. */
+  private static readonly FILL_LOCK_TTL_SECONDS = 5;
+  /** How long a process waits for another process's fill before fetching itself. */
+  private static readonly FILL_WAIT_MS = 1000;
+  private static readonly FILL_POLL_MS = 100;
   private cacheInvalidationSubscribed = false;
 
   constructor(
@@ -145,52 +177,100 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  private async subscribeToCacheInvalidations(): Promise<void> {
+  /**
+   * Cross-process L1 invalidation (see cache-invalidation-broadcast.util). The cache client's
+   * subscribe() silently does nothing while its connection is not ready yet, so the subscription
+   * is confirmed with a self-addressed ping and retried until the ping round-trips. A retry that
+   * leaves a second subscriber is harmless: message ids are deduped.
+   */
+  private async subscribeToCacheInvalidations(attempt = 1): Promise<void> {
     if (this.cacheInvalidationSubscribed || !this.l1CacheService || !this.enableL1) {
       return;
     }
-
     try {
-      await this.subscribe(CacheService.CACHE_INVALIDATION_CHANNEL, message => {
-        try {
-          const payload = JSON.parse(message) as { scope?: string; keys?: string[] };
-          void payload;
-        } catch {
-          // Ignore malformed payloads; the safe fallback is clearing local L1.
-        }
-
-        this.l1CacheService?.clear();
+      await this.subscribe(CACHE_INVALIDATION_CHANNEL, message => {
+        this.handleCacheInvalidationMessage(message);
       });
-
-      this.cacheInvalidationSubscribed = true;
-
-      await this.loggingService.log(
-        LogType.CACHE,
-        LogLevel.INFO,
-        'Subscribed to cache invalidation broadcasts',
-        'CacheService',
-        { channel: CacheService.CACHE_INVALIDATION_CHANNEL }
+      const pingId = randomUUID();
+      this.pendingInvalidationPingId = pingId;
+      await this.publish(
+        CACHE_INVALIDATION_CHANNEL,
+        buildInvalidationMessage(pingId, this.cacheProcessId, 'ping')
       );
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.CACHE,
         LogLevel.WARN,
-        'Failed to subscribe to cache invalidation broadcasts',
+        'Cache invalidation subscribe attempt failed',
         'CacheService',
-        {
-          channel: CacheService.CACHE_INVALIDATION_CHANNEL,
-          error: error instanceof Error ? error.message : String(error),
-        }
+        { attempt, error: error instanceof Error ? error.message : String(error) }
       );
     }
+
+    const retry = setTimeout(
+      () => {
+        if (this.cacheInvalidationSubscribed) return;
+        if (attempt >= CacheService.INVALIDATION_SUBSCRIBE_MAX_ATTEMPTS) {
+          void this.loggingService.log(
+            LogType.CACHE,
+            LogLevel.ERROR,
+            'Cache invalidation broadcasts not confirmed: L1 entries may stay stale until their TTL',
+            'CacheService',
+            { channel: CACHE_INVALIDATION_CHANNEL, attempts: attempt }
+          );
+          return;
+        }
+        void this.subscribeToCacheInvalidations(attempt + 1);
+      },
+      Math.min(
+        CacheService.INVALIDATION_SUBSCRIBE_RETRY_MS * attempt,
+        CacheService.INVALIDATION_SUBSCRIBE_RETRY_MAX_MS
+      )
+    );
+    retry.unref?.();
+  }
+
+  private handleCacheInvalidationMessage(raw: string): void {
+    const action = l1ActionFor(raw, this.cacheProcessId);
+    if (action.kind === 'ignore') return;
+    if (action.kind === 'ping') {
+      if (!this.cacheInvalidationSubscribed && action.id === this.pendingInvalidationPingId) {
+        this.cacheInvalidationSubscribed = true;
+        void this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.INFO,
+          'Subscribed to cache invalidation broadcasts (confirmed)',
+          'CacheService',
+          { channel: CACHE_INVALIDATION_CHANNEL }
+        );
+      }
+      return;
+    }
+    const message = parseInvalidationMessage(raw);
+    if (message && !this.seenInvalidationIds.add(message.id)) return;
+    if (action.kind === 'delete') {
+      for (const key of action.keys) this.l1CacheService?.delete(key);
+      return;
+    }
+    this.l1CacheService?.clear();
   }
 
   private async broadcastCacheInvalidation(
     scope: 'key' | 'keys' | 'pattern' | 'tag' | 'clear',
     value?: string | string[]
   ): Promise<void> {
+    // Key deletes drop the local L1 copy here (tag / pattern / clear callers clear L1 themselves);
+    // the publisher ignores its own message.
+    if (this.enableL1 && this.l1CacheService && (scope === 'key' || scope === 'keys')) {
+      for (const key of typeof value === 'string' ? [value] : (value ?? [])) {
+        this.l1CacheService.delete(key);
+      }
+    }
     try {
-      await this.publish(CacheService.CACHE_INVALIDATION_CHANNEL, JSON.stringify({ scope, value }));
+      await this.publish(
+        CACHE_INVALIDATION_CHANNEL,
+        buildInvalidationMessage(randomUUID(), this.cacheProcessId, scope, value)
+      );
     } catch (error) {
       await this.loggingService.log(
         LogType.CACHE,
@@ -199,7 +279,6 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
         'CacheService',
         {
           scope,
-          value,
           error: error instanceof Error ? error.message : String(error),
         }
       );
@@ -329,6 +408,47 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       return await fetchFn();
     }
 
+    // Stampede protection: concurrent misses for one key in this process share ONE fetch
+    // (forceRefresh callers explicitly want their own fresh read).
+    if (options.forceRefresh) {
+      return this.cacheThroughLayers(key, fetchFn, options);
+    }
+    return this.readFlight.run(key, () => this.cacheThroughLayers(key, fetchFn, options));
+  }
+
+  /**
+   * Cross-process half of the stampede protection. On an L2 miss the first process takes a short
+   * fill lock and rebuilds the key; the others wait up to FILL_WAIT_MS for it to appear and then
+   * read it (or give up and fetch themselves, so a dead lock holder costs latency, never data).
+   * Returns the release function for the lock holder.
+   */
+  private async coordinateFill(key: string): Promise<() => Promise<void>> {
+    const lockKey = `cache:fill:${key}`;
+    const noop = (): Promise<void> => Promise.resolve();
+    let acquired: boolean;
+    try {
+      acquired = await this.acquireLock(lockKey, CacheService.FILL_LOCK_TTL_SECONDS);
+    } catch {
+      return noop; // lock store unavailable: fail open
+    }
+    if (acquired) {
+      return async (): Promise<void> => {
+        await this.releaseLock(lockKey).catch(() => false);
+      };
+    }
+    const deadline = Date.now() + CacheService.FILL_WAIT_MS;
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, CacheService.FILL_POLL_MS));
+      if (await this.cacheRepository.exists(key).catch(() => false)) break;
+    }
+    return noop;
+  }
+
+  private async cacheThroughLayers<T>(
+    key: string,
+    fetchFn: () => Promise<T>,
+    options: CacheOperationOptions
+  ): Promise<T> {
     const startTime = Date.now();
 
     try {
@@ -368,8 +488,14 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Execute cache operation (strategy handles hit/miss, stale data, SWR internally)
-      // This is L2 (distributed cache)
-      const result = await this.cacheRepository.cache(key, fetchFn, options);
+      // This is L2 (distributed cache). On a miss, coordinate with other processes first.
+      const releaseFill = keyExists || options.forceRefresh ? null : await this.coordinateFill(key);
+      let result: T;
+      try {
+        result = await this.cacheRepository.cache(key, fetchFn, options);
+      } finally {
+        await releaseFill?.();
+      }
 
       // Populate L1 after L2 cache operation (if enabled)
       if (this.enableL1 && this.l1CacheService) {
@@ -532,24 +658,18 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   }
 
   async set<T>(key: string, value: T, ttl?: number): Promise<void>;
-  async set<T>(
-    key: string,
-    value: T,
-    ttl?: { ttl?: number; tags?: readonly string[] } | number
-  ): Promise<void>;
-  async set<T>(
-    key: string,
-    value: T,
-    ttl?: { ttl?: number; tags?: readonly string[] } | number
-  ): Promise<void> {
+  async set<T>(key: string, value: T, ttl?: SetOptions | number): Promise<void>;
+  async set<T>(key: string, value: T, ttl?: SetOptions | number): Promise<void> {
     this.ensureConfigInitialized();
     const resolvedTtl = typeof ttl === 'number' ? ttl : ttl?.ttl;
     const resolvedTags = typeof ttl === 'number' ? undefined : ttl?.tags;
+    const tagScopeClinicId = typeof ttl === 'number' ? undefined : ttl?.tagScopeClinicId;
     // Tags are registered in the repository's tag index so that
     // invalidateCacheByTag() reaches entries written via set() as well as cache().
     const options: CacheOperationOptions = {
       ...(resolvedTtl !== undefined ? { ttl: resolvedTtl } : {}),
       ...(resolvedTags && resolvedTags.length > 0 ? { tags: [...resolvedTags] } : {}),
+      ...(tagScopeClinicId ? { tagScopeClinicId } : {}),
     };
 
     // Set in L2 (distributed cache)
@@ -709,7 +829,14 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   async invalidateUserDataCache(userId: string, clinicId?: string): Promise<number> {
     const id = escapeGlobLiteral(userId);
     const clinic = clinicId ? escapeGlobLiteral(clinicId) : '*';
-    const roots = [`user:${id}:*`, `users:one:${id}:*`, `users:one:v5:${id}:*`];
+    const roots = [
+      `user:${id}:*`,
+      `users:one:${id}:*`,
+      `users:one:v5:${id}:*`,
+      `users:one:v6:${id}:*`,
+      `users:one:v7:${id}:*`,
+      `users:one:v8:${id}:*`,
+    ];
     let count = await this.invalidateCacheByTag(`user:${userId}`);
     count += await this.invalidateCacheByTag(`doctor:${userId}`);
     for (const root of roots) {
@@ -726,7 +853,11 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     doctorId?: string,
     clinicId?: string
   ): Promise<number> {
-    const patterns = [this.keyFactory.appointment(escapeGlobLiteral(appointmentId), '*')];
+    // Tag sets are the hot path: every cached appointment read (HTTP lists / detail / upcoming,
+    // the service list `clinic:<id>:appointments:list:*`, the detail `appointment:<id>:detail`) is
+    // registered in the tag sets below, so SMEMBERS + DEL reaches it without a keyspace SCAN.
+    // The glob deletes only remain as the fallback for a write that does not know its clinic.
+    const patterns: string[] = [];
     // Core tags every appointment write tags its cache entries with (see
     // appointments.controller.ts) — invalidating only `appointment:${id}` and
     // `clinic:${id}` left list/detail/upcoming views stale until TTL expiry.
@@ -740,19 +871,15 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     ];
 
     if (clinicId) {
-      patterns.push(this.keyFactory.clinic(escapeGlobLiteral(clinicId), 'appointments:list:*'));
-      patterns.push(this.keyFactory.clinic(escapeGlobLiteral(clinicId), 'appointments:*'));
       tags.push(`clinic:${clinicId}`, 'clinic_appointments');
+    } else {
+      patterns.push(this.keyFactory.appointment(escapeGlobLiteral(appointmentId), '*'));
+      if (patientId) {
+        patterns.push(this.keyFactory.patient(escapeGlobLiteral(patientId), undefined, '*'));
+      }
     }
 
     if (patientId) {
-      patterns.push(
-        this.keyFactory.patient(
-          escapeGlobLiteral(patientId),
-          clinicId ? escapeGlobLiteral(clinicId) : undefined,
-          '*'
-        )
-      );
       // The patient dashboard summary (PatientsService.getDashboardSummary) is tagged
       // `user:${patientId}` and composes appointment data — without this, completing
       // or cancelling an appointment left the dashboard's appointment fields stale
@@ -771,10 +898,23 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       invalidated += await this.invalidateCacheByPattern(pattern);
     }
 
-    for (const tag of tags) {
+    // With a clinic, collection tags (`appointments`, ...) only reach that clinic's lists plus
+    // clinic-less entries instead of every clinic's (tag-scope.util.ts).
+    invalidated += await this.invalidateCollectionTags(tags, clinicId);
+
+    return invalidated;
+  }
+
+  /**
+   * Invalidates `tags`, scoping collection tags (bare words such as `appointments`) to
+   * `clinicId` when one is given. Entity tags (`appointment:<id>`, `user:<id>`) are unchanged;
+   * without a clinic every tag is invalidated globally (previous behaviour).
+   */
+  async invalidateCollectionTags(tags: readonly string[], clinicId?: string): Promise<number> {
+    let invalidated = 0;
+    for (const tag of scopeInvalidationTags(tags, clinicId)) {
       invalidated += await this.invalidateCacheByTag(tag);
     }
-
     return invalidated;
   }
 
@@ -909,6 +1049,22 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     count += await this.invalidateCacheByTag('appointments');
     count += await this.invalidateCacheByTag(`user:${userId}`);
     return count;
+  }
+
+  /**
+   * Cached doctor availability of ONE clinic (keys `healthcare:doctor:<id>:clinic:<clinicId>:
+   * location:...:availability:...`, plus the legacy `availability:<clinicId>:*`). Used when the
+   * clinic's calendar changes (location hours, holidays, leave); other clinics are untouched.
+   */
+  async invalidateClinicAvailabilityCache(clinicId: string): Promise<number> {
+    const id = escapeGlobLiteral(clinicId);
+    if (!id) return 0;
+    const patterns = [`*doctor:*:clinic:${id}:*availability*`, `availability:${id}:*`];
+    let invalidated = 0;
+    for (const pattern of patterns) {
+      invalidated += await this.invalidateCacheByPattern(pattern);
+    }
+    return invalidated;
   }
 
   async invalidateClinicCache(clinicId: string): Promise<number> {

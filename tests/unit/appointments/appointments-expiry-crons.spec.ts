@@ -12,7 +12,7 @@ jest.mock('@services/billing/billing.service', () => ({ BillingService: class Bi
 import { LogLevel } from '@core/types/logging.types';
 import { AppointmentsService } from '@services/appointments/appointments.service';
 import type { Row } from './test-helpers';
-import { CLINIC, appointmentRow, paidVideoRow } from './appointments-harness';
+import { CLINIC, appointmentRow, paidVideoRow, schedulerFor } from './appointments-harness';
 import { buildRealCoreHarness, type RealCoreHarness } from './appointments-real-core-harness';
 
 const LONG_AGO = new Date('2020-01-06T00:00:00.000+05:30');
@@ -227,7 +227,7 @@ describe('AppointmentsService.processPastVideoCallClosures', () => {
       harness.cache.heldLocks.add('lock:cron:appointments:past-video-closure');
       const run = jest.spyOn(harness.service, 'processPastVideoCallClosures');
 
-      await harness.service.handlePastVideoCallClosureCron();
+      await schedulerFor(harness).handlePastVideoCallClosureCron();
 
       expect(run).not.toHaveBeenCalled();
       expect(loggedWarning(harness, 'lock is held')).toBe(true);
@@ -238,7 +238,7 @@ describe('AppointmentsService.processPastVideoCallClosures', () => {
         .spyOn(harness.service, 'processPastVideoCallClosures')
         .mockResolvedValue({ totalChecked: 0, closed: 0, failed: 0, details: [] });
 
-      await harness.service.handlePastVideoCallClosureCron();
+      await schedulerFor(harness).handlePastVideoCallClosureCron();
 
       expect(run).toHaveBeenCalledTimes(1);
       expect(loggedWarning(harness, 'lock is held')).toBe(false);
@@ -458,7 +458,7 @@ describe('AppointmentsService.processExpiredInPersonAppointments', () => {
     harness.cache.heldLocks.add('lock:cron:appointments:in-person-expiry');
     const run = jest.spyOn(harness.service, 'processExpiredInPersonAppointments');
 
-    await harness.service.handleExpiredInPersonAppointmentsCron();
+    await schedulerFor(harness).handleExpiredInPersonAppointmentsCron();
 
     expect(run).not.toHaveBeenCalled();
     expect(loggedWarning(harness, 'lock is held')).toBe(true);

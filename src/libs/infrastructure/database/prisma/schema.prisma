@@ -148,6 +148,9 @@ model Clinic {
   email                        String                              @unique
   app_name                     String                              @unique
   whatsappName                 String? // Short name for WhatsApp templates (max 15 chars)
+  supportPhone                 String? // Clinic-set technical/app support phone, shown on the patient Help page
+  supportEmail                 String? // Clinic-set technical/app support email, shown on the patient Help page
+  abdmHipId                    String? // ABDM Health Information Provider (HIP) id for this clinic
   db_connection_string         String
   databaseName                 String?
   databaseStatus               DatabaseStatus                      @default(CREATING)
@@ -247,6 +250,7 @@ model ClinicLocation {
   timezone           String?             @default("UTC")
   workingHours       Json?
   settings           Json?
+  abdmHfrId          String? // ABDM Health Facility Registry (HFR) id for this location
   appointments       Appointment[]
   doctorClinic       DoctorClinic[]
   clinicAdmins       ClinicAdmin[]
@@ -721,6 +725,7 @@ model Doctor {
   education                    String?
   certifications               String[]                            @default([])
   localizedProfile             Json?
+  abdmHprId                    String? // ABDM Health Professional Registry (HPR) id for this doctor
   createdAt                    DateTime                            @default(now())
   appointments                 Appointment[]
   appointmentTemplates         AppointmentTemplate[]
@@ -1145,6 +1150,7 @@ model FamilyMember {
   deletedAt       DateTime?
   createdByUserId String?
   notes           String?
+  allergies       String?
   patient         Patient       @relation("PatientFamilyMembers", fields: [patientId], references: [id], onDelete: Cascade)
   user            User?         @relation("PrimaryPatientFamilyMembers", fields: [userId], references: [id])
   createdByUser   User?         @relation("FamilyMemberCreatedByUser", fields: [createdByUserId], references: [id])
@@ -1199,6 +1205,13 @@ model Appointment {
   completedAt           DateTime?
   subscriptionId        String?
   isSubscriptionBased   Boolean           @default(false)
+  // ─── In-person queue token (durable) ─────────────────────────────
+  // One series per clinic location per IST visit day (`tokenDay` = the visit day of `date`, so a
+  // 23:45 slot checked in at 00:10 keeps the previous day's series). Allocated atomically from
+  // `location_token_counters` inside the check-in transaction; re-check-in returns the stored token.
+  tokenNumber           Int?
+  tokenLabel            String?
+  tokenDay              DateTime?         @db.Date
 
   // Follow-up relationships
   parentAppointmentId  String?
@@ -1241,24 +1254,41 @@ model Appointment {
   VideoConsultation VideoConsultation[]
   insuranceClaims   InsuranceClaim[]
 
-  // Single-column indexes (existing)
-  @@index([doctorId])
-  @@index([patientId])
+  // Duplicate-token guard (NULL tokens never conflict): one K-001 per location per visit day.
+  @@unique([clinicId, locationId, tokenDay, tokenNumber], map: "Appointment_location_token_day_key")
+  // Single-column indexes. doctorId / patientId / clinicId / parentAppointmentId / seriesId were
+  // dropped (20261021000000): each is the leftmost prefix of a composite below.
+  // SQL-only partial indexes (migration 20261021000000, not expressible here; `db push` drops
+  // them): (checkedInAt) WHERE status IN (CONFIRMED, IN_PROGRESS); (paymentExpiresAt) WHERE
+  // type = VIDEO_CALL AND status = PENDING; (date) WHERE type = VIDEO_CALL AND status =
+  // IN_PROGRESS. Table storage settings (fillfactor 85, autovacuum) are SQL-only too.
   @@index([familyMemberId])
   @@index([locationId])
-  @@index([clinicId])
   @@index([subscriptionId])
-  @@index([parentAppointmentId])
-  @@index([seriesId])
   @@index([isFollowUp])
   @@index([originalAppointmentId])
   // ✅ Composite indexes for common query patterns (10M+ users optimization)
   @@index([doctorId, clinicId, date]) // Doctor's daily schedule queries
   @@index([patientId, status, date]) // Patient's pending/upcoming appointments
   @@index([clinicId, date, status]) // Clinic's daily appointments by status
+  @@index([clinicId, locationId, date, status]) // Reception desk / location day list by status
   @@index([clinicId, isFollowUp, type]) // Clinic's follow-ups by type
   @@index([parentAppointmentId, date]) // Follow-up chains chronologically
   @@index([seriesId, seriesSequence]) // Recurring series order
+}
+
+/// Durable in-person token counter: ONE series per clinic location per IST visit day.
+/// Allocated with `INSERT .. ON CONFLICT DO UPDATE SET "lastValue" = "lastValue" + 1 RETURNING`
+/// inside the check-in transaction (atomic across API replicas, survives cache loss / restarts).
+model LocationTokenCounter {
+  clinicId   String
+  locationId String
+  day        DateTime @db.Date
+  lastValue  Int      @default(0)
+  updatedAt  DateTime @default(now())
+
+  @@id([clinicId, locationId, day])
+  @@map("location_token_counters")
 }
 
 model Therapy {
@@ -1294,6 +1324,16 @@ model Prescription {
   prescriptionNumber String?
   // Last day the prescription may be dispensed (WB8 / B5); null = no expiry.
   validUntil         DateTime?
+  // Assistant-doctor draft workflow (DRAFT -> approved PENDING | RETURNED -> resubmitted DRAFT).
+  draftedByUserId    String?
+  draftedByRole      String?
+  draftSnapshot      Json?
+  submittedAt        DateTime?
+  returnedAt         DateTime?
+  returnedByUserId   String?
+  returnNote         String?
+  approvedAt         DateTime?
+  approvedByUserId   String?
   doctor             Doctor             @relation(fields: [doctorId], references: [id])
   patient            Patient            @relation(fields: [patientId], references: [id])
   location           ClinicLocation?    @relation(fields: [locationId], references: [id])
@@ -1301,6 +1341,11 @@ model Prescription {
 
   @@unique([clinicId, prescriptionNumber])
   @@index([clinicId])
+  // Doctor's paged prescription list / summary: clinic + doctor + date window, newest first.
+  @@index([clinicId, doctorId, date])
+  @@index([clinicId, date]) // Legacy (no page) list: clinic's most recent N, newest first
+  @@index([patientId, date]) // Patient's prescriptions (EHR / pharmacy history) by date
+  @@index([clinicId, status, date]) // Pharmacist / clinic paged list by status, newest first
   @@index([locationId])
   @@index([visitId])
   @@index([appointmentId])
@@ -1580,6 +1625,7 @@ model Payment {
   @@index([status])
   @@index([subscriptionId])
   @@index([invoiceId])
+  @@index([transactionId])
 }
 
 model Subscription {
@@ -1628,6 +1674,9 @@ model BillingPlan {
   appointmentsIncluded    Int?
   isUnlimitedAppointments Boolean         @default(false)
   appointmentTypes        Json?
+  /// Per-clinic, admin-set: whether a subscriber on this plan can book in-person visits for a
+  /// family member (not just themselves). False keeps today's self-only behavior.
+  allowFamilyBooking      Boolean         @default(false)
   createdAt               DateTime        @default(now())
   updatedAt               DateTime        @updatedAt
   subscriptions           Subscription[]
@@ -1681,6 +1730,8 @@ model Invoice {
   @@index([dueDate])
   @@index([patientId, createdAt])
   @@index([clinicId, patientId])
+  @@index([clinicId, createdAt]) // Clinic invoice list / reports by date
+  @@index([appointmentId, clinicId, status]) // Reassignment cascade / reschedule billing-impact checks
 }
 
 // Kind of bill an Invoice represents; drives the patient "Bill History" tab.
@@ -1765,6 +1816,7 @@ model Queue {
   clinicLocationId  String?
 
   @@index([clinicId])
+  @@index([clinicId, clinicLocationId, status]) // Live queue of one location
 }
 
 model Notification {
@@ -2238,7 +2290,10 @@ model prakritiAssessment {
   @@map("prakriti_assessments")
 }
 
-model nadiPariksha {
+// Named NadiParikshaRecord (not `nadiPariksha`): the legacy `NadiPariksha` model above already
+// owns the `prisma.nadiPariksha` client delegate, so a same-named model here was unreachable and
+// every query hit the legacy userId-based table. The table name is unchanged (@@map below).
+model NadiParikshaRecord {
   id             String   @id @default(uuid())
   patientId      String
   clinicId       String?
@@ -3275,6 +3330,9 @@ model CheckInLocation {
   locationId     String?         @unique // Link to ClinicLocation
   locationName   String
   qrCode         String          @unique
+  // Bumped by POST .../qr-code/regenerate; the signed poster QR carries it, so older posters stop working.
+  qrVersion      Int             @default(1)
+  qrRotatedAt    DateTime?
   coordinates    Json
   radius         Float
   isActive       Boolean         @default(true)
@@ -3396,6 +3454,8 @@ enum NotificationStatus {
   PENDING
   SENT
   FAILED
+  /// No channel could carry it (channel disabled / no contact for it); in-app inbox only.
+  SKIPPED
 }
 
 enum DeliveryStatus {
@@ -3405,6 +3465,8 @@ enum DeliveryStatus {
   FAILED
   BOUNCED
   REJECTED
+  /// Never attempted: no eligible channel for the recipient (reason in failureReason).
+  SKIPPED
 }
 
 enum AppointmentType {
@@ -3529,6 +3591,10 @@ enum PrescriptionStatus {
   PARTIAL
   FILLED
   CANCELLED
+  /// Prepared by the assistant doctor, awaiting the doctor's approval. Never reaches the pharmacy.
+  DRAFT
+  /// Sent back by the doctor with a change note; the assistant edits and resubmits (-> DRAFT).
+  RETURNED
 }
 
 enum DatabaseStatus {
@@ -3757,4 +3823,389 @@ model MedicationDoseLog {
   @@unique([medicationId, doseDate, doseIndex])
   @@index([userId, doseDate])
   @@map("medication_dose_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Clinic admin / assistant doctor / round-3 operations.
+// Same convention as patient_visits: plain string FKs (no @relation), enum-like
+// columns are strings validated by the DTOs in src/services/clinic-ops.
+// ---------------------------------------------------------------------------
+
+/// Staff / doctor leave request (and approval trail). kind: LEAVE | HALF_DAY | BREAK.
+/// status: PENDING | APPROVED | DECLINED | CANCELLED.
+model LeaveRequest {
+  id                       String    @id @default(uuid())
+  clinicId                 String
+  locationId               String?
+  userId                   String
+  requesterRole            String
+  kind                     String    @default("LEAVE")
+  startDate                DateTime  @db.Date
+  endDate                  DateTime  @db.Date
+  startTime                String?
+  endTime                  String?
+  reason                   String?
+  status                   String    @default("PENDING")
+  coverUserId              String?
+  decidedById              String?
+  decidedAt                DateTime?
+  decisionNote             String?
+  impactedAppointmentCount Int       @default(0)
+  patientsNotifiedAt       DateTime?
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  @@index([clinicId, status])
+  @@index([clinicId, startDate, endDate])
+  @@index([userId, startDate])
+  @@map("leave_requests")
+}
+
+/// Clinic-wide or per-location holiday / closure / doctor-leave block on the calendar.
+/// kind: HOLIDAY | CLOSURE | DOCTOR_LEAVE.
+model ClinicHoliday {
+  id              String    @id @default(uuid())
+  clinicId        String
+  locationId      String?
+  title           String
+  kind            String    @default("HOLIDAY")
+  startDate       DateTime  @db.Date
+  endDate         DateTime  @db.Date
+  notifyPatients  Boolean   @default(true)
+  notifiedCount   Int       @default(0)
+  messageTemplate String?
+  createdById     String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  @@index([clinicId, startDate, endDate])
+  @@index([clinicId, locationId])
+  @@map("clinic_holidays")
+}
+
+/// Every in-clinic check-in attempt (QR scan, manual desk check-in, walk-in), successful or not.
+/// method: QR | MANUAL | WALK_IN. outcome: SUCCESS | FAILED.
+/// failureReason: EXPIRED_QR | INVALID_QR | WRONG_LOCATION | NOT_BOOKED | TOO_EARLY | TOO_LATE | ALREADY_CHECKED_IN | LOCATION_INACTIVE | LOCATION_REQUIRED | TOO_FAR | OTHER.
+/// resolution: MANUAL_CHECK_IN | CALLED | IGNORED.
+model CheckInAttempt {
+  id             String    @id @default(uuid())
+  clinicId       String
+  locationId     String?
+  appointmentId  String?
+  patientId      String?
+  patientName    String?
+  actorUserId    String?
+  actorRole      String?
+  method         String    @default("QR")
+  outcome        String    @default("SUCCESS")
+  failureReason  String?
+  failureDetail  String?
+  tokenLabel     String?
+  resolution     String?
+  resolvedById   String?
+  resolvedAt     DateTime?
+  resolutionNote String?
+  createdAt      DateTime  @default(now())
+
+  @@index([clinicId, createdAt])
+  @@index([clinicId, outcome, createdAt])
+  @@index([clinicId, locationId, createdAt])
+  @@index([appointmentId])
+  @@map("check_in_attempts")
+}
+
+/// Pending staff invitation. status: PENDING | ACCEPTED | REVOKED | EXPIRED.
+model StaffInvite {
+  id           String    @id @default(uuid())
+  clinicId     String
+  role         String
+  name         String?
+  phone        String?
+  email        String?
+  locationIds  String[]  @default([])
+  tokenHash    String    @unique
+  status       String    @default("PENDING")
+  invitedById  String
+  acceptedById String?
+  expiresAt    DateTime
+  lastSentAt   DateTime?
+  resendCount  Int       @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([clinicId, status])
+  @@map("staff_invites")
+}
+
+/// Medicines handed over from clinic stock by the doctor / assistant / pharmacist without (or
+/// outside) a prescription. status: DISPENSED | REVERSED. Prices live only here (billing side) and
+/// are stripped from every DOCTOR / ASSISTANT_DOCTOR response.
+model DirectDispense {
+  id                String               @id @default(uuid())
+  clinicId          String
+  locationId        String?
+  patientId         String?
+  walkInName        String?
+  walkInPhone       String?
+  prescriptionId    String?
+  dispensedByUserId String
+  dispensedByRole   String
+  note              String?
+  status            String               @default("DISPENSED")
+  undoUntil         DateTime
+  reversedAt        DateTime?
+  reversedByUserId  String?
+  reverseReason     String?
+  invoiceId         String?
+  totalAmount       Float                @default(0)
+  settledAt         DateTime?
+  settledMethod     String?
+  settledById       String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  items             DirectDispenseItem[]
+
+  @@index([clinicId, createdAt])
+  @@index([clinicId, patientId])
+  @@index([dispensedByUserId, createdAt])
+  @@map("direct_dispenses")
+}
+
+model DirectDispenseItem {
+  id               String         @id @default(uuid())
+  directDispenseId String
+  medicineId       String
+  medicineName     String
+  quantity         Int
+  unitPrice        Float          @default(0)
+  lineAmount       Float          @default(0)
+  batchAllocations Json?
+  directDispense   DirectDispense @relation(fields: [directDispenseId], references: [id], onDelete: Cascade)
+
+  @@index([directDispenseId])
+  @@index([medicineId])
+  @@map("direct_dispense_items")
+}
+
+/// Reminder sent (or scheduled) for an unpaid invoice. channel: WHATSAPP | SMS. language: en | mr | hi.
+/// status: SCHEDULED | SENT | FAILED | CANCELLED.
+model InvoiceReminder {
+  id            String    @id @default(uuid())
+  clinicId      String
+  invoiceId     String
+  channel       String    @default("WHATSAPP")
+  language      String    @default("en")
+  message       String?
+  status        String    @default("SENT")
+  scheduledFor  DateTime?
+  sentAt        DateTime?
+  failureReason String?
+  sentById      String
+  createdAt     DateTime  @default(now())
+
+  @@index([clinicId, invoiceId])
+  @@index([status, scheduledFor])
+  @@map("invoice_reminders")
+}
+
+/// Counter hand-over of a prescription to the patient (QR / OTP verified), with an undo window.
+/// method: QR | OTP. status: PENDING_VERIFICATION | HANDED_OVER | UNDONE.
+model DispenseHandover {
+  id             String    @id @default(uuid())
+  clinicId       String
+  prescriptionId String
+  patientId      String?
+  method         String?
+  otpHash        String?
+  otpExpiresAt   DateTime?
+  otpAttempts    Int       @default(0)
+  status         String    @default("PENDING_VERIFICATION")
+  verifiedAt     DateTime?
+  acknowledgedBy String?
+  signature      String?
+  itemChecklist  Json?
+  handedOverById String?
+  handedOverAt   DateTime?
+  undoUntil      DateTime?
+  undoneAt       DateTime?
+  undoneById     String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([clinicId, prescriptionId])
+  @@index([status])
+  @@map("dispense_handovers")
+}
+
+/// Append-only audit trail of operational actions (invoice refunds, priority changes, no-show undo,
+/// staff role changes, QR regeneration, leave decisions ...).
+model ClinicAuditEvent {
+  id          String   @id @default(uuid())
+  clinicId    String
+  entityType  String
+  entityId    String
+  action      String
+  actorUserId String?
+  actorRole   String?
+  detail      Json?
+  createdAt   DateTime @default(now())
+
+  @@index([clinicId, entityType, entityId])
+  @@index([clinicId, createdAt])
+  @@map("clinic_audit_events")
+}
+
+/// Home lab test / package booking by a patient. status: REQUESTED | CONFIRMED | SAMPLE_COLLECTED | COMPLETED | CANCELLED.
+model LabBooking {
+  id          String    @id @default(uuid())
+  clinicId    String
+  patientId   String
+  userId      String
+  packageCode String
+  packageName String
+  tests       Json?
+  addressLine String
+  city        String?
+  zipCode     String?
+  slotDate    DateTime  @db.Date
+  slotWindow  String
+  status      String    @default("REQUESTED")
+  notes       String?
+  cancelledAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([clinicId, status])
+  @@index([patientId, createdAt])
+  @@map("lab_bookings")
+}
+
+/// Patient help-chat thread. status: OPEN | CLOSED.
+model SupportThread {
+  id        String           @id @default(uuid())
+  clinicId  String?
+  userId    String
+  subject   String?
+  status    String           @default("OPEN")
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  messages  SupportMessage[]
+
+  @@index([userId, status])
+  @@map("support_threads")
+}
+
+/// senderType: PATIENT | ASSISTANT | STAFF.
+model SupportMessage {
+  id             String        @id @default(uuid())
+  threadId       String
+  senderType     String
+  senderId       String?
+  body           String
+  quickReply     Boolean       @default(false)
+  /// Quick-reply chip that was tapped: RESCHEDULE | CHECK_IN_HELP | REPORTS | BILLING | PRESCRIPTION | TALK_TO_STAFF.
+  quickReplyType String?
+  createdAt      DateTime      @default(now())
+  thread         SupportThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@index([threadId, createdAt])
+  @@map("support_messages")
+}
+
+/// Investigation (lab / imaging) order raised by the doctor. urgency: ROUTINE | URGENT | STAT.
+/// status: ORDERED | SAMPLE_COLLECTED | RESULT_READY | CANCELLED.
+model InvestigationOrder {
+  id             String   @id @default(uuid())
+  clinicId       String
+  patientId      String
+  doctorId       String
+  visitId        String?
+  appointmentId  String?
+  tests          Json
+  urgency        String   @default("ROUTINE")
+  labDestination String?
+  notes          String?
+  status         String   @default("ORDERED")
+  orderedAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([clinicId, status])
+  @@index([patientId, orderedAt])
+  @@map("investigation_orders")
+}
+
+/// Per-account favourites of a doctor / assistant doctor (quick-Rx medicines, templates, diagnoses,
+/// investigations ...). Replaces the device-local copy so favourites follow the account.
+/// kind: MEDICINE | RX_TEMPLATE | DIAGNOSIS | INVESTIGATION | PATIENT | OTHER.
+model DoctorFavourite {
+  id        String   @id @default(uuid())
+  userId    String
+  clinicId  String?
+  kind      String
+  itemKey   String
+  label     String
+  payload   Json?
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, kind, itemKey])
+  @@index([userId, kind, sortOrder])
+  @@map("doctor_favourites")
+}
+
+/// Dated override of a doctor's OPD windows for one calendar day, on top of the static weekly
+/// Doctor.workingHours. Sessions are the per-day shape the availability engine consumes:
+/// a JSON array of { start: 'HH:MM', end: 'HH:MM' } blocks (e.g. going somewhere / family
+/// matter / illness -> a short window, or [] = closed for the day). At most ONE active
+/// (deletedAt IS NULL) override per doctor+date(+location) exists; the service replaces on
+/// create. `date` is an IST-midnight day key in UTC, compared as YYYY-MM-DD.
+model DoctorDayAvailability {
+  id         String    @id @default(uuid())
+  doctorId   String
+  clinicId   String
+  locationId String?
+  date       DateTime  @db.Date
+  sessions   Json      @default("[]")
+  reason     String?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  @@index([doctorId, date])
+  @@index([clinicId, date])
+  @@map("doctor_day_availability")
+}
+
+/// L3 cascade proposal: when a doctor's OPD windows are removed for a day by a
+/// DoctorDayAvailability override, the not-yet-started visits that fall inside the removed
+/// windows either auto-move to an open same-clinic provider (recorded here as a resolved
+/// APPLIED row, autoEligible = true) or become a PENDING proposal the doctor / clinic-admin
+/// reviews (apply a chosen provider or next-available-day, hold for reception, or discard).
+/// At most one PENDING row per appointment; replacing an override updates it, never piles up.
+/// `date` is the IST-midnight day key in UTC, compared as YYYY-MM-DD (same convention as
+/// doctor_day_availability).
+model DoctorReassignmentProposal {
+  id                      String    @id @default(uuid())
+  clinicId                String
+  doctorId                String
+  appointmentId           String
+  date                    DateTime  @db.Date
+  reason                  String?
+  autoEligible            Boolean   @default(false)
+  suggestedTargetDoctorId String?
+  status                  String    @default("PENDING")
+  notes                   String?
+  appliedBy               String?
+  resolvedAt              DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+  deletedAt               DateTime?
+
+  @@index([clinicId, status])
+  @@index([appointmentId])
+  @@index([doctorId, date])
+  @@map("doctor_reassignment_proposal")
 }

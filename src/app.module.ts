@@ -24,6 +24,7 @@ import { AyurvedaModule } from './services/ayurveda/ayurveda.module';
 import { DietModule } from './services/diet/diet.module';
 import { PharmacyModule } from './services/pharmacy/pharmacy.module';
 import { PharmacyInventoryModule } from './services/pharmacy-inventory/pharmacy-inventory.module';
+import { ClinicOpsModule } from './services/clinic-ops/clinic-ops.module';
 import { IpdModule } from './services/ipd/ipd.module';
 import { EventsModule } from '@infrastructure/events/events.module';
 import { CacheModule } from '@infrastructure/cache/cache.module';
@@ -103,6 +104,7 @@ import { SentryModule } from '@sentry/nestjs/setup';
     PharmacyModule,
     // Pharmacy inventory management module (batch/lot tracking, FEFO, expiry alerts, auto-reorder, inter-clinic transfer)
     PharmacyInventoryModule,
+    ClinicOpsModule,
     // Automation module (merged into CommunicationModule)
     CommunicationModule,
     // IPD module (admission, beds, wards, discharge, nurse station, daily billing)

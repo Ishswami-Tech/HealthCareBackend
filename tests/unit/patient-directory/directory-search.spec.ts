@@ -1,7 +1,11 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  UNNAMED_PATIENT_LABEL,
   classifySearchTerm,
+  directoryDisplayName,
   escapeLike,
+  normalizePhoneDigits,
+  isPharmacySearchAllowed,
   isRealCalendarDate,
 } from '../../../src/services/patient-directory/utils/directory-search.util';
 
@@ -27,7 +31,7 @@ describe('classifySearchTerm', () => {
   });
 
   it('treats a country-code mobile without a plus as a phone, not a register number', () => {
-    expect(classifySearchTerm('919876543210')).toEqual({ kind: 'phone', value: '919876543210' });
+    expect(classifySearchTerm('919876543210')).toEqual({ kind: 'phone', value: '9876543210' });
   });
 
   it('recognises OPD numbers with or without the VM prefix', () => {
@@ -37,7 +41,7 @@ describe('classifySearchTerm', () => {
   });
 
   it('treats a phone number in any format as digits', () => {
-    expect(classifySearchTerm('+91 98765-43210')).toEqual({ kind: 'phone', value: '919876543210' });
+    expect(classifySearchTerm('+91 98765-43210')).toEqual({ kind: 'phone', value: '9876543210' });
     expect(classifySearchTerm('09876543210')).toEqual({ kind: 'phone', value: '9876543210' });
     expect(classifySearchTerm('4321')).toEqual({ kind: 'phone', value: '4321' });
   });
@@ -68,6 +72,34 @@ describe('classifySearchTerm', () => {
   });
 });
 
+describe('phone search matches every stored form of an Indian mobile', () => {
+  it('searches the national number for +91, 91 and 0 prefixes', () => {
+    for (const typed of ['+919000000980', '919000000980', '+91 90000 00980', '09000000980']) {
+      expect(classifySearchTerm(typed)).toEqual({ kind: 'phone', value: '9000000980' });
+    }
+    expect(classifySearchTerm('9000000980')).toEqual({ kind: 'phone', value: '9000000980' });
+  });
+
+  it('keeps partial numbers and non-Indian numbers as typed', () => {
+    expect(normalizePhoneDigits('0980')).toBe('0980');
+    expect(normalizePhoneDigits('447854545454')).toBe('447854545454');
+    // 91 followed by a number that is not a mobile is left alone.
+    expect(normalizePhoneDigits('911234567890')).toBe('911234567890');
+  });
+});
+
+describe('directoryDisplayName', () => {
+  it('uses the full name, else first and last name', () => {
+    expect(directoryDisplayName('PERF Gate Test', 'PERF Gate', 'Test')).toBe('PERF Gate Test');
+    expect(directoryDisplayName(null, 'Asha', 'Patil')).toBe('Asha Patil');
+  });
+
+  it('labels an app sign-up that has no name yet instead of showing a blank row', () => {
+    expect(directoryDisplayName('', '', '')).toBe(UNNAMED_PATIENT_LABEL);
+    expect(directoryDisplayName('   ', null, undefined)).toBe(UNNAMED_PATIENT_LABEL);
+  });
+});
+
 describe('escapeLike', () => {
   it('escapes LIKE wildcards so they match literally', () => {
     const typed = String.raw`50%_off\x`;
@@ -85,5 +117,21 @@ describe('isRealCalendarDate', () => {
     expect(isRealCalendarDate('2026-02-31')).toBe(false);
     expect(isRealCalendarDate('2027-02-29')).toBe(false);
     expect(isRealCalendarDate('2026-13-01')).toBe(false);
+  });
+});
+
+describe('isPharmacySearchAllowed (N4)', () => {
+  it('lets pharmacy staff search by UHID, phone or a name of 3+ letters', () => {
+    expect(isPharmacySearchAllowed(classifySearchTerm('CL0002-000000208'))).toBe(true);
+    expect(isPharmacySearchAllowed(classifySearchTerm('98765 43210'))).toBe(true);
+    expect(isPharmacySearchAllowed(classifySearchTerm('Asha'))).toBe(true);
+    expect(isPharmacySearchAllowed(classifySearchTerm('asha patil'))).toBe(true);
+  });
+
+  it('refuses short names, e-mails, register numbers and an empty search', () => {
+    expect(isPharmacySearchAllowed(classifySearchTerm('as'))).toBe(false);
+    expect(isPharmacySearchAllowed(classifySearchTerm('a@b.in'))).toBe(false);
+    expect(isPharmacySearchAllowed(classifySearchTerm('123456789012345678'))).toBe(false);
+    expect(isPharmacySearchAllowed(null)).toBe(false);
   });
 });

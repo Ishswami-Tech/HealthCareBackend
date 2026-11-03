@@ -1,4 +1,5 @@
-import { Injectable, BadRequestException, Inject, forwardRef } from '@nestjs/common';
+import { hasUsablePassword } from '@services/auth/core/has-password.util';
+import { Injectable, BadRequestException, Inject, forwardRef, HttpStatus } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -13,7 +14,15 @@ import { EmergencyContact } from '@core/types/database.types';
 import { RbacService } from '@core/rbac/rbac.service';
 import { CreateUserDto, UserResponseDto, UpdateUserDto, MedicalDocumentDto } from '@dtos/user.dto';
 import type { BloodGroup, EmergencyContactDto, MaritalStatus } from '@dtos/user.dto';
-import { HealthcareErrorsService } from '@core/errors';
+import { HealthcareErrorsService, HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
+import { isUniqueViolation } from '@services/compliance/utils/db-errors.util';
+import {
+  describePhoneConflict,
+  phoneConflictLookupCandidates,
+  type ExistingPhoneOwner,
+  type PhoneConflict,
+} from '@services/users/phone-conflict.util';
 // Removed ProfileCompletionService import as logic is moved here
 import { PatientsService } from '@services/patients/patients.service';
 import type {
@@ -24,6 +33,7 @@ import type { UserUpdateInput, UserWhereInput } from '@core/types/input.types';
 import type { Doctor, Patient, Receptionist, ClinicAdmin, SuperAdmin, AuditLog } from '@core/types';
 import { AuditInfo } from '@core/types/database.types';
 import { formatISODateInIST, nowIso } from '@utils/date-time.util';
+import { readStaffLocation } from '@utils/staff-location.util';
 import { normalizeAuthPhoneNumber } from '../auth/core/phone-normalizer.util';
 
 export interface ProfileCompletionValidationResult {
@@ -146,8 +156,8 @@ export class UsersService {
     this.authService = authService as UsersAuthServiceLike;
   }
 
-  async findAll(role?: Role, clinicId?: string): Promise<UserResponseDto[]> {
-    const cacheKey = `users:all:${role || 'all'}:${clinicId || 'global'}`;
+  async findAll(role?: Role, clinicId?: string, locationId?: string): Promise<UserResponseDto[]> {
+    const cacheKey = `users:all:${role || 'all'}:${clinicId || 'global'}:${locationId || 'any-location'}`;
 
     return this.cacheService.cache(
       cacheKey,
@@ -170,6 +180,19 @@ export class UsersService {
           // 🔒 TENANT ISOLATION: Filter by clinic when clinicId is provided
           if (clinicId) {
             where['clinics'] = { some: { id: clinicId } };
+          }
+          // Scope doctors to one clinic location (e.g. patient booking at a
+          // specific branch): only doctors with a DoctorClinic row at that
+          // location, not every doctor in the whole multi-branch clinic.
+          if (locationId && (role === Role.DOCTOR || role === Role.ASSISTANT_DOCTOR)) {
+            where['doctor'] = {
+              clinics: {
+                some: {
+                  locationId,
+                  ...(clinicId ? { clinicId } : {}),
+                },
+              },
+            };
           }
           const result = await typedClient.user.findMany({
             where: where as PrismaDelegateArgs,
@@ -240,7 +263,7 @@ export class UsersService {
   }
 
   async findOne(id: string, clinicId?: string): Promise<UserResponseDto> {
-    const cacheKey = `users:one:v5:${id}:${clinicId || 'global'}`;
+    const cacheKey = `users:one:v8:${id}:${clinicId || 'global'}`;
 
     return this.cacheService.cache(
       cacheKey,
@@ -285,11 +308,19 @@ export class UsersService {
             specialization?: string | null;
             experience?: number | null;
             workingHours?: Record<string, unknown> | null;
+            licenseNumber?: string | null;
+            qualification?: string | null;
+            education?: string | null;
+            certifications?: string[] | null;
+            languages?: string[] | null;
+            localizedProfile?: unknown;
+            abdmHprId?: string | null;
           } | null;
         };
         const userResponse: UserResponseDto = {
           id: result.id,
           email: result.email,
+          name: result.name,
           firstName: result.firstName ?? '',
           lastName: result.lastName ?? '',
           role: result.role as Role,
@@ -300,6 +331,12 @@ export class UsersService {
           phone: result.phone ?? '',
           isProfileComplete: result.isProfileComplete ?? false,
           profileComplete: result.isProfileComplete ?? false,
+          hasPassword: hasUsablePassword({
+            password: _password,
+            passwordChangedAt: (result as { passwordChangedAt?: Date | string | null })
+              .passwordChangedAt,
+            role: String(result.role),
+          }),
           ...(typeof result.phoneVerified === 'boolean'
             ? { phoneVerified: result.phoneVerified }
             : {}),
@@ -362,6 +399,17 @@ export class UsersService {
           userResponse.dateOfBirth = this.formatDateToString(result.dateOfBirth);
         }
 
+        // Staff: the allotted clinic location comes from the staff profile (server side), so the
+        // reception desk / queue screens never have to guess or ask the user for it.
+        const staffLocation = await readStaffLocation(
+          this.databaseService,
+          result.id,
+          String(result.role),
+          clinicId ?? (result as { primaryClinicId?: string | null }).primaryClinicId ?? undefined
+        );
+        if (staffLocation.locationId) userResponse.locationId = staffLocation.locationId;
+        userResponse.locationName = staffLocation.locationName;
+
         if (userRecord.doctor) {
           if (userRecord.doctor.specialization) {
             userResponse.specialization = userRecord.doctor.specialization;
@@ -373,6 +421,27 @@ export class UsersService {
             (
               userResponse as UserResponseDto & { availability?: Record<string, unknown> }
             ).availability = userRecord.doctor.workingHours as Record<string, unknown>;
+          }
+          if (userRecord.doctor.licenseNumber) {
+            userResponse.licenseNumber = userRecord.doctor.licenseNumber;
+          }
+          if (userRecord.doctor.qualification) {
+            userResponse.qualification = userRecord.doctor.qualification;
+          }
+          if (userRecord.doctor.education) {
+            userResponse.education = userRecord.doctor.education;
+          }
+          if (userRecord.doctor.certifications?.length) {
+            userResponse.certifications = userRecord.doctor.certifications;
+          }
+          if (userRecord.doctor.languages?.length) {
+            userResponse.languages = userRecord.doctor.languages;
+          }
+          if (userRecord.doctor.localizedProfile) {
+            userResponse.localizedProfile = userRecord.doctor.localizedProfile;
+          }
+          if (userRecord.doctor.abdmHprId) {
+            userResponse.abdmHprId = userRecord.doctor.abdmHprId;
           }
         }
 
@@ -575,6 +644,11 @@ export class UsersService {
         registeredByDoctorId = callerDoctor?.id;
       }
 
+      // One account per mobile number: refuse up front with a 409 the desk can act on (and the
+      // existing patient's id when this clinic may serve them) instead of letting the insert hit
+      // users_phone_key and surface as a 500.
+      await this.assertPhoneAvailable(data.phone, userClinicId);
+
       await this.authService.register(
         {
           email: data.email,
@@ -603,6 +677,17 @@ export class UsersService {
 
       // Get the created user from database using findUserByEmailSafe
       const userRaw = await this.databaseService.findUserByEmailSafe(data.email);
+
+      // AuthService.register only creates a role-specific profile row for PATIENT
+      // (ensurePatientRecordForAuth). Every other role created through this admin path got a
+      // working login with no Doctor/Receptionist/Pharmacist/... row at all - invisible to the
+      // rest of the app (not bookable as a doctor, "allot to location" silently matching zero
+      // rows, etc.). Create it here, once, before building the response below.
+      if (userRaw && targetRole !== Role.PATIENT) {
+        const { resolveClinicUUID } = await import('@utils/clinic.utils');
+        const targetClinicUUID = await resolveClinicUUID(this.databaseService, userClinicId);
+        await this.ensureStaffProfileRecord(userRaw.id, targetClinicUUID, targetRole, data, userId);
+      }
       // If we need relations, use executeHealthcareRead
       const user = userRaw
         ? await this.databaseService.executeHealthcareRead<{
@@ -801,7 +886,322 @@ export class UsersService {
           type: 'createUser_error',
         }
       );
+      // A concurrent registration can still win the race to the unique index: answer 409, not 500.
+      const alreadyClientError = error instanceof HealthcareError && error.getStatus() < 500;
+      // AuthService.register maps the same race to a bare USER_PHONE_ALREADY_EXISTS; enrich it.
+      const barePhoneConflict =
+        error instanceof HealthcareError &&
+        error.code === ErrorCode.USER_PHONE_ALREADY_EXISTS &&
+        !error.metadata?.['reason'];
+      if (barePhoneConflict || (!alreadyClientError && isUniqueViolation(error))) {
+        throw await this.conflictForUniqueViolation(data.phone, data.clinicId || clinicId);
+      }
       throw error;
+    }
+  }
+
+  /** Throws a 409 when the phone number already has an account (any stored format). */
+  private async assertPhoneAvailable(phone: string | undefined, clinicId: string): Promise<void> {
+    const candidates = phoneConflictLookupCandidates(phone);
+    if (candidates.length === 0) return;
+    const clinicUUID = await this.resolveClinicIdForConflict(clinicId);
+    const owner = await this.findPhoneOwner(candidates, clinicUUID);
+    if (owner) {
+      throw this.toConflictError(describePhoneConflict(owner, clinicUUID));
+    }
+  }
+
+  /** The 409 for a unique-index violation seen at insert time (lost a registration race). */
+  private async conflictForUniqueViolation(
+    phone: string | undefined,
+    clinicId: string | undefined
+  ): Promise<HealthcareError> {
+    const candidates = phoneConflictLookupCandidates(phone);
+    if (candidates.length > 0 && clinicId) {
+      try {
+        const clinicUUID = await this.resolveClinicIdForConflict(clinicId);
+        const owner = await this.findPhoneOwner(candidates, clinicUUID);
+        if (owner) return this.toConflictError(describePhoneConflict(owner, clinicUUID));
+      } catch (lookupError) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Phone owner lookup after a unique violation failed',
+          'UsersService',
+          { error: lookupError instanceof Error ? lookupError.message : String(lookupError) }
+        );
+      }
+    }
+    return this.errors.userAlreadyExists(undefined, 'UsersService.createUser');
+  }
+
+  private toConflictError(conflict: PhoneConflict): HealthcareError {
+    return new HealthcareError(
+      conflict.code,
+      conflict.message,
+      HttpStatus.CONFLICT,
+      { ...conflict.metadata },
+      'UsersService.createUser'
+    );
+  }
+
+  private async resolveClinicIdForConflict(clinicId: string): Promise<string> {
+    const { resolveClinicUUID } = await import('@utils/clinic.utils');
+    return resolveClinicUUID(this.databaseService, clinicId);
+  }
+
+  /** Fresh (uncached) lookup of the account holding any stored form of the number. */
+  private async findPhoneOwner(
+    candidates: string[],
+    clinicId: string
+  ): Promise<ExistingPhoneOwner | null> {
+    return this.databaseService.executeHealthcareRead<ExistingPhoneOwner | null>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        user: {
+          findFirst: (args: PrismaDelegateArgs) => Promise<{
+            id: string;
+            role: string;
+            primaryClinicId: string | null;
+            patient: { id: string } | null;
+          } | null>;
+        };
+        appointment: { findFirst: (args: PrismaDelegateArgs) => Promise<{ id: string } | null> };
+        patientIdentifier: {
+          findFirst: (args: PrismaDelegateArgs) => Promise<{ id: string } | null>;
+        };
+      };
+      const user = await typedClient.user.findFirst({
+        where: { phone: { in: candidates } } as PrismaDelegateArgs,
+        select: {
+          id: true,
+          role: true,
+          primaryClinicId: true,
+          patient: { select: { id: true } },
+        } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+      if (!user) return null;
+
+      const patientId = user.patient?.id ?? null;
+      let linkedToClinic = false;
+      if (patientId && user.primaryClinicId !== clinicId) {
+        const [appointment, identifier] = await Promise.all([
+          typedClient.appointment.findFirst({
+            where: { patientId, clinicId } as PrismaDelegateArgs,
+            select: { id: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs),
+          typedClient.patientIdentifier.findFirst({
+            where: { patientId, clinicId } as PrismaDelegateArgs,
+            select: { id: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs),
+        ]);
+        linkedToClinic = Boolean(appointment || identifier);
+      }
+      return {
+        userId: user.id,
+        role: user.role,
+        primaryClinicId: user.primaryClinicId ?? null,
+        patientId,
+        linkedToClinic,
+      };
+    });
+  }
+
+  /** Top-level Prisma delegate name for each "simple" staff profile shape ({userId, clinicId?, locationId?}). */
+  private static readonly SIMPLE_STAFF_DELEGATE: Readonly<Partial<Record<Role, string>>> = {
+    [Role.RECEPTIONIST]: 'receptionist',
+    [Role.PHARMACIST]: 'pharmacist',
+    [Role.NURSE]: 'nurse',
+    [Role.THERAPIST]: 'therapist',
+    [Role.LAB_TECHNICIAN]: 'labTechnician',
+    [Role.FINANCE_BILLING]: 'financeBilling',
+    [Role.SUPPORT_STAFF]: 'supportStaff',
+    [Role.COUNSELOR]: 'counselor',
+  };
+
+  /**
+   * Creates the role-specific profile row a staff account needs to actually function (bookable
+   * as a doctor, matched by "allot to location", etc.) — see the call site in createUser() for
+   * why this exists. Idempotent and fail-soft, same pattern as
+   * AuthService.ensurePatientRecordForAuth: a user account must never fail to create because of
+   * a problem building its (fixable later) staff profile.
+   */
+  private async ensureStaffProfileRecord(
+    userId: string,
+    clinicId: string,
+    role: Role,
+    data: CreateUserDto,
+    createdByUserId?: string
+  ): Promise<void> {
+    try {
+      const simpleDelegate = UsersService.SIMPLE_STAFF_DELEGATE[role];
+      if (simpleDelegate) {
+        await this.databaseService.executeHealthcareWrite(
+          async client => {
+            const delegate = (
+              client as unknown as Record<
+                string,
+                {
+                  findUnique: (args: PrismaDelegateArgs) => Promise<{ id: string } | null>;
+                  create: (args: PrismaDelegateArgs) => Promise<{ id: string }>;
+                }
+              >
+            )[simpleDelegate]!;
+            const existing = await delegate.findUnique({
+              where: { userId } as PrismaDelegateArgs,
+              select: { id: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+            if (existing) return existing;
+            return delegate.create({
+              data: {
+                userId,
+                clinicId,
+                ...(data.locationId ? { locationId: data.locationId } : {}),
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          },
+          {
+            userId,
+            clinicId,
+            resourceType: role,
+            operation: 'CREATE',
+            resourceId: userId,
+            userRole: role,
+            details: { source: 'UsersService.createUser', action: 'ensure_staff_profile' },
+          }
+        );
+        return;
+      }
+
+      if (role === Role.DOCTOR || role === Role.ASSISTANT_DOCTOR) {
+        await this.databaseService.executeHealthcareWrite(
+          async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+            let doctor = await typedClient.doctor.findUnique({
+              where: { userId } as PrismaDelegateArgs,
+              select: { id: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+            if (!doctor) {
+              doctor = await typedClient.doctor.create({
+                data: {
+                  userId,
+                  // Required columns with no safe default: a blank/placeholder value here is
+                  // visible to patients, but creating no Doctor row at all was strictly worse
+                  // (the account couldn't be booked at all). The admin can edit these after.
+                  specialization: data.specialization?.trim() || 'General Medicine',
+                  experience: data.experience ?? 0,
+                } as PrismaDelegateArgs,
+                select: { id: true } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs);
+            }
+            const existingLink = await typedClient.doctorClinic.findFirst({
+              where: { doctorId: doctor.id, clinicId } as PrismaDelegateArgs,
+              select: { doctorId: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+            if (!existingLink) {
+              await typedClient.doctorClinic.create({
+                data: {
+                  doctorId: doctor.id,
+                  clinicId,
+                  ...(data.locationId ? { locationId: data.locationId } : {}),
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs);
+            }
+          },
+          {
+            userId,
+            clinicId,
+            resourceType: role,
+            operation: 'CREATE',
+            resourceId: userId,
+            userRole: role,
+            details: { source: 'UsersService.createUser', action: 'ensure_staff_profile' },
+          }
+        );
+        return;
+      }
+
+      if (role === Role.CLINIC_LOCATION_HEAD) {
+        await this.databaseService.executeHealthcareWrite(
+          async client => {
+            const typedClient = client as unknown as {
+              locationHead: {
+                findFirst: (args: PrismaDelegateArgs) => Promise<{ id: string } | null>;
+                create: (args: PrismaDelegateArgs) => Promise<{ id: string }>;
+              };
+            };
+            const existing = await typedClient.locationHead.findFirst({
+              where: { userId, clinicId } as PrismaDelegateArgs,
+              select: { id: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+            if (existing) return existing;
+            return typedClient.locationHead.create({
+              data: {
+                userId,
+                clinicId,
+                ...(data.locationId ? { locationId: data.locationId } : {}),
+                assignedBy: createdByUserId || 'SYSTEM',
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          },
+          {
+            userId,
+            clinicId,
+            resourceType: role,
+            operation: 'CREATE',
+            resourceId: userId,
+            userRole: role,
+            details: { source: 'UsersService.createUser', action: 'ensure_staff_profile' },
+          }
+        );
+        return;
+      }
+
+      if (role === Role.CLINIC_ADMIN) {
+        await this.databaseService.executeHealthcareWrite(
+          async client => {
+            const typedClient = client as unknown as {
+              clinicAdmin: {
+                findUnique: (args: PrismaDelegateArgs) => Promise<{ id: string } | null>;
+                create: (args: PrismaDelegateArgs) => Promise<{ id: string }>;
+              };
+            };
+            const existing = await typedClient.clinicAdmin.findUnique({
+              where: { userId } as PrismaDelegateArgs,
+              select: { id: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+            if (existing) return existing;
+            return typedClient.clinicAdmin.create({
+              data: {
+                userId,
+                clinicId,
+                ...(data.locationId ? { locationId: data.locationId } : {}),
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          },
+          {
+            userId,
+            clinicId,
+            resourceType: role,
+            operation: 'CREATE',
+            resourceId: userId,
+            userRole: role,
+            details: { source: 'UsersService.createUser', action: 'ensure_staff_profile' },
+          }
+        );
+      }
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Failed to ensure staff profile record for role ${role}`,
+        'UsersService.ensureStaffProfileRecord',
+        {
+          userId,
+          clinicId,
+          role,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
     }
   }
 
@@ -1439,8 +1839,8 @@ export class UsersService {
   }
 
   // Role-specific methods
-  async getDoctors(clinicId?: string): Promise<UserResponseDto[]> {
-    return this.findAll(Role.DOCTOR, clinicId);
+  async getDoctors(clinicId?: string, locationId?: string): Promise<UserResponseDto[]> {
+    return this.findAll(Role.DOCTOR, clinicId, locationId);
   }
 
   async getPatients(clinicId?: string): Promise<UserResponseDto[]> {
@@ -1761,6 +2161,11 @@ export class UsersService {
     limit = 20,
     offset = 0
   ): Promise<{ data: UserResponseDto[]; total: number }> {
+    // Query-string values arrive as text; Prisma needs integers for take/skip.
+    const parsedLimit = Math.trunc(Number(limit));
+    const parsedOffset = Math.trunc(Number(offset));
+    const take = Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 100) : 20;
+    const skip = Number.isFinite(parsedOffset) && parsedOffset > 0 ? parsedOffset : 0;
     // RBAC check usually happens at controller, but good to have clinic scope here
     const where: Record<string, unknown> = {};
 
@@ -1849,7 +2254,7 @@ export class UsersService {
     }
 
     // Execute with caching
-    const cacheKey = `users:search:${clinicId || 'all'}:${query}:${roles?.join(',') || 'all'}:${limit}:${offset}`;
+    const cacheKey = `users:search:${clinicId || 'all'}:${query}:${roles?.join(',') || 'all'}:${take}:${skip}`;
 
     return this.cacheService.cache(
       cacheKey,
@@ -1859,8 +2264,8 @@ export class UsersService {
             const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
             return await typedClient.user.findMany({
               where: where as UserWhereInput,
-              take: limit,
-              skip: offset,
+              take,
+              skip,
               orderBy: { createdAt: 'desc' },
             } as PrismaDelegateArgs);
           }),
@@ -2015,6 +2420,7 @@ export class UsersService {
   private async invalidateUserProfileCaches(userId: string, clinicId?: string): Promise<void> {
     await Promise.all([
       this.cacheService.invalidateCache(`users:one:v5:${userId}:global`),
+      this.cacheService.invalidateCache(`users:one:v7:${userId}:global`),
       this.cacheService.invalidateCache(`users:one:${userId}`),
       this.cacheService.invalidateUserDataCache(userId, clinicId),
       this.cacheService.invalidateDoctorCache(userId, clinicId),

@@ -79,6 +79,12 @@ export interface CommunicationRequest {
   respectPreferences?: boolean;
   /** Whether to apply rate limiting */
   applyRateLimit?: boolean;
+  /**
+   * Deliver in-app (socket) plus only the FIRST reachable out-of-app channel of `channels`
+   * (in that order, after preferences) instead of every channel: one message per milestone,
+   * not the same text by push, email and WhatsApp.
+   */
+  singleExternalChannel?: boolean;
   /** Initiator user ID (for auditing) */
   initiatorId?: string;
   /** Initiator role (for auditing) */

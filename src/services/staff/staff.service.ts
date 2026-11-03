@@ -3,6 +3,37 @@ import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
 import { PrismaDelegateArgs, PrismaTransactionClientWithDelegates } from '@core/types/prisma.types';
 
+/**
+ * Safe `User` fields for a staff profile read. Never `password` or any other auth/device field
+ * (googleId/facebookId/appleId, lastLoginIP, lastLoginDevice, ...) — this previously used a raw
+ * Prisma `include`, which returns every scalar column including the bcrypt password hash to any
+ * RECEPTIONIST/NURSE/CLINIC_ADMIN/SUPER_ADMIN caller of GET /staff/:id. Same vulnerability class
+ * already fixed on /doctors/:id (see doctor-response.util.ts's DOCTOR_PROFILE_USER_SELECT) — this
+ * endpoint wasn't covered by that fix.
+ */
+const STAFF_PROFILE_USER_SELECT = {
+  id: true,
+  userid: true,
+  firstName: true,
+  lastName: true,
+  name: true,
+  email: true,
+  phone: true,
+  phoneVerified: true,
+  profilePicture: true,
+  role: true,
+  gender: true,
+  isVerified: true,
+  isActive: true,
+  isProfileComplete: true,
+  primaryClinicId: true,
+  createdAt: true,
+  updatedAt: true,
+  receptionists: true,
+  clinicAdmins: true,
+  nurse: true,
+} as const;
+
 @Injectable()
 export class StaffService {
   constructor(
@@ -145,22 +176,31 @@ export class StaffService {
   async getStaffProfile(userId: string, clinicId?: string) {
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-        user: { findUnique: (args: PrismaDelegateArgs) => Promise<unknown> };
+        user: {
+          findUnique: (args: PrismaDelegateArgs) => Promise<unknown>;
+          findFirst: (args: PrismaDelegateArgs) => Promise<unknown>;
+        };
       };
 
-      // 🔒 TENANT ISOLATION: Build where clause with clinic scoping
-      const where: Record<string, unknown> = { id: userId };
-      if (clinicId) {
-        where['clinics'] = { some: { id: clinicId } };
+      if (!clinicId) {
+        return await typedClient.user.findUnique({
+          where: { id: userId } as PrismaDelegateArgs,
+          select: STAFF_PROFILE_USER_SELECT as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
       }
 
-      return await typedClient.user.findUnique({
-        where: where as PrismaDelegateArgs,
-        include: {
-          receptionists: true,
-          clinicAdmins: true,
-          nurse: true,
+      // 🔒 TENANT ISOLATION, with a fallback: a user is scoped to a clinic either through the
+      // `clinics` many-to-many relation, or (for every staff account created via
+      // UsersService.createUser, which only ever sets the scalar primaryClinicId and never adds
+      // a _UserClinics row) through primaryClinicId. Without the fallback, a brand-new staff
+      // member's profile looked up scoped to their own clinic returned null, and the UI showed
+      // their real, correctly-saved location allotment as "Not allotted".
+      return await typedClient.user.findFirst({
+        where: {
+          id: userId,
+          OR: [{ clinics: { some: { id: clinicId } } }, { primaryClinicId: clinicId }],
         } as PrismaDelegateArgs,
+        select: STAFF_PROFILE_USER_SELECT as PrismaDelegateArgs,
       } as PrismaDelegateArgs);
     });
   }

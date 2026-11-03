@@ -41,6 +41,15 @@ const createService = () => {
     exists: jest.fn(),
     ttl: jest.fn(),
     increment: jest.fn(),
+    // Raw pipeline used for the lockout / wrong-code counters: no lockout key (ttl -2), first
+    // failure counts 1, everything else acknowledges.
+    multi: jest.fn(async (commands: Array<{ command: string }>) =>
+      commands.map(({ command }) => {
+        if (command === 'ttl') return [null, -2];
+        if (command === 'incr') return [null, 1];
+        return [null, 'OK'];
+      })
+    ),
   };
   mockedCache.mockImplementation(() => mockCache as unknown as CacheService);
 
@@ -51,11 +60,14 @@ const createService = () => {
 
   const mockEmail = {
     sendEmail: jest.fn().mockResolvedValue({ success: true }),
+    isEnabled: jest.fn().mockReturnValue(true),
   };
   mockedEmail.mockImplementation(() => mockEmail as unknown as EmailService);
 
   const mockWhatsApp = {
     sendMessage: jest.fn().mockResolvedValue({ success: true }),
+    sendOTP: jest.fn().mockResolvedValue(true),
+    isEnabled: jest.fn().mockReturnValue(true),
   };
   mockedWhatsApp.mockImplementation(() => mockWhatsApp as unknown as WhatsAppService);
 
@@ -151,25 +163,97 @@ describe('OtpService', () => {
     });
   });
 
-  describe('sendOtpSms', () => {
-    it('should send OTP via SMS', async () => {
+  describe('sendOtpPhone', () => {
+    it('should send OTP via WhatsApp', async () => {
       mockCache.get.mockResolvedValue(null);
       mockCache.set.mockResolvedValue(undefined);
       mockCache.exists.mockResolvedValue(false);
 
       const result = await (
         service as unknown as {
-          sendOtpSms: (phone: string, purpose?: string, clinicId?: string) => Promise<OtpResult>;
+          sendOtpPhone: (phone: string, purpose?: string, clinicId?: string) => Promise<OtpResult>;
         }
-      ).sendOtpSms('+919876543210', 'verification');
+      ).sendOtpPhone('+919876543210', 'verification');
 
       expect(result.success).toBe(true);
+      expect(mockCache.set).toHaveBeenCalled();
+    });
+
+    it('logs delivery as scheduled via WhatsApp when the channel is enabled', async () => {
+      mockCache.get.mockResolvedValue(null);
+      mockCache.set.mockResolvedValue(undefined);
+      (mockWhatsApp.isEnabled as jest.Mock).mockReturnValue(true);
+
+      await (
+        service as unknown as {
+          sendOtpPhone: (phone: string, purpose?: string) => Promise<OtpResult>;
+        }
+      ).sendOtpPhone('+919000000992', 'login');
+
+      const logging = (service as unknown as Record<string, unknown>)['loggingService'] as {
+        log: jest.Mock;
+      };
+      const messages = logging.log.mock.calls.map(call => String(call[2]));
+      expect(messages.some(m => m.startsWith('OTP delivery scheduled via WhatsApp'))).toBe(true);
+      expect(messages.some(m => m.startsWith('OTP not delivered'))).toBe(false);
+    });
+  });
+
+  describe('disabled channel providers', () => {
+    const logMessages = (): string[] => {
+      const logging = (service as unknown as Record<string, unknown>)['loggingService'] as {
+        log: jest.Mock;
+      };
+      return logging.log.mock.calls.map(call => String(call[2]));
+    };
+    const flush = async (): Promise<void> => {
+      await new Promise(resolve => setImmediate(resolve));
+    };
+
+    beforeEach(() => {
+      mockCache.get.mockResolvedValue(null);
+      mockCache.set.mockResolvedValue(undefined);
+      mockCache.exists.mockResolvedValue(false);
+    });
+
+    it('WhatsApp disabled: the OTP is issued (login still works) but not reported as sent', async () => {
+      (mockWhatsApp.isEnabled as jest.Mock).mockReturnValue(false);
+      const result = await (
+        service as unknown as {
+          sendOtpPhone: (phone: string, purpose?: string) => Promise<OtpResult>;
+        }
+      ).sendOtpPhone('+919000000991', 'login');
+      await flush();
+
+      expect(result.success).toBe(true);
+      expect(mockCache.set).toHaveBeenCalled();
+      expect(mockWhatsApp.sendOTP).not.toHaveBeenCalled();
+      const messages = logMessages();
+      expect(messages.some(m => m.startsWith('OTP not delivered: WhatsApp disabled'))).toBe(true);
+      expect(messages.some(m => m.includes('OTP sent via WhatsApp'))).toBe(false);
+      expect(messages.some(m => m.includes('OTP delivery scheduled'))).toBe(false);
+    });
+
+    it('email disabled: the OTP is issued but no email send is attempted or claimed', async () => {
+      (mockEmail.isEnabled as jest.Mock).mockReturnValue(false);
+      const result = await (
+        service as unknown as {
+          sendOtpEmail: (email: string, name: string, purpose?: string) => Promise<OtpResult>;
+        }
+      ).sendOtpEmail('qa-991@example.test', 'QA', 'login');
+
+      expect(result.success).toBe(true);
+      expect(mockEmail.sendEmail).not.toHaveBeenCalled();
+      const messages = logMessages();
+      expect(messages.some(m => m.startsWith('OTP not delivered: Email disabled'))).toBe(true);
+      expect(messages.some(m => m.startsWith('Email OTP sent directly'))).toBe(false);
     });
   });
 
   describe('verifyOtp', () => {
     it('should verify correct OTP', async () => {
-      mockCache.get.mockResolvedValueOnce(null).mockResolvedValueOnce('123456');
+      // Reads the pending code first, then the just-verified replay entry.
+      mockCache.get.mockResolvedValueOnce('123456').mockResolvedValueOnce(null);
       mockCache.exists.mockResolvedValue(true);
 
       const result = await (

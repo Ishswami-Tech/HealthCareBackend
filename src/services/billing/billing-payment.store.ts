@@ -15,6 +15,10 @@ import type {
   FinalisationMarker,
   JsonRecord,
 } from '@services/billing/billing-payment-finalisation.util';
+import {
+  openAttemptsToClose,
+  planInvoicePaymentAttempt,
+} from '@services/billing/invoice-payment-attempt.util';
 
 export interface PaymentRow {
   id: string;
@@ -55,6 +59,8 @@ interface PaymentDelegate {
     orderBy?: { updatedAt?: 'asc' | 'desc'; createdAt?: 'asc' | 'desc' };
   }) => Promise<PaymentRow[]>;
   updateMany: (args: { where: WhereInput; data: WhereInput }) => Promise<UpdateManyResult>;
+  create: (args: { data: WhereInput }) => Promise<PaymentRow>;
+  update: (args: { where: { id: string }; data: WhereInput }) => Promise<PaymentRow>;
 }
 
 interface InvoiceDelegate {
@@ -66,11 +72,31 @@ interface AppointmentDelegate {
   updateMany: (args: { where: WhereInput; data: WhereInput }) => Promise<UpdateManyResult>;
 }
 
+interface SubscriptionDelegate {
+  updateMany: (args: { where: WhereInput; data: WhereInput }) => Promise<UpdateManyResult>;
+}
+
 type StoreClient = {
   payment: PaymentDelegate;
   invoice: InvoiceDelegate;
   appointment: AppointmentDelegate;
+  subscription: SubscriptionDelegate;
 };
+
+type TransactionStoreClient = StoreClient & {
+  $executeRaw: (query: TemplateStringsArray, ...values: Array<string | number>) => Promise<number>;
+};
+
+export interface InvoiceAttemptOutcome {
+  payment: PaymentRow;
+  /** True when an open row for the same gateway order was reused instead of inserting one. */
+  reused: boolean;
+  /** Open rows closed as superseded by this attempt. */
+  supersededIds: string[];
+}
+
+/** Status given to an open payment attempt that can no longer be paid usefully. */
+const CLOSED_ATTEMPT_STATUS = 'CANCELLED';
 
 export type MetadataMutationResult = 'written' | 'unchanged' | 'conflict' | 'missing';
 
@@ -134,8 +160,10 @@ export class BillingPaymentStore {
     );
   }
 
-  /** COMPLETED payments last touched inside [since, until] - candidates for a stalled finalisation. */
-  /** Booking payments still PENDING after `olderThan` but started after `newerThan`, oldest first. */
+  /**
+   * Booking and invoice payments still PENDING after `olderThan` but started after `newerThan`,
+   * oldest first.
+   */
   async listStalePending(args: {
     olderThan: Date;
     newerThan: Date;
@@ -146,7 +174,7 @@ export class BillingPaymentStore {
         (client as unknown as StoreClient).payment.findMany({
           where: {
             status: 'PENDING',
-            appointmentId: { not: null },
+            OR: [{ appointmentId: { not: null } }, { invoiceId: { not: null } }],
             createdAt: { gte: args.newerThan, lte: args.olderThan },
           },
           take: args.limit,
@@ -156,6 +184,16 @@ export class BillingPaymentStore {
     );
   }
 
+  /** Fresh read of every payment recorded against a subscription (any of its invoices). */
+  async listSubscriptionPayments(subscriptionId: string, clinicId: string): Promise<PaymentRow[]> {
+    return this.database.executeHealthcareWrite(
+      async client =>
+        (client as unknown as StoreClient).payment.findMany({ where: { subscriptionId } }),
+      this.audit(clinicId, 'PAYMENT', subscriptionId, 'READ_SUBSCRIPTION_PAYMENTS', {}, true)
+    );
+  }
+
+  /** COMPLETED payments last touched inside [since, until] - candidates for a stalled finalisation. */
   async listRecentCompleted(args: {
     since: Date;
     until: Date;
@@ -182,6 +220,213 @@ export class BillingPaymentStore {
         true
       )
     );
+  }
+
+  /**
+   * Records one payment attempt for an invoice, serialised per invoice by a transaction-scoped
+   * advisory lock so a double click can never insert two open rows. The open row for the same
+   * gateway order is reused (refreshed with `refresh`); every other open row is closed as
+   * superseded; only when no open row matches is a new row inserted from `create`.
+   */
+  async recordInvoiceAttempt(args: {
+    invoiceId: string;
+    orderId: string;
+    create: WhereInput;
+    refresh: WhereInput;
+    supersededMetadata: (current: JsonRecord) => JsonRecord;
+    preserveMetadataKeys?: readonly string[];
+    /** Provider of this attempt: an open row of the same order id at another provider is not reused. */
+    provider?: string;
+  }): Promise<InvoiceAttemptOutcome> {
+    return this.database.executeInTransaction(async client => {
+      const tx = client as unknown as TransactionStoreClient;
+      const lockKey = `invoice-payment-attempt:${args.invoiceId}`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+
+      const rows = await tx.payment.findMany({ where: { invoiceId: args.invoiceId } });
+      const plan = planInvoicePaymentAttempt(rows, args.orderId, args.provider);
+      const supersededIds: string[] = [];
+      for (const id of plan.supersedeIds) {
+        const row = rows.find(candidate => candidate.id === id);
+        const closed = await tx.payment.updateMany({
+          where: { id, status: 'PENDING' },
+          data: {
+            status: CLOSED_ATTEMPT_STATUS,
+            metadata: args.supersededMetadata(asJsonRecord(row?.metadata) ?? {}),
+          },
+        });
+        if (closed.count === 1) {
+          supersededIds.push(id);
+        }
+      }
+
+      if (plan.reuseId) {
+        const current = rows.find(candidate => candidate.id === plan.reuseId);
+        const currentMetadata = asJsonRecord(current?.metadata) ?? {};
+        const refreshMetadata = asJsonRecord(args.refresh['metadata']) ?? {};
+        // Keys the reused row keeps (e.g. its payment window: the provider order is the same one,
+        // so its expiry does not move when the patient presses Pay again).
+        const kept = Object.fromEntries(
+          (args.preserveMetadataKeys ?? [])
+            .filter(key => currentMetadata[key] !== undefined)
+            .map(key => [key, currentMetadata[key]])
+        );
+        const payment = await tx.payment.update({
+          where: { id: plan.reuseId },
+          data: {
+            ...args.refresh,
+            metadata: { ...currentMetadata, ...refreshMetadata, ...kept },
+          },
+        });
+        return { payment, reused: true, supersededIds };
+      }
+
+      const payment = await tx.payment.create({ data: { ...args.create, status: 'PENDING' } });
+      return { payment, reused: false, supersededIds };
+    });
+  }
+
+  /**
+   * After `settledPaymentId` paid the invoice, closes every other open attempt of that invoice.
+   * Each row is a compare-and-set on PENDING, so a row a concurrent callback is settling is never
+   * overwritten. Returns the ids actually closed.
+   */
+  async closeOpenInvoiceAttempts(args: {
+    invoiceId: string;
+    clinicId: string;
+    settledPaymentId: string;
+    closedMetadata: (current: JsonRecord) => JsonRecord;
+  }): Promise<string[]> {
+    const rows = await this.listInvoicePayments(args.invoiceId, args.clinicId);
+    const closed: string[] = [];
+    for (const id of openAttemptsToClose(rows, args.settledPaymentId)) {
+      const row = rows.find(candidate => candidate.id === id);
+      const result = await this.database.executeHealthcareWrite(
+        async client =>
+          (client as unknown as StoreClient).payment.updateMany({
+            where: { id, status: 'PENDING' },
+            data: {
+              status: CLOSED_ATTEMPT_STATUS,
+              metadata: args.closedMetadata(asJsonRecord(row?.metadata) ?? {}),
+            },
+          }),
+        this.audit(args.clinicId, 'PAYMENT', id, 'UPDATE', {
+          reason: 'Open payment attempt closed: invoice settled by another payment',
+          settledByPaymentId: args.settledPaymentId,
+        })
+      );
+      if (result.count === 1) {
+        closed.push(id);
+      }
+    }
+    return closed;
+  }
+
+  /**
+   * Invoice / plan payments (no booking: those follow the booking's own window) still PENDING and
+   * opened before `openedBefore`, oldest first: candidates for the payment-window sweep (the
+   * caller checks each row's own window end).
+   */
+  async listOpenCheckoutAttempts(args: {
+    openedBefore: Date;
+    limit: number;
+  }): Promise<PaymentRow[]> {
+    return this.database.executeHealthcareWrite(
+      async client =>
+        (client as unknown as StoreClient).payment.findMany({
+          where: {
+            status: 'PENDING',
+            appointmentId: null,
+            OR: [{ invoiceId: { not: null } }, { subscriptionId: { not: null } }],
+            createdAt: { lte: args.openedBefore },
+          },
+          take: args.limit,
+          orderBy: { createdAt: 'asc' },
+        }),
+      this.audit('SYSTEM', 'PAYMENT', 'sweep', 'READ_PAYMENT_WINDOW_CANDIDATES', {}, true)
+    );
+  }
+
+  /** PENDING -> EXPIRED, only while still PENDING (a payment completing meanwhile wins). */
+  async expireOpenAttempt(args: { payment: PaymentRow; metadata: JsonRecord }): Promise<boolean> {
+    const result = await this.database.executeHealthcareWrite(
+      async client =>
+        (client as unknown as StoreClient).payment.updateMany({
+          where: { id: args.payment.id, status: 'PENDING' },
+          data: { status: 'EXPIRED', metadata: args.metadata },
+        }),
+      this.audit(args.payment.clinicId, 'PAYMENT', args.payment.id, 'UPDATE', {
+        reason: 'Payment window expired',
+      })
+    );
+    return result.count === 1;
+  }
+
+  /** PENDING -> VOID, only while still PENDING (an invoice paid meanwhile is never voided). */
+  async voidPendingInvoice(args: {
+    invoice: InvoiceRow;
+    clinicId: string;
+    metadata: JsonRecord;
+    /** Audit reason; defaults to the checkout payment-window sweep. */
+    reason?: string;
+  }): Promise<boolean> {
+    const result = await this.database.executeHealthcareWrite(
+      async client =>
+        (client as unknown as StoreClient).invoice.updateMany({
+          where: { id: args.invoice.id, status: 'PENDING' },
+          data: { status: 'VOID', metadata: args.metadata },
+        }),
+      this.audit(args.clinicId, 'INVOICE', args.invoice.id, 'UPDATE', {
+        reason: args.reason ?? 'Checkout payment window expired',
+      })
+    );
+    return result.count === 1;
+  }
+
+  /**
+   * Stamps the desk-collection marker on a still-PENDING invoice (a staff member takes a plan
+   * invoice over for cash / UPI at the desk), so the online payment window no longer voids it.
+   * Guarded on PENDING: an invoice paid or voided meanwhile is left alone.
+   */
+  async markInvoiceDeskCollected(args: {
+    invoice: InvoiceRow;
+    clinicId: string;
+    metadata: JsonRecord;
+    actorUserId?: string;
+  }): Promise<boolean> {
+    const result = await this.database.executeHealthcareWrite(
+      async client =>
+        (client as unknown as StoreClient).invoice.updateMany({
+          where: { id: args.invoice.id, status: 'PENDING' },
+          data: { metadata: args.metadata },
+        }),
+      this.audit(args.clinicId, 'INVOICE', args.invoice.id, 'UPDATE', {
+        reason: 'Plan invoice taken over for desk collection',
+        ...(args.actorUserId ? { actorUserId: args.actorUserId } : {}),
+      })
+    );
+    return result.count === 1;
+  }
+
+  /**
+   * INCOMPLETE -> INCOMPLETE_EXPIRED: a plan purchase that was waiting for its first payment.
+   * Any other status (ACTIVE, PAST_DUE, ...) is left alone, so a paid plan is never touched.
+   */
+  async expireIncompleteSubscription(args: {
+    subscriptionId: string;
+    clinicId: string;
+  }): Promise<boolean> {
+    const result = await this.database.executeHealthcareWrite(
+      async client =>
+        (client as unknown as StoreClient).subscription.updateMany({
+          where: { id: args.subscriptionId, status: 'INCOMPLETE' },
+          data: { status: 'INCOMPLETE_EXPIRED' },
+        }),
+      this.audit(args.clinicId, 'SUBSCRIPTION', args.subscriptionId, 'UPDATE', {
+        reason: 'Plan purchase payment window expired',
+      })
+    );
+    return result.count === 1;
   }
 
   /**
@@ -269,6 +514,47 @@ export class BillingPaymentStore {
       }
     }
     return 'conflict';
+  }
+
+  /**
+   * Records a gateway-confirmed late payment on a released (EXPIRED / CANCELLED) payment row:
+   * status COMPLETED + the verified transaction id + `mutate(current metadata)`. Compare-and-set
+   * on the released status and `updatedAt`, so a row that moved on in between is never touched.
+   * Returns the status the row had when it was recorded, or null when nothing was written.
+   */
+  async recordLateSettlement(args: {
+    paymentId: string;
+    clinicId: string;
+    releasedStatuses: readonly string[];
+    completedStatus: string;
+    transactionId?: string | undefined;
+    mutate: (current: JsonRecord, releasedStatus: string) => JsonRecord;
+  }): Promise<string | null> {
+    for (let attempt = 0; attempt < METADATA_CAS_ATTEMPTS; attempt += 1) {
+      const row = await this.readPayment(args.paymentId, args.clinicId);
+      const status = String(row?.status ?? '').toUpperCase();
+      if (!row || !args.releasedStatuses.includes(status)) {
+        return null;
+      }
+      const result = await this.database.executeHealthcareWrite(
+        async client =>
+          (client as unknown as StoreClient).payment.updateMany({
+            where: { id: args.paymentId, status: row.status, updatedAt: row.updatedAt },
+            data: {
+              status: args.completedStatus,
+              ...(args.transactionId ? { transactionId: args.transactionId } : {}),
+              metadata: args.mutate(asJsonRecord(row.metadata) ?? {}, status),
+            },
+          }),
+        this.audit(args.clinicId, 'PAYMENT', args.paymentId, 'UPDATE', {
+          reason: 'Late settlement recorded (gateway-confirmed payment after release)',
+        })
+      );
+      if (result.count === 1) {
+        return status;
+      }
+    }
+    return null;
   }
 
   /** Stamps `sideEffectsAppliedAt` LAST, and only while the caller still owns the claim. */

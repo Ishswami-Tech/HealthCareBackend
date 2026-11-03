@@ -11,11 +11,31 @@ function normalizeDateInput(dateInput: DateInput): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+/**
+ * Formatters are cached per option set: constructing an Intl.DateTimeFormat is expensive (it was
+ * ~66% of the CPU of GET /in-person/desk for 400 visits, M6) while formatting with one is cheap.
+ * The option sets used are a handful of literals, so the cache stays tiny (bounded anyway).
+ */
+const FORMATTER_CACHE = new Map<string, Intl.DateTimeFormat>();
+const FORMATTER_CACHE_MAX = 200;
+
+function formatterKey(options: Intl.DateTimeFormatOptions): string {
+  return Object.keys(options)
+    .sort()
+    .map(key => `${key}=${String(options[key as keyof Intl.DateTimeFormatOptions])}`)
+    .join('|');
+}
+
 function buildFormatter(options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
-  return new Intl.DateTimeFormat('en-IN', {
+  const key = formatterKey(options);
+  const cached = FORMATTER_CACHE.get(key);
+  if (cached) return cached;
+  const formatter = new Intl.DateTimeFormat('en-IN', {
     timeZone: IST_TIMEZONE,
     ...options,
   });
+  if (FORMATTER_CACHE.size < FORMATTER_CACHE_MAX) FORMATTER_CACHE.set(key, formatter);
+  return formatter;
 }
 
 export function formatDateTimeInIST(

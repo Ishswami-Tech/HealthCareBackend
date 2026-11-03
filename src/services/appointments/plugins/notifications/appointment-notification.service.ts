@@ -19,9 +19,16 @@ import {
   type SocketEventPrimitive,
 } from '@communication/channels/socket/socket.service';
 import { DatabaseService } from '@infrastructure/database';
+import { NotificationPreferenceService } from '@services/notification/notification-preference.service';
 import { mergeAppointmentFacts } from './notification-template-facts';
+import {
+  APPOINTMENT_INBOX_LOCK_TTL_SECONDS,
+  appointmentInboxLockKey,
+  buildAppointmentInboxEntry,
+} from './appointment-inbox.util';
 import { EmailTemplate } from '@core/types';
 import { findTreatmentCatalogEntryOrUndefined } from '@core/types/treatment-catalog.types';
+import { APPOINTMENT_COMPLETED_PUSH } from '@communication/listeners/appointment-notification-dedup.util';
 import type {
   PrismaTransactionClientWithDelegates,
   PrismaDelegateArgs,
@@ -118,8 +125,56 @@ export class AppointmentNotificationService {
     private readonly socketService: SocketService,
     private readonly configService: ConfigService,
     private readonly deviceTokenService: DeviceTokenService,
-    private readonly databaseService: DatabaseService
+    private readonly databaseService: DatabaseService,
+    private readonly notificationPreferenceService: NotificationPreferenceService
   ) {}
+
+  /**
+   * Drops channels the patient has turned off (per-channel toggle or the `appointmentEnabled`
+   * category toggle) before `sendNotification` fans out. Previously this service called
+   * Email/WhatsApp/Push directly and never consulted preferences at all — unlike
+   * `CommunicationService.send()`'s `filterChannelsByPreferences`, which every OTHER
+   * notification path in the app already goes through.
+   */
+  private async filterChannelsByPatientPreference(
+    channels: NotificationData['channels'],
+    patientId: string,
+    notificationId: string
+  ): Promise<NotificationData['channels']> {
+    if (channels.length === 0) return channels;
+    const userId = await this.resolvePatientUserId(patientId, notificationId);
+    if (!userId) return channels; // Can't resolve the recipient — fail open, same as before this fix.
+
+    try {
+      const prefs = await this.notificationPreferenceService.getPreferences(userId);
+      if (prefs.appointmentEnabled === false) return [];
+      return channels.filter(channel => {
+        switch (channel) {
+          case 'email':
+            return prefs.emailEnabled !== false;
+          case 'whatsapp':
+            return prefs.whatsappEnabled !== false;
+          case 'sms':
+            return prefs.smsEnabled !== false;
+          case 'push':
+            return prefs.pushEnabled !== false;
+          case 'socket':
+            return prefs.socketEnabled !== false;
+          default:
+            return true;
+        }
+      });
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        'Failed to load notification preferences; sending to all requested channels',
+        'AppointmentNotificationService.filterChannelsByPatientPreference',
+        { notificationId, patientId, error: error instanceof Error ? error.message : String(error) }
+      );
+      return channels;
+    }
+  }
 
   /**
    * Send appointment notification through multiple channels
@@ -143,8 +198,15 @@ export class AppointmentNotificationService {
       }
     );
 
-    // Process each notification channel
-    for (const channel of notificationData.channels) {
+    const allowedChannels = await this.filterChannelsByPatientPreference(
+      notificationData.channels,
+      notificationData.patientId,
+      notificationId
+    );
+
+    // Process each allowed notification channel (channels the patient opted out of are skipped,
+    // not attempted — see filterChannelsByPatientPreference)
+    for (const channel of allowedChannels) {
       try {
         await this.sendViaChannel(channel, notificationData, notificationId);
         sentChannels.push(channel);
@@ -172,6 +234,9 @@ export class AppointmentNotificationService {
       }
     }
 
+    // One in-app inbox row per appointment change (web bell / mobile notifications screen).
+    await this.recordInAppNotification(notificationData, notificationId);
+
     // Log the notification attempt
     await this.loggingService.log(
       LogType.NOTIFICATION,
@@ -194,6 +259,78 @@ export class AppointmentNotificationService {
       failedChannels,
       errors: errors.length > 0 ? errors : [],
     };
+  }
+
+  /**
+   * Persists the in-app inbox row (channel `socket`) for booking / confirmation / reschedule /
+   * cancellation / expiry, once per (appointment, type). Best effort: never fails the delivery.
+   */
+  private async recordInAppNotification(
+    notificationData: NotificationData,
+    notificationId: string
+  ): Promise<void> {
+    const { appointmentId, patientId, clinicId, type, templateData } = notificationData;
+    const entry = buildAppointmentInboxEntry(type, templateData);
+    if (!entry || !appointmentId || !patientId) {
+      return;
+    }
+    try {
+      const userId = await this.resolvePatientUserId(patientId, notificationId);
+      if (!userId) {
+        return;
+      }
+      const firstForEvent = await this.cacheService.acquireLock(
+        appointmentInboxLockKey(appointmentId, type),
+        APPOINTMENT_INBOX_LOCK_TTL_SECONDS
+      );
+      if (!firstForEvent) {
+        return;
+      }
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.notification.create({
+            data: {
+              userId,
+              type: 'PUSH_NOTIFICATION',
+              channel: 'socket',
+              title: entry.title,
+              message: entry.message,
+              category: 'APPOINTMENT',
+              status: 'SENT',
+              deliveryStatus: 'DELIVERED',
+              sentAt: new Date(),
+              deliveredAt: new Date(),
+              appointmentId,
+              clinicId: clinicId || null,
+              data: { appointmentId, type, route: `/appointments/${appointmentId}` },
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        },
+        {
+          userId: 'system',
+          userRole: 'system',
+          clinicId: clinicId || '',
+          operation: 'CREATE',
+          resourceType: 'NOTIFICATION',
+          resourceId: appointmentId,
+          timestamp: new Date(),
+        }
+      );
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.WARN,
+        'Failed to record in-app appointment notification',
+        'AppointmentNotificationService.recordInAppNotification',
+        {
+          notificationId,
+          appointmentId,
+          type,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+    }
   }
 
   /**
@@ -880,7 +1017,9 @@ export class AppointmentNotificationService {
     // This follows the architecture pattern: use service layer, not direct database access
     let deviceTokens: string[] = [];
     try {
-      const tokenData = patientUserId ? this.deviceTokenService.getUserTokens(patientUserId) : [];
+      const tokenData = patientUserId
+        ? await this.deviceTokenService.getActiveUserTokens(patientUserId)
+        : [];
       deviceTokens = tokenData.map(token => token.token);
     } catch (error) {
       await this.loggingService.log(
@@ -1147,6 +1286,10 @@ export class AppointmentNotificationService {
       expired: `Appointment Expired`,
       reschedule: `Appointment Rescheduled`,
       follow_up: `Follow-up Required`,
+      created: `Appointment Booked`,
+      updated: `Appointment Update`,
+      completed: APPOINTMENT_COMPLETED_PUSH.title,
+      prescription: `Prescription Ready`,
     };
 
     return titles[type as keyof typeof titles] || 'Appointment Notification';
@@ -1164,6 +1307,10 @@ export class AppointmentNotificationService {
       expired: `Your appointment has expired`,
       reschedule: `Your appointment has been rescheduled`,
       follow_up: `Please schedule a follow-up appointment`,
+      created: 'Your appointment has been booked. Open the app for details.',
+      updated: 'There is an update to your appointment. Open the app for details.',
+      completed: APPOINTMENT_COMPLETED_PUSH.body,
+      prescription: 'Your prescription is ready. Open the app for details.',
     };
 
     return bodies[type as keyof typeof bodies] || 'Appointment notification';

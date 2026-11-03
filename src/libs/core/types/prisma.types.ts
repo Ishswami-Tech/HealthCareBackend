@@ -84,6 +84,27 @@ export interface PrismaDelegateBase<
   groupBy: (args: PrismaDelegateArgs) => Promise<Array<PrismaDelegateArgs>>;
 }
 
+/** Row of `nadi_pariksha_records` (model NadiParikshaRecord, the Ayurveda pulse-diagnosis table). */
+export interface NadiParikshaRecordRow {
+  id: string;
+  patientId: string;
+  clinicId: string | null;
+  dominantDosha: string;
+  pulseQuality: string;
+  regularity: string | null;
+  strength: string | null;
+  abnormalities: string | null;
+  interpretation: string;
+  observations: string | null;
+  side: string | null;
+  performedBy: string;
+  assessedAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export type NadiParikshaRecordDelegate = PrismaDelegateBase<NadiParikshaRecordRow>;
+
 export interface UserDelegate extends PrismaDelegateBase<UserWithRelations> {
   findUnique: (args: PrismaDelegateArgs) => Promise<UserWithRelations | null>;
   findFirst: (args: PrismaDelegateArgs) => Promise<UserWithRelations | null>;
@@ -927,6 +948,7 @@ export interface PrismaClientWithDelegates {
   ayurvedicDiagnosis: any;
   prakritiAssessment: any;
   nadiPariksha: any;
+  nadiParikshaRecord: NadiParikshaRecordDelegate;
   doshaImbalance: any;
   // Transaction
   $transaction: TransactionDelegate['$transaction'];

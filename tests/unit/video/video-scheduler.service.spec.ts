@@ -33,6 +33,7 @@ jest.mock('@infrastructure/logging/logging.service', () => ({
 jest.mock('@config/config.service', () => ({ ConfigService: class ConfigService {} }));
 jest.mock('@infrastructure/events/event.service', () => ({ EventService: class EventService {} }));
 jest.mock('@infrastructure/cache/cache.service', () => ({ CacheService: class CacheService {} }));
+jest.mock('@services/billing/billing.service', () => ({ BillingService: class BillingService {} }));
 
 type Deps = ConstructorParameters<typeof VideoAppointmentSchedulerService>;
 
@@ -87,7 +88,9 @@ function createScheduler(): {
     {} as unknown as Deps[3],
     {} as unknown as Deps[4],
     cacheService as unknown as Deps[5],
-    eventService as unknown as Deps[6]
+    eventService as unknown as Deps[6],
+    // The open-visit reminder path never resolves lapsed payments, so billing stays an empty stub.
+    {} as unknown as Deps[7]
   );
 
   return { scheduler, findMany, cacheService, eventService };

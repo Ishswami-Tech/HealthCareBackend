@@ -39,7 +39,13 @@ import {
   buildAppointmentTreatmentCategoryGroups,
   buildAppointmentTreatmentFilterGroup,
 } from '@core/types/treatment-catalog.types';
-import { HEALTHCARE_QUEUE, QUEUE_METRICS_CONFIG } from './queue.constants';
+import {
+  HEALTHCARE_QUEUE,
+  JOB_RETENTION,
+  QUEUE_METRICS_CONFIG,
+  WORKER_LIFECYCLE,
+} from './queue.constants';
+import { closeWorkersGracefully } from './worker-lifecycle/close-workers.util';
 
 // Internal imports - Types
 import {
@@ -662,8 +668,8 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
           type: 'exponential',
           delay: 2000,
         },
-        removeOnComplete: options.removeOnComplete ?? 100,
-        removeOnFail: options.removeOnFail ?? 50,
+        removeOnComplete: options.removeOnComplete ?? JOB_RETENTION.removeOnComplete,
+        removeOnFail: options.removeOnFail ?? JOB_RETENTION.removeOnFail,
         timestamp: Date.now(), // Track creation time — jobs older than 24h get flagged
         ...(options.correlationId && { jobId: options.correlationId }),
         // Enhanced metadata for 1M users - stored in job data instead
@@ -797,8 +803,8 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
               type: 'exponential',
               delay: 2000,
             },
-            removeOnComplete: job.options?.removeOnComplete ?? 100,
-            removeOnFail: job.options?.removeOnFail ?? 50,
+            removeOnComplete: job.options?.removeOnComplete ?? JOB_RETENTION.removeOnComplete,
+            removeOnFail: job.options?.removeOnFail ?? JOB_RETENTION.removeOnFail,
             timeout: job.options?.timeout || 30000,
             ...(job.options?.correlationId && {
               jobId: job.options.correlationId,
@@ -2932,13 +2938,35 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
       clearInterval(this.autoScalingInterval);
     }
 
-    // Close all queues and workers
-    for (const queue of Array.from(this.queues.values())) {
-      await queue.close();
+    // Workers FIRST: stop fetching new jobs and let in-flight jobs finish (bounded), so a deploy
+    // does not kill jobs mid-run and re-run them after the stall check. Queues (producers) after.
+    const allWorkers = Array.from(this.workers.values()).flat();
+    const closeResults = await closeWorkersGracefully(allWorkers, WORKER_LIFECYCLE.closeTimeoutMs);
+    for (const result of closeResults) {
+      void this.loggingService.log(
+        LogType.QUEUE,
+        result.outcome === 'closed' ? LogLevel.INFO : LogLevel.WARN,
+        `BullMQ worker ${result.name} ${result.outcome} during shutdown`,
+        'QueueService',
+        {
+          worker: result.name,
+          outcome: result.outcome,
+          durationMs: result.durationMs,
+          ...(result.error ? { error: result.error } : {}),
+        }
+      );
     }
-    for (const workers of Array.from(this.workers.values())) {
-      for (const worker of workers) {
-        await worker.close();
+    for (const queue of Array.from(this.queues.values())) {
+      try {
+        await queue.close();
+      } catch (error) {
+        void this.loggingService.log(
+          LogType.QUEUE,
+          LogLevel.WARN,
+          `Failed to close queue ${queue.name} during shutdown`,
+          'QueueService',
+          { queue: queue.name, error: error instanceof Error ? error.message : String(error) }
+        );
       }
     }
 

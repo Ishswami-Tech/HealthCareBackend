@@ -4,7 +4,10 @@
  */
 
 import { DatabaseMethodsBase } from './database-methods.base';
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
 import { isPaidPaymentStatus, normalizePaymentStatus } from '@utils/currency.util';
+import { readWalkInFlag } from '@utils/in-person-flow.util';
 import { getVideoActiveWindowMinutes, getVideoEarlyJoinMinutes } from '@config/video.config';
 import { findTreatmentCatalogEntryOrUndefined } from '@core/types/treatment-catalog.types';
 import type { AppointmentWithRelations, AppointmentTimeSlot } from '@core/types/database.types';
@@ -192,16 +195,6 @@ export function resolveAppointmentServiceLabel(treatmentType: unknown): string |
     .join(' ');
 }
 
-function readWalkInFlag(metadata: unknown): boolean | undefined {
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return undefined;
-  const record = metadata as Record<string, unknown>;
-  const flag = record['isWalkIn'] ?? record['walkIn'];
-  if (typeof flag === 'boolean') return flag;
-  const source = record['bookingSource'] ?? record['source'];
-  if (typeof source === 'string') return source.toUpperCase().includes('WALK');
-  return undefined;
-}
-
 export function enrichAppointmentPaymentState(
   appointment: AppointmentWithRelations
 ): AppointmentWithPaymentRelation {
@@ -249,6 +242,21 @@ export function enrichAppointmentPaymentState(
     videoActiveWindowMinutes: getVideoActiveWindowMinutes(),
   };
 }
+
+/**
+ * Optional serialization of a booking (see createAppointmentSafe): `lockKey` names the advisory
+ * lock (the doctor's day), `assertFree` re-checks the slot on the transaction client and throws
+ * (e.g. ConflictException) to abort the insert.
+ */
+export interface AppointmentSlotGuard {
+  lockKey: string;
+  assertFree: (tx: Record<string, unknown>) => Promise<void>;
+}
+
+type GuardedTransactionClient = {
+  $executeRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<number>;
+  appointment: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
+};
 
 /**
  * Appointment methods implementation
@@ -364,9 +372,14 @@ export class AppointmentMethods extends DatabaseMethodsBase {
   }
 
   /**
-   * Count appointments with filtering
+   * Count appointments with filtering. `options.cap` stops counting after that many rows
+   * (`SELECT count(*) FROM (... LIMIT cap)`), so a paged list never counts a clinic's whole
+   * history on every page.
    */
-  async countAppointmentsSafe(where: AppointmentWhereInput): Promise<number> {
+  async countAppointmentsSafe(
+    where: AppointmentWhereInput,
+    options: { cap?: number } = {}
+  ): Promise<number> {
     const clinicId =
       typeof (where as { clinicId?: unknown }).clinicId === 'string'
         ? String((where as { clinicId?: unknown }).clinicId)
@@ -374,7 +387,9 @@ export class AppointmentMethods extends DatabaseMethodsBase {
 
     return await this.executeRead<number>(
       async prisma => {
-        return await prisma.appointment.count({ where });
+        return await prisma.appointment.count(
+          options.cap && options.cap > 0 ? { where, take: options.cap } : { where }
+        );
       },
       (() => {
         let builder = this.queryOptionsBuilder.where(where);
@@ -398,7 +413,10 @@ export class AppointmentMethods extends DatabaseMethodsBase {
   /**
    * Create appointment
    */
-  async createAppointmentSafe(data: AppointmentCreateInput): Promise<AppointmentWithRelations> {
+  async createAppointmentSafe(
+    data: AppointmentCreateInput,
+    slotGuard?: AppointmentSlotGuard
+  ): Promise<AppointmentWithRelations> {
     // Prisma requires nested relation inputs for required relations (e.g. `clinic`),
     // while our centralized `AppointmentCreateInput` carries scalar foreign keys.
     // Normalize to Prisma's expected shape here.
@@ -433,27 +451,61 @@ export class AppointmentMethods extends DatabaseMethodsBase {
       prismaCreateData['user'] = { connect: { id: userId } };
     }
 
+    const include = {
+      patient: { include: { user: true } },
+      doctor: { include: { user: true } },
+      clinic: true,
+      location: true,
+    };
     const result = await this.executeWrite<AppointmentWithRelations>(
       async prisma => {
-        return await prisma.appointment.create({
-          data: prismaCreateData as unknown as Parameters<
-            typeof prisma.appointment.create
-          >[0]['data'],
-          include: {
-            patient: {
-              include: {
-                user: true,
-              },
-            },
-            doctor: {
-              include: {
-                user: true,
-              },
-            },
-            clinic: true,
-            location: true,
+        if (!slotGuard) {
+          return await prisma.appointment.create({
+            data: prismaCreateData as unknown as Parameters<
+              typeof prisma.appointment.create
+            >[0]['data'],
+            include,
+          });
+        }
+        // DB-level double-booking guard: one transaction per booking holds a Postgres advisory
+        // lock on the doctor's day, re-checks the slot on that transaction and inserts. Two
+        // concurrent bookings of the same doctor and day therefore run one after the other, so
+        // overlapping slots (not only the identical start) can never both be inserted.
+        const insertGuarded = async (tx: GuardedTransactionClient) => {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${slotGuard.lockKey})::bigint)`;
+          await slotGuard.assertFree(tx as unknown as Record<string, unknown>);
+          return (await tx.appointment.create({
+            data: prismaCreateData,
+            include,
+          } as PrismaDelegateArgs)) as AppointmentWithRelations;
+        };
+        const runner = prisma as unknown as {
+          $transaction?: (
+            fn: (tx: GuardedTransactionClient) => Promise<unknown>
+          ) => Promise<unknown>;
+          $executeRaw?: unknown;
+        };
+        if (typeof runner.$transaction === 'function') {
+          return (await runner.$transaction(insertGuarded)) as AppointmentWithRelations;
+        }
+        // No $transaction but $executeRaw: this is an interactive TransactionClient (the write
+        // wrapper already opened a transaction), so pg_advisory_xact_lock holds until that
+        // transaction commits and the guard is valid.
+        if (typeof runner.$executeRaw === 'function') {
+          return await insertGuarded(prisma as unknown as GuardedTransactionClient);
+        }
+        // Neither: the advisory lock cannot be taken, so the slot would be inserted unguarded.
+        throw new HealthcareError(
+          ErrorCode.DATABASE_TRANSACTION_FAILED,
+          'The booking could not be saved safely right now. Please try again.',
+          undefined,
+          {
+            reason:
+              'createAppointmentSafe: client has neither $transaction nor $executeRaw, so the ' +
+              'double-booking guard (pg_advisory_xact_lock) cannot run; refusing to insert unguarded.',
           },
-        });
+          'AppointmentMethods.createAppointmentSafe'
+        );
       },
       {
         userId: 'system',

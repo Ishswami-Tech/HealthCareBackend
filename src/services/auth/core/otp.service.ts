@@ -1,8 +1,10 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
+import { randomInt } from 'crypto';
 import { nowIso } from '@utils/date-time.util';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { EmailService } from '@communication/channels/email/email.service';
+import { CHANNEL_DISABLED_REASON } from '@communication/services/notification-delivery-plan.util';
 import { ConfigService } from '@config/config.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { EventService } from '@infrastructure/events/event.service';
@@ -12,6 +14,7 @@ import { QueueService } from '@infrastructure/queue';
 import { normalizeAuthPhoneNumber } from './phone-normalizer.util';
 
 import type { OtpConfig, OtpResult } from '@core/types/auth.types';
+import { withRetryWait } from '@security/rate-limit/retry-wait.util';
 
 type OtpCacheEntry = {
   otp: string;
@@ -30,6 +33,13 @@ export class OtpService {
   private readonly isDevelopment: boolean;
   private readonly REQUESTS_PER_STAGE = 3;
   private readonly VERIFIED_OTP_TTL_SECONDS = 60;
+  /**
+   * Per-identifier brute-force lockout (audit P0-6): after `maxAttempts` wrong codes within
+   * `lockoutSeconds`, the current OTP is deleted and the identifier can neither verify nor
+   * request a new code until the lockout expires. Keyed by the normalised phone/email only, so
+   * changing IP or User-Agent does not reset it.
+   */
+  private readonly lockoutSeconds: number;
 
   /**
    * Progressive cooldown schedule (seconds) indexed by stage count.
@@ -71,6 +81,10 @@ export class OtpService {
       maxAttempts: this.configService.getEnvNumber('OTP_MAX_ATTEMPTS', 5),
       cooldownMinutes: this.configService.getEnvNumber('OTP_COOLDOWN_MINUTES', 3),
     };
+    this.lockoutSeconds = Math.max(
+      60,
+      this.configService.getEnvNumber('OTP_LOCKOUT_MINUTES', 15) * 60
+    );
 
     this.otpDebugEnabled =
       this.configService.getEnvBoolean('ENABLE_OTP_DEBUG', false) ||
@@ -123,12 +137,16 @@ export class OtpService {
   }
 
   /**
-   * Log full OTP for local development testing.
-   * Active when NODE_ENV=development OR ENABLE_OTP_DEBUG=true
-   * Never logs OTPs in staging/production unless explicitly opted in.
+   * Log full OTP for local testing. Active ONLY when ENABLE_OTP_DEBUG=true AND
+   * NODE_ENV=development (a stray ENABLE_OTP_DEBUG in staging / prod must never print OTPs; the
+   * LoggingService also drops `[OTP DEV]` lines outside development as a second guard).
+   *
+   * The line format `identifier=<phone> OTP=<code>` is read by the local QA tooling from the
+   * terminal (docker logs), so it stays verbatim there; the LoggingService masks the phone and
+   * the code in every stored copy, and the metadata below carries neither.
    */
   private logDevOtp(identifier: string, otp: string, channel: string, purpose: string): void {
-    if (!this.isDevelopment && !this.otpDebugEnabled) {
+    if (!this.isDevOtpLogEnabled()) {
       return;
     }
 
@@ -137,7 +155,37 @@ export class OtpService {
       LogLevel.WARN,
       `[OTP DEV] channel=${channel} purpose=${purpose} identifier=${identifier} OTP=${otp}`,
       'OtpService',
-      { identifier, channel, purpose, otp }
+      { channel, purpose }
+    );
+  }
+
+  private isDevOtpLogEnabled(): boolean {
+    return (
+      this.configService.getEnvBoolean('ENABLE_OTP_DEBUG', false) &&
+      this.configService.isDevelopment()
+    );
+  }
+
+  /**
+   * The channel's provider is switched off in this environment: the OTP is NOT delivered (it
+   * stays in the cache, so login still works with the code from the `[OTP DEV]` log line in
+   * development). Logged as a distinct "not sent" outcome, never as a successful send.
+   */
+  private logOtpChannelDisabled(channel: 'WhatsApp' | 'Email', purpose: string): void {
+    const outcome = this.isDevOtpLogEnabled()
+      ? 'available in dev log only'
+      : 'enable the provider to deliver it';
+    void this.loggingService.log(
+      LogType.AUTH,
+      LogLevel.INFO,
+      `OTP not delivered: ${channel} disabled; ${outcome}`,
+      'OtpService',
+      {
+        channel: channel.toLowerCase(),
+        purpose,
+        skipped: true,
+        skipReason: CHANNEL_DISABLED_REASON,
+      }
     );
   }
 
@@ -211,30 +259,89 @@ export class OtpService {
     return Math.max(0, this.REQUESTS_PER_STAGE - positionInStage);
   }
 
-  /**
-   * Failed OTP verification attempts, scoped to the current OTP's cache key so a
-   * fresh send always resets the counter. TTL is capped to the OTP expiry window.
-   */
-  private async getOtpVerifyAttempts(normalizedIdentifier: string): Promise<number> {
-    const attempts = await this.cacheService.get<string>(
-      `otp_verify_attempts:${normalizedIdentifier}`
-    );
-    return attempts ? parseInt(attempts, 10) : 0;
+  private otpFailuresKey(normalizedIdentifier: string): string {
+    return `otp_verify_failures:${normalizedIdentifier}`;
+  }
+
+  private otpLockoutKey(normalizedIdentifier: string): string {
+    return `otp_lockout:${normalizedIdentifier}`;
   }
 
   /**
-   * Atomically increments the failed-attempt counter (INCR), setting the TTL
-   * only on the first increment. A read-then-write here would let concurrent
-   * guesses race past maxAttempts before any of them observes the updated
-   * count — exactly the brute-force window this counter exists to close.
+   * Run raw commands on the cache connection. The failure counter and the lockout flag use
+   * raw keys on purpose: CacheService.get/set/del/ttl version their keys (`<key>:v1`) while
+   * incr/expire do not, so mixing them (as the previous counter did) read and deleted a
+   * different key than the one INCR wrote, and the counter never took effect.
    */
-  private async recordOtpVerifyAttempt(normalizedIdentifier: string): Promise<number> {
-    const attemptsKey = `otp_verify_attempts:${normalizedIdentifier}`;
-    const newCount = await this.cacheService.incr(attemptsKey);
-    if (newCount === 1) {
-      await this.cacheService.expire(attemptsKey, this.config.expiryMinutes * 60);
+  private async rawCommands(
+    commands: Array<{ command: string; args: Array<string | number> }>
+  ): Promise<Array<number | string | null>> {
+    const results = await this.cacheService.multi(commands);
+    return results.map(([error, value]) => {
+      if (error || value === undefined || value === null) {
+        return null;
+      }
+      return typeof value === 'number' || typeof value === 'string' ? value : null;
+    });
+  }
+
+  /**
+   * Atomically counts a wrong code for this identifier (INCR) inside one pipeline with TTL,
+   * re-applying the TTL whenever the key has none, so a crash between INCR and EXPIRE can never
+   * leave a counter that never expires. The window is the lockout length and is NOT reset by
+   * requesting a new OTP, so re-sending cannot be used to get fresh guesses.
+   */
+  private async recordOtpVerifyFailure(normalizedIdentifier: string): Promise<number> {
+    const key = this.otpFailuresKey(normalizedIdentifier);
+    const [count, ttl] = await this.rawCommands([
+      { command: 'incr', args: [key] },
+      { command: 'ttl', args: [key] },
+    ]);
+    if (typeof ttl === 'number' && ttl < 0) {
+      await this.rawCommands([{ command: 'expire', args: [key, this.lockoutSeconds] }]);
     }
-    return newCount;
+    return typeof count === 'number' ? count : Number.parseInt(String(count ?? '0'), 10) || 0;
+  }
+
+  /** Seconds left on this identifier's lockout, 0 when not locked. */
+  async getOtpLockoutRemainingSeconds(identifier: string): Promise<number> {
+    const normalizedIdentifier = this.normalizeIdentifier(identifier);
+    const key = this.otpLockoutKey(normalizedIdentifier);
+    const [ttl] = await this.rawCommands([{ command: 'ttl', args: [key] }]);
+    if (typeof ttl !== 'number' || ttl === -2) {
+      return 0;
+    }
+    if (ttl === -1) {
+      // Lockout flag without TTL (should never happen): repair it rather than lock forever.
+      await this.rawCommands([{ command: 'expire', args: [key, this.lockoutSeconds] }]);
+      return this.lockoutSeconds;
+    }
+    return ttl;
+  }
+
+  private buildLockoutResult(remainingSeconds: number): OtpResult {
+    return {
+      success: false,
+      // Says when the patient may retry, not just "later".
+      message: withRetryWait('Too many incorrect codes', remainingSeconds),
+      rateLimited: true,
+      attemptsRemaining: 0,
+    };
+  }
+
+  /** Lock the identifier and burn the current code (and any just-verified replay entry). */
+  private async lockOutIdentifier(normalizedIdentifier: string): Promise<void> {
+    await Promise.all([
+      this.rawCommands([
+        {
+          command: 'set',
+          args: [this.otpLockoutKey(normalizedIdentifier), '1', 'EX', this.lockoutSeconds],
+        },
+        { command: 'del', args: [this.otpFailuresKey(normalizedIdentifier)] },
+      ]),
+      this.cacheService.del(`otp:${normalizedIdentifier}`),
+      this.cacheService.del(`otp_verified:${normalizedIdentifier}`),
+    ]);
   }
 
   async peekOtp(identifier: string): Promise<string | null> {
@@ -265,8 +372,9 @@ export class OtpService {
    */
   generateOtp(): string {
     const min = Math.pow(10, this.config.length - 1);
-    const max = Math.pow(10, this.config.length) - 1;
-    return Math.floor(Math.random() * (max - min + 1)) + min + '';
+    const max = Math.pow(10, this.config.length);
+    // CSPRNG: Math.random() is predictable and must not mint login codes.
+    return String(randomInt(min, max));
   }
 
   /**
@@ -281,6 +389,10 @@ export class OtpService {
   ): Promise<OtpResult> {
     try {
       const normalizedEmail = this.normalizeIdentifier(email);
+      const lockoutRemaining = await this.getOtpLockoutRemainingSeconds(normalizedEmail);
+      if (lockoutRemaining > 0) {
+        return this.buildLockoutResult(lockoutRemaining);
+      }
       // Read cooldown + attempts in parallel to avoid extra round-trips.
       const cooldownKey = `otp_cooldown:${normalizedEmail}`;
       const attemptsKey = `otp_attempts:${normalizedEmail}`;
@@ -291,10 +403,12 @@ export class OtpService {
 
       if (cooldown) {
         const remainingTtl = await this.cacheService.ttl(cooldownKey);
-        const waitMinutes = Math.ceil((remainingTtl > 0 ? remainingTtl : 60) / 60);
         return {
           success: false,
-          message: `Please wait ${waitMinutes} minute(s) before requesting another OTP`,
+          message: withRetryWait(
+            'A code was just sent. Please wait before requesting another OTP',
+            remainingTtl > 0 ? remainingTtl : 60
+          ),
           rateLimited: true,
         };
       }
@@ -358,8 +472,12 @@ export class OtpService {
 
       // Send email DIRECTLY (not via queue) - queue workers may not be running in clinic service
       try {
-        const sent = await this.emailService.sendEmail(emailJobData);
-        if (!sent) {
+        const sent = this.emailService.isEnabled()
+          ? await this.emailService.sendEmail(emailJobData)
+          : null;
+        if (sent === null) {
+          this.logOtpChannelDisabled('Email', purpose);
+        } else if (!sent) {
           void this.loggingService.log(
             LogType.ERROR,
             LogLevel.ERROR,
@@ -392,7 +510,7 @@ export class OtpService {
       void this.loggingService.log(
         LogType.AUTH,
         LogLevel.INFO,
-        `OTP sent to ${email} for ${purpose}`,
+        `OTP issued to ${email} for ${purpose}`,
         'OtpService',
         { email: normalizedEmail, purpose }
       );
@@ -434,6 +552,10 @@ export class OtpService {
   ): Promise<OtpResult> {
     try {
       const normalizedPhone = this.normalizeIdentifier(phone);
+      const lockoutRemaining = await this.getOtpLockoutRemainingSeconds(normalizedPhone);
+      if (lockoutRemaining > 0) {
+        return this.buildLockoutResult(lockoutRemaining);
+      }
       // Read cooldown + attempts in parallel to avoid extra round-trips.
       const cooldownKey = `otp_cooldown:${normalizedPhone}`;
       const attemptsKey = `otp_attempts:${normalizedPhone}`;
@@ -444,10 +566,12 @@ export class OtpService {
 
       if (cooldown) {
         const remainingTtl = await this.cacheService.ttl(cooldownKey);
-        const waitMinutes = Math.ceil((remainingTtl > 0 ? remainingTtl : 60) / 60);
         return {
           success: false,
-          message: `Please wait ${waitMinutes} minute(s) before requesting another OTP`,
+          message: withRetryWait(
+            'A code was just sent. Please wait before requesting another OTP',
+            remainingTtl > 0 ? remainingTtl : 60
+          ),
           rateLimited: true,
         };
       }
@@ -498,6 +622,13 @@ export class OtpService {
         });
       }
 
+      // WhatsApp switched off in this environment: nothing is scheduled, so log the real
+      // outcome (not delivered) instead of a misleading "delivery scheduled" line.
+      if (!this.whatsAppService.isEnabled()) {
+        this.logOtpChannelDisabled('WhatsApp', purpose);
+        return this.buildPhoneOtpSuccess(otp, expirySeconds, newAttemptCount);
+      }
+
       // Fire-and-forget delivery so the request can complete immediately after
       // the OTP is persisted. This prevents the login UI from hanging on slow
       // WhatsApp/provider responses while still keeping the OTP available for
@@ -525,13 +656,7 @@ export class OtpService {
         { phone: normalizedPhone, purpose }
       );
 
-      return {
-        success: true,
-        message: 'OTP sent successfully',
-        otp,
-        expiresIn: expirySeconds,
-        attemptsRemaining: this.getRequestsRemainingInStage(newAttemptCount),
-      };
+      return this.buildPhoneOtpSuccess(otp, expirySeconds, newAttemptCount);
     } catch (_error) {
       void this.loggingService.log(
         LogType.ERROR,
@@ -549,6 +674,21 @@ export class OtpService {
         message: 'Failed to send WhatsApp message. Please try again later.',
       };
     }
+  }
+
+  /** Success result for a phone OTP that is issued and cached (delivery is logged separately). */
+  private buildPhoneOtpSuccess(
+    otp: string,
+    expirySeconds: number,
+    attemptCount: number
+  ): OtpResult {
+    return {
+      success: true,
+      message: 'OTP sent successfully',
+      otp,
+      expiresIn: expirySeconds,
+      attemptsRemaining: this.getRequestsRemainingInStage(attemptCount),
+    };
   }
 
   private async dispatchOtpSmsDelivery(
@@ -595,7 +735,21 @@ export class OtpService {
       const normalizedOtp = this.normalizeOtpValue(otp);
       const otpKey = `otp:${normalizedIdentifier}`;
       const verifiedKey = `otp_verified:${normalizedIdentifier}`;
-      const verifyAttemptsKey = `otp_verify_attempts:${normalizedIdentifier}`;
+
+      // Lockout first: a locked identifier is refused even with the right code (the code was
+      // burnt when the lockout started), so the attacker learns nothing during the cooldown.
+      const lockoutRemaining = await this.getOtpLockoutRemainingSeconds(normalizedIdentifier);
+      if (lockoutRemaining > 0) {
+        void this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.WARN,
+          'OTP verification refused: identifier is locked out',
+          'OtpService',
+          { lockoutRemainingSeconds: lockoutRemaining }
+        );
+        return this.buildLockoutResult(lockoutRemaining);
+      }
+
       const storedOtp = this.extractOtpValue(await this.cacheService.get<unknown>(otpKey));
       const recentlyVerifiedOtp = this.extractOtpValue(
         await this.cacheService.get<unknown>(verifiedKey)
@@ -603,25 +757,6 @@ export class OtpService {
       const cacheExists = await this.cacheService.exists(otpKey);
       const cacheTtl = await this.cacheService.ttl(otpKey);
       const hasValidStoredOtp = typeof storedOtp === 'string' && storedOtp.length > 0;
-
-      // NOTE: deliberately not enforced as a lockout. In a healthcare app,
-      // denying a patient/doctor access to their own account because of
-      // mistyped OTP entries is a worse failure mode than the residual
-      // brute-force exposure — the OTP's own TTL (a few minutes) is the
-      // real bound on the guessing window. We still track and log the
-      // count so unusually high attempt volumes are visible to security
-      // monitoring without ever refusing a still-valid, correctly-entered
-      // code.
-      const failedAttempts = await this.getOtpVerifyAttempts(normalizedIdentifier);
-      if (hasValidStoredOtp && failedAttempts >= this.config.maxAttempts) {
-        void this.loggingService.log(
-          LogType.SECURITY,
-          LogLevel.WARN,
-          `OTP verification exceeded ${this.config.maxAttempts} attempts (not blocked)`,
-          'OtpService',
-          { identifier: normalizedIdentifier, failedAttempts }
-        );
-      }
 
       this.logOtp('OTP verification lookup', {
         identifier: normalizedIdentifier,
@@ -659,8 +794,20 @@ export class OtpService {
       }
 
       if (storedOtp !== normalizedOtp) {
-        const newFailedAttempts = await this.recordOtpVerifyAttempt(normalizedIdentifier);
+        const newFailedAttempts = await this.recordOtpVerifyFailure(normalizedIdentifier);
         const attemptsRemaining = Math.max(0, this.config.maxAttempts - newFailedAttempts);
+
+        if (newFailedAttempts >= this.config.maxAttempts) {
+          await this.lockOutIdentifier(normalizedIdentifier);
+          void this.loggingService.log(
+            LogType.SECURITY,
+            LogLevel.WARN,
+            `OTP locked out after ${newFailedAttempts} wrong codes; code invalidated`,
+            'OtpService',
+            { failedAttempts: newFailedAttempts, lockoutSeconds: this.lockoutSeconds }
+          );
+          return this.buildLockoutResult(this.lockoutSeconds);
+        }
 
         this.logOtp('OTP verification mismatch', {
           identifier: normalizedIdentifier,
@@ -693,7 +840,7 @@ export class OtpService {
           this.buildVerifiedOtpCacheEntry(normalizedOtp),
           this.VERIFIED_OTP_TTL_SECONDS
         ),
-        this.cacheService.del(verifyAttemptsKey),
+        this.rawCommands([{ command: 'del', args: [this.otpFailuresKey(normalizedIdentifier)] }]),
       ]);
 
       void this.loggingService.log(
@@ -834,7 +981,15 @@ export class OtpService {
       const attemptsKey = `otp_attempts:${normalizedIdentifier}`;
       const cooldownKey = `otp_cooldown:${normalizedIdentifier}`;
 
-      await Promise.all([this.cacheService.del(attemptsKey), this.cacheService.del(cooldownKey)]);
+      await Promise.all([
+        this.cacheService.del(attemptsKey),
+        this.cacheService.del(cooldownKey),
+        // Administrative reset also clears the brute-force lockout and its failure counter.
+        this.rawCommands([
+          { command: 'del', args: [this.otpLockoutKey(normalizedIdentifier)] },
+          { command: 'del', args: [this.otpFailuresKey(normalizedIdentifier)] },
+        ]),
+      ]);
 
       void this.loggingService.log(
         LogType.AUTH,

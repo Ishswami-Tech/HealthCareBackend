@@ -495,7 +495,7 @@ describe('VideoService consultation lifecycle', () => {
       expect(eventService.emitEnterprise).not.toHaveBeenCalled();
     });
 
-    it.each(['CONFIRMED', 'SCHEDULED'])(
+    it.each(['SCHEDULED'])(
       'rejects ending a %s visit that never started with 409 "has not started" and writes nothing',
       async status => {
         const { service, provider, clients, eventService } = createHarness();
@@ -521,13 +521,14 @@ describe('VideoService consultation lifecycle', () => {
 
       expect(clients.appointment['updateMany']).toHaveBeenCalledTimes(1);
       const args = clients.appointment['updateMany']?.mock.calls[0]?.[0] as {
-        where: { id: string; clinicId: string; status: string };
+        where: { id: string; clinicId: string; status: unknown };
         data: { status: string; completedAt: Date };
       };
       expect(args.where.id).toBe('appt-1');
       expect(args.where.clinicId).toBe(CLINIC);
-      // Compare-and-set on IN_PROGRESS only: a visit that raced back to CONFIRMED is not completed.
-      expect(args.where.status).toBe('IN_PROGRESS');
+      // Compare-and-set on the statuses the end route completes: IN_PROGRESS, and CONFIRMED for a
+      // video visit the doctor ran without the start hop.
+      expect(args.where.status).toEqual({ in: ['IN_PROGRESS', 'CONFIRMED'] });
       expect(args.data.status).toBe('COMPLETED');
       expect(args.data.completedAt).toBeInstanceOf(Date);
       expect(cacheService['invalidateAppointmentCache']).toHaveBeenCalled();
@@ -537,13 +538,13 @@ describe('VideoService consultation lifecycle', () => {
       );
     });
 
-    it('does not complete a visit that moved back to CONFIRMED during the request', async () => {
+    it('does not complete a visit that moved back to SCHEDULED during the request', async () => {
       const { service, clients, eventService } = createHarness();
       clients.appointment['findUnique']?.mockResolvedValue(
         makeAppointment({ status: 'IN_PROGRESS' })
       );
       clients.appointment['updateMany']?.mockResolvedValue({ count: 0 });
-      clients.appointment['findFirst']?.mockResolvedValue({ status: 'CONFIRMED' });
+      clients.appointment['findFirst']?.mockResolvedValue({ status: 'SCHEDULED' });
 
       const error = await captureError(doctorEnd(service));
 

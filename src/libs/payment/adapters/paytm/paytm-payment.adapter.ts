@@ -246,6 +246,10 @@ export class PaytmBusinessPaymentAdapter extends BasePaymentAdapter {
       // Validate options
       this.validatePaymentIntentOptions(options);
 
+      // Order expiry: initiateTransaction has no merchant-settable expiry; the txnToken it
+      // returns is valid for a fixed 15 minutes (Paytm-side). Longer payment windows rely on the
+      // payment-window sweeps, which ask Paytm for the order status (Transaction Status API)
+      // after window + buffer and expire the attempt when unpaid.
       // Generate unique order ID
       const orderId =
         options.orderId || `TXN_${Date.now()}_${Math.random().toString(36).substring(7)}`;

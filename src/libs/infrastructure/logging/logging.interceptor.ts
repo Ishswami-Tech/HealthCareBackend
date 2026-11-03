@@ -8,6 +8,14 @@ import { LoggingService } from '@logging';
 
 // Internal imports - Types
 import { LogType, LogLevel } from '@core/types';
+import {
+  accessLogSeverity,
+  formatAccessLogLine,
+  isSlowRequest,
+  resolveRequestId,
+  toDurationMs,
+  type AccessLogSeverity,
+} from '@infrastructure/logging/access-log.util';
 
 /**
  * Interface for HTTP request object from NestJS ExecutionContext
@@ -18,13 +26,40 @@ interface HttpRequest {
   body: unknown;
   headers: Record<string, string>;
   ip: string;
+  /** Fastify request id (incoming x-request-id or a generated UUID, see access-log.util). */
+  requestId: string;
+  /** Matched route pattern, e.g. /api/v1/appointments/:id (undefined for unmatched routes). */
+  route: string | undefined;
 }
+
+const SEVERITY_LEVEL: Readonly<Record<AccessLogSeverity, LogLevel>> = {
+  INFO: LogLevel.INFO,
+  WARN: LogLevel.WARN,
+  ERROR: LogLevel.ERROR,
+};
 
 /**
  * Interface for HTTP response object from NestJS ExecutionContext
  */
 interface HttpResponse {
   statusCode: number;
+}
+
+/**
+ * The error code of a failed request: the error's own `code` (HealthcareError), else the `code`
+ * of an HttpException body (e.g. 409 { code: 'CONSULTATION_IN_PROGRESS' }), else UNKNOWN_ERROR.
+ */
+function errorCodeOf(error: unknown): string {
+  const own = (error as { code?: unknown } | null)?.code;
+  if (typeof own === 'string' && own) return own;
+  const getResponse = (error as { getResponse?: () => unknown } | null)?.getResponse;
+  if (typeof getResponse === 'function') {
+    const body = getResponse.call(error) as { code?: unknown } | string | null;
+    if (body && typeof body === 'object' && typeof body.code === 'string' && body.code) {
+      return body.code;
+    }
+  }
+  return 'UNKNOWN_ERROR';
 }
 
 @Injectable()
@@ -44,7 +79,7 @@ export class LoggingInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const httpContext = context.switchToHttp();
     const request = this.extractRequest(httpContext.getRequest());
-    const { method, url, body, headers, ip } = request;
+    const { method, url, body, headers, ip, requestId, route } = request;
     const userAgent = headers['user-agent'] || 'unknown';
     const startTime = Date.now();
     const requestSummary = this.summarizeRequest(url, body);
@@ -57,41 +92,51 @@ export class LoggingInterceptor implements NestInterceptor {
       return next.handle();
     }
 
-    void this.loggingService.log(LogType.REQUEST, LogLevel.INFO, `${method} ${url}`, 'API', {
-      method,
-      url,
-      body: this.sanitizeBody(body),
-      ...(requestSummary ? { requestSummary } : {}),
-      ip,
-      userAgent,
-    });
+    void this.loggingService.log(
+      LogType.REQUEST,
+      LogLevel.INFO,
+      `${method} ${url} rid=${requestId}`,
+      'API',
+      {
+        method,
+        url,
+        requestId,
+        body: this.sanitizeBody(body),
+        ...(requestSummary ? { requestSummary } : {}),
+        ip,
+        userAgent,
+      }
+    );
 
     return next.handle().pipe(
       tap({
         next: responseBody => {
-          const endTime = Date.now();
-          const duration = endTime - startTime;
+          const durationMs = toDurationMs(startTime, Date.now());
           const response = this.extractResponse(context.switchToHttp().getResponse());
           const statusCode = response.statusCode;
           const responseSummary = this.summarizeResponse(responseBody);
+          const slow = isSlowRequest(durationMs);
           void this.loggingService.log(
-            LogType.RESPONSE,
-            LogLevel.INFO,
-            `${method} ${url} [${statusCode}]`,
+            slow ? LogType.PERFORMANCE : LogType.RESPONSE,
+            SEVERITY_LEVEL[accessLogSeverity(statusCode, durationMs)],
+            formatAccessLogLine({ method, url, statusCode, durationMs, requestId, route }),
             'API',
             {
               method,
               url,
-              duration: `${duration}ms`,
+              ...(route ? { route } : {}),
+              requestId,
+              durationMs,
+              duration: `${durationMs}ms`,
               statusCode,
+              ...(slow ? { slow: true } : {}),
               response: responseSummary,
               ...(responseSummary ? { responseSummary } : {}),
             }
           );
         },
         error: error => {
-          const endTime = Date.now();
-          const duration = endTime - startTime;
+          const durationMs = toDurationMs(startTime, Date.now());
 
           // A 4xx is the client or a business rule being told "no" and is expected traffic
           // (invalid OTP, expired visit, refused completion); only a 5xx is a failure of ours.
@@ -99,16 +144,19 @@ export class LoggingInterceptor implements NestInterceptor {
           const statusCode = (error as { status?: number }).status || 500;
           void this.loggingService.log(
             LogType.ERROR,
-            statusCode >= 500 ? LogLevel.ERROR : LogLevel.WARN,
-            `${method} ${url} failed: ${(error as Error).message}`,
+            SEVERITY_LEVEL[accessLogSeverity(statusCode, durationMs)],
+            `${formatAccessLogLine({ method, url, statusCode, durationMs, requestId, route })} failed: ${(error as Error).message}`,
             'API',
             {
               method,
               url,
-              duration: `${duration}ms`,
+              ...(route ? { route } : {}),
+              requestId,
+              durationMs,
+              duration: `${durationMs}ms`,
               error: {
                 message: (error as Error).message,
-                code: (error as { code?: string }).code || 'UNKNOWN_ERROR',
+                code: errorCodeOf(error),
                 statusCode,
               },
             }
@@ -260,12 +308,20 @@ export class LoggingInterceptor implements NestInterceptor {
    */
   private extractRequest(request: unknown): HttpRequest {
     const req = request as Record<string, unknown>;
+    const headers = (req['headers'] as Record<string, string>) || {};
+    const routeOptions = req['routeOptions'] as { url?: unknown } | undefined;
+    const ownId = req['id'];
     return {
       method: (req['method'] as string) || 'UNKNOWN',
       url: (req['url'] as string) || '/',
       body: req['body'],
-      headers: (req['headers'] as Record<string, string>) || {},
+      headers,
       ip: (req['ip'] as string) || 'unknown',
+      // Fastify sets request.id (see FastifyFrameworkAdapter genReqId); resolve the same way when
+      // the interceptor runs on a request object without one.
+      requestId:
+        typeof ownId === 'string' && ownId ? ownId : resolveRequestId(headers['x-request-id']),
+      route: typeof routeOptions?.url === 'string' ? routeOptions.url : undefined,
     };
   }
 

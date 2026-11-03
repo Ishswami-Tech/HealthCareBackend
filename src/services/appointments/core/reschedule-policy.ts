@@ -3,7 +3,7 @@
  *
  * - Video (VIDEO_CALL): only while CONFIRMED (paid, awaiting the call).
  * - In-person (every other type): any status except the ones below. A visit that is over or
- *   under way (consultation in progress) cannot move.
+ *   under way (consultation in progress) cannot move, nor can one that has checked in (409).
  *
  * The 5-hour video window and the reschedule limit are separate rules in AppointmentsService.
  */
@@ -92,6 +92,23 @@ export function reschedulePinnedWhere(row: ReschedulePinInput): Record<string, u
   if (isVideoAppointmentType(row.type)) return { status: rescheduleStatusFilter(row.type) };
   const checkedInAt = row.checkedInAt ? new Date(row.checkedInAt) : null;
   return { status: row.status, checkedInAt };
+}
+
+export const CHECKED_IN_RESCHEDULE_MESSAGE =
+  'This visit is already checked in, so it cannot be rescheduled. Ask the front desk for help.';
+
+/**
+ * True when an in-person visit has already arrived (checked in), so it may no longer be moved:
+ * the patient is in today's queue and moving the booking would desync queue and desk.
+ */
+export function isCheckedInForReschedule(row: {
+  readonly type: unknown;
+  readonly checkedInAt?: Date | string | null;
+}): boolean {
+  if (isVideoAppointmentType(row.type)) return false;
+  if (!row.checkedInAt) return false;
+  const arrived = new Date(row.checkedInAt);
+  return !Number.isNaN(arrived.getTime());
 }
 
 /** True when the visit may be sitting in a queue and so must be removed after a move. */

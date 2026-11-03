@@ -29,8 +29,7 @@ export function generateSecurityAlertTemplate(
       
       <p>For your security, we recommend:</p>
       <ul>
-        <li>Change your password immediately</li>
-        <li>Enable two-factor authentication if available</li>
+        <li>If this wasn't you, contact the clinic</li>
         <li>Review recent account activity</li>
       </ul>
       

@@ -1,4 +1,5 @@
 import { nowIso } from '@utils/date-time.util';
+import { startOfIstDay } from '@utils/clock.util';
 import { Injectable, Logger, BadRequestException, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
@@ -261,6 +262,8 @@ export class AppointmentConfirmationService {
     domain: string,
     clinicalData?: {
       diagnosis?: string | undefined;
+      /** Free-text consultation notes, e.g. from "Complete without medicine". */
+      notes?: string | undefined;
       treatmentPlan?: TreatmentPlanDto | undefined;
       medications?: ClinicalMedicationInput[] | undefined;
       clinicId?: string | undefined;
@@ -589,12 +592,123 @@ export class AppointmentConfirmationService {
     };
   }
 
+  /**
+   * The newest prescription already written for this visit (null when there is none): one linked
+   * to the appointment, or one the treating doctor wrote for this patient during the visit without
+   * the link (the visit screen sends the pharmacy prescription before it completes the visit).
+   */
+  private async findVisitPrescription(
+    appointmentId: string,
+    clinicId: string
+  ): Promise<{ id: string; diagnosis: string | null } | null> {
+    try {
+      return await this.databaseService.executeHealthcareRead(async client => {
+        const records = client as unknown as Record<string, unknown>;
+        const visit = await (
+          records['appointment'] as {
+            findFirst: (args: unknown) => Promise<{
+              patientId: string;
+              doctorId: string;
+              date: Date;
+              checkedInAt: Date | null;
+              startedAt: Date | null;
+            } | null>;
+          }
+        ).findFirst({
+          where: { id: appointmentId, clinicId },
+          select: {
+            patientId: true,
+            doctorId: true,
+            date: true,
+            checkedInAt: true,
+            startedAt: true,
+          },
+        });
+        const visitStart = visit?.startedAt ?? visit?.checkedInAt ?? startOfIstDay(visit?.date);
+        const delegate = records['prescription'] as {
+          findFirst: (args: unknown) => Promise<{ id: string; diagnosis: string | null } | null>;
+        };
+        return await delegate.findFirst({
+          where: {
+            clinicId,
+            OR: [
+              { appointmentId },
+              ...(visit && visitStart
+                ? [
+                    {
+                      appointmentId: null,
+                      patientId: visit.patientId,
+                      doctorId: visit.doctorId,
+                      date: { gte: visitStart },
+                    },
+                  ]
+                : []),
+            ],
+          },
+          select: { id: true, diagnosis: true },
+          orderBy: { date: 'desc' },
+        });
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Could not check the visit prescription of ${appointmentId}: ${error instanceof Error ? error.message : String(error)}`
+      );
+      return null;
+    }
+  }
+
+  /**
+   * The visit's prescription becomes THE prescription of the completed visit: linked to the
+   * appointment when it was not, and given the completion diagnosis when it has none yet.
+   */
+  private async adoptVisitPrescription(
+    prescription: { id: string; diagnosis: string | null },
+    diagnosis: string | undefined,
+    clinicId: string,
+    appointmentId: string
+  ): Promise<void> {
+    const text = diagnosis?.trim();
+    try {
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          const delegate = (client as unknown as Record<string, unknown>)['prescription'] as {
+            updateMany: (args: unknown) => Promise<{ count: number }>;
+          };
+          await delegate.updateMany({
+            where: { id: prescription.id, clinicId, appointmentId: null },
+            data: { appointmentId },
+          });
+          if (!text || prescription.diagnosis?.trim()) return { count: 0 };
+          return await delegate.updateMany({
+            where: { id: prescription.id, clinicId, diagnosis: null },
+            data: { diagnosis: text },
+          });
+        },
+        {
+          userId: 'system',
+          clinicId,
+          resourceType: 'PRESCRIPTION',
+          operation: 'UPDATE',
+          resourceId: prescription.id,
+          userRole: 'system',
+          details: { source: 'appointment-completion' },
+        }
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Could not add the diagnosis to prescription ${prescription.id}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
   private async performCompletion(
     appointmentId: string,
     doctorId: string,
     domain: string,
     clinicalData?: {
       diagnosis?: string | undefined;
+      /** Free-text consultation notes, e.g. from "Complete without medicine". */
+      notes?: string | undefined;
       treatmentPlan?: TreatmentPlanDto | undefined;
       medications?: ClinicalMedicationInput[] | undefined;
       clinicId?: string | undefined;
@@ -633,12 +747,35 @@ export class AppointmentConfirmationService {
         } => medication !== null
       );
 
-    // 1. If we have clinical data, persist it to EHR
-    if (clinicalData && clinicalData.userId) {
+    // 1. If we have clinical data, persist it to EHR. B12: when the visit already has a
+    //    prescription (written with its medicines at the pharmacy desk / visit screen), the
+    //    completion does not add a second, note-only one; the diagnosis goes onto that one.
+    const existingPrescription =
+      clinicalData && clinicalData.userId
+        ? await this.findVisitPrescription(appointmentId, appointment.clinicId)
+        : null;
+    if (existingPrescription) {
+      await this.adoptVisitPrescription(
+        existingPrescription,
+        clinicalData?.diagnosis,
+        appointment.clinicId,
+        appointmentId
+      );
+    } else if (
+      clinicalData &&
+      clinicalData.userId &&
+      // Nothing written (no medicine, diagnosis, notes or plan): no empty prescription / EHR note.
+      ((normalizedMedications?.length ?? 0) > 0 ||
+        Boolean(clinicalData.diagnosis?.trim()) ||
+        Boolean(clinicalData.notes?.trim()) ||
+        this.summarizeTreatmentPlan(clinicalData.treatmentPlan).trim().length > 0)
+    ) {
       void this.ehrService
         .createPrescription(
           {
-            userId: clinicalData.userId,
+            // The visit's patient (Patient.id). `clinicalData.userId` is the BOOKING user, which is
+            // the receptionist for a desk booking, so the note never found its patient.
+            userId: appointment.patientId || clinicalData.userId,
             clinicId: appointment.clinicId,
             doctorId: doctorId,
             diagnosis: clinicalData.diagnosis,
@@ -652,7 +789,8 @@ export class AppointmentConfirmationService {
                 ? { instructions: medication.instructions }
                 : {}),
             })),
-            notes: this.summarizeTreatmentPlan(clinicalData.treatmentPlan),
+            notes:
+              clinicalData.notes?.trim() || this.summarizeTreatmentPlan(clinicalData.treatmentPlan),
           },
           clinicalData.caller
         )

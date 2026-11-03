@@ -15,6 +15,7 @@ import { RbacGuard } from '@core/rbac/rbac.guard';
 import { Roles } from '@core/decorators/roles.decorator';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Role } from '@core/types/enums.types';
+import { DOCTOR_SELF_EARNINGS_VISIBLE } from '@core/interceptors/billing-redaction.util';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { AnalyticsService, type AnalyticsQueryFilters } from './analytics.service';
 import { DoctorEarningsQueryDto } from './dto/doctor-earnings-query.dto';
@@ -49,7 +50,8 @@ export class AnalyticsController {
    * data: the doctor is resolved from the token, never from a parameter.
    */
   @Get('doctor/me/earnings')
-  @Roles(Role.DOCTOR)
+  // Earnings are billing amounts: closed to the doctor unless the owner flips the product switch.
+  @Roles(...(DOCTOR_SELF_EARNINGS_VISIBLE ? [Role.DOCTOR] : [Role.SUPER_ADMIN]))
   @RequireResourcePermission('analytics', 'read')
   @ApiOperation({ summary: "Get the signed-in doctor's own earnings" })
   async getMyEarnings(

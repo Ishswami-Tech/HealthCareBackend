@@ -1,5 +1,9 @@
 import type { DatabaseService } from '@infrastructure/database';
 import type { PrismaDelegateArgs } from '@core/types/prisma.types';
+import {
+  DEFAULT_IN_PERSON_VISIT_MINUTES,
+  DEFAULT_VIDEO_VISIT_MINUTES,
+} from '@utils/visit-duration.util';
 
 /**
  * Doctor slot rule: one doctor may hold two appointments in the same time slot only when one is a
@@ -20,11 +24,14 @@ export const SLOT_FREEING_STATUSES: readonly string[] = [
   'EXPIRED',
 ];
 
-/** Length of the slot being requested: the quarter-hour video grid, the 3-minute clinic grid. */
-const VIDEO_SLOT_MINUTES = 15;
-const IN_CLINIC_SLOT_MINUTES = 3;
-/** Occupancy of an existing appointment that carries no duration. */
-const DEFAULT_BOOKED_MINUTES = 30;
+/**
+ * Fallback lengths when the caller passes none: the clinic defaults of visit-duration.util
+ * (in-person 3 min, video 15 min). Booking, reschedule and the grid pass the clinic's own values.
+ */
+const FALLBACK_MINUTES: Readonly<Record<AppointmentSlotKind, number>> = {
+  VIDEO: DEFAULT_VIDEO_VISIT_MINUTES,
+  IN_CLINIC: DEFAULT_IN_PERSON_VISIT_MINUTES,
+};
 
 export interface DoctorDayAppointment {
   readonly id: string;
@@ -43,22 +50,19 @@ function toMinutes(time: string | null | undefined): number | null {
 }
 
 /**
- * The kind of visit that already holds the requested slot, or null when the slot is free for this
- * type. `existing` must already be limited to the doctor, the clinic, the day and the statuses
- * that hold a slot (see loadDoctorDayAppointments).
+ * Whether [start, start + minutes) overlaps an existing appointment of `kind`. A row without a
+ * duration occupies `defaultBookedMinutes` (the clinic's length for that kind). Shared by the
+ * availability grid and the booking / reschedule check.
  */
-export function findConflictingSlotKind(
+export function isSlotTaken(
   existing: readonly DoctorDayAppointment[],
-  request: { type: string | null | undefined; time: string }
-): AppointmentSlotKind | null {
-  const kind = appointmentSlotKind(request.type);
-  const slotStart = toMinutes(request.time);
-  if (slotStart === null) {
-    return null;
-  }
-  const slotEnd = slotStart + (kind === 'VIDEO' ? VIDEO_SLOT_MINUTES : IN_CLINIC_SLOT_MINUTES);
-
-  const conflicting = existing.some(row => {
+  kind: AppointmentSlotKind,
+  slotStart: number,
+  slotMinutes: number,
+  defaultBookedMinutes: number = FALLBACK_MINUTES[kind]
+): boolean {
+  const slotEnd = slotStart + Math.max(1, slotMinutes);
+  return existing.some(row => {
     if (appointmentSlotKind(row.type) !== kind) {
       return false;
     }
@@ -66,11 +70,35 @@ export function findConflictingSlotKind(
     if (rowStart === null) {
       return false;
     }
-    const rowEnd = rowStart + (row.duration || DEFAULT_BOOKED_MINUTES);
+    const rowEnd = rowStart + (row.duration || defaultBookedMinutes);
     return rowStart < slotEnd && rowEnd > slotStart;
   });
+}
 
-  return conflicting ? kind : null;
+/**
+ * The kind of visit that already holds the requested slot, or null when the slot is free for this
+ * type. `existing` must already be limited to the doctor, the clinic, the day and the statuses
+ * that hold a slot (see loadDoctorDayAppointments). `durationMinutes` is the length of the visit
+ * being booked (the clinic setting for its type); rows without a duration occupy the same.
+ */
+export function findConflictingSlotKind(
+  existing: readonly DoctorDayAppointment[],
+  request: {
+    type: string | null | undefined;
+    time: string;
+    durationMinutes?: number | null;
+  }
+): AppointmentSlotKind | null {
+  const kind = appointmentSlotKind(request.type);
+  const slotStart = toMinutes(request.time);
+  if (slotStart === null) {
+    return null;
+  }
+  const minutes =
+    typeof request.durationMinutes === 'number' && request.durationMinutes > 0
+      ? request.durationMinutes
+      : FALLBACK_MINUTES[kind];
+  return isSlotTaken(existing, kind, slotStart, minutes, minutes) ? kind : null;
 }
 
 export function slotConflictMessage(kind: AppointmentSlotKind): string {
@@ -88,29 +116,43 @@ export function slotConflictMessage(kind: AppointmentSlotKind): string {
  */
 export async function loadDoctorDayAppointments(
   databaseService: Pick<DatabaseService, 'executeHealthcareRead'>,
-  params: {
-    doctorId: string;
-    clinicId: string;
-    dayKey: string;
-    excludeAppointmentId?: string;
-  }
+  params: DoctorDayQuery
+): Promise<DoctorDayAppointment[]> {
+  return await databaseService.executeHealthcareRead(async client =>
+    readDoctorDayAppointments(client as unknown as Record<string, unknown>, params)
+  );
+}
+
+export interface DoctorDayQuery {
+  doctorId: string;
+  clinicId: string;
+  dayKey: string;
+  excludeAppointmentId?: string;
+}
+
+/** Same read on a given client (e.g. the booking transaction, see assertDoctorSlotFreeInTx). */
+export async function readDoctorDayAppointments(
+  client: Record<string, unknown>,
+  params: DoctorDayQuery
 ): Promise<DoctorDayAppointment[]> {
   const dayStart = new Date(`${params.dayKey}T00:00:00.000+05:30`);
   const dayEnd = new Date(`${params.dayKey}T23:59:59.999+05:30`);
+  const delegate = client['appointment'] as unknown as {
+    findMany: (args: PrismaDelegateArgs) => Promise<DoctorDayAppointment[]>;
+  };
+  return await delegate.findMany({
+    where: {
+      doctorId: params.doctorId,
+      clinicId: params.clinicId,
+      ...(params.excludeAppointmentId ? { id: { not: params.excludeAppointmentId } } : {}),
+      date: { gte: dayStart, lte: dayEnd },
+      status: { notIn: [...SLOT_FREEING_STATUSES] },
+    },
+    select: { id: true, type: true, time: true, duration: true },
+  } as PrismaDelegateArgs);
+}
 
-  return await databaseService.executeHealthcareRead(async client => {
-    const delegate = client['appointment'] as unknown as {
-      findMany: (args: PrismaDelegateArgs) => Promise<DoctorDayAppointment[]>;
-    };
-    return await delegate.findMany({
-      where: {
-        doctorId: params.doctorId,
-        clinicId: params.clinicId,
-        ...(params.excludeAppointmentId ? { id: { not: params.excludeAppointmentId } } : {}),
-        date: { gte: dayStart, lte: dayEnd },
-        status: { notIn: [...SLOT_FREEING_STATUSES] },
-      },
-      select: { id: true, type: true, time: true, duration: true },
-    } as PrismaDelegateArgs);
-  });
+/** Advisory-lock key of one doctor's IST day: every booking of that day serializes on it. */
+export function doctorDayLockKey(doctorId: string, dayKey: string): string {
+  return `appointment-slot:${doctorId}:${dayKey}`;
 }

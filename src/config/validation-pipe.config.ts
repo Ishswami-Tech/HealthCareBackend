@@ -50,6 +50,8 @@ export class ValidationPipeConfig {
         }
 
         return new BadRequestException({
+          // `code` is what the access log and clients key on (it was logged as UNKNOWN_ERROR).
+          code: 'VALIDATION_ERROR',
           type: 'VALIDATION_ERROR',
           message: 'Validation failed',
           errors: formattedErrors,

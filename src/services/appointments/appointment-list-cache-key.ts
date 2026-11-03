@@ -45,6 +45,7 @@ const FILTER_KEYS: Readonly<Record<ListVariant, readonly string[]>> = {
     'locationId',
     'page',
     'limit',
+    'isFollowUp',
   ],
   my: ['status', 'date', 'startDate', 'endDate', 'doctorId', 'locationId', 'type', 'page', 'limit'],
 };

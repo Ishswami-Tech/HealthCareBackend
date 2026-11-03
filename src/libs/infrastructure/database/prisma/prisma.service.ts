@@ -122,6 +122,7 @@ import type {
   NursingNoteDelegate,
   VitalsFlowsheetDelegate,
   BedsideMedicationDelegate,
+  NadiParikshaRecordDelegate,
   TransactionDelegate,
 } from '@core/types/prisma.types';
 
@@ -217,6 +218,31 @@ export type AppointmentTimeSlotResult = AppointmentTimeSlot[];
  * because query strategies and other services need to inject this as a singleton.
  * Multi-tenant isolation is handled at the query level, not at the service level.
  */
+/**
+ * Model delegates declared on PrismaService that are copied from the generated client only when
+ * present (see assignAllDelegates). Every name must be a model in schema.prisma (unit-tested).
+ */
+export const LENIENT_MODEL_DELEGATES = [
+  'stockBatch',
+  'stockMovement',
+  'stockTransfer',
+  'reorderRule',
+  'stockAlert',
+  'purchaseOrder',
+  'foodItem',
+  'dietPlan',
+  'dietPlanItem',
+  'dietaryRestriction',
+  'foodCompatibilityRule',
+  'prakritiAnalysis',
+  'nadiPariksha',
+  'nadiParikshaRecord',
+  'prakritiAssessment',
+  'doshaImbalance',
+  'sampraptiStage',
+  'ayurvedicDiagnosis',
+] as const;
+
 @Injectable()
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private prismaClient!: PrismaClient;
@@ -272,6 +298,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   readonly ayurvedicDiagnosis!: any;
   readonly prakritiAssessment!: any;
   readonly nadiPariksha!: any;
+  readonly nadiParikshaRecord!: NadiParikshaRecordDelegate;
   readonly doshaImbalance!: any;
   readonly $transaction!: TransactionDelegate['$transaction'];
   private static connectionCount = 0;
@@ -838,8 +865,11 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       this.loggingService = loggingService;
     }
 
-    // Initialize pool size using helper function
-    this.poolSize = getEnvNumber('DB_POOL_SIZE', 20);
+    // Explicit per-process pool budget (audit P1). Defaults: API 25, worker 10. Budget rule:
+    // api_replicas * (pool + 2 health) + worker * (pool + 2) + ~10 admin/backup/migrate must stay
+    // below Postgres max_connections (prod 120). Always set DB_POOL_SIZE explicitly per service.
+    const isWorkerProcess = (getEnv('APP_MODE') || '').toLowerCase() === 'worker';
+    this.poolSize = getEnvNumber('DB_POOL_SIZE', isWorkerProcess ? 10 : 25);
 
     // With REQUEST scope, NestJS creates a new instance per request
     // We still need to initialize prismaClient on each instance
@@ -920,15 +950,34 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       ? getEnvNumber('DB_CONNECTION_TIMEOUT', 10000)
       : getEnvNumber('DB_CONNECTION_TIMEOUT', 30000); // 30 seconds for dev
 
+    // Per-session OLTP timeouts (audit P1), sent as startup parameters on every pooled
+    // connection: one slow report or a blocked lock can no longer hold a pool slot for the
+    // server-wide 60s. Applies to app sessions only - migrations go through the Prisma CLI with
+    // the raw DATABASE_URL and keep the server defaults. 0 disables a timeout.
+    const statementTimeoutMs = getEnvNumber(
+      'DB_STATEMENT_TIMEOUT_MS',
+      isWorkerProcess ? 60000 : 15000
+    );
+    const lockTimeoutMs = getEnvNumber('DB_LOCK_TIMEOUT_MS', 5000);
+    const idleInTransactionTimeoutMs = getEnvNumber('DB_IDLE_IN_TRANSACTION_TIMEOUT_MS', 30000);
+
     const poolConfig: {
       connectionString: string;
       ssl?: boolean | { rejectUnauthorized: boolean };
       max?: number;
       connectionTimeoutMillis?: number;
+      statement_timeout?: number;
+      lock_timeout?: number;
+      idle_in_transaction_session_timeout?: number;
     } = {
       connectionString,
-      max: this.poolSize, // Configurable via DB_POOL_SIZE env var (default 20)
+      max: this.poolSize, // DB_POOL_SIZE (default: API 25, worker 10)
       connectionTimeoutMillis: connectionTimeout,
+      ...(statementTimeoutMs > 0 && { statement_timeout: statementTimeoutMs }),
+      ...(lockTimeoutMs > 0 && { lock_timeout: lockTimeoutMs }),
+      ...(idleInTransactionTimeoutMs > 0 && {
+        idle_in_transaction_session_timeout: idleInTransactionTimeoutMs,
+      }),
     };
 
     // For Supabase/cloud databases, always configure SSL
@@ -1029,27 +1078,18 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
             }
           }
 
-          // Add query timeout in production
-          if (isProduction()) {
-            const productionQueryArgs: Record<string, unknown> =
-              PrismaService.stampConfirmationExpiryIfNeeded(operationArgs);
-            const productionQueryResultPromise = productionQueryFn(productionQueryArgs);
-            const productionQueryResult: Promise<Record<string, never>> =
-              productionQueryResultPromise;
-            return Promise.race([
-              productionQueryResult,
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('Query timeout')), PrismaService.QUERY_TIMEOUT)
-              ),
-            ]);
-          }
-
-          const nonProductionQueryArgs: Record<string, unknown> =
+          // Query timeout applies in every environment, not just production: a dev/test run
+          // with no timeout at all is how a genuinely unbounded hang (e.g. a saturated
+          // connection pool, or a stuck query) goes completely unnoticed until production.
+          const queryArgs: Record<string, unknown> =
             PrismaService.stampConfirmationExpiryIfNeeded(operationArgs);
-          const nonProductionQueryResultPromise = productionQueryFn(nonProductionQueryArgs);
-          const nonProductionQueryResult: Promise<Record<string, never>> =
-            nonProductionQueryResultPromise;
-          return nonProductionQueryResult;
+          const queryResultPromise: Promise<Record<string, never>> = productionQueryFn(queryArgs);
+          return Promise.race([
+            queryResultPromise,
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('Query timeout')), PrismaService.QUERY_TIMEOUT)
+            ),
+          ]);
         },
       },
     };
@@ -1174,19 +1214,11 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     assignDelegate<NursingNoteDelegate>('nursingNote', 'nursingNote');
     assignDelegate<VitalsFlowsheetDelegate>('vitalsFlowsheet', 'vitalsFlowsheet');
     assignDelegate<BedsideMedicationDelegate>('bedsideMedication', 'bedsideMedication');
-    // Pharmacy inventory delegates are declared on this class but were never
-    // copied from the client, so `db.prisma.stockBatch` etc. were undefined at
-    // runtime. Assigned leniently (only when the generated client has the model)
-    // so a stale generated client does not stop the whole app from booting.
-    const pharmacyInventoryDelegates = [
-      'stockBatch',
-      'stockMovement',
-      'stockTransfer',
-      'reorderRule',
-      'stockAlert',
-      'purchaseOrder',
-    ] as const;
-    for (const delegateName of pharmacyInventoryDelegates) {
+    // Pharmacy inventory, diet and Ayurveda delegates are declared on this class but were never
+    // copied from the client, so `db.prisma.stockBatch` / `prakritiAssessment` etc. were undefined
+    // at runtime (Ayurveda endpoints answered 500 "undefined.findMany"). Assigned leniently (only
+    // when the generated client has the model) so a stale generated client does not stop the boot.
+    for (const delegateName of LENIENT_MODEL_DELEGATES) {
       const delegateValue = clientTyped[delegateName];
       if (delegateValue !== undefined && delegateValue !== null) {
         Object.defineProperty(this, delegateName, {

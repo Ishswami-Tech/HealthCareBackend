@@ -6,6 +6,7 @@
 
 import { DatabaseMethodsBase } from './database-methods.base';
 import { LogType, LogLevel } from '@core/types';
+import { startOfIstDay } from '@utils/clock.util';
 import type {
   ClinicDashboardStats,
   ClinicPatientOptions,
@@ -71,10 +72,9 @@ export class ClinicMetricsMethods extends DatabaseMethodsBase {
 
         // Today's appointments (cached, short TTL)
         this.executeRead(async prisma => {
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const tomorrow = new Date(today);
-          tomorrow.setDate(tomorrow.getDate() + 1);
+          // IST day (Appointment.date is the IST-midnight day key), not the server UTC day.
+          const today = startOfIstDay(new Date()) ?? new Date();
+          const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
 
           return prisma.appointment.count({
             where: {
@@ -86,10 +86,8 @@ export class ClinicMetricsMethods extends DatabaseMethodsBase {
 
         // Upcoming appointments (next 7 days, cached)
         this.executeRead(async prisma => {
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const nextWeek = new Date(today);
-          nextWeek.setDate(nextWeek.getDate() + 7);
+          const today = startOfIstDay(new Date()) ?? new Date();
+          const nextWeek = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
 
           return prisma.appointment.count({
             where: {

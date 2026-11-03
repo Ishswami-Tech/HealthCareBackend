@@ -237,7 +237,12 @@ describe('payment finalisation - stale read cache', () => {
 
     await world.deliver();
 
-    expect(world.db.row('payment', 'pay-1')['status']).toBe('CANCELLED');
+    // Recorded (money received) and flagged for the clinic; the released plan stays released.
+    expect(world.db.row('payment', 'pay-1')['status']).toBe('COMPLETED');
+    expect(world.db.metadata('payment', 'pay-1')['settlementReview']).toMatchObject({
+      reason: 'LATE_SETTLEMENT',
+      requiredAction: 'REFUND_OR_REBOOK',
+    });
     expect(world.events('billing.payment.late_settlement')).toHaveLength(1);
     expect(world.db.row('subscription', 'sub-1')['status']).toBe('INCOMPLETE');
   });
@@ -372,8 +377,14 @@ describe('payment finalisation - duplicate and late settlements', () => {
     await world.deliver();
     const before = world.db.row('payment', 'pay-1')['status'];
 
+    // A second order of the SAME plan purchase: the gateway's own order tags name it.
     world.paymentService['verifyPaymentStatus']?.mockResolvedValue(
-      gatewayResult({ transactionId: 'cf-tx-other', paymentId: 'order-9', amount: 118 })
+      gatewayResult({
+        transactionId: 'cf-tx-other',
+        paymentId: 'order-9',
+        amount: 118,
+        metadata: { order_id: 'order-9', order_tags: { subscriptionId: 'sub-1' } },
+      })
     );
     await world.deliver('pay-1', 'order-9');
     await world.deliver('pay-1', 'order-9'); // redelivery of the same extra order: no spam
@@ -387,6 +398,25 @@ describe('payment finalisation - duplicate and late settlements', () => {
     expect(renewedIds(world)).toEqual(['pay-1']);
   });
 
+  it('rejects a paid order of ANOTHER checkout replayed against this payment (callback replay)', async () => {
+    const world = createFinalisationWorld();
+    world.paymentService['verifyPaymentStatus']?.mockResolvedValue(
+      gatewayResult({
+        transactionId: 'cf-tx-attacker',
+        paymentId: 'order-attacker',
+        amount: 118,
+        metadata: { order_id: 'order-attacker', order_tags: { subscriptionId: 'sub-attacker' } },
+      })
+    );
+
+    await expect(world.deliver('pay-1', 'order-attacker')).rejects.toThrow(
+      'does not match the payment'
+    );
+    expect(world.db.row('payment', 'pay-1')['status']).toBe('PENDING');
+    expect(world.db.row('subscription', 'sub-1')['status']).toBe('INCOMPLETE');
+    expect(world.enterpriseEvents('payment.completed')).toHaveLength(0);
+  });
+
   it('never treats a redelivery of the settled order as a second payment', async () => {
     const world = createFinalisationWorld();
     await world.deliver();
@@ -398,21 +428,44 @@ describe('payment finalisation - duplicate and late settlements', () => {
   });
 
   it.each(['CANCELLED', 'EXPIRED'])(
-    'a gateway success for a locally %s payment emits late_settlement and changes nothing',
+    'a gateway success for a locally %s payment is recorded COMPLETED + flagged REFUND_OR_REBOOK, with no side effect',
     async status => {
       const world = createFinalisationWorld({ payment: { status } });
 
       await world.deliver();
 
-      expect(world.db.row('payment', 'pay-1')['status']).toBe(status);
+      // The money was collected: recorded, never dropped and never refunded automatically.
+      expect(world.db.row('payment', 'pay-1')['status']).toBe('COMPLETED');
+      const metadata = world.db.metadata('payment', 'pay-1');
+      expect(metadata['settlementReview']).toMatchObject({
+        reason: 'LATE_SETTLEMENT',
+        requiredAction: 'REFUND_OR_REBOOK',
+        status: 'PENDING_REVIEW',
+      });
+      expect(metadata['lateSettlement']).toMatchObject({ releasedStatus: status });
+      // An already-applied marker: no later delivery / repair runs the side effects.
+      expect((metadata['finalisation'] as Record<string, unknown>)['sideEffectsAppliedAt']).toEqual(
+        expect.any(String)
+      );
       expect(world.events('billing.payment.late_settlement')).toHaveLength(1);
+      // The released checkout stays released.
       expect(world.db.row('subscription', 'sub-1')['status']).toBe('INCOMPLETE');
       expect(world.db.row('invoice', 'inv-1')['status']).toBe('PENDING');
-      // No refund machinery: nothing is persisted for a late settlement.
-      expect(world.db.metadata('payment', 'pay-1')['settlementReview']).toBeUndefined();
-      expect(world.db.count('payment.updateMany')).toBe(0);
     }
   );
+
+  it('a redelivery of the same late payment changes nothing more', async () => {
+    const world = createFinalisationWorld({ payment: { status: 'EXPIRED' } });
+
+    await world.deliver();
+    const afterFirst = world.db.count('payment.updateMany');
+    await world.deliver();
+
+    expect(world.db.row('payment', 'pay-1')['status']).toBe('COMPLETED');
+    expect(world.db.row('invoice', 'inv-1')['status']).toBe('PENDING');
+    expect(world.db.count('payment.updateMany')).toBe(afterFirst);
+    expect(world.events('billing.payment.late_settlement')).toHaveLength(1);
+  });
 });
 
 describe('payment finalisation - ownership of the payment targets', () => {

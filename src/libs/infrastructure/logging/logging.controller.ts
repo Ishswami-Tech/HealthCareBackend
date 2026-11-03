@@ -23,6 +23,10 @@ import { LoggingService } from '@logging';
 // Internal imports - Types
 import { LogType, LogLevel } from '@core/types';
 import { JwtAuthGuard } from '@core/guards';
+import { RolesGuard } from '@core/guards/roles.guard';
+import { Roles } from '@core/decorators/roles.decorator';
+import { Role } from '@core/types/enums.types';
+import { LoggerUiEnabledGuard } from '@infrastructure/logging/logger-ui-access.guard';
 
 // Internal imports - DTOs
 import { GetLogsQueryDto, GetEventsQueryDto } from '@dtos/logging.dto';
@@ -756,7 +760,9 @@ export class LoggingController {
   }
 
   @Get()
-  @Public() // Public - no authentication required
+  @UseGuards(LoggerUiEnabledGuard, JwtAuthGuard, RolesGuard)
+  @Roles(Role.SUPER_ADMIN)
+  @ApiBearerAuth()
   async getUI(@Res() reply: FastifyReply) {
     reply.header('Content-Type', 'text/html');
     return reply.send(this.getHtmlTemplate('logs'));
@@ -796,19 +802,23 @@ export class LoggingController {
   }
 
   @Get('ui/events')
-  @Public() // Public - no authentication required
+  @UseGuards(LoggerUiEnabledGuard, JwtAuthGuard, RolesGuard)
+  @Roles(Role.SUPER_ADMIN)
+  @ApiBearerAuth()
   async getEventsPage(@Res() reply: FastifyReply) {
     reply.header('Content-Type', 'text/html');
     return reply.send(this.getHtmlTemplate('events'));
   }
 
   @Get('logs')
-  @Public() // Public - no authentication required
+  @UseGuards(LoggerUiEnabledGuard, JwtAuthGuard, RolesGuard)
+  @Roles(Role.SUPER_ADMIN)
+  @ApiBearerAuth()
   @RateLimitAPI({ points: 100, duration: 60 }) // 100 requests per minute
   @ApiOperation({
-    summary: 'Get logs (Public API)',
+    summary: 'Get logs (SUPER_ADMIN)',
     description:
-      'Public API endpoint to retrieve logs in JSON format. Supports pagination and filtering. No authentication required.',
+      'Retrieve logs in JSON format (pagination + filtering). Log lines can contain PHI: SUPER_ADMIN only, and disabled in production unless LOGGER_UI_ENABLED=true.',
   })
   @ApiResponse({
     status: 200,
@@ -985,12 +995,14 @@ export class LoggingController {
   }
 
   @Get('events')
-  @Public() // Public - no authentication required
+  @UseGuards(LoggerUiEnabledGuard, JwtAuthGuard, RolesGuard)
+  @Roles(Role.SUPER_ADMIN)
+  @ApiBearerAuth()
   @RateLimitAPI({ points: 100, duration: 60 }) // 100 requests per minute
   @ApiOperation({
-    summary: 'Get events (Public API)',
+    summary: 'Get events (SUPER_ADMIN)',
     description:
-      'Public API endpoint to retrieve events in JSON format. Supports pagination and filtering. No authentication required.',
+      'Retrieve stored events in JSON format (pagination + filtering). Events can contain PHI: SUPER_ADMIN only, and disabled in production unless LOGGER_UI_ENABLED=true.',
   })
   @ApiResponse({
     status: 200,

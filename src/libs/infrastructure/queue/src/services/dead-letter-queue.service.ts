@@ -22,34 +22,80 @@
  *   await dlqService.purgeDeadLetter();
  */
 
-import { Injectable, Inject, forwardRef, Optional } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, Optional, type OnModuleDestroy } from '@nestjs/common';
 import { Queue } from 'bullmq';
+import type { Job, JobsOptions } from 'bullmq';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { DatabaseService } from '@infrastructure/database/database.service';
-import { DEAD_LETTER_QUEUE } from '../queue.constants';
-import type { Job } from 'bullmq';
+import { DEAD_LETTER_QUEUE, DLQ_CONFIG, JOB_RETENTION } from '../queue.constants';
 
 export interface DeadLetterEntry {
   jobId: string;
   originalQueue: string;
   name: string;
   data: unknown;
+  /** Options the original job was added with (priority, backoff, ...). */
+  opts?: Record<string, unknown>;
   error: string;
   stack: string | undefined;
   attemptsMade: number;
   failedAt: Date;
 }
 
+export interface DeadLetterRetryResult {
+  /** `requeued`: the job was re-added; `already-pending`: the original is still queued/running. */
+  readonly outcome: 'requeued' | 'already-pending';
+  readonly originalQueue: string;
+  readonly jobId: string;
+}
+
+export interface DeadLetterConnection {
+  host: string;
+  port: number;
+  password?: string;
+  db: number;
+}
+
+/** The slice of a BullMQ Queue the DLQ needs; lets unit tests inject fakes. */
+export type DeadLetterQueueLike = Pick<
+  Queue,
+  'add' | 'getJob' | 'getJobs' | 'getWaiting' | 'getFailed' | 'getCompleted' | 'clean' | 'close'
+>;
+
+export type DeadLetterQueueFactory = (
+  name: string,
+  connection: DeadLetterConnection
+) => DeadLetterQueueLike;
+
+const defaultQueueFactory: DeadLetterQueueFactory = (name, connection) =>
+  new Queue(name, { connection });
+
+/** States in which a job will still run (or is running) without any help from the DLQ. */
+const PENDING_STATES: ReadonlySet<string> = new Set([
+  'waiting',
+  'active',
+  'delayed',
+  'prioritized',
+  'waiting-children',
+]);
+
+/** Job options copied from the original job when it is retried (the rest are BullMQ-internal). */
+const RETRIED_OPTION_KEYS = ['priority', 'backoff', 'timeout', 'lifo'] as const;
+const DEFAULT_RETRY_ATTEMPTS = 5;
+const DEFAULT_RETRY_BACKOFF: NonNullable<JobsOptions['backoff']> = {
+  type: 'exponential',
+  delay: 2000,
+};
+
 @Injectable()
-export class DeadLetterQueueService {
-  private dlqQueue: Queue | null = null;
-  private redisConnection: {
-    host: string;
-    port: number;
-    password?: string;
-    db: number;
-  } | null = null;
+export class DeadLetterQueueService implements OnModuleDestroy {
+  private dlqQueue: DeadLetterQueueLike | null = null;
+  private redisConnection: DeadLetterConnection | null = null;
+  /** One producer per target queue, reused across retries (was: a leaked connection per retry). */
+  private readonly targetQueues = new Map<string, DeadLetterQueueLike>();
+  private queueFactory: DeadLetterQueueFactory = defaultQueueFactory;
+  private lastPruneAt = 0;
 
   constructor(
     @Inject(forwardRef(() => DatabaseService))
@@ -60,11 +106,22 @@ export class DeadLetterQueueService {
   ) {}
 
   /**
-   * Initialize the DLQ queue. Call once on module init.
+   * Initialize the DLQ queue. Call once on module init. `queueFactory` exists for tests.
    */
-  initialize(connection: { host: string; port: number; password?: string; db: number }): void {
+  initialize(
+    connection: DeadLetterConnection,
+    queueFactory: DeadLetterQueueFactory = defaultQueueFactory
+  ): void {
     this.redisConnection = connection;
-    this.dlqQueue = new Queue(DEAD_LETTER_QUEUE, { connection });
+    this.queueFactory = queueFactory;
+    this.dlqQueue = queueFactory(DEAD_LETTER_QUEUE, connection);
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    const queues = [...this.targetQueues.values(), ...(this.dlqQueue ? [this.dlqQueue] : [])];
+    this.targetQueues.clear();
+    this.dlqQueue = null;
+    await Promise.allSettled(queues.map(queue => queue.close()));
   }
 
   /**
@@ -84,11 +141,13 @@ export class DeadLetterQueueService {
     }
 
     try {
+      const opts = pickRetriedOptions(job.opts as Record<string, unknown> | undefined);
       const entry: DeadLetterEntry = {
         jobId: String(job.id),
         originalQueue: job.queueName,
         name: job.name,
         data: job.data,
+        ...(opts ? { opts } : {}),
         error: error.message,
         stack: error.stack,
         attemptsMade: job.attemptsMade,
@@ -97,8 +156,8 @@ export class DeadLetterQueueService {
 
       await this.dlqQueue.add('dead-letter', entry, {
         jobId: `dlq-${job.id}`,
-        removeOnComplete: 0,
-        removeOnFail: 0,
+        removeOnComplete: DLQ_CONFIG.removeOnComplete,
+        removeOnFail: DLQ_CONFIG.removeOnFail,
         priority: 0,
       });
 
@@ -109,6 +168,7 @@ export class DeadLetterQueueService {
         'DeadLetterQueueService',
         { jobId: String(job.id), jobName: job.name, error: error.message }
       );
+      await this.pruneIfDue();
     } catch (dlqError) {
       void this.loggingService?.log(
         LogType.QUEUE,
@@ -131,49 +191,89 @@ export class DeadLetterQueueService {
     if (!this.dlqQueue) return [];
 
     const jobs = await this.dlqQueue.getJobs(['wait', 'active', 'delayed', 'failed'], 0, limit - 1);
-    return jobs.map((job: Job): DeadLetterEntry => ({
-      jobId: String(job.id),
-      originalQueue: (job.data as DeadLetterEntry)?.originalQueue ?? 'unknown',
-      name: job.name,
-      data: job.data,
-      error: (job.progress as string) ?? 'unknown',
-      stack: undefined,
-      attemptsMade: job.attemptsMade,
-      failedAt: job.timestamp ? new Date(job.timestamp) : new Date(),
-    }));
+    return jobs.map((job: Job): DeadLetterEntry => {
+      const entry = job.data as Partial<DeadLetterEntry> | undefined;
+      return {
+        jobId: String(job.id),
+        originalQueue: entry?.originalQueue ?? 'unknown',
+        name: job.name,
+        data: job.data,
+        error: typeof entry?.error === 'string' ? entry.error : 'unknown',
+        stack: typeof entry?.stack === 'string' ? entry.stack : undefined,
+        attemptsMade: job.attemptsMade,
+        failedAt: job.timestamp ? new Date(job.timestamp) : new Date(),
+      };
+    });
   }
 
   /**
    * Retry a dead-letter job by re-enqueueing it on the original queue.
+   *
+   * The original job id usually still exists in the original queue's FAILED set (retained by
+   * removeOnFail), and BullMQ silently ignores an add() whose jobId already exists. The previous
+   * implementation therefore "succeeded", deleted the DLQ entry and lost the job. Now:
+   *   - the original is still waiting/active/delayed: nothing to re-add, the DLQ entry is removed;
+   *   - the original is finished (failed/completed): it is moved back to wait with Job.retry()
+   *     under its own id, with the attempt counters reset;
+   *   - the original is gone (pruned): it is re-added from the DLQ copy (reusing a custom id;
+   *     BullMQ does not allow integer custom ids) and the add is verified;
+   *   - the DLQ entry is removed only once the job is back on its queue.
+   *
+   * @throws Error when the DLQ is not initialized, the entry does not exist or carries no
+   *   metadata, or the job could not be re-enqueued (the DLQ entry is kept in that case).
    */
-  async retryDeadLetter(jobId: string): Promise<void> {
-    if (!this.dlqQueue) throw new Error('DLQ not initialized');
+  async retryDeadLetter(jobId: string): Promise<DeadLetterRetryResult> {
+    if (!this.dlqQueue || !this.redisConnection) throw new Error('DLQ not initialized');
 
     const dlqJob = await this.dlqQueue.getJob(jobId);
     if (!dlqJob) throw new Error(`DLQ job not found: ${jobId}`);
 
-    const entry = dlqJob.data as DeadLetterEntry;
-    // Remove the 'dead-letter' marker so it doesn't look like a DLQ entry
-    const { jobId: _, ...cleanData } = entry.data as Record<string, unknown>;
+    const entry = dlqJob.data as Partial<DeadLetterEntry> | undefined;
+    if (!entry?.originalQueue || !entry.name || !entry.jobId) {
+      throw new Error(`DLQ job ${jobId} has no original queue/job metadata`);
+    }
+    const target = this.getTargetQueue(entry.originalQueue);
 
-    // Re-add to the original queue
-    const originalQueue = new Queue(entry.originalQueue, { connection: this.redisConnection! });
-    await originalQueue.add(entry.name, cleanData, {
-      jobId: entry.jobId,
-      attempts: 5,
-      backoff: { type: 'exponential', delay: 2000 },
-    });
+    const existing = await target.getJob(entry.jobId);
+    if (existing) {
+      const state = await existing.getState();
+      if (PENDING_STATES.has(state)) {
+        await dlqJob.remove();
+        this.logRetry(entry.jobId, entry.originalQueue, 'already-pending', state);
+        return {
+          outcome: 'already-pending',
+          originalQueue: entry.originalQueue,
+          jobId: entry.jobId,
+        };
+      }
+      if (state === 'failed' || state === 'completed') {
+        // The original hash is still there: move it back to wait under its own id, with a fresh
+        // attempt budget (throws if BullMQ refuses, which keeps the DLQ entry).
+        await existing.retry(state, { resetAttemptsMade: true, resetAttemptsStarted: true });
+        return this.finishRetry(dlqJob, entry.jobId, entry.originalQueue);
+      }
+      // Unknown state: free the id so the re-add below is not a silent no-op.
+      await existing.remove();
+    }
 
-    // Remove from DLQ
+    const added = await target.add(entry.name, entry.data, buildRetryOptions(entry));
+    if (!added?.id || (isCustomJobId(entry.jobId) && String(added.id) !== entry.jobId)) {
+      throw new Error(
+        `Re-enqueue of DLQ job ${jobId} to ${entry.originalQueue} was not accepted; DLQ entry kept`
+      );
+    }
+    return this.finishRetry(dlqJob, String(added.id), entry.originalQueue);
+  }
+
+  /** Drops the DLQ copy only after the job is back on its queue. */
+  private async finishRetry(
+    dlqJob: Job,
+    requeuedJobId: string,
+    originalQueue: string
+  ): Promise<DeadLetterRetryResult> {
     await dlqJob.remove();
-
-    void this.loggingService?.log(
-      LogType.QUEUE,
-      LogLevel.INFO,
-      `Retried DLQ job: ${entry.jobId} -> ${entry.originalQueue}`,
-      'DeadLetterQueueService',
-      { jobId: entry.jobId, queue: entry.originalQueue }
-    );
+    this.logRetry(requeuedJobId, originalQueue, 'requeued');
+    return { outcome: 'requeued', originalQueue, jobId: requeuedJobId };
   }
 
   /**
@@ -197,4 +297,80 @@ export class DeadLetterQueueService {
 
     return purged;
   }
+
+  /**
+   * Caps DLQ growth (entries carry full job payloads, PHI included): entries older than
+   * DLQ_CONFIG.maxAgeMs are removed, and the wait list is cut to the newest
+   * DLQ_CONFIG.maxEntries. Throttled to once per DLQ_CONFIG.pruneIntervalMs; never throws.
+   */
+  async pruneIfDue(now: number = Date.now()): Promise<number> {
+    if (!this.dlqQueue || now - this.lastPruneAt < DLQ_CONFIG.pruneIntervalMs) return 0;
+    this.lastPruneAt = now;
+    try {
+      const expired = await this.dlqQueue.clean(DLQ_CONFIG.maxAgeMs, 1000, 'wait');
+      // getJobs on 'wait' is newest-first (desc), so everything past maxEntries is the oldest.
+      const overflow = await this.dlqQueue.getJobs(['wait'], DLQ_CONFIG.maxEntries, -1, false);
+      await Promise.all(overflow.map(job => job.remove()));
+      return expired.length + overflow.length;
+    } catch (error) {
+      void this.loggingService?.log(
+        LogType.QUEUE,
+        LogLevel.WARN,
+        'DLQ prune failed',
+        'DeadLetterQueueService',
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+      return 0;
+    }
+  }
+
+  private getTargetQueue(name: string): DeadLetterQueueLike {
+    const cached = this.targetQueues.get(name);
+    if (cached) return cached;
+    if (!this.redisConnection) throw new Error('DLQ not initialized');
+    const queue = this.queueFactory(name, this.redisConnection);
+    this.targetQueues.set(name, queue);
+    return queue;
+  }
+
+  private logRetry(jobId: string, queueName: string, outcome: string, state?: string): void {
+    void this.loggingService?.log(
+      LogType.QUEUE,
+      LogLevel.INFO,
+      `Retried DLQ job: ${jobId} -> ${queueName} (${outcome})`,
+      'DeadLetterQueueService',
+      { jobId, queue: queueName, outcome, ...(state ? { state } : {}) }
+    );
+  }
+}
+
+/**
+ * BullMQ auto-generated ids are integers, and BullMQ refuses integer CUSTOM ids ("Custom Id
+ * cannot be integers"), so only a producer-chosen (non-integer) id is reused on re-add.
+ */
+function isCustomJobId(jobId: string): boolean {
+  return `${parseInt(jobId, 10)}` !== jobId;
+}
+
+function buildRetryOptions(entry: Partial<DeadLetterEntry>): JobsOptions {
+  const savedBackoff = entry.opts?.['backoff'] as JobsOptions['backoff'] | undefined;
+  const backoff: NonNullable<JobsOptions['backoff']> = savedBackoff ?? DEFAULT_RETRY_BACKOFF;
+  return {
+    ...(entry.opts ?? {}),
+    ...(entry.jobId && isCustomJobId(entry.jobId) ? { jobId: entry.jobId } : {}),
+    attempts: DEFAULT_RETRY_ATTEMPTS,
+    backoff,
+    removeOnComplete: JOB_RETENTION.removeOnComplete,
+    removeOnFail: JOB_RETENTION.removeOnFail,
+  };
+}
+
+function pickRetriedOptions(
+  opts: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  if (!opts) return undefined;
+  const picked = Object.fromEntries(
+    RETRIED_OPTION_KEYS.filter(key => opts[key] !== undefined).map(key => [key, opts[key]])
+  );
+  return Object.keys(picked).length > 0 ? picked : undefined;
 }

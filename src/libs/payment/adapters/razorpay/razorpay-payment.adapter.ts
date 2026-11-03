@@ -13,7 +13,9 @@ import { createRequire } from 'module';
 import * as crypto from 'crypto';
 import { LoggingService } from '@logging';
 import { LogType, LogLevel } from '@core/types';
+import { PaymentProvider } from '@core/types/payment.types';
 import { BasePaymentAdapter } from '../base/base-payment-adapter';
+import { buildProviderOrderExpiry } from '@payment/provider-order-expiry.util';
 import { HealthcareError } from '@core/errors/healthcare-error.class';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { toError } from '@core/errors/error-message.util';
@@ -297,6 +299,12 @@ export class RazorpayPaymentAdapter extends BasePaymentAdapter {
       // PaymentIntentOptions.amount is already in the smallest currency unit.
       const amountInPaise = Math.round(options.amount);
 
+      // Razorpay orders have no expiry field (POST /v1/orders takes amount, currency, receipt,
+      // notes only), so the gateway cannot refuse a late payment: the payment-window sweeps ask
+      // Razorpay for the order status after window + buffer and expire it when unpaid. Checkout's
+      // own `timeout` option (seconds) is returned below so clients close the modal in time.
+      const expiry = buildProviderOrderExpiry(PaymentProvider.RAZORPAY);
+
       // Create order in Razorpay
       const orderOptions: RazorpayOrderOptions = {
         amount: amountInPaise,
@@ -368,6 +376,7 @@ export class RazorpayPaymentAdapter extends BasePaymentAdapter {
       pending.metadata = {
         ...(pending.metadata || {}),
         razorpayKeyId: this.keyId,
+        ...expiry.requestFields,
         ...(Object.keys(prefill).length > 0 ? { prefill } : {}),
       };
       return pending;

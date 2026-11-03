@@ -1,4 +1,11 @@
-import { Injectable, OnModuleInit, Inject, Optional, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleInit,
+  Inject,
+  Optional,
+  UnauthorizedException,
+  forwardRef,
+} from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -18,6 +25,13 @@ import type {
   SessionSummary,
 } from '@core/types/session.types';
 import type { FastifySession } from '@core/types/guard.types';
+import {
+  parseJwtDurationSeconds,
+  sessionRevocationTtlSeconds,
+} from '@core/session/session-revocation.util';
+
+/** Default JWT_REFRESH_EXPIRES_IN (7 days), used when the variable is missing or malformed. */
+const DEFAULT_REFRESH_TOKEN_LIFETIME_SECONDS = 7 * 24 * 60 * 60;
 
 /**
  * Session Management Service for Healthcare Backend
@@ -191,6 +205,11 @@ export class SessionManagementService implements OnModuleInit {
       metadata?: Record<string, unknown>;
     }
   ): Promise<SessionData> {
+    // A logged-out / revoked / evicted session is never brought back: getSession() returns null
+    // for it exactly like for a cold cache, so the revocation list is checked explicitly.
+    if (await this.isSessionBlacklisted(sessionId)) {
+      throw new UnauthorizedException('Session has been revoked');
+    }
     const existing = await this.getSession(sessionId);
     if (existing) {
       return existing;
@@ -388,19 +407,20 @@ export class SessionManagementService implements OnModuleInit {
   async invalidateSession(sessionId: string): Promise<boolean> {
     try {
       const session = await this.getSessionRaw(sessionId);
+      const blacklistKey = `${this.BLACKLIST_PREFIX}${sessionId}`;
       if (!session) {
+        // Not stored (cold cache / already gone): still revoke the id, otherwise the next request
+        // with its access token (or a refresh with its refresh token) would restore it.
+        await this.cacheService.set(blacklistKey, '1', this.revocationTtlSeconds(0));
         return false;
       }
 
-      // Add to blacklist
-      const blacklistKey = `${this.BLACKLIST_PREFIX}${sessionId}`;
-      const ttl = Math.max(
-        0,
+      // Add to blacklist. Kept for the longest token lifetime that can still name this session
+      // (refresh token included), so no token issued for it can restore it or mint new tokens.
+      const ttl = this.revocationTtlSeconds(
         Math.floor((new Date(session.expiresAt).getTime() - Date.now()) / 1000)
       );
-      if (ttl > 0) {
-        await this.cacheService.set(blacklistKey, '1', ttl);
-      }
+      await this.cacheService.set(blacklistKey, '1', ttl);
 
       // Remove from session storage
       const sessionKey = this.getSessionKey(sessionId);
@@ -732,6 +752,31 @@ export class SessionManagementService implements OnModuleInit {
    * @param sessionId - Session identifier
    * @returns True if session is blacklisted
    */
+  /** True when the session id was revoked (logout / revoke / eviction); see invalidateSession. */
+  async isSessionRevoked(sessionId: string): Promise<boolean> {
+    try {
+      return await this.isSessionBlacklisted(sessionId);
+    } catch {
+      // Revocation list unreadable: treat as not revoked; the session lookup still gates access.
+      return false;
+    }
+  }
+
+  /** Revocation-list TTL for a session that had `remainingSessionSeconds` left. */
+  private revocationTtlSeconds(remainingSessionSeconds: number): number {
+    const sessionTimeoutSeconds =
+      this.config?.sessionTimeout || this.configService.getEnvNumber('SESSION_TIMEOUT', 86400);
+    const refreshTokenLifetimeSeconds = parseJwtDurationSeconds(
+      this.configService.getEnv('JWT_REFRESH_EXPIRES_IN', '7d'),
+      DEFAULT_REFRESH_TOKEN_LIFETIME_SECONDS
+    );
+    return sessionRevocationTtlSeconds({
+      sessionTimeoutSeconds,
+      remainingSessionSeconds,
+      refreshTokenLifetimeSeconds,
+    });
+  }
+
   private async isSessionBlacklisted(sessionId: string): Promise<boolean> {
     const blacklistKey = `${this.BLACKLIST_PREFIX}${sessionId}`;
     const value = await this.cacheService.get(blacklistKey);

@@ -1,0 +1,11 @@
+# Prisma's generated client is rewritten on every build (yarn prisma:generate)
+# and is never hand-edited, so formatting it is pointless. It's also the actual
+# cause of CI builds hanging for 20-30+ minutes: index.d.ts alone is 350k+ lines
+# / 15MB+ for this schema, which hits Prettier's TypeScript printer's known
+# pathological slowdown on huge generated .d.ts files. ESLint already ignores
+# this directory (see eslint.config.mjs); Prettier had no ignore file at all.
+src/libs/infrastructure/database/prisma/generated/
+
+dist/
+coverage/
+node_modules/

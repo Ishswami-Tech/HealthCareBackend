@@ -9,6 +9,7 @@ import { ProviderFactory } from '@communication/adapters/factories/provider.fact
 import { CommunicationConfigService } from '@communication/config/communication-config.service';
 import { DatabaseService } from '@infrastructure/database';
 import { ClinicTemplateService } from '@communication/services/clinic-template.service';
+import { CHANNEL_DISABLED_REASON } from '@communication/services/notification-delivery-plan.util';
 import { humanizeVisitWhen } from '@utils/appointment-when.util';
 import {
   formatOTPTemplateParams,
@@ -54,6 +55,27 @@ export class WhatsAppService {
     @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService
   ) {}
+
+  /**
+   * WHATSAPP_ENABLED, the master switch of this environment. When off nothing is sent (no clinic
+   * adapter either): every send method reports "not sent" (false) instead of a simulated success,
+   * and CommunicationService records the attempt as SKIPPED with reason "channel disabled".
+   */
+  isEnabled(): boolean {
+    return this.whatsAppConfig.enabled;
+  }
+
+  /** Logs that `what` was not sent because WhatsApp is disabled; always false (not sent). */
+  private skipDisabled(what: string): false {
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      `WhatsApp disabled (WHATSAPP_ENABLED=false) — ${what} not sent via WhatsApp`,
+      'WhatsAppService',
+      { skipped: true, skipReason: CHANNEL_DISABLED_REASON }
+    );
+    return false;
+  }
   /**
    * Creates an instance of WhatsAppService
    * @param configService - Configuration service for environment variables
@@ -87,15 +109,7 @@ export class WhatsAppService {
     clinicId?: string,
     purpose: string = 'verification'
   ): Promise<boolean> {
-    if (!this.whatsAppConfig.enabled && !clinicId) {
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'WhatsApp service is disabled. Simulating successful OTP send.',
-        'WhatsAppService'
-      );
-      return true;
-    }
+    if (!this.whatsAppConfig.enabled) return this.skipDisabled('OTP');
 
     const appName =
       this.configService.getEnv('APP_NAME') ||
@@ -229,15 +243,7 @@ export class WhatsAppService {
     appointmentType: string = 'in-person',
     serviceLabel?: string
   ): Promise<boolean> {
-    if (!this.whatsAppConfig.enabled && !clinicId) {
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'WhatsApp service is disabled. Simulating successful appointment reminder.',
-        'WhatsAppService'
-      );
-      return true;
-    }
+    if (!this.whatsAppConfig.enabled) return this.skipDisabled('appointment reminder');
 
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
@@ -314,15 +320,7 @@ export class WhatsAppService {
     joinUrl?: string,
     clinicId?: string
   ): Promise<boolean> {
-    if (!this.whatsAppConfig.enabled && !clinicId) {
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'WhatsApp service is disabled. Simulating successful doctor-joined notice.',
-        'WhatsAppService'
-      );
-      return true;
-    }
+    if (!this.whatsAppConfig.enabled) return this.skipDisabled('doctor-joined notice');
 
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
@@ -396,15 +394,7 @@ export class WhatsAppService {
     recipientRole: 'patient' | 'doctor' = 'patient',
     serviceLabel?: string
   ): Promise<boolean> {
-    if (!this.whatsAppConfig.enabled && !clinicId) {
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'WhatsApp service is disabled. Simulating successful appointment confirmation.',
-        'WhatsAppService'
-      );
-      return true;
-    }
+    if (!this.whatsAppConfig.enabled) return this.skipDisabled('appointment confirmation');
 
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
@@ -484,6 +474,8 @@ export class WhatsAppService {
     message: string,
     clinicId?: string
   ): Promise<boolean> {
+    // The master switch gates the clinic adapter as well (see sendTemplateMessage).
+    if (!this.whatsAppConfig.enabled) return this.skipDisabled('custom message');
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
 
@@ -529,15 +521,6 @@ export class WhatsAppService {
       }
 
       // Fallback to global provider (existing behavior)
-      if (!this.whatsAppConfig.enabled) {
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.INFO,
-          'WhatsApp service is disabled. Simulating successful custom message.',
-          'WhatsAppService'
-        );
-        return true;
-      }
 
       await this.httpService.post(
         `${this.whatsAppConfig.apiUrl}/${this.whatsAppConfig.phoneNumberId}/messages`,
@@ -607,6 +590,16 @@ export class WhatsAppService {
     clinicId?: string
   ): Promise<unknown> {
     try {
+      // WHATSAPP_ENABLED is the master kill switch for this environment (e.g. local/test):
+      // no clinic has its own enable/disable toggle (provider.factory's adapter resolution is
+      // credential fallback only), so this must gate every send path, including the clinic
+      // adapter below - checking it only in the global-fallback branch let a clinicId bypass it
+      // entirely and reach the real provider.
+      if (!this.whatsAppConfig.enabled) {
+        this.skipDisabled('template message');
+        return { success: false, skipped: true, skipReason: CHANNEL_DISABLED_REASON };
+      }
+
       // If clinicId is provided, use multi-tenant provider adapter
       if (clinicId) {
         try {
@@ -652,17 +645,8 @@ export class WhatsAppService {
         }
       }
 
-      // Fallback to global provider (existing behavior)
-      if (!this.whatsAppConfig.enabled) {
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.INFO,
-          'WhatsApp service is disabled. Simulating successful template message.',
-          'WhatsAppService'
-        );
-        return { success: true, simulated: true };
-      }
-
+      // Fallback to global provider (existing behavior). this.whatsAppConfig.enabled is already
+      // known true here - checked unconditionally above.
       const response = await this.httpService.post(
         `${this.whatsAppConfig.apiUrl}/${this.whatsAppConfig.phoneNumberId}/messages`,
         {
@@ -809,15 +793,7 @@ export class WhatsAppService {
     invoiceUrl: string,
     clinicId?: string
   ): Promise<boolean> {
-    if (!this.whatsAppConfig.enabled) {
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'WhatsApp service is disabled. Simulating successful receipt delivery.',
-        'WhatsAppService'
-      );
-      return true;
-    }
+    if (!this.whatsAppConfig.enabled) return this.skipDisabled('receipt delivery');
 
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
@@ -886,16 +862,10 @@ export class WhatsAppService {
     totalCount: string,
     clinicId?: string
   ): Promise<boolean> {
-    // Allow clinic adapter to bypass the global WHATSAPP_ENABLED gate (same as OTP pattern).
-    if (!this.whatsAppConfig.enabled && !clinicId) {
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'WhatsApp service is disabled. Simulating successful doctor daily summary delivery.',
-        'WhatsAppService'
-      );
-      return true;
-    }
+    // Early-exit shortcut for the no-clinicId case; the real, unconditional WHATSAPP_ENABLED
+    // gate (including for a clinicId whose "own" provider turns out to be the global one, via
+    // CommunicationConfigService.getDefaultConfig()) lives in sendTemplateMessage().
+    if (!this.whatsAppConfig.enabled) return this.skipDisabled('doctor daily summary delivery');
 
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
@@ -1029,16 +999,10 @@ export class WhatsAppService {
     dateLabel: string,
     clinicId?: string
   ): Promise<boolean> {
-    // Allow clinic adapter to bypass the global WHATSAPP_ENABLED gate (same as OTP pattern).
-    if (!this.whatsAppConfig.enabled && !clinicId) {
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'WhatsApp service is disabled. Simulating successful doctor no-appointments delivery.',
-        'WhatsAppService'
-      );
-      return true;
-    }
+    // Early-exit shortcut for the no-clinicId case; the real, unconditional WHATSAPP_ENABLED
+    // gate (including for a clinicId whose "own" provider turns out to be the global one, via
+    // CommunicationConfigService.getDefaultConfig()) lives in sendTemplateMessage().
+    if (!this.whatsAppConfig.enabled) return this.skipDisabled('doctor no-appointments delivery');
 
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
@@ -1139,7 +1103,9 @@ export class WhatsAppService {
    * Returns null if not configured, so callers can skip the secondary send.
    */
   private getAdditionalNotificationPhone(): string | null {
-    return '917218378311';
+    return (
+      this.configService.getEnv('WHATSAPP_ADDITIONAL_NOTIFICATION_PHONE', '917218378311') ?? null
+    );
   }
 
   /**
@@ -1170,15 +1136,7 @@ export class WhatsAppService {
     startDate: string,
     endDate: string
   ): Promise<boolean> {
-    if (!this.whatsAppConfig.enabled) {
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'WhatsApp service is disabled. Simulating successful subscription confirmation.',
-        'WhatsAppService'
-      );
-      return true;
-    }
+    if (!this.whatsAppConfig.enabled) return this.skipDisabled('subscription confirmation');
 
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);

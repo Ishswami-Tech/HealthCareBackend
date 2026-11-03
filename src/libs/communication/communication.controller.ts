@@ -776,6 +776,38 @@ export class CommunicationController {
     return { success: true, markedCount: result.count };
   }
 
+  @Delete('history/delete-all')
+  @Roles(...INBOX_ROLES)
+  @RequireResourcePermission('notifications', 'read', { requireOwnership: true })
+  async deleteAllNotifications(
+    @Query('userId') userId: string,
+    @Request() req?: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req?.clinicContext?.clinicId;
+    const result = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const nc = client as unknown as {
+          notification: {
+            deleteMany: (args: {
+              where: { userId: string; clinicId?: string };
+            }) => Promise<{ count: number }>;
+          };
+        };
+        return await nc.notification.deleteMany({
+          where: { userId, ...(clinicId ? { clinicId } : {}) },
+        });
+      },
+      {
+        operation: 'DELETE_ALL_NOTIFICATIONS',
+        resourceType: 'NOTIFICATION',
+        userId: req?.user?.sub || '',
+        userRole: req?.user?.role || 'PATIENT',
+        clinicId: clinicId || '',
+      }
+    );
+    return { success: true, deletedCount: result.count };
+  }
+
   @Delete(':id')
   @Roles(...INBOX_ROLES)
   @RequireResourcePermission('notifications', 'read', { requireOwnership: true })

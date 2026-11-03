@@ -56,6 +56,6 @@ import { PurchaseOrderService } from './services/purchase-order.service';
     StockTransferService,
     PurchaseOrderService,
   ],
-  exports: [InventoryService, BatchService, StockTransferService],
+  exports: [InventoryService, BatchService, StockTransferService, PurchaseOrderService],
 })
 export class PharmacyInventoryModule {}

@@ -5,6 +5,7 @@ import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel, PrismaTransactionClientWithDelegates } from '@core/types';
 import { DatabaseService } from '@infrastructure/database';
 import { getClockPartsInIST } from '@utils/date-time.util';
+import { foldPriorityCounts } from '@services/appointments/plugins/analytics/appointment-analytics.util';
 import type {
   AppointmentMetrics,
   DoctorMetrics,
@@ -203,13 +204,46 @@ export class AppointmentAnalyticsService {
       const patientSatisfaction = 0; // Patient satisfaction would need to come from a separate Review/Feedback table
 
       const noShowCount = statusMap['NO_SHOW'] || 0;
-      const _cancelledCount = statusMap['CANCELLED'] || 0;
       const completedCount = statusMap['COMPLETED'] || 0;
       const noShowRate = totalAppointments > 0 ? (noShowCount / totalAppointments) * 100 : 0;
       const completionRate = totalAppointments > 0 ? (completedCount / totalAppointments) * 100 : 0;
 
-      const revenue = 0; // Revenue would need to come from Payment table
+      // Real figures of the same window: priorities of its appointments and the completed
+      // payments of its appointments. Nothing is a demo value; an empty window is zeros.
+      const [priorityRows, revenueSum] = await this.databaseService.executeHealthcareRead(
+        async client => {
+          const db = client as unknown as {
+            appointment: {
+              groupBy: (
+                args: unknown
+              ) => Promise<Array<{ priority: string | null; _count: { _all: number } }>>;
+            };
+            payment: {
+              aggregate: (args: unknown) => Promise<{ _sum: { amount: number | null } }>;
+            };
+          };
+          return await Promise.all([
+            db.appointment.groupBy({
+              by: ['priority'],
+              where: whereClause,
+              _count: { _all: true },
+            }),
+            db.payment.aggregate({
+              where: { clinicId, status: 'COMPLETED', appointment: { is: whereClause } },
+              _sum: { amount: true },
+            }),
+          ]);
+        }
+      );
+      const appointmentsByPriority = foldPriorityCounts(
+        priorityRows.map(row => ({ priority: row.priority, count: row._count._all }))
+      );
+      const revenue = Math.round((revenueSum._sum?.amount ?? 0) * 100) / 100;
       const costPerAppointment = 0;
+      // Share of the visits that reached the doctor (not cancelled) and were completed.
+      const cancelledCount = statusMap['CANCELLED'] || 0;
+      const servedBase = totalAppointments - cancelledCount;
+      const queueEfficiency = servedBase > 0 ? (completedCount / servedBase) * 100 : 0;
 
       const averageDuration =
         completedAppointmentsTyped.length > 0
@@ -223,18 +257,12 @@ export class AppointmentAnalyticsService {
         totalAppointments,
         appointmentsByStatus: statusMap,
         appointmentsByType: typeMap,
-        appointmentsByPriority: {
-          EMERGENCY: 5,
-          URGENT: 15,
-          HIGH: 30,
-          NORMAL: 85,
-          LOW: 15,
-        },
+        appointmentsByPriority,
         averageDuration: Math.round(averageDuration),
         noShowRate: Math.round(noShowRate * 10) / 10,
         completionRate: Math.round(completionRate * 10) / 10,
         averageWaitTime: Math.round(averageWaitTime),
-        queueEfficiency: 85.2, // This would need queue-specific calculations
+        queueEfficiency: Math.round(queueEfficiency * 10) / 10,
         patientSatisfaction: Math.round(patientSatisfaction * 10) / 10,
         revenue,
         costPerAppointment: Math.round(costPerAppointment),
@@ -506,6 +534,22 @@ export class AppointmentAnalyticsService {
           ? (waitTimeAnalytics.data as { averageWaitTime: number }).averageWaitTime
           : 0;
 
+        // Real shares of the window instead of fixed demo numbers: completed out of the visits
+        // that were not cancelled (queue efficiency), and visits not cancelled / no-show out of
+        // all booked (utilization). An empty window is 0.
+        const [completedInWindow, cancelledInWindow, noShowInWindow] = await Promise.all([
+          client.appointment.count({ where: { ...whereClause, status: 'COMPLETED' } }),
+          client.appointment.count({ where: { ...whereClause, status: 'CANCELLED' } }),
+          client.appointment.count({ where: { ...whereClause, status: 'NO_SHOW' } }),
+        ]);
+        const notCancelled = totalAppointments - cancelledInWindow;
+        const queueEfficiency =
+          notCancelled > 0 ? Math.round((completedInWindow / notCancelled) * 1000) / 10 : 0;
+        const utilizationRate =
+          totalAppointments > 0
+            ? Math.round(((notCancelled - noShowInWindow) / totalAppointments) * 1000) / 10
+            : 0;
+
         const clinicMetrics: ClinicMetrics = {
           clinicId,
           clinicName: clinic.name,
@@ -513,11 +557,11 @@ export class AppointmentAnalyticsService {
           totalDoctors,
           totalPatients,
           averageWaitTime,
-          queueEfficiency: 85, // Placeholder for now
+          queueEfficiency,
           patientSatisfaction: avgRatingResult._avg?.rating || 0,
           revenue,
           costPerAppointment: Math.round(costPerAppointment),
-          utilizationRate: 75, // Placeholder for now
+          utilizationRate,
         };
 
         return clinicMetrics;
@@ -904,7 +948,7 @@ export class AppointmentAnalyticsService {
     try {
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return JSON.parse(cached as string) as AnalyticsResult;
+        return cached as AnalyticsResult;
       }
 
       // Query CheckIn and Appointment tables for wait time analysis
@@ -1091,7 +1135,7 @@ export class AppointmentAnalyticsService {
         };
       });
 
-      await this.cacheService.set(cacheKey, JSON.stringify(waitTimeData), this.ANALYTICS_CACHE_TTL);
+      await this.cacheService.set(cacheKey, waitTimeData, this.ANALYTICS_CACHE_TTL);
 
       return waitTimeData;
     } catch (_error) {
@@ -1138,7 +1182,7 @@ export class AppointmentAnalyticsService {
     try {
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return JSON.parse(cached as string) as AnalyticsResult;
+        return cached as AnalyticsResult;
       }
 
       const patternData = await this.databaseService.executeHealthcareRead(async client => {
@@ -1262,7 +1306,7 @@ export class AppointmentAnalyticsService {
         };
       });
 
-      await this.cacheService.set(cacheKey, JSON.stringify(patternData), this.ANALYTICS_CACHE_TTL);
+      await this.cacheService.set(cacheKey, patternData, this.ANALYTICS_CACHE_TTL);
 
       return patternData;
     } catch (_error) {
@@ -1305,7 +1349,7 @@ export class AppointmentAnalyticsService {
     try {
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return JSON.parse(cached as string) as AnalyticsResult;
+        return cached as AnalyticsResult;
       }
 
       const correlationData = await this.databaseService.executeHealthcareRead(async client => {
@@ -1429,11 +1473,7 @@ export class AppointmentAnalyticsService {
         };
       });
 
-      await this.cacheService.set(
-        cacheKey,
-        JSON.stringify(correlationData),
-        this.ANALYTICS_CACHE_TTL
-      );
+      await this.cacheService.set(cacheKey, correlationData, this.ANALYTICS_CACHE_TTL);
 
       return correlationData;
     } catch (_error) {

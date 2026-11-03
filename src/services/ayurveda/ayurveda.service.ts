@@ -87,14 +87,14 @@ export class AyurvedaService {
   /**
    * Retrieves Prakriti assessment history for a patient.
    *
-   * @param patientId - Patient ID
+   * @param patientId - Patient ID, or undefined for the clinic's most recent assessments
    * @param clinicId - Clinic context
    * @param limit - Maximum results
    * @param offset - Results to skip
    * @returns Array of Prakriti assessments
    */
   async getPrakritiHistory(
-    patientId: string,
+    patientId: string | undefined,
     clinicId: string,
     limit: number,
     offset: number
@@ -152,14 +152,14 @@ export class AyurvedaService {
   /**
    * Retrieves Nadi Pariksha history for a patient.
    *
-   * @param patientId - Patient ID
+   * @param patientId - Patient ID, or undefined for the clinic's most recent records
    * @param clinicId - Clinic context
    * @param limit - Maximum results
    * @param offset - Results to skip
    * @returns Array of Nadi Pariksha records
    */
   async getNadiHistory(
-    patientId: string,
+    patientId: string | undefined,
     clinicId: string,
     limit: number,
     offset: number
@@ -264,14 +264,22 @@ export class AyurvedaService {
    *
    * Returns the latest imbalance record per dosha type.
    *
-   * @param patientId - Patient ID
+   * Without a patient, returns the clinic's most recent imbalance records instead.
+   *
+   * @param patientId - Patient ID, or undefined for the clinic-scoped recent list
    * @param clinicId - Clinic context
+   * @param limit - Maximum results for the clinic-scoped recent list
    * @returns Array of current imbalance records
    */
   async getDoshaImbalances(
-    patientId: string,
-    clinicId: string
+    patientId: string | undefined,
+    clinicId: string,
+    limit: number
   ): Promise<DoshaImbalanceResponseDto[]> {
+    if (!patientId) {
+      return this.doshaImbalanceService.getRecentClinicImbalances(clinicId, limit);
+    }
+
     const imbalances = await this.doshaImbalanceService.getCurrentImbalances(patientId, clinicId);
 
     return (Object.values(imbalances) as Array<DoshaImbalanceResponseDto | null>).filter(

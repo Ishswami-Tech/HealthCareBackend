@@ -16,6 +16,7 @@ import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { EventService } from '@infrastructure/events';
 import { HealthcareError, ErrorCode } from '@core/errors';
+import type { NadiParikshaRecordRow } from '@core/types/prisma.types';
 
 /**
  * Cache key prefix for Nadi Pariksha records
@@ -68,18 +69,18 @@ export class NadiParikshaService {
       clinicId,
     });
 
-    const record = await this.db.prisma.nadiPariksha.create({
+    const record = await this.db.prisma.nadiParikshaRecord.create({
       data: {
         patientId: dto.patientId,
         clinicId,
         dominantDosha: dto.dominantDosha,
         pulseQuality: dto.pulseQuality,
-        regularity: dto.regularity,
-        strength: dto.strength,
-        abnormalities: dto.abnormalities,
+        regularity: dto.regularity ?? null,
+        strength: dto.strength ?? null,
+        abnormalities: dto.abnormalities ?? null,
         interpretation: dto.interpretation,
-        observations: dto.observations,
-        side: dto.side,
+        observations: dto.observations ?? null,
+        side: dto.side ?? null,
         performedBy: userId,
         assessedAt: new Date(),
       },
@@ -104,34 +105,40 @@ export class NadiParikshaService {
   /**
    * Retrieves Nadi Pariksha history for a patient.
    *
-   * @param patientId - Patient ID
+   * @param patientId - Patient ID, or undefined for the clinic's most recent records (not cached)
    * @param clinicId - Clinic context
    * @param limit - Maximum results (default 20)
    * @param offset - Results to skip (default 0)
    * @returns Array of Nadi Pariksha records sorted by date descending
    */
   async getNadiHistory(
-    patientId: string,
+    patientId: string | undefined,
     clinicId: string,
     limit = 20,
     offset = 0
   ): Promise<NadiParikshaResponseDto[]> {
-    const cacheKey = `${NADI_CACHE_PREFIX}:history:${clinicId}:${patientId}:${limit}:${offset}`;
+    const cacheKey = patientId
+      ? `${NADI_CACHE_PREFIX}:history:${clinicId}:${patientId}:${limit}:${offset}`
+      : undefined;
 
-    const cached = await this.cache.get<NadiParikshaResponseDto[]>(cacheKey);
-    if (cached) {
-      return cached;
+    if (cacheKey) {
+      const cached = await this.cache.get<NadiParikshaResponseDto[]>(cacheKey);
+      if (cached) {
+        return cached;
+      }
     }
 
-    const records = await this.db.prisma.nadiPariksha.findMany({
-      where: { patientId, clinicId },
+    const records = await this.db.prisma.nadiParikshaRecord.findMany({
+      where: patientId ? { patientId, clinicId } : { clinicId },
       orderBy: { assessedAt: 'desc' },
       take: limit,
       skip: offset,
     });
 
-    const result = records.map((r: (typeof records)[number]) => this.mapToResponseDto(r));
-    await this.cache.set(cacheKey, result, 300);
+    const result = records.map(r => this.mapToResponseDto(r));
+    if (cacheKey) {
+      await this.cache.set(cacheKey, result, 300);
+    }
 
     return result;
   }
@@ -152,7 +159,7 @@ export class NadiParikshaService {
       return cached;
     }
 
-    const record = await this.db.prisma.nadiPariksha.findFirst({
+    const record = await this.db.prisma.nadiParikshaRecord.findFirst({
       where: { id, clinicId },
     });
 
@@ -182,24 +189,24 @@ export class NadiParikshaService {
   /**
    * Maps Prisma model to response DTO.
    *
-   * @param record - Prisma NadiPariksha model
+   * @param record - nadi_pariksha_records row
    * @returns Formatted response DTO
    */
-  private mapToResponseDto(record: any): NadiParikshaResponseDto {
+  private mapToResponseDto(record: NadiParikshaRecordRow): NadiParikshaResponseDto {
     return {
-      id: record.id as string,
-      patientId: record.patientId as string,
-      clinicId: record.clinicId as string,
+      id: record.id,
+      patientId: record.patientId,
+      clinicId: record.clinicId ?? '',
       dominantDosha: record.dominantDosha as DoshaType,
-      pulseQuality: record.pulseQuality as string,
-      regularity: record.regularity as string | undefined,
-      strength: record.strength as string | undefined,
-      abnormalities: record.abnormalities as string | undefined,
-      interpretation: record.interpretation as string,
-      observations: record.observations as string | undefined,
-      side: record.side as string | undefined,
-      performedBy: record.performedBy as string,
-      assessedAt: (record.assessedAt as Date).toISOString(),
+      pulseQuality: record.pulseQuality,
+      regularity: record.regularity ?? undefined,
+      strength: record.strength ?? undefined,
+      abnormalities: record.abnormalities ?? undefined,
+      interpretation: record.interpretation,
+      observations: record.observations ?? undefined,
+      side: record.side ?? undefined,
+      performedBy: record.performedBy,
+      assessedAt: new Date(record.assessedAt).toISOString(),
     };
   }
 }

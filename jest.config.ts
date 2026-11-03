@@ -6,6 +6,43 @@
  */
 
 import type { Config } from 'jest';
+import { spawnSync } from 'node:child_process';
+import * as vm from 'node:vm';
+
+/**
+ * NestJS 12 (and several other runtime deps) ship as ESM-only packages
+ * ("type": "module"). The app itself is CommonJS and loads them through
+ * Node 24's native require(esm). Jest 30 mirrors that only when
+ * `vm.SourceTextModule` exists, i.e. when Node runs with
+ * --experimental-vm-modules; without it every suite that touches
+ * @nestjs/* fails with "Must use import to load ES Module".
+ *
+ * The yarn test scripts pass the flag via NODE_OPTIONS. This guard makes a
+ * bare `npx jest` (or an IDE runner) behave the same: if the flag is missing
+ * it re-runs the identical jest command once with the flag and exits with
+ * its status.
+ */
+const VM_MODULES_FLAG = '--experimental-vm-modules';
+const REEXEC_MARKER = 'HEALTHCARE_JEST_VM_MODULES_REEXEC';
+
+function ensureVmModules(): void {
+  const hasSourceTextModule =
+    typeof (vm as { SourceTextModule?: unknown }).SourceTextModule === 'function';
+  if (hasSourceTextModule || process.env[REEXEC_MARKER] === '1') {
+    return;
+  }
+  const nodeOptions = [process.env['NODE_OPTIONS'] ?? '', VM_MODULES_FLAG].join(' ').trim();
+  const result = spawnSync(process.execPath, process.argv.slice(1), {
+    stdio: 'inherit',
+    env: { ...process.env, NODE_OPTIONS: nodeOptions, [REEXEC_MARKER]: '1' },
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  process.exit(result.status ?? 1);
+}
+
+ensureVmModules();
 
 const moduleMapper = {
   '^@infrastructure/(.*)$': '<rootDir>/src/libs/infrastructure/$1',

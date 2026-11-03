@@ -21,6 +21,8 @@ interface ConfirmationPluginData {
   /** Authenticated caller bound by the plugin controller; never taken from the request body. */
   caller?: unknown;
   diagnosis?: string | undefined;
+  /** Free-text consultation notes, e.g. from "Complete without medicine". */
+  notes?: string | undefined;
   treatmentPlan?: TreatmentPlanDto | undefined;
   medications?: PrescriptionMedicationDto[] | undefined;
 }
@@ -108,6 +110,7 @@ export class ClinicConfirmationPlugin extends BaseAppointmentPlugin {
             'clinic',
             {
               diagnosis: pluginData.diagnosis,
+              notes: pluginData.notes,
               treatmentPlan: pluginData.treatmentPlan,
               medications: pluginData.medications,
               clinicId: pluginData.clinicId,
