@@ -456,11 +456,21 @@ jobs:
           # ── Deploy via Temps: pull the image on the control-plane host (it
           # already holds GHCR credentials), then push it to Temps through the
           # loopback API context (bypasses Cloudflare's upload-size limit that a
-          # direct `deploy:local-image` from this runner would hit). ──
+          # direct `deploy:local-image` from this runner would hit).
+          #
+          # A plain `docker pull` only fetches the manifest matching the
+          # control-plane host's own platform (amd64) out of our multi-arch
+          # manifest list, so the arm64 variant never lands here and any
+          # arm64 node is silently skipped at scheduling ("this deployment
+          # only has images for [linux/amd64]"). The control-plane host's
+          # containerd-snapshotter store keeps multiple platforms under one
+          # tag, so pulling each platform explicitly accumulates both under
+          # the same local reference. ──
           echo "Triggering Temps deploy (project=${TEMPS_PROJECT}, environment=${TEMPS_ENVIRONMENT})..."
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
             set -euo pipefail
-            docker pull '${IMAGE_FULL}'
+            docker pull --platform linux/amd64 '${IMAGE_FULL}'
+            docker pull --platform linux/arm64 '${IMAGE_FULL}'
             npx -y @temps-sdk/cli --target-context temps-local deploy:local-image \
               --image '${IMAGE_FULL}' \
               --no-build \
