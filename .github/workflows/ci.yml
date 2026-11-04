@@ -439,7 +439,11 @@ jobs:
           # Temps project/environment this image deploys into. Only the preprod
           # project exists today — a production Temps project isn't set up yet,
           # so production pushes stay gated off below until one is.
-          TEMPS_PROJECT: ${{ github.ref == 'refs/heads/main' && vars.TEMPS_PROD_PROJECT || 'healthcare-api-test' }}
+          TEMPS_PROJECT: ${{ github.ref == 'refs/heads/main' && vars.TEMPS_PROD_PROJECT || 'healthcarebackend' }}
+          # Separate Temps project the Worker service lives in. Unlike
+          # TEMPS_PROJECT above this isn't part of the prod/preprod cutover
+          # gate — it's the one project that already exists either way.
+          TEMPS_WORKER_PROJECT: ${{ github.ref == 'refs/heads/main' && vars.TEMPS_WORKER_PROD_PROJECT || 'healthcarebackend-worker' }}
           TEMPS_ENVIRONMENT: production
         run: |
           echo "Deploying to: ${DEPLOY_ENV} (image: ${IMAGE_FULL})"
@@ -457,7 +461,11 @@ jobs:
           # ── Deploy via Temps: pull the image on the control-plane host (it
           # already holds GHCR credentials), then push it to Temps through the
           # loopback API context (bypasses Cloudflare's upload-size limit that a
-          # direct `deploy:local-image` from this runner would hit). ──
+          # direct `deploy:local-image` from this runner would hit). Deploys
+          # both the API and Worker projects — Temps always runs the image's
+          # baked-in default command, so the Worker container this creates
+          # needs its entrypoint fixed up afterward (see sync-manual-replicas
+          # job below). ──
           echo "Triggering Temps deploy (project=${TEMPS_PROJECT}, environment=${TEMPS_ENVIRONMENT})..."
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
             set -euo pipefail
@@ -466,6 +474,12 @@ jobs:
               --image '${IMAGE_FULL}' \
               --no-build \
               -p '${TEMPS_PROJECT}' \
+              -e '${TEMPS_ENVIRONMENT}' \
+              -y --timeout 600
+            npx -y @temps-sdk/cli --target-context temps-local deploy:local-image \
+              --image '${IMAGE_FULL}' \
+              --no-build \
+              -p '${TEMPS_WORKER_PROJECT}' \
               -e '${TEMPS_ENVIRONMENT}' \
               -y --timeout 600
           "
@@ -543,6 +557,40 @@ jobs:
         run: |
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
             "cd '${DEPLOY_PATH}' && BASE_DIR='${DEPLOY_PATH}' bash devops/scripts/docker-infra/backup.sh success"
+
+  # ============================================================================
+  # JOB: sync-manual-replicas — Re-apply the Worker entrypoint fix + both
+  # oracle-main (arm64) replicas that Temps's own deploy can't produce
+  # ============================================================================
+  #
+  # Why this exists: Temps's "Docker Image" deploy type always runs the
+  # image's baked-in default command (dist/main.js) — there's no way to tell
+  # it to run dist/worker-bootstrap.js instead — and Temps's scheduler can't
+  # reach the arm64 node (oracle-main) at all. Both gaps are bridged with
+  # manually-run containers that Temps itself has no knowledge of, so every
+  # deploy needs this step to put them back afterward. See
+  # devops/scripts/temps/sync-manual-replicas.sh for the full explanation.
+  #
+  # This MUST run on a host that can reach temps-worker (192.168.122.8) — a
+  # private-LAN VM with no path from any cloud host, including the Temps
+  # control-plane itself. Today that's only the self-hosted runner on the
+  # local hypervisor.
+  sync-manual-replicas:
+    name: "Sync Manual Replicas (Worker + oracle-main)"
+    runs-on: [self-hosted, healthcare-local-hypervisor]
+    needs: [docker-build-merge, deploy]
+    if: always() && needs.deploy.result == 'success'
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync worker entrypoint + oracle-main replicas
+        env:
+          IMAGE_FULL: ${{ needs.docker-build-merge.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_ACTOR: ${{ github.actor }}
+        run: |
+          bash devops/scripts/temps/sync-manual-replicas.sh "${IMAGE_FULL}" "${GHCR_TOKEN}" "${GHCR_ACTOR}"
 
   # ============================================================================
   # JOB: failure-recovery — Roll back after deployment or verification failure
