@@ -52,6 +52,10 @@ export class RetryService {
     'QueryTimeoutError',
     'ConnectionPoolExhausted',
     'DatabaseUnavailable',
+    // node-postgres raises this exact message (no error code) when a socket on the connection
+    // mesh drops mid-query instead of being cleanly refused — seen in production as transient
+    // packet loss on the worker's cross-node link, not a dead database (2026-11-04).
+    'Connection terminated',
     // Prisma initialization errors (should be retryable during startup)
     'did not initialize yet',
     'prisma generate',

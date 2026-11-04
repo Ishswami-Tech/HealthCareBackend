@@ -146,52 +146,11 @@ export class DatabaseHealthMonitorService implements OnModuleInit, OnModuleDestr
       // Use the main service which has proper readiness checks
       // Use $queryRaw on the main PrismaService which has proper readiness checks
       // During startup grace period, $queryRaw will return empty result instead of throwing
-      await Promise.race([
-        this.prismaService.$queryRaw`SELECT 1`,
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Health check timeout')), this.healthCheckTimeout)
-        ),
-      ]);
-
-      const latency = Date.now() - startTime;
-      const status: DatabaseHealthStatus['status'] = latency < 1000 ? 'healthy' : 'degraded';
-
-      this.currentHealth = {
-        status,
-        latency,
-        lastCheck: new Date(),
-        connectionCount: 1, // Dedicated health check connection
-        errorRate: 0,
-      };
-
-      // Log the connected state once (on first success and on recovery), not periodically
-      // Use DEBUG level for routine checks to reduce log noise
-      const now = Date.now();
-      // INFO only on the first success and after a failure (state change); routine checks DEBUG.
-      const shouldLogInfo = !this.lastSuccessLogTime;
-
-      if (shouldLogInfo) {
-        this.lastSuccessLogTime = now;
-        void this.loggingService.log(
-          LogType.DATABASE,
-          LogLevel.INFO,
-          `Database health check: Connected (latency: ${latency}ms)`,
-          this.serviceName,
-          {
-            status,
-            latency,
-            connectionType: 'dedicated-health-check-pool',
-          }
-        );
-      } else {
-        // Log routine checks at DEBUG level to reduce log noise
-        void this.loggingService.log(
-          LogType.DATABASE,
-          LogLevel.DEBUG,
-          `Database health check: Connected (latency: ${latency}ms)`,
-          this.serviceName
-        );
-      }
+      //
+      // One retry before giving up: SELECT 1 has no side effects, so re-running it costs
+      // nothing, and a single dropped packet on a cross-node link (the worker's DB can be a
+      // WireGuard hop away) shouldn't flip the container unhealthy on its own (2026-11-04).
+      await this.queryOnceWithOneRetry();
     } catch (error) {
       this.lastSuccessLogTime = 0; // next success is a state change -> INFO
       const latency = Date.now() - startTime;
@@ -251,6 +210,77 @@ export class DatabaseHealthMonitorService implements OnModuleInit, OnModuleDestr
         `Database health check failed: ${errorMessage}`,
         this.serviceName,
         { error: errorStack || errorMessage }
+      );
+      return;
+    }
+
+    this.recordSuccess(startTime);
+  }
+
+  /** Runs the SELECT 1 probe, and if it fails once, waits briefly and tries exactly one more time. */
+  private async queryOnceWithOneRetry(): Promise<void> {
+    try {
+      await this.runProbe();
+    } catch (firstError) {
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.WARN,
+        `Database health check failed once, retrying: ${firstError instanceof Error ? firstError.message : String(firstError)}`,
+        this.serviceName
+      );
+      await new Promise(resolve => setTimeout(resolve, 300));
+      await this.runProbe();
+    }
+  }
+
+  private async runProbe(): Promise<void> {
+    await Promise.race([
+      this.prismaService.$queryRaw`SELECT 1`,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Health check timeout')), this.healthCheckTimeout)
+      ),
+    ]);
+  }
+
+  /** Records a successful probe, logging at INFO only on the first success or a recovery. */
+  private recordSuccess(startTime: number): void {
+    const latency = Date.now() - startTime;
+    const status: DatabaseHealthStatus['status'] = latency < 1000 ? 'healthy' : 'degraded';
+
+    this.currentHealth = {
+      status,
+      latency,
+      lastCheck: new Date(),
+      connectionCount: 1, // Dedicated health check connection
+      errorRate: 0,
+    };
+
+    // Log the connected state once (on first success and on recovery), not periodically
+    // Use DEBUG level for routine checks to reduce log noise
+    const now = Date.now();
+    // INFO only on the first success and after a failure (state change); routine checks DEBUG.
+    const shouldLogInfo = !this.lastSuccessLogTime;
+
+    if (shouldLogInfo) {
+      this.lastSuccessLogTime = now;
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.INFO,
+        `Database health check: Connected (latency: ${latency}ms)`,
+        this.serviceName,
+        {
+          status,
+          latency,
+          connectionType: 'dedicated-health-check-pool',
+        }
+      );
+    } else {
+      // Log routine checks at DEBUG level to reduce log noise
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.DEBUG,
+        `Database health check: Connected (latency: ${latency}ms)`,
+        this.serviceName
       );
     }
   }
