@@ -85,7 +85,11 @@ export class TopologyHeartbeatService implements OnModuleInit, OnModuleDestroy {
       startedAt,
       lastHeartbeat: startedAt,
     };
-    this.selfKey = `${TopologyHeartbeatService.KEY_PREFIX}${role}:${nodeId}:${replica}:${process.pid}`;
+    // hostname (the container's own id) makes this unique even for manually-synced replicas
+    // (oracle-main, and temps-worker's manual worker) that get no Temps-injected node/replica
+    // identity and all run as container pid 1 — without it, every such replica of the same role
+    // built the identical key and silently overwrote each other in the registry.
+    this.selfKey = `${TopologyHeartbeatService.KEY_PREFIX}${role}:${nodeId}:${replica}:${this.selfInfo.hostname}:${process.pid}`;
   }
 
   onModuleInit(): void {
