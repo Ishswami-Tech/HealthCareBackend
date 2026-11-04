@@ -31,6 +31,16 @@ WORKER_ENV_ID=5
 API_ENV_ID=4
 WORKER_NODE_ID_TEMPS_WORKER=6
 ORACLE_NODE_ID=4
+# The per-node overlay bridge (alongside temps-app-network) that gives a
+# manually-run container the same DB/Dragonfly mesh routing Temps's own
+# containers get. Numbered per node, not globally consistent — verified
+# against each host's `docker network ls` rather than assumed.
+TEMPS_WORKER_OVERLAY_NET=temps0
+ORACLE_MAIN_OVERLAY_NET=temps2
+
+ghcr_login() {
+  printf '%s' "${GHCR_TOKEN}" | ssh "$1" "sudo docker login ghcr.io -u '${GHCR_ACTOR}' --password-stdin"
+}
 
 run_psql_script() {
   ssh contabo-healthcare "sudo python3 -I - $2" < "${SCRIPT_DIR}/$1"
@@ -58,6 +68,12 @@ else
   HOST_PORT=$(echo "$WRONG_ROW" | cut -f3)
   echo "Replacing Temps-created container ${WRONG_CONTAINER_ID} (row ${WRONG_ROW_ID}, port ${HOST_PORT})"
 
+  # Temps's own pull doesn't leave a locally-cached/authenticated image a
+  # plain `docker build` can reuse (its image fetch path is separate from the
+  # host's docker CLI/config.json) — log in and pull explicitly first.
+  ghcr_login temps-worker
+  ssh temps-worker "sudo docker pull '${IMAGE_FULL}'"
+
   cat <<DOCKERFILE | ssh temps-worker "sudo docker build -t '${WRAPPER_TAG}' -f - /tmp"
 FROM ${IMAGE_FULL}
 CMD ["node", "dist/worker-bootstrap.js"]
@@ -73,7 +89,7 @@ DOCKERFILE
     sudo docker run -d --name healthcarebackend-worker-local --restart unless-stopped \
       --network temps-app-network -p 10.201.0.5:${HOST_PORT}:8088 \
       --env-file /tmp/worker_env_sync '${WRAPPER_TAG}'
-    sudo docker network connect temps2 healthcarebackend-worker-local
+    sudo docker network connect ${TEMPS_WORKER_OVERLAY_NET} healthcarebackend-worker-local
     sudo docker restart healthcarebackend-worker-local
   "
 
@@ -88,7 +104,7 @@ fi
 #    nothing pulls new tags onto oracle-main automatically.
 # ---------------------------------------------------------------------------
 echo "-- oracle-main: docker login + pull new tag --"
-printf '%s' "${GHCR_TOKEN}" | ssh oracle-main "sudo docker login ghcr.io -u '${GHCR_ACTOR}' --password-stdin"
+ghcr_login oracle-main
 ssh oracle-main "sudo docker pull '${IMAGE_FULL}'"
 
 echo "-- oracle-main: API replica --"
@@ -102,7 +118,7 @@ ssh oracle-main "
   sudo docker run -d --name healthcarebackend-oracle-arm64 --restart unless-stopped \
     --network temps-app-network -p 10.201.0.2:32900:8088 \
     --env-file /tmp/api_env_sync '${IMAGE_FULL}'
-  sudo docker network connect temps2 healthcarebackend-oracle-arm64
+  sudo docker network connect ${ORACLE_MAIN_OVERLAY_NET} healthcarebackend-oracle-arm64
   sudo docker restart healthcarebackend-oracle-arm64
 "
 API_CONTAINER_ID=$(ssh oracle-main "sudo docker inspect healthcarebackend-oracle-arm64 --format '{{.Id}}'")
@@ -124,7 +140,7 @@ ssh oracle-main "
   sudo docker run -d --name healthcarebackend-worker-oracle-arm64 --restart unless-stopped \
     --network temps-app-network -p 10.201.0.2:32901:8088 \
     --env-file /tmp/worker_env_sync_oracle '${WRAPPER_TAG}'
-  sudo docker network connect temps2 healthcarebackend-worker-oracle-arm64
+  sudo docker network connect ${ORACLE_MAIN_OVERLAY_NET} healthcarebackend-worker-oracle-arm64
   sudo docker restart healthcarebackend-worker-oracle-arm64
 "
 WORKER_CONTAINER_ID=$(ssh oracle-main "sudo docker inspect healthcarebackend-worker-oracle-arm64 --format '{{.Id}}'")
