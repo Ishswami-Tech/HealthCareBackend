@@ -43,6 +43,14 @@ export interface DeploymentTopology {
 @Injectable()
 export class TopologyHeartbeatService implements OnModuleInit, OnModuleDestroy {
   private static readonly KEY_PREFIX = 'cluster:topology:';
+  // Separate plain Set used only to enumerate live replica keys. CacheService.keys()/get() can't
+  // be round-tripped here: keys() returns provider-level names with CacheVersioningService's
+  // ":vN" suffix already baked in (it bypasses CacheRepository, which is the only layer that
+  // knows about versioning), so feeding those names back into get() re-appends the suffix and
+  // every lookup misses. sAdd/sMembers/sRem also bypass CacheRepository, so the bare member
+  // strings we store round-trip cleanly through get() (which does apply versioning, matching how
+  // writeHeartbeat's set() wrote them).
+  private static readonly INDEX_KEY = 'cluster:topology:index';
   private static readonly TTL_SECONDS = 45;
   private static readonly INTERVAL_MS = 15000;
 
@@ -101,6 +109,9 @@ export class TopologyHeartbeatService implements OnModuleInit, OnModuleDestroy {
     const payload: TopologyReplica = { ...this.selfInfo, lastHeartbeat: nowIso() };
     try {
       await this.cacheService.set(this.selfKey, payload, TopologyHeartbeatService.TTL_SECONDS);
+      // The index entry has no TTL of its own — staleness is detected (and the stale member
+      // pruned) on read, via the get() miss once the replica's own entry above expires.
+      await this.cacheService.sAdd(TopologyHeartbeatService.INDEX_KEY, this.selfKey);
     } catch (error) {
       void this.loggingService?.log(
         LogType.SYSTEM,
@@ -125,23 +136,38 @@ export class TopologyHeartbeatService implements OnModuleInit, OnModuleDestroy {
       };
     }
 
-    let keys: string[] = [];
+    let members: string[] = [];
     try {
-      keys = await this.cacheService.keys(`${TopologyHeartbeatService.KEY_PREFIX}*`);
+      members = await this.cacheService.sMembers(TopologyHeartbeatService.INDEX_KEY);
     } catch (error) {
       void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.WARN,
-        'Failed to list deployment-topology registry keys',
+        'Failed to list deployment-topology registry index',
         'TopologyHeartbeatService',
         { error: error instanceof Error ? error.message : String(error) }
       );
     }
 
     const fetched = await Promise.all(
-      keys.map(key => this.cacheService!.get<TopologyReplica>(key).catch(() => null))
+      members.map(async member => ({
+        member,
+        value: await this.cacheService!.get<TopologyReplica>(member).catch(() => null),
+      }))
     );
-    const replicas = fetched.filter((r): r is TopologyReplica => r !== null);
+    const replicas = fetched
+      .filter(entry => entry.value !== null)
+      .map(entry => entry.value as TopologyReplica);
+
+    // Prune index members whose own TTL-backed entry has expired (dead replica), so the index
+    // doesn't grow unboundedly across restarts. Best-effort — a failure just leaves cleanup for
+    // next read.
+    const staleMembers = fetched.filter(entry => entry.value === null).map(entry => entry.member);
+    if (staleMembers.length > 0) {
+      void this.cacheService
+        .sRem(TopologyHeartbeatService.INDEX_KEY, ...staleMembers)
+        .catch(() => 0);
+    }
 
     // Guarantee this instance is represented even if its own write hasn't landed/propagated yet
     // (e.g. the very first request right after process start).
