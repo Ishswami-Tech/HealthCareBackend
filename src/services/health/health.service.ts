@@ -22,8 +22,7 @@ import { performance } from 'node:perf_hooks';
 import { cpus, totalmem, freemem } from 'node:os';
 import { LoggingService } from '@infrastructure/logging';
 import { CommunicationHealthMonitorService } from '@communication/communication-health-monitor.service';
-import cluster from 'cluster';
-import * as os from 'os';
+import { TopologyHeartbeatService, type DeploymentTopology } from './topology-heartbeat.service';
 /**
  * Independent Health Service
  *
@@ -86,7 +85,10 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     @Optional() private readonly healthCacheService?: HealthCacheService,
     @Optional()
     @Inject(forwardRef(() => CommunicationHealthMonitorService))
-    private readonly communicationHealthMonitor?: CommunicationHealthMonitorService
+    private readonly communicationHealthMonitor?: CommunicationHealthMonitorService,
+    @Optional()
+    @Inject(forwardRef(() => TopologyHeartbeatService))
+    private readonly topologyHeartbeat?: TopologyHeartbeatService
   ) {}
 
   /**
@@ -439,69 +441,34 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Get cluster information including worker and node details
+   * Live deployment topology: every API/worker replica currently heartbeating, across every
+   * node, read fresh from the shared registry on each call (see TopologyHeartbeatService).
+   * Replaces the old Node `cluster`-module-based info, which only reflects in-process forking
+   * (cluster.fork()) — a feature this app doesn't use, since it scales via containers/replicas.
    */
-  private getClusterInfo(): {
-    isPrimary: boolean;
-    isWorker: boolean;
-    workerId: string | number | undefined;
-    instanceId: string;
-    nodeName: string;
-    hostname: string;
-    cpuCount: number;
-    totalWorkers?: number;
-    activeWorkers?: number;
-  } {
-    const isPrimary = Boolean(
-      cluster.isPrimary || (cluster as { isMaster?: boolean }).isMaster || false
-    );
-    const isWorker = !isPrimary && cluster.worker !== undefined;
-    // Use ConfigService (which uses dotenv) for environment variable access
-    const workerId = cluster.worker?.id || this.config?.getEnv('WORKER_ID') || undefined;
-    const instanceId =
-      this.config?.getEnv('INSTANCE_ID') || this.config?.getEnv('WORKER_ID') || '1';
-    const nodeName =
-      this.config?.getEnv('NODE_NAME') || this.config?.getEnv('HOSTNAME') || os.hostname();
-    const hostname = os.hostname();
-    const cpuCount = os.cpus().length;
-
-    let totalWorkers: number | undefined;
-    let activeWorkers: number | undefined;
-
-    if (isPrimary && cluster.workers) {
-      const workers = Object.values(cluster.workers);
-      totalWorkers = workers.length;
-      activeWorkers = workers.filter(w => w && !w.isDead()).length;
+  private async getDeploymentTopology(): Promise<DeploymentTopology> {
+    if (!this.topologyHeartbeat) {
+      const fallbackNow = nowIso();
+      const fallback = {
+        role: 'api' as const,
+        nodeId: process.env['TEMPS_NODE_ID'] || 'local',
+        nodeName: process.env['TEMPS_NODE_NAME'] || 'unknown',
+        replica: process.env['TEMPS_REPLICA'] || '1',
+        hostname: 'unknown',
+        pid: process.pid,
+        startedAt: fallbackNow,
+        lastHeartbeat: fallbackNow,
+      };
+      return {
+        self: fallback,
+        replicas: [fallback],
+        totalReplicas: 1,
+        byRole: { api: 1 },
+        byNode: { [fallback.nodeName]: 1 },
+        registrySource: 'unavailable',
+      };
     }
-
-    const result: {
-      isPrimary: boolean;
-      isWorker: boolean;
-      workerId: string | number | undefined;
-      instanceId: string;
-      nodeName: string;
-      hostname: string;
-      cpuCount: number;
-      totalWorkers?: number;
-      activeWorkers?: number;
-    } = {
-      isPrimary,
-      isWorker,
-      workerId,
-      instanceId,
-      nodeName,
-      hostname,
-      cpuCount,
-    };
-
-    if (totalWorkers !== undefined) {
-      result.totalWorkers = totalWorkers;
-    }
-    if (activeWorkers !== undefined) {
-      result.activeWorkers = activeWorkers;
-    }
-
-    return result;
+    return this.topologyHeartbeat.getTopology();
   }
 
   /**
@@ -2683,7 +2650,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           versions: Object.fromEntries(
             Object.entries(process.versions).filter(([, value]) => value !== undefined)
           ) as Record<string, string>,
-          cluster: this.getClusterInfo(),
+          cluster: await this.getDeploymentTopology(),
         },
         memory: {
           heapUsed: memoryUsage.heapUsed,
@@ -2909,7 +2876,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           ppid: process.ppid,
           platform: process.platform,
           versions: {},
-          cluster: this.getClusterInfo(),
+          cluster: await this.getDeploymentTopology(),
         },
         memory: {
           heapUsed: 0,

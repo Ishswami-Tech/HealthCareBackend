@@ -65,6 +65,7 @@ import type { Worker } from 'bullmq';
 import { AppointmentsModule } from '@services/appointments/appointments.module';
 import { BillingModule } from '@services/billing/billing.module';
 import { VideoModule } from '@services/video/video.module';
+import { TopologyHeartbeatService } from '@services/health/topology-heartbeat.service';
 
 @Module({
   imports: [
@@ -101,7 +102,9 @@ import { VideoModule } from '@services/video/video.module';
     forwardRef(() => GuardsModule),
     forwardRef(() => SessionModule),
   ],
-  providers: [],
+  // Reports this worker replica into the live deployment-topology registry
+  // (dashboard's "Cluster & Node Information" panel) — same mechanism the API uses.
+  providers: [TopologyHeartbeatService],
   exports: [],
 })
 class WorkerModule {}

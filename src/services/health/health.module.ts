@@ -4,6 +4,7 @@ import { HttpModule } from '@infrastructure/http';
 import { ConfigModule } from '@config/config.module';
 import { HealthController } from './health.controller';
 import { HealthService } from './health.service';
+import { TopologyHeartbeatService } from './topology-heartbeat.service';
 // Use direct import to avoid circular dependency with barrel exports
 import { DatabaseModule } from '@infrastructure/database/database.module';
 import { LoggingModule } from '@infrastructure/logging';
@@ -46,6 +47,7 @@ import { HealthBroadcasterService } from './realtime/services/health-broadcaster
   controllers: [HealthController],
   providers: [
     HealthService,
+    TopologyHeartbeatService,
     // Health indicators (no Terminus dependency - uses only LoggingService)
     DatabaseHealthIndicator,
     CacheHealthIndicator,

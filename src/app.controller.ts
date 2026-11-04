@@ -53,15 +53,28 @@ interface DashboardData {
   }>;
   clusterInfo?:
     | {
-        isPrimary: boolean;
-        isWorker: boolean;
-        workerId: string | number | undefined;
-        instanceId: string;
-        nodeName: string;
-        hostname: string;
-        cpuCount: number;
-        totalWorkers?: number;
-        activeWorkers?: number;
+        self: {
+          role: 'api' | 'worker';
+          nodeName: string;
+          replica: string;
+          hostname: string;
+          pid: number;
+        };
+        replicas: Array<{
+          role: 'api' | 'worker';
+          nodeId: string;
+          nodeName: string;
+          replica: string;
+          hostname: string;
+          pid: number;
+          gitSha?: string;
+          startedAt: string;
+          lastHeartbeat: string;
+        }>;
+        totalReplicas: number;
+        byRole: Record<string, number>;
+        byNode: Record<string, number>;
+        registrySource: 'live' | 'unavailable';
       }
     | undefined;
 }
@@ -1329,67 +1342,82 @@ export class AppController {
             ? `
         <section class="cluster-section" style="margin-top: 2rem; background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); padding: 1.5rem;">
             <h2 class="section-title">Cluster & Node Information</h2>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; margin-top: 1rem;">
+            <div style="font-size: 0.8rem; color: #64748b; margin-top: -0.5rem; margin-bottom: 1rem;">
+                Live deployment topology — read fresh from the shared replica registry on every request (not a cached snapshot).
+                ${healthData.clusterInfo.registrySource === 'unavailable' ? ' <span style="color: #dc2626; font-weight: 600;">Registry unavailable — showing this instance only.</span>' : ''}
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
                 <div style="padding: 1rem; background: #f8f9fa; border-radius: 6px;">
-                    <div style="font-size: 0.875rem; color: #64748b; margin-bottom: 0.5rem;">Process Type</div>
+                    <div style="font-size: 0.875rem; color: #64748b; margin-bottom: 0.5rem;">Total Replicas</div>
                     <div style="font-size: 1.125rem; font-weight: 600; color: #1e293b;">
-                        ${healthData.clusterInfo.isPrimary ? 'Primary (Master)' : healthData.clusterInfo.isWorker ? 'Worker' : 'Standalone'}
+                        ${healthData.clusterInfo.totalReplicas}
                     </div>
                 </div>
+                ${Object.entries(healthData.clusterInfo.byRole)
+                  .map(
+                    ([role, count]) => `
                 <div style="padding: 1rem; background: #f8f9fa; border-radius: 6px;">
-                    <div style="font-size: 0.875rem; color: #64748b; margin-bottom: 0.5rem;">Worker ID</div>
+                    <div style="font-size: 0.875rem; color: #64748b; margin-bottom: 0.5rem;">${role.charAt(0).toUpperCase() + role.slice(1)} Replicas</div>
                     <div style="font-size: 1.125rem; font-weight: 600; color: #1e293b;">
-                        ${healthData.clusterInfo.workerId !== undefined ? healthData.clusterInfo.workerId : 'N/A'}
-                    </div>
-                </div>
-                <div style="padding: 1rem; background: #f8f9fa; border-radius: 6px;">
-                    <div style="font-size: 0.875rem; color: #64748b; margin-bottom: 0.5rem;">Instance ID</div>
-                    <div style="font-size: 1.125rem; font-weight: 600; color: #1e293b;">
-                        ${healthData.clusterInfo.instanceId}
-                    </div>
-                </div>
-                <div style="padding: 1rem; background: #f8f9fa; border-radius: 6px;">
-                    <div style="font-size: 0.875rem; color: #64748b; margin-bottom: 0.5rem;">Node Name</div>
-                    <div style="font-size: 1.125rem; font-weight: 600; color: #1e293b;">
-                        ${healthData.clusterInfo.nodeName}
-                    </div>
-                </div>
-                <div style="padding: 1rem; background: #f8f9fa; border-radius: 6px;">
-                    <div style="font-size: 0.875rem; color: #64748b; margin-bottom: 0.5rem;">Hostname</div>
-                    <div style="font-size: 1.125rem; font-weight: 600; color: #1e293b;">
-                        ${healthData.clusterInfo.hostname}
-                    </div>
-                </div>
-                <div style="padding: 1rem; background: #f8f9fa; border-radius: 6px;">
-                    <div style="font-size: 0.875rem; color: #64748b; margin-bottom: 0.5rem;">CPU Cores</div>
-                    <div style="font-size: 1.125rem; font-weight: 600; color: #1e293b;">
-                        ${healthData.clusterInfo.cpuCount}
-                    </div>
-                </div>
-                ${
-                  healthData.clusterInfo.totalWorkers !== undefined
-                    ? `
-                <div style="padding: 1rem; background: #f8f9fa; border-radius: 6px;">
-                    <div style="font-size: 0.875rem; color: #64748b; margin-bottom: 0.5rem;">Total Workers</div>
-                    <div style="font-size: 1.125rem; font-weight: 600; color: #1e293b;">
-                        ${healthData.clusterInfo.totalWorkers}
+                        ${count}
                     </div>
                 </div>
                 `
-                    : ''
-                }
-                ${
-                  healthData.clusterInfo.activeWorkers !== undefined
-                    ? `
+                  )
+                  .join('')}
                 <div style="padding: 1rem; background: #f8f9fa; border-radius: 6px;">
-                    <div style="font-size: 0.875rem; color: #64748b; margin-bottom: 0.5rem;">Active Workers</div>
+                    <div style="font-size: 0.875rem; color: #64748b; margin-bottom: 0.5rem;">Nodes</div>
                     <div style="font-size: 1.125rem; font-weight: 600; color: #1e293b;">
-                        ${healthData.clusterInfo.activeWorkers}
+                        ${Object.keys(healthData.clusterInfo.byNode).length}
+                        <span style="font-size: 0.8rem; font-weight: 400; color: #64748b;">(${Object.keys(healthData.clusterInfo.byNode).join(', ')})</span>
                     </div>
                 </div>
-                `
-                    : ''
-                }
+            </div>
+            <div style="overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
+                    <thead>
+                        <tr style="text-align: left; border-bottom: 2px solid #e2e8f0;">
+                            <th style="padding: 0.5rem;">Role</th>
+                            <th style="padding: 0.5rem;">Node</th>
+                            <th style="padding: 0.5rem;">Replica</th>
+                            <th style="padding: 0.5rem;">Hostname</th>
+                            <th style="padding: 0.5rem;">PID</th>
+                            <th style="padding: 0.5rem;">Image</th>
+                            <th style="padding: 0.5rem;">Started</th>
+                            <th style="padding: 0.5rem;">Last Heartbeat</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${healthData.clusterInfo.replicas
+                          .map(replica => {
+                            const ageSeconds = Math.max(
+                              0,
+                              Math.round(
+                                (Date.now() - new Date(replica.lastHeartbeat).getTime()) / 1000
+                              )
+                            );
+                            const isLive = ageSeconds <= 45;
+                            return `
+                        <tr style="border-bottom: 1px solid #f1f5f9;">
+                            <td style="padding: 0.5rem;">
+                                <span style="display: inline-flex; align-items: center; gap: 0.4rem;">
+                                    <span style="width: 8px; height: 8px; border-radius: 50%; background: ${isLive ? '#22c55e' : '#cbd5e1'}; display: inline-block;"></span>
+                                    ${replica.role}
+                                </span>
+                            </td>
+                            <td style="padding: 0.5rem;">${replica.nodeName}</td>
+                            <td style="padding: 0.5rem;">#${replica.replica}</td>
+                            <td style="padding: 0.5rem; font-family: monospace; font-size: 0.8rem;">${replica.hostname}</td>
+                            <td style="padding: 0.5rem;">${replica.pid}</td>
+                            <td style="padding: 0.5rem; font-family: monospace; font-size: 0.8rem;">${replica.gitSha ? replica.gitSha.slice(0, 12) : 'N/A'}</td>
+                            <td style="padding: 0.5rem;">${formatDateTimeInIST(replica.startedAt)}</td>
+                            <td style="padding: 0.5rem;">${ageSeconds}s ago</td>
+                        </tr>
+                        `;
+                          })
+                          .join('')}
+                    </tbody>
+                </table>
             </div>
         </section>
         `

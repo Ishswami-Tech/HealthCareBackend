@@ -458,27 +458,30 @@ jobs:
             echo "Production deploys are ENABLED."
           fi
 
-          # ── Deploy via Temps: pull the image on the control-plane host (it
-          # already holds GHCR credentials), then push it to Temps through the
-          # loopback API context (bypasses Cloudflare's upload-size limit that a
-          # direct `deploy:local-image` from this runner would hit). Deploys
-          # both the API and Worker projects — Temps always runs the image's
-          # baked-in default command, so the Worker container this creates
-          # needs its entrypoint fixed up afterward (see sync-manual-replicas
-          # job below). ──
+          # ── Deploy via Temps: run the CLI on the control-plane host itself
+          # (loopback API context) so the deploy call never has to cross
+          # Cloudflare's upload-size limit. `deploy:image` has Temps pull
+          # straight from GHCR (it already holds GHCR credentials) rather
+          # than uploading the image through the CLI as `deploy:local-image`
+          # did — same no-size-limit benefit, but it also keeps the real
+          # `ghcr.io/...` tag as the deployment's image_name instead of
+          # rewriting it to an opaque `temps.internal/...:immutable`
+          # reference, which is what the app's own dashboard reads for its
+          # "Image" / "Built" display (2026-11-04). Deploys both the API and
+          # Worker projects — Temps always runs the image's baked-in default
+          # command, so the Worker container this creates needs its
+          # entrypoint fixed up afterward (see sync-manual-replicas job
+          # below). ──
           echo "Triggering Temps deploy (project=${TEMPS_PROJECT}, environment=${TEMPS_ENVIRONMENT})..."
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
             set -euo pipefail
-            docker pull '${IMAGE_FULL}'
-            npx -y @temps-sdk/cli --target-context temps-local deploy:local-image \
+            npx -y @temps-sdk/cli --target-context temps-local deploy:image \
               --image '${IMAGE_FULL}' \
-              --no-build \
               -p '${TEMPS_PROJECT}' \
               -e '${TEMPS_ENVIRONMENT}' \
               -y --timeout 600
-            npx -y @temps-sdk/cli --target-context temps-local deploy:local-image \
+            npx -y @temps-sdk/cli --target-context temps-local deploy:image \
               --image '${IMAGE_FULL}' \
-              --no-build \
               -p '${TEMPS_WORKER_PROJECT}' \
               -e '${TEMPS_ENVIRONMENT}' \
               -y --timeout 600

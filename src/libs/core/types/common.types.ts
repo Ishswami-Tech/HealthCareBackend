@@ -145,15 +145,32 @@ export interface DetailedHealthCheckResponse extends HealthCheckResponse {
     platform: string;
     versions: Record<string, string>;
     cluster?: {
-      isPrimary: boolean;
-      isWorker: boolean;
-      workerId: string | number | undefined;
-      instanceId: string;
-      nodeName: string;
-      hostname: string;
-      cpuCount: number;
-      totalWorkers?: number;
-      activeWorkers?: number;
+      self: {
+        role: 'api' | 'worker';
+        nodeId: string;
+        nodeName: string;
+        replica: string;
+        hostname: string;
+        pid: number;
+        gitSha?: string;
+        startedAt: string;
+        lastHeartbeat: string;
+      };
+      replicas: Array<{
+        role: 'api' | 'worker';
+        nodeId: string;
+        nodeName: string;
+        replica: string;
+        hostname: string;
+        pid: number;
+        gitSha?: string;
+        startedAt: string;
+        lastHeartbeat: string;
+      }>;
+      totalReplicas: number;
+      byRole: Record<string, number>;
+      byNode: Record<string, number>;
+      registrySource: 'live' | 'unavailable';
     };
   };
   memory: {
