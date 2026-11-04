@@ -159,14 +159,28 @@ export class TopologyHeartbeatService implements OnModuleInit, OnModuleDestroy {
         value: await this.cacheService!.get<TopologyReplica>(member).catch(() => null),
       }))
     );
+
+    // Staleness is judged by the payload's own lastHeartbeat, not by whether get() returned
+    // non-null: CacheService's L1 (in-process) layer caches a hit for its own default TTL
+    // (minutes), independent of the much shorter TTL the value was written with, so a dead
+    // replica's last-known snapshot can keep being served long after its real cache entry (and
+    // the replica itself) is gone. Re-checking the embedded timestamp here is what keeps the
+    // view actually live rather than "live until this reader's L1 entry happens to expire".
+    const freshCutoffMs = TopologyHeartbeatService.TTL_SECONDS * 1000;
+    const isFresh = (value: TopologyReplica): boolean =>
+      Date.now() - new Date(value.lastHeartbeat).getTime() <= freshCutoffMs;
+
     const replicas = fetched
-      .filter(entry => entry.value !== null)
+      .filter(entry => entry.value !== null && isFresh(entry.value))
       .map(entry => entry.value as TopologyReplica);
 
-    // Prune index members whose own TTL-backed entry has expired (dead replica), so the index
-    // doesn't grow unboundedly across restarts. Best-effort — a failure just leaves cleanup for
-    // next read.
-    const staleMembers = fetched.filter(entry => entry.value === null).map(entry => entry.member);
+    // Prune index members that are missing OR stale, so the index doesn't grow unboundedly
+    // across restarts and dead replicas drop out of view within one heartbeat interval instead
+    // of lingering for however long this reader's L1 cache happens to hold the old snapshot.
+    // Best-effort — a failure just leaves cleanup for the next read.
+    const staleMembers = fetched
+      .filter(entry => entry.value === null || !isFresh(entry.value))
+      .map(entry => entry.member);
     if (staleMembers.length > 0) {
       void this.cacheService
         .sRem(TopologyHeartbeatService.INDEX_KEY, ...staleMembers)
