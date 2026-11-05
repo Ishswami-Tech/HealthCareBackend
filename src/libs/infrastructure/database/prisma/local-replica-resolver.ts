@@ -21,20 +21,22 @@
 
 import { Client } from 'pg';
 
-/** Mirrors PostgresClusterTopologyService's mapping — duplicated intentionally to
- * avoid a database -> health module dependency; update both if the mesh changes. */
-const SERVER_NAME_BY_HOST: Readonly<Record<string, string>> = {
-  '10.201.0.1': 'contabo-healthcare',
-  '10.201.0.2': 'oracle-main',
-  '10.201.0.5': 'temps-worker',
-  '10.201.0.6': 'temps-control-plane',
+/**
+ * Maps every TEMPS_NODE_NAME alias this cluster uses to its mesh IP. The same physical
+ * host can report different names depending on which deploy path started the container —
+ * e.g. temps-worker-ubuntu's host answers to "temps-worker" from the manually-synced
+ * container (sync-manual-replicas.sh) and "temps-worker-ubuntu" from Temps's own managed
+ * deployment. List every alias you've seen for a host, not just one.
+ */
+const MESH_IP_BY_NODE_NAME: Readonly<Record<string, string>> = {
+  'contabo-healthcare': '10.201.0.1',
+  'oracle-main': '10.201.0.2',
+  'temps-worker': '10.201.0.5',
+  'temps-worker-ubuntu': '10.201.0.5',
+  'temps-control-plane': '10.201.0.6',
 };
 
 const CONNECT_TIMEOUT_MS = 2000;
-
-function resolveServerName(host: string): string {
-  return SERVER_NAME_BY_HOST[host] ?? host;
-}
 
 /**
  * Looks up this host's own Postgres HA member via the pg_auto_failover monitor
@@ -47,6 +49,11 @@ export async function resolveLocalHealthCheckUrl(databaseUrl: string): Promise<s
   const monitorUri = process.env['MONITOR_URI'];
   const nodeName = process.env['TEMPS_NODE_NAME'];
   if (!monitorUri || !nodeName) {
+    return null;
+  }
+
+  const myMeshIp = MESH_IP_BY_NODE_NAME[nodeName];
+  if (!myMeshIp) {
     return null;
   }
 
@@ -63,7 +70,7 @@ export async function resolveLocalHealthCheckUrl(databaseUrl: string): Promise<s
       'SELECT nodehost, nodeport FROM pgautofailover.node ORDER BY nodeid'
     );
 
-    const localMember = result.rows.find(row => resolveServerName(row.nodehost) === nodeName);
+    const localMember = result.rows.find(row => row.nodehost === myMeshIp);
     if (!localMember) {
       return null;
     }
