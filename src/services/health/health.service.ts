@@ -314,10 +314,13 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             resolve({
               isHealthy: false,
               avgResponseTime: -1,
-              errors: ['Health check timeout (2s)'],
+              errors: ['Health check timeout (5s)'],
               lastHealthCheck: new Date(),
             });
-          }, 2000); // 2 seconds timeout - matches robust health check implementation
+          }, 5000); // 5 seconds - actually matches DatabaseHealthMonitorService's own timeout now;
+          // the previous 2s budget was tighter than the retry+probe it was racing against, so a
+          // single slow tick under load (or even a normal cache read delayed by event-loop
+          // contention) could trip this before the real check underneath ever got a chance.
         }),
       ]);
 
@@ -2933,10 +2936,10 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             status: 'error',
             database: {
               status: 'down',
-              message: 'Health check timeout (2s)',
+              message: 'Health check timeout (5s)',
             },
           });
-        }, 2000); // 2 seconds timeout - matches robust health check implementation
+        }, 5000); // 5 seconds - see the matching comment in monitorDatabaseConnection() above
       });
 
       const healthResult = await Promise.race([healthStatusPromise, timeoutPromise]);
