@@ -88,6 +88,7 @@ DOCKERFILE
     sudo docker rm -f '${WRONG_CONTAINER_ID}' healthcarebackend-worker-local >/dev/null 2>&1 || true
     sudo docker run -d --name healthcarebackend-worker-local --restart unless-stopped \
       --network temps-app-network -p 10.201.0.5:${HOST_PORT}:8088 \
+      -e TEMPS_NODE_NAME=temps-worker \
       --env-file /tmp/worker_env_sync '${WRAPPER_TAG}'
     sudo docker network connect ${TEMPS_WORKER_OVERLAY_NET} healthcarebackend-worker-local
     sudo docker restart healthcarebackend-worker-local
@@ -117,6 +118,7 @@ ssh oracle-main "
   sudo docker rm -f healthcarebackend-oracle-arm64 >/dev/null 2>&1 || true
   sudo docker run -d --name healthcarebackend-oracle-arm64 --restart unless-stopped \
     --network temps-app-network -p 10.201.0.2:32900:8088 \
+    -e TEMPS_NODE_NAME=oracle-main \
     --env-file /tmp/api_env_sync '${IMAGE_FULL}'
   sudo docker network connect ${ORACLE_MAIN_OVERLAY_NET} healthcarebackend-oracle-arm64
   sudo docker restart healthcarebackend-oracle-arm64
@@ -139,6 +141,7 @@ ssh oracle-main "
   sudo docker rm -f healthcarebackend-worker-oracle-arm64 >/dev/null 2>&1 || true
   sudo docker run -d --name healthcarebackend-worker-oracle-arm64 --restart unless-stopped \
     --network temps-app-network -p 10.201.0.2:32901:8088 \
+    -e TEMPS_NODE_NAME=oracle-main \
     --env-file /tmp/worker_env_sync_oracle '${WRAPPER_TAG}'
   sudo docker network connect ${ORACLE_MAIN_OVERLAY_NET} healthcarebackend-worker-oracle-arm64
   sudo docker restart healthcarebackend-worker-oracle-arm64

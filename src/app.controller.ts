@@ -77,6 +77,19 @@ interface DashboardData {
         registrySource: 'live' | 'unavailable';
       }
     | undefined;
+  databaseCluster?:
+    | {
+        nodes: Array<{
+          nodeId: number;
+          nodeName: string;
+          serverName: string;
+          host: string;
+          port: number;
+          state: string;
+        }>;
+        source: 'live' | 'unavailable';
+      }
+    | undefined;
 }
 
 @ApiTags('root')
@@ -464,6 +477,13 @@ export class AppController {
           healthData.processInfo &&
           'cluster' in healthData.processInfo
             ? (healthData.processInfo.cluster as DashboardData['clusterInfo'])
+            : undefined,
+        databaseCluster:
+          healthData &&
+          'processInfo' in healthData &&
+          healthData.processInfo &&
+          'databaseCluster' in healthData.processInfo
+            ? (healthData.processInfo.databaseCluster as DashboardData['databaseCluster'])
             : undefined,
       };
 
@@ -1419,6 +1439,54 @@ export class AppController {
                     </tbody>
                 </table>
             </div>
+            ${
+              healthData.databaseCluster
+                ? `
+            <h3 style="font-size: 1.0625rem; font-weight: 600; color: #334155; margin-top: 1.5rem; margin-bottom: 0.5rem;">Database Cluster</h3>
+            <div style="font-size: 0.8rem; color: #64748b; margin-bottom: 0.75rem;">
+                ${healthData.databaseCluster.source === 'unavailable' ? '<span style="color: #dc2626; font-weight: 600;">Unavailable on this replica.</span>' : 'Live primary/secondary topology from the HA monitor.'}
+            </div>
+            ${
+              healthData.databaseCluster.nodes.length > 0
+                ? `
+            <div style="overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
+                    <thead>
+                        <tr style="text-align: left; border-bottom: 2px solid #e2e8f0;">
+                            <th style="padding: 0.5rem;">Role</th>
+                            <th style="padding: 0.5rem;">Server</th>
+                            <th style="padding: 0.5rem;">Node</th>
+                            <th style="padding: 0.5rem;">Host:Port</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${healthData.databaseCluster.nodes
+                          .map(node => {
+                            const isPrimary = node.state === 'primary';
+                            return `
+                        <tr style="border-bottom: 1px solid #f1f5f9;">
+                            <td style="padding: 0.5rem;">
+                                <span style="display: inline-flex; align-items: center; gap: 0.4rem;">
+                                    <span style="width: 8px; height: 8px; border-radius: 50%; background: ${isPrimary ? '#3b82f6' : '#22c55e'}; display: inline-block;"></span>
+                                    ${node.state}
+                                </span>
+                            </td>
+                            <td style="padding: 0.5rem; font-weight: 600;">${node.serverName}</td>
+                            <td style="padding: 0.5rem;">${node.nodeName}</td>
+                            <td style="padding: 0.5rem; font-family: monospace; font-size: 0.8rem;">${node.host}:${node.port}</td>
+                        </tr>
+                        `;
+                          })
+                          .join('')}
+                    </tbody>
+                </table>
+            </div>
+            `
+                : ''
+            }
+            `
+                : ''
+            }
         </section>
         `
             : ''

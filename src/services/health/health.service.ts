@@ -23,6 +23,10 @@ import { cpus, totalmem, freemem } from 'node:os';
 import { LoggingService } from '@infrastructure/logging';
 import { CommunicationHealthMonitorService } from '@communication/communication-health-monitor.service';
 import { TopologyHeartbeatService, type DeploymentTopology } from './topology-heartbeat.service';
+import {
+  PostgresClusterTopologyService,
+  type DatabaseClusterTopology,
+} from './postgres-cluster-topology.service';
 /**
  * Independent Health Service
  *
@@ -88,7 +92,10 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     private readonly communicationHealthMonitor?: CommunicationHealthMonitorService,
     @Optional()
     @Inject(forwardRef(() => TopologyHeartbeatService))
-    private readonly topologyHeartbeat?: TopologyHeartbeatService
+    private readonly topologyHeartbeat?: TopologyHeartbeatService,
+    @Optional()
+    @Inject(forwardRef(() => PostgresClusterTopologyService))
+    private readonly postgresClusterTopology?: PostgresClusterTopologyService
   ) {}
 
   /**
@@ -472,6 +479,19 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       };
     }
     return this.topologyHeartbeat.getTopology();
+  }
+
+  /**
+   * Live primary/secondary topology of the Postgres HA cluster, read on-demand from the
+   * pg_auto_failover monitor (see PostgresClusterTopologyService). 'unavailable' on a replica
+   * that has no MONITOR_URI configured, or if the monitor can't be reached - the rest of the
+   * dashboard still renders either way.
+   */
+  private async getDatabaseClusterTopology(): Promise<DatabaseClusterTopology> {
+    if (!this.postgresClusterTopology) {
+      return { nodes: [], source: 'unavailable' };
+    }
+    return this.postgresClusterTopology.getTopology();
   }
 
   /**
@@ -2656,6 +2676,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             Object.entries(process.versions).filter(([, value]) => value !== undefined)
           ) as Record<string, string>,
           cluster: await this.getDeploymentTopology(),
+          databaseCluster: await this.getDatabaseClusterTopology(),
         },
         memory: {
           heapUsed: memoryUsage.heapUsed,
@@ -2882,6 +2903,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           platform: process.platform,
           versions: {},
           cluster: await this.getDeploymentTopology(),
+          databaseCluster: await this.getDatabaseClusterTopology(),
         },
         memory: {
           heapUsed: 0,

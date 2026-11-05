@@ -172,6 +172,17 @@ export interface DetailedHealthCheckResponse extends HealthCheckResponse {
       byNode: Record<string, number>;
       registrySource: 'live' | 'unavailable';
     };
+    databaseCluster?: {
+      nodes: Array<{
+        nodeId: number;
+        nodeName: string;
+        serverName: string;
+        host: string;
+        port: number;
+        state: string;
+      }>;
+      source: 'live' | 'unavailable';
+    };
   };
   memory: {
     heapUsed: number;
