@@ -15,6 +15,7 @@ import type { PrismaClient as GeneratedPrismaClient } from '@prisma/client';
 // Import PrismaClient type from @prisma/client for static properties and type annotations
 import type { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { resolveLocalHealthCheckUrl } from './local-replica-resolver';
 // Pool import removed: @prisma/adapter-pg@7.x takes a pool config directly and
 // creates its own pg.Pool internally. Passing a Pool instance was the root cause
 // of the "Can't reach database server at 127.0.0.1:5432" error.
@@ -316,6 +317,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   // Uses a separate connection pool to avoid interfering with regular operations
   // Use type assertion to avoid ESLint error type issues with dynamic imports
   private static healthCheckPrismaClient: PrismaClient | null = null;
+  // Connection string override for the health-check client, resolved once in onModuleInit
+  // to the current host's own Postgres HA member when one exists (see
+  // resolveLocalHealthCheckUrl); null means "use DATABASE_URL" (the default/fallback).
+  private static healthCheckUrlOverride: string | null = null;
   private static circuitBreakerFailures = 0;
   private static circuitBreakerLastFailure = 0;
   private static isCircuitOpen = false;
@@ -1286,7 +1291,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         : [{ emit: 'stdout' as const, level: 'error' as const }];
 
       // Prisma 7: Use adapter pattern for library engine type
-      let connectionString = dbUrlValue || getEnv('DATABASE_URL') || '';
+      // Prefer the local-replica override (resolved in onModuleInit) over DATABASE_URL so
+      // these pings hit this host's own Postgres member instead of crossing the mesh.
+      let connectionString =
+        PrismaService.healthCheckUrlOverride || dbUrlValue || getEnv('DATABASE_URL') || '';
       if (!connectionString) {
         throw new HealthcareError(
           ErrorCode.DATABASE_CONNECTION_FAILED,
@@ -1673,6 +1681,20 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
     // Initialize health check PrismaClient if needed
     if (!PrismaService.healthCheckPrismaClient) {
+      // If this host runs its own Postgres HA member (e.g. a secondary), point the
+      // dedicated health-check client at it instead of DATABASE_URL's primary — avoids
+      // paying a cross-node network round trip (measured ~260ms on this cluster's mesh)
+      // on every periodic SELECT 1 ping. Fails safe to DATABASE_URL on any error. Never
+      // affects the main PrismaClient, which must keep targeting the primary.
+      try {
+        const databaseUrlForOverride = getEnv('DATABASE_URL');
+        if (databaseUrlForOverride) {
+          PrismaService.healthCheckUrlOverride =
+            await resolveLocalHealthCheckUrl(databaseUrlForOverride);
+        }
+      } catch {
+        PrismaService.healthCheckUrlOverride = null;
+      }
       // getHealthCheckClient() only *registers* _healthCheckConstructorArgs on its first call
       // (it returns null until this onModuleInit constructs the real client from those args).
       // Nothing else in the app calls it, so without this self-seed call the args are never
