@@ -486,7 +486,12 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
           const duration = Date.now() - start;
 
           this.metrics.lastHealthCheck = new Date();
-          this.metrics.isHealthy = duration < 2000; // Relaxed for high-load scenarios
+          // A fresh connection on this cluster (any replica not on the same host as the
+          // Postgres primary) measured ~1.1-1.3s to connect+query in practice - the TLS and
+          // Postgres-protocol handshakes each cost a full mesh round trip (~260-300ms) on top
+          // of the network hop itself. 2000ms left almost no margin and flagged this replica
+          // unhealthy on perfectly normal connection churn (2026-11-05).
+          this.metrics.isHealthy = duration < 5000;
 
           // Update estimated pool metrics
           this.metrics.idleConnections = Math.max(
