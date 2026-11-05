@@ -28,6 +28,7 @@ import type { PrismaDelegateArgs } from '@core/types/prisma.types';
 
 import { AsyncLocalStorage } from 'async_hooks';
 import { redactLogMetadata, redactText } from '@infrastructure/logging/log-redaction.util';
+import { emitOtelLog } from '@infrastructure/logging/otel-log-sink';
 import { PaginationMetaDto } from '@dtos/common-response.dto';
 import { calculatePagination } from '@infrastructure/database/query/query.utils';
 
@@ -772,6 +773,9 @@ export class LoggingService implements OnApplicationShutdown {
     if (this.cacheService && passesLevelFilter && this.shouldPersistToCache(type, level)) {
       this.enqueueLogWrite(this.safeStringify(logEntry));
     }
+
+    // OTLP sink (ClickStack): the redacted entry, only when OTEL_LOGS_EXPORTER=otlp is on.
+    emitOtelLog({ type, level, message: safeMessage, context, metadata: logEntry.metadata });
 
     // Level-gated operations below: terminal output, metrics, notifications.
     // These respect LOG_LEVEL so production doesn't spam with DEBUG/VERBOSE.

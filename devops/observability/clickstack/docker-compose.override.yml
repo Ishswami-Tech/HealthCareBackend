@@ -1,0 +1,36 @@
+# Overlay for the official ClickStack Docker Compose stack
+# (github.com/ClickHouse/ClickStack, commit pinned in setup.sh).
+#
+# setup.sh copies this file next to the upstream docker-compose.yml, where
+# `docker compose up` merges it automatically. Requires Docker Compose >= 2.24.4
+# (`!override`).
+#
+# Changes from upstream:
+# - Only two ports are published, both on 127.0.0.1: OTLP/HTTP (4318) and the
+#   HyperDX UI. Put them behind the host's TLS reverse proxy (see ../README.md).
+#   Upstream also publishes OTLP gRPC, fluentd, collector metrics and the
+#   HyperDX API port on every interface.
+# - restart: unless-stopped everywhere (upstream: db and app have no policy).
+# - HyperDX usage stats off: the app sends nothing to third parties.
+services:
+  db:
+    restart: unless-stopped
+
+  ch-server:
+    restart: unless-stopped
+
+  otel-collector:
+    ports: !override
+      - "127.0.0.1:4318:4318" # OTLP/HTTP: apps send traces, logs, metrics here (via TLS proxy)
+      - "127.0.0.1:13133:13133" # collector health check, for Uptime Kuma on this host
+    restart: unless-stopped
+
+  app:
+    ports: !override
+      - "127.0.0.1:${HYPERDX_APP_PORT}:${HYPERDX_APP_PORT}" # HyperDX UI (via TLS proxy)
+    environment:
+      USAGE_STATS_ENABLED: "false"
+      # Upstream builds this as ${HYPERDX_APP_URL}:${HYPERDX_APP_PORT}, which is wrong behind a
+      # proxy on 443. Set HYPERDX_PUBLIC_URL (e.g. https://observe.example.com) in .env.
+      FRONTEND_URL: ${HYPERDX_PUBLIC_URL:-${HYPERDX_APP_URL}:${HYPERDX_APP_PORT}}
+    restart: unless-stopped

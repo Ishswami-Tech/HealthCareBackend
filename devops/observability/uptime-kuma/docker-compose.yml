@@ -1,0 +1,20 @@
+# Uptime Kuma: external uptime checks and alerting for the healthcare stack.
+# Run it on a DIFFERENT host from the apps it watches, or it goes down with them.
+# The UI binds to 127.0.0.1; publish it through the host's TLS reverse proxy.
+#
+#   docker compose -f devops/observability/uptime-kuma/docker-compose.yml up -d
+#
+# Monitors to create are listed in ../README.md (Uptime Kuma is configured in its UI).
+# The data volume is on local disk; Uptime Kuma does not support NFS for /app/data.
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:2
+    container_name: uptime-kuma
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - uptime-kuma-data:/app/data
+
+volumes:
+  uptime-kuma-data:

@@ -1,7 +1,9 @@
 # Database observability
 
 PostgreSQL settings for finding slow queries and checking that autovacuum keeps
-up.
+up. For application traces, logs, metrics, analytics and uptime checks
+(ClickStack, OpenTelemetry, PostHog, Uptime Kuma), see
+[`devops/observability/README.md`](../devops/observability/README.md).
 
 ## Settings
 
