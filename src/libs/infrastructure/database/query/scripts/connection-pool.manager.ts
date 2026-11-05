@@ -445,10 +445,17 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
           const start = Date.now();
 
           try {
-            // Use $queryRawUnsafe directly on PrismaService
-            // PrismaService.$queryRawUnsafe will ensure client is initialized
-            // During startup grace period, this will return empty result instead of throwing
-            await this.prismaService.$queryRawUnsafe('SELECT 1');
+            // Ping on the dedicated health-check pool (max 2 connections, isolated from the
+            // main pool) so this check never contends with real query traffic. Falls back to
+            // the main pool only if the dedicated client hasn't finished initializing yet.
+            const healthCheckClient = PrismaServiceClass.getHealthCheckClient() as unknown as {
+              $queryRawUnsafe: (query: string) => Promise<unknown>;
+            } | null;
+            if (healthCheckClient) {
+              await healthCheckClient.$queryRawUnsafe('SELECT 1');
+            } else {
+              await this.prismaService.$queryRawUnsafe('SELECT 1');
+            }
           } catch (_queryError) {
             // Log warning but don't mark as unhealthy during startup
             // This is expected if Prisma is still initializing

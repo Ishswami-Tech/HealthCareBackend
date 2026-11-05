@@ -1712,10 +1712,18 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
       if (shouldPerformRealtimeCheck) {
         try {
-          // Perform a quick real-time health check
+          // Perform a quick real-time health check on the dedicated health-check pool so it
+          // doesn't contend with real query traffic; falls back to the main pool only if the
+          // dedicated client hasn't finished initializing yet.
           const startTime = Date.now();
+          const healthCheckClient = PrismaService.getHealthCheckClient() as unknown as {
+            $queryRaw: (query: TemplateStringsArray) => Promise<unknown>;
+          } | null;
+          const probe = healthCheckClient
+            ? healthCheckClient.$queryRaw`SELECT 1`
+            : this.prismaService.$queryRaw`SELECT 1`;
           await Promise.race([
-            this.prismaService.$queryRaw`SELECT 1`,
+            probe,
             new Promise((_, reject) =>
               setTimeout(() => reject(new Error('Health check timeout')), 5000)
             ),

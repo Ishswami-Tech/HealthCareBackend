@@ -141,11 +141,8 @@ export class DatabaseHealthMonitorService implements OnModuleInit, OnModuleDestr
     const startTime = Date.now();
 
     try {
-      // CRITICAL: Use the main PrismaService instance instead of separate health check client
-      // The health check client might not be initialized, causing Prisma errors
-      // Use the main service which has proper readiness checks
-      // Use $queryRaw on the main PrismaService which has proper readiness checks
-      // During startup grace period, $queryRaw will return empty result instead of throwing
+      // Probes the dedicated health-check pool when it's ready (see runProbe()), falling back
+      // to the main PrismaService only during the brief window before it's initialized.
       //
       // One retry before giving up: SELECT 1 has no side effects, so re-running it costs
       // nothing, and a single dropped packet on a cross-node link (the worker's DB can be a
@@ -234,8 +231,17 @@ export class DatabaseHealthMonitorService implements OnModuleInit, OnModuleDestr
   }
 
   private async runProbe(): Promise<void> {
+    // Ping on the dedicated health-check pool (isolated from the main pool) so this probe
+    // never contends with real query traffic; falls back to the main pool only if the
+    // dedicated client hasn't finished initializing yet (see PrismaService.onModuleInit).
+    const healthCheckClient = PrismaServiceClass.getHealthCheckClient() as unknown as {
+      $queryRaw: (query: TemplateStringsArray) => Promise<unknown>;
+    } | null;
+    const probe = healthCheckClient
+      ? healthCheckClient.$queryRaw`SELECT 1`
+      : this.prismaService.$queryRaw`SELECT 1`;
     await Promise.race([
-      this.prismaService.$queryRaw`SELECT 1`,
+      probe,
       new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Health check timeout')), this.healthCheckTimeout)
       ),

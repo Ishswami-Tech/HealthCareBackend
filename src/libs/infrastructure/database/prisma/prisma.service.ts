@@ -1673,6 +1673,13 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
     // Initialize health check PrismaClient if needed
     if (!PrismaService.healthCheckPrismaClient) {
+      // getHealthCheckClient() only *registers* _healthCheckConstructorArgs on its first call
+      // (it returns null until this onModuleInit constructs the real client from those args).
+      // Nothing else in the app calls it, so without this self-seed call the args are never
+      // registered and the dedicated health-check pool stays permanently uninitialized —
+      // the reason callers (ConnectionPoolManager, DatabaseHealthMonitorService) previously
+      // fell back to the shared pool for their periodic SELECT 1 pings.
+      PrismaService.getHealthCheckClient();
       const healthCheckConstructorArgs = (
         PrismaService as unknown as {
           _healthCheckConstructorArgs?: PrismaClientConstructorArgs;
