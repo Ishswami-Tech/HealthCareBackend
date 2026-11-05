@@ -1959,7 +1959,9 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               const result = await Promise.race([
                 this.databaseHealthIndicator.check('database'),
                 new Promise<never>((_, reject) =>
-                  setTimeout(() => reject(new Error('Timeout')), 2000)
+                  // 5s to match DatabaseHealthMonitorService's own budget - see the identical
+                  // fix (and why) in checkDatabaseHealth() below.
+                  setTimeout(() => reject(new Error('Timeout')), 5000)
                 ),
               ]);
               const dbResult = result['database'] as Record<string, unknown>;
@@ -2004,7 +2006,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               // Build detailed error message
               let errorDetails = `Database health check failed: ${dbErrorMessage}`;
               if (isTimeout) {
-                errorDetails = `Database health check timeout (2s) - service may be slow or unavailable`;
+                errorDetails = `Database health check timeout (5s) - service may be slow or unavailable`;
               } else if (isConnectionError) {
                 errorDetails = `Database connection refused - PostgreSQL may not be running or network issue`;
               }
