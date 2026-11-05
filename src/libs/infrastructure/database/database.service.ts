@@ -1661,6 +1661,28 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   }
 
   /**
+   * Pings the dedicated health-check pool (isolated from the main pool, and pointed at this
+   * host's own Postgres member when one exists — see PrismaService.getHealthCheckClient()).
+   * For lightweight liveness checks only; falls back to executeHealthcareRead's main pool
+   * only if the dedicated client hasn't finished initializing yet.
+   */
+  async pingHealthCheckPool(): Promise<void> {
+    const healthCheckClient = PrismaService.getHealthCheckClient() as unknown as {
+      $queryRaw: (query: TemplateStringsArray) => Promise<unknown>;
+    } | null;
+    if (healthCheckClient) {
+      await healthCheckClient.$queryRaw`SELECT 1`;
+      return;
+    }
+    await this.executeHealthcareRead(async prisma => {
+      const queryClient = prisma as unknown as {
+        $queryRaw: (query: TemplateStringsArray) => Promise<unknown>;
+      };
+      await queryClient.$queryRaw`SELECT 1`;
+    });
+  }
+
+  /**
    * Get connection health status
    * @see IDatabaseClient.getHealthStatus
    */

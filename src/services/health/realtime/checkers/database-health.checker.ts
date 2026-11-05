@@ -38,14 +38,11 @@ export class DatabaseHealthChecker {
     }
 
     try {
-      // Lightweight check: Simple query
+      // Lightweight check: ping the dedicated health-check pool instead of
+      // executeHealthcareRead's main pool, which this leader-elected check would otherwise
+      // send across the mesh to the primary on every tick (see DatabaseService.pingHealthCheckPool).
       await Promise.race([
-        this.databaseService.executeHealthcareRead(async prisma => {
-          const queryClient = prisma as unknown as {
-            $queryRaw: (query: TemplateStringsArray) => Promise<unknown>;
-          };
-          await queryClient.$queryRaw`SELECT 1`;
-        }),
+        this.databaseService.pingHealthCheckPool(),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('Database check timeout')), this.TIMEOUT_MS)
         ),
