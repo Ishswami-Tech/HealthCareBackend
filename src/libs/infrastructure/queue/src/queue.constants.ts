@@ -154,8 +154,14 @@ export const WORKER_LIFECYCLE = {
   heartbeatIntervalMs: 15_000,
   /** A heartbeat older than this means the worker process is hung or dead. */
   heartbeatMaxAgeMs: 60_000,
-  /** Per-dependency ping timeout inside the heartbeat loop. */
-  pingTimeoutMs: 3_000,
+  /**
+   * Per-dependency ping timeout inside the heartbeat loop. The DB ping calls
+   * DatabaseService.getHealthStatus(), which can itself run a fresh query racing its own 5s
+   * timeout - 3s here meant the outer ping killed that inner check before it ever got a chance
+   * to finish, failing the worker's Docker healthcheck on perfectly normal connection latency
+   * (2026-11-05). Must stay above getHealthStatus()'s own 5s budget.
+   */
+  pingTimeoutMs: 6_000,
 } as const;
 
 /** TTL of the "job already completed" marker that makes re-delivered jobs no-ops. */
