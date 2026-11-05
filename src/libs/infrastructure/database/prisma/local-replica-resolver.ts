@@ -15,11 +15,17 @@
  * i.e. the primary) — only the dedicated health-check client (see
  * PrismaService.getHealthCheckClient()) may use the override this resolves.
  *
- * Fail-safe by design: any missing env var, query failure, or no-match returns
- * null, and callers fall back to DATABASE_URL unchanged.
+ * Fail-safe by design: any missing env var, query failure, no-match, or
+ * unreachable candidate returns null, and callers fall back to DATABASE_URL
+ * unchanged. The reachability check matters: a node's containers aren't always
+ * able to reach that same node's own WireGuard mesh IP directly (confirmed on
+ * oracle-main, which rejects it with EHOSTUNREACH, while temps-worker-ubuntu's
+ * containers can reach their own host's mesh IP fine) — an asymmetry in this
+ * cluster's networking, not something to assume away.
  */
 
 import { Client } from 'pg';
+import { connect as netConnect } from 'net';
 
 /**
  * Maps every TEMPS_NODE_NAME alias this cluster uses to its mesh IP. The same physical
@@ -37,6 +43,20 @@ const MESH_IP_BY_NODE_NAME: Readonly<Record<string, string>> = {
 };
 
 const CONNECT_TIMEOUT_MS = 2000;
+
+/** Quick TCP reachability probe — resolves true only on a successful connect. */
+function isReachable(host: string, port: number): Promise<boolean> {
+  return new Promise(resolve => {
+    const socket = netConnect({ host, port, timeout: CONNECT_TIMEOUT_MS });
+    const finish = (ok: boolean): void => {
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false));
+    socket.once('error', () => finish(false));
+  });
+}
 
 /**
  * Looks up this host's own Postgres HA member via the pg_auto_failover monitor
@@ -72,6 +92,14 @@ export async function resolveLocalHealthCheckUrl(databaseUrl: string): Promise<s
 
     const localMember = result.rows.find(row => row.nodehost === myMeshIp);
     if (!localMember) {
+      return null;
+    }
+
+    // The mesh IP is reachable cross-node (that's the whole point of the mesh), but not
+    // reliably reachable from a container back to its own host's mesh IP — verify before
+    // committing to it instead of assuming.
+    const reachable = await isReachable(localMember.nodehost, localMember.nodeport);
+    if (!reachable) {
       return null;
     }
 
