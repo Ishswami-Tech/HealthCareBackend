@@ -53,9 +53,16 @@ function getEncryptionKey(): Buffer | null {
  * required LoggingService itself. Instead it exposes this message exactly
  * once (module-level flag) for the caller — which does have a
  * LoggingService — to log through it.
+ *
+ * Only returns the warning when the key is actually missing/invalid (checked via
+ * getEncryptionKey()). It used to return it unconditionally on the first call
+ * regardless of key validity — a false-positive "PHI cached in plaintext" alarm
+ * that fired even with a correctly configured key, which would also mask a real
+ * future incident behind the same indistinguishable log line.
  */
 export function getMissingEncryptionKeyWarningOnce(): string | null {
   if (hasWarnedMissingKey) return null;
+  if (getEncryptionKey() !== null) return null;
   hasWarnedMissingKey = true;
   return (
     'PHI_CACHE_ENCRYPTION_KEY is missing or invalid (expected 64 hex chars / 32 bytes). ' +
