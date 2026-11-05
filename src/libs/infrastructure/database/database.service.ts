@@ -1762,13 +1762,18 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
         }
       }
 
+      // 'degraded' means the monitor's own query succeeded but took >=1s (DatabaseHealthMonitorService
+      // .recordSuccess()) - it is still up and answering, just slower than ideal on this mesh's
+      // ~260-300ms baseline round trip. Treating it as equivalent to 'unhealthy' here flipped the
+      // whole dashboard to "Database Inactive" on perfectly normal latency variance (2026-11-05).
+      const monitorIsUp = healthStatus.status !== 'unhealthy';
       return {
-        isHealthy: connectionMetrics.isHealthy && healthStatus.status === 'healthy',
+        isHealthy: connectionMetrics.isHealthy && monitorIsUp,
         connectionCount: connectionMetrics.totalConnections,
         activeQueries: connectionMetrics.activeConnections,
         avgResponseTime: healthStatus.latency,
         lastHealthCheck: healthStatus.lastCheck,
-        errors: healthStatus.status === 'unhealthy' ? [errorMessage] : [],
+        errors: monitorIsUp ? [] : [errorMessage],
       };
     } catch (error) {
       return {
