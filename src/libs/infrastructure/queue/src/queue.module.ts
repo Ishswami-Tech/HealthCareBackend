@@ -29,6 +29,7 @@ import {
   JOB_RETENTION,
 } from './queue.constants';
 import { runJobOnce, type CompletionMarkerStore } from './worker-lifecycle/job-idempotency.util';
+import { captureError } from '../../../../instrument/sentry';
 
 /** The worker's own BullMQ connection (queue DB) as a marker store; null if unavailable. */
 async function resolveMarkerStore(worker: Worker): Promise<CompletionMarkerStore | null> {
@@ -349,12 +350,25 @@ export class QueueModule {
                       }
                     );
 
-                    // When a job exhausts all retries, move it to the dead-letter queue
+                    // When a job exhausts all retries, move it to the dead-letter queue and
+                    // report it to Sentry — previously only logged to the internal /logger
+                    // dashboard, so permanently-failed jobs never showed up as errors.
                     worker.on('failed', (job: Job | undefined, err: Error) => {
                       if (!job) return;
                       const maxAttempts = job.opts.attempts ?? 3;
                       if (job.attemptsMade >= maxAttempts) {
                         void deadLetterQueueService.moveToDeadLetter(job, err);
+                        captureError(err, {
+                          level: 'error',
+                          tags: {
+                            queue: job.queueName,
+                            jobName: job.name,
+                          },
+                          extra: {
+                            jobId: String(job.id),
+                            attemptsMade: job.attemptsMade,
+                          },
+                        });
                       }
                     });
 
