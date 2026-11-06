@@ -675,29 +675,65 @@ export abstract class BaseCacheClientService {
 
   async publish(channel: string, message: string): Promise<number> {
     if (!this.client || this.client.status !== 'ready') {
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.WARN,
+        `Publish skipped: ${this.PROVIDER_NAME} client not ready`,
+        `${this.PROVIDER_NAME}Service`,
+        { channel, clientStatus: this.client?.status ?? 'no-client' }
+      );
       return 0;
     }
     try {
       return await this.client.publish(channel, message);
-    } catch {
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.WARN,
+        `Publish failed on channel ${channel}`,
+        `${this.PROVIDER_NAME}Service`,
+        { channel, error: error instanceof Error ? error.message : String(error) }
+      );
       return 0;
     }
   }
 
   async subscribe(channel: string, callback: (message: string) => void): Promise<void> {
     if (!this.client || this.client.status !== 'ready') {
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.WARN,
+        `Subscribe skipped: ${this.PROVIDER_NAME} client not ready`,
+        `${this.PROVIDER_NAME}Service`,
+        { channel, clientStatus: this.client?.status ?? 'no-client' }
+      );
       return;
     }
     try {
       const subscriber = this.client.duplicate();
+      subscriber.on('error', err => {
+        void this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          `Subscriber connection error on channel ${channel}`,
+          `${this.PROVIDER_NAME}Service`,
+          { channel, error: err instanceof Error ? err.message : String(err) }
+        );
+      });
       await subscriber.subscribe(channel);
       subscriber.on('message', (ch, msg) => {
         if (ch === channel) {
           callback(msg);
         }
       });
-    } catch {
-      // Fail silently
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.WARN,
+        `Subscribe failed on channel ${channel}`,
+        `${this.PROVIDER_NAME}Service`,
+        { channel, error: error instanceof Error ? error.message : String(error) }
+      );
     }
   }
 
