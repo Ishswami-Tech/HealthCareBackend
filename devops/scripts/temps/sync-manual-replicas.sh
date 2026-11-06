@@ -52,6 +52,16 @@ latest_deployment_id() {
 
 echo "== Syncing manual replicas to ${IMAGE_FULL} =="
 
+# Computed once up front so every container gets labels pointing at the deployment
+# that's actually current right now — not whatever was current the last time this
+# script ran. Without these labels, Temps's own agent can never re-discover these
+# manually-run containers (it matches live Docker state to deployment_containers
+# rows via the sh.temps.* label set, the same one its own containers get at
+# creation), so the dashboard permanently shows "No containers yet" for them even
+# though the DB row Temps wrote itself is correct and the container is healthy.
+API_DEPLOYMENT_ID=$(latest_deployment_id "${API_ENV_ID}")
+WORKER_DEPLOYMENT_ID=$(latest_deployment_id "${WORKER_ENV_ID}")
+
 # ---------------------------------------------------------------------------
 # 1. x86 Worker wrapper (temps-worker) — find whatever Temps's own deploy
 #    just created for the worker environment on this node, and replace it.
@@ -89,6 +99,11 @@ DOCKERFILE
     sudo docker run -d --name healthcarebackend-worker-local --restart unless-stopped \
       --network temps-app-network -p 10.201.0.5:${HOST_PORT}:8088 \
       -e TEMPS_NODE_NAME=temps-worker \
+      --label sh.temps.managed=true \
+      --label sh.temps.project_id=${WORKER_ENV_ID} \
+      --label sh.temps.environment=${WORKER_ENV_ID} \
+      --label sh.temps.deploy_id=${WORKER_DEPLOYMENT_ID} \
+      --label sh.temps.service=healthcarebackend-worker-local \
       --env-file /tmp/worker_env_sync '${WRAPPER_TAG}'
     sudo docker network connect ${TEMPS_WORKER_OVERLAY_NET} healthcarebackend-worker-local
     sudo docker restart healthcarebackend-worker-local
@@ -109,7 +124,6 @@ ghcr_login oracle-main
 ssh oracle-main "sudo docker pull '${IMAGE_FULL}'"
 
 echo "-- oracle-main: API replica --"
-API_DEPLOYMENT_ID=$(latest_deployment_id "${API_ENV_ID}")
 run_psql_script export_env.py "${API_ENV_ID}" > /tmp/api_env_sync
 scp -q /tmp/api_env_sync oracle-main:/tmp/api_env_sync
 rm -f /tmp/api_env_sync
@@ -119,6 +133,11 @@ ssh oracle-main "
   sudo docker run -d --name healthcarebackend-oracle-arm64 --restart unless-stopped \
     --network temps-app-network -p 10.201.0.2:32900:8088 \
     -e TEMPS_NODE_NAME=oracle-main \
+    --label sh.temps.managed=true \
+    --label sh.temps.project_id=${API_ENV_ID} \
+    --label sh.temps.environment=${API_ENV_ID} \
+    --label sh.temps.deploy_id=${API_DEPLOYMENT_ID} \
+    --label sh.temps.service=healthcarebackend-oracle-arm64 \
     --env-file /tmp/api_env_sync '${IMAGE_FULL}'
   sudo docker network connect ${ORACLE_MAIN_OVERLAY_NET} healthcarebackend-oracle-arm64
   sudo docker restart healthcarebackend-oracle-arm64
@@ -127,7 +146,6 @@ API_CONTAINER_ID=$(ssh oracle-main "sudo docker inspect healthcarebackend-oracle
 run_psql_script register_container.py "insert ${API_DEPLOYMENT_ID} ${ORACLE_NODE_ID} ${API_CONTAINER_ID} healthcarebackend-oracle-arm64 ${IMAGE_FULL} 32900 8088"
 
 echo "-- oracle-main: worker replica --"
-WORKER_DEPLOYMENT_ID=$(latest_deployment_id "${WORKER_ENV_ID}")
 ssh oracle-main "sudo docker build -t '${WRAPPER_TAG}' -f - /tmp" <<DOCKERFILE
 FROM ${IMAGE_FULL}
 CMD ["node", "dist/worker-bootstrap.js"]
@@ -142,6 +160,11 @@ ssh oracle-main "
   sudo docker run -d --name healthcarebackend-worker-oracle-arm64 --restart unless-stopped \
     --network temps-app-network -p 10.201.0.2:32901:8088 \
     -e TEMPS_NODE_NAME=oracle-main \
+    --label sh.temps.managed=true \
+    --label sh.temps.project_id=${WORKER_ENV_ID} \
+    --label sh.temps.environment=${WORKER_ENV_ID} \
+    --label sh.temps.deploy_id=${WORKER_DEPLOYMENT_ID} \
+    --label sh.temps.service=healthcarebackend-worker-oracle-arm64 \
     --env-file /tmp/worker_env_sync_oracle '${WRAPPER_TAG}'
   sudo docker network connect ${ORACLE_MAIN_OVERLAY_NET} healthcarebackend-worker-oracle-arm64
   sudo docker restart healthcarebackend-worker-oracle-arm64
