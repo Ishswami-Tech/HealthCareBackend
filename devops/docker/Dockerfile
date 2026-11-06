@@ -270,6 +270,13 @@ RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
   echo '  node /app/scripts/deploy-migrate.js || { echo "[ERROR] Migrations failed - refusing to start this release"; exit 1; }' >> /app/entrypoint.sh && \
   echo 'fi' >> /app/entrypoint.sh && \
   echo '' >> /app/entrypoint.sh && \
+  echo '# When APP_MODE=worker, always run the worker process regardless of CMD. This lets a' >> /app/entrypoint.sh && \
+  echo '# single image serve both roles from one build, independent of whatever startup command' >> /app/entrypoint.sh && \
+  echo '# the deploy platform passes (its own CMD override UI may be unavailable or unreliable).' >> /app/entrypoint.sh && \
+  echo 'if [ "${APP_MODE:-api}" = "worker" ]; then' >> /app/entrypoint.sh && \
+  echo '  set -- node dist/worker-bootstrap.js' >> /app/entrypoint.sh && \
+  echo 'fi' >> /app/entrypoint.sh && \
+  echo '' >> /app/entrypoint.sh && \
   echo 'echo "=========================================="' >> /app/entrypoint.sh && \
   echo 'echo "Starting application..."' >> /app/entrypoint.sh && \
   echo 'echo "=========================================="' >> /app/entrypoint.sh && \
