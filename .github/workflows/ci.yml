@@ -167,23 +167,23 @@ jobs:
           echo "Dependency audit passed" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
-  # JOB: docker-build — Build each platform natively (no QEMU) and push by digest
+  # JOB: docker-build — Build and push by digest
   # ============================================================================
-  # Building linux/amd64 and linux/arm64 together on one ubuntu-latest runner
-  # used QEMU to emulate arm64, under which Prisma's native query-engine binary
-  # (invoked during `yarn prisma:generate`) would hang for 20+ minutes and starve
-  # the amd64 leg of CPU too — see commit history for the incident. Splitting into
-  # a matrix gives each platform its own native runner (ubuntu-24.04-arm for
-  # arm64), so nothing is emulated and nothing hangs.
+  # amd64-only: every node that actually runs this image (temps-worker-ubuntu,
+  # contabo-ds, contabo-healthcare, test-x86-micro) is amd64. The last arm64
+  # node (oracle-main) was decommissioned; building that platform further would
+  # just produce an image nothing deploys to. Still matrixed/digest-merged
+  # (see docker-build-merge below) so a second platform can be added back the
+  # same way if an arm64 node ever rejoins.
   docker-build:
     name: "Docker Build and Push (${{ matrix.platform }})"
-    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     needs: [detect-changes, security]
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        platform: [linux/amd64, linux/arm64]
+        platform: [linux/amd64]
     outputs:
       image_name: ${{ steps.image.outputs.image }}
     steps:
