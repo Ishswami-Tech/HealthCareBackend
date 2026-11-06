@@ -468,10 +468,9 @@ jobs:
           # rewriting it to an opaque `temps.internal/...:immutable`
           # reference, which is what the app's own dashboard reads for its
           # "Image" / "Built" display (2026-11-04). Deploys both the API and
-          # Worker projects — Temps always runs the image's baked-in default
-          # command, so the Worker container this creates needs its
-          # entrypoint fixed up afterward (see sync-manual-replicas job
-          # below). ──
+          # Worker projects — the Worker container picks its own entrypoint
+          # at startup via APP_MODE (see devops/docker/Dockerfile), so this
+          # needs no manual fix-up afterward. ──
           echo "Triggering Temps deploy (project=${TEMPS_PROJECT}, environment=${TEMPS_ENVIRONMENT})..."
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
             set -euo pipefail
@@ -560,40 +559,6 @@ jobs:
         run: |
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
             "cd '${DEPLOY_PATH}' && BASE_DIR='${DEPLOY_PATH}' bash devops/scripts/docker-infra/backup.sh success"
-
-  # ============================================================================
-  # JOB: sync-manual-replicas — Re-apply the Worker entrypoint fix + both
-  # oracle-main (arm64) replicas that Temps's own deploy can't produce
-  # ============================================================================
-  #
-  # Why this exists: Temps's "Docker Image" deploy type always runs the
-  # image's baked-in default command (dist/main.js) — there's no way to tell
-  # it to run dist/worker-bootstrap.js instead — and Temps's scheduler can't
-  # reach the arm64 node (oracle-main) at all. Both gaps are bridged with
-  # manually-run containers that Temps itself has no knowledge of, so every
-  # deploy needs this step to put them back afterward. See
-  # devops/scripts/temps/sync-manual-replicas.sh for the full explanation.
-  #
-  # This MUST run on a host that can reach temps-worker (192.168.122.8) — a
-  # private-LAN VM with no path from any cloud host, including the Temps
-  # control-plane itself. Today that's only the self-hosted runner on the
-  # local hypervisor.
-  sync-manual-replicas:
-    name: "Sync Manual Replicas (Worker + oracle-main)"
-    runs-on: [self-hosted, healthcare-local-hypervisor]
-    needs: [docker-build-merge, deploy]
-    if: always() && needs.deploy.result == 'success'
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Sync worker entrypoint + oracle-main replicas
-        env:
-          IMAGE_FULL: ${{ needs.docker-build-merge.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_ACTOR: ${{ github.actor }}
-        run: |
-          bash devops/scripts/temps/sync-manual-replicas.sh "${IMAGE_FULL}" "${GHCR_TOKEN}" "${GHCR_ACTOR}"
 
   # ============================================================================
   # JOB: failure-recovery — Roll back after deployment or verification failure
