@@ -1,16 +1,18 @@
 # Multi-Environment CI/CD Pipeline — Healthcare Backend
 #
 # TRIGGER FLOW:
-#   push to preprod    → detect → security → docker-build → deploy PREPROD
-#   PR  to main        → lint/type-check + promotion rule check (no deploy)
+#   PR  to main        → lint/type-check (no deploy)
 #   push to main       → detect → security → docker-build → deploy PRODUCTION
+#
+# There is no preprod environment: Temps hosts only the production project, so
+# work merges straight into main. Pushes to other branches (including the old
+# preprod branch) do not build or deploy.
 #
 # PR-to-main checks:
 #   - Lint + type-check
-#   - Promotion rule (only preprod branch can merge into main)
 #   - NO secrets, NO infra, NO deploy
 #
-# DEPLOY STRATEGY: Coolify rolling deploy for both environments.
+# DEPLOY STRATEGY: Temps rolling deploy (see "Deploy via Temps API").
 # ============================================================================
 
 name: CI/CD
@@ -20,7 +22,7 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened]
   push:
-    branches: [preprod, main]
+    branches: [main]
     paths-ignore:
       - "**/*.md"
       - "**/*.svg"
@@ -116,19 +118,6 @@ jobs:
 
       - name: Type-check
         run: yarn type-check
-
-      - name: Enforce promotion flow
-        run: |
-          echo "PR: ${{ github.head_ref }} → ${{ github.base_ref }}"
-          if [[ "${{ github.base_ref }}" != "main" ]]; then
-            echo "::warning::PR targets ${{ github.base_ref }} — promotion rule only applies to main."
-            exit 0
-          fi
-          if [[ "${{ github.head_ref }}" != "preprod" ]]; then
-            echo "::error::Only the 'preprod' branch can merge into 'main'. Current head: ${{ github.head_ref }}"
-            exit 1
-          fi
-          echo "Promotion flow valid: preprod → main."
 
       - name: PR check summary
         run: |
