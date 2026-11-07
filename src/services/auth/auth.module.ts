@@ -17,6 +17,7 @@ import { QueueModule } from '@infrastructure/queue/src/queue.module';
 // Auth services
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
+import { ReviewLoginController } from './review-login.controller';
 
 // Core auth services
 import { JwtAuthService } from './core/jwt.service';
@@ -24,6 +25,8 @@ import { OtpService } from './core/otp.service';
 import { PasswordService } from './core/password.service';
 import { SocialAuthService } from './core/social-auth.service';
 import { RecordClaimService } from './core/record-claim.service';
+import { ReviewLoginService } from './core/review-login.service';
+import { CredentialEncryptionService } from '@communication/config/credential-encryption.service';
 import { SignOptions } from 'jsonwebtoken';
 
 // Guards - using shared guards from libs
@@ -56,7 +59,7 @@ import { SignOptions } from 'jsonwebtoken';
     WhatsAppModule, // WhatsApp OTP support
     QueueModule, // Async email dispatch support
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, ReviewLoginController],
   providers: [
     // Main auth service
     AuthService,
@@ -71,6 +74,9 @@ import { SignOptions } from 'jsonwebtoken';
     PasswordService,
     SocialAuthService,
     RecordClaimService,
+    ReviewLoginService,
+    // Stateless AES-GCM helper; encrypts the stored review login code
+    CredentialEncryptionService,
     // Note: HealthcareCacheInterceptor is provided globally by CacheModule
     // No need to register it here to avoid duplicate instances
   ],

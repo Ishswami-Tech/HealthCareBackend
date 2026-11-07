@@ -11,6 +11,7 @@ import { QueueService } from '@infrastructure/queue';
 import { EventService } from '@infrastructure/events/event.service';
 import { ConfigService } from '@config/config.service';
 import { OtpResult } from '@core/types/auth.types';
+import type { ReviewLoginService } from '@services/auth/core/review-login.service';
 
 jest.mock('uuid', () => ({ v4: () => 'mock-uuid' }));
 jest.mock('@infrastructure/http');
@@ -33,7 +34,9 @@ const mockedQueue = QueueService as jest.MockedClass<typeof QueueService>;
 const mockedEvent = EventService as jest.MockedClass<typeof EventService>;
 const mockedConfig = ConfigService as jest.MockedClass<typeof ConfigService>;
 
-const createService = (env: Record<string, string> = {}) => {
+const createService = (
+  reviewLogin: { getActive: jest.Mock } = { getActive: jest.fn().mockResolvedValue(null) }
+) => {
   const mockCache = {
     get: jest.fn(),
     set: jest.fn(),
@@ -84,7 +87,7 @@ const createService = (env: Record<string, string> = {}) => {
 
   const mockConfig = {
     get: jest.fn().mockReturnValue(6),
-    getEnv: jest.fn((key: string) => env[key]),
+    getEnv: jest.fn(),
     getEnvNumber: jest.fn().mockReturnValue(6),
     getEnvBoolean: jest.fn().mockReturnValue(false),
     getAppConfig: jest.fn(),
@@ -100,7 +103,8 @@ const createService = (env: Record<string, string> = {}) => {
     mockWhatsApp as unknown as WhatsAppService,
     mockConfig as unknown as ConfigService,
     mockEvent as unknown as EventService,
-    mockLogging as unknown as LoggingService
+    mockLogging as unknown as LoggingService,
+    reviewLogin as unknown as ReviewLoginService
   );
 };
 
@@ -366,19 +370,20 @@ describe('OtpService', () => {
   describe('issueReviewLoginOtp', () => {
     const reviewPhone = '+919000000001';
     const reviewOtp = '482915';
-    const reviewEnv = { REVIEW_LOGIN_IDENTIFIER: reviewPhone, REVIEW_LOGIN_OTP: reviewOtp };
 
-    const setup = (env: Record<string, string> = reviewEnv) => {
-      const review = createService(env);
+    const setup = (
+      active: { phone: string; otp: string } | null = { phone: reviewPhone, otp: reviewOtp }
+    ) => {
+      const getActive = jest.fn().mockResolvedValue(active);
+      const review = createService({ getActive });
       const svcAny = review as unknown as Record<string, unknown>;
       return {
         review,
+        getActive,
         cache: svcAny['cacheService'] as unknown as {
           get: jest.Mock;
           set: jest.Mock;
           del: jest.Mock;
-          exists: jest.Mock;
-          ttl: jest.Mock;
           multi: jest.Mock;
         },
         whatsApp: svcAny['whatsAppService'] as unknown as { sendOTP: jest.Mock },
@@ -386,8 +391,8 @@ describe('OtpService', () => {
       };
     };
 
-    it('is off when no review login is configured', async () => {
-      const { review, cache } = setup({});
+    it('is off when no review login is live', async () => {
+      const { review, cache } = setup(null);
 
       await expect(review.issueReviewLoginOtp(reviewPhone)).resolves.toBeNull();
       expect(cache.set).not.toHaveBeenCalled();
@@ -400,22 +405,25 @@ describe('OtpService', () => {
       expect(cache.set).not.toHaveBeenCalled();
     });
 
-    it.each([
-      ['only the number is set', { REVIEW_LOGIN_IDENTIFIER: reviewPhone }],
-      ['only the code is set', { REVIEW_LOGIN_OTP: reviewOtp }],
-      ['the code is too short', { ...reviewEnv, REVIEW_LOGIN_OTP: '1234' }],
-      ['the code is not numeric', { ...reviewEnv, REVIEW_LOGIN_OTP: 'abcdef' }],
-      ['the identifier is an email', { ...reviewEnv, REVIEW_LOGIN_IDENTIFIER: 'a@example.com' }],
-      ['the identifier is not a phone', { ...reviewEnv, REVIEW_LOGIN_IDENTIFIER: '123' }],
-    ])('stays off and warns when %s', async (_name, env) => {
-      const { review, cache, logging } = setup(env as Record<string, string>);
+    it('reads the setting on every request, so changes apply at once', async () => {
+      const { review, getActive } = setup();
+
+      await review.issueReviewLoginOtp(reviewPhone);
+      await review.issueReviewLoginOtp(reviewPhone);
+
+      expect(getActive).toHaveBeenCalledTimes(2);
+    });
+
+    it('falls back to a normal OTP when the lookup fails', async () => {
+      const { review, getActive, cache, logging } = setup();
+      getActive.mockRejectedValue(new Error('db down'));
 
       await expect(review.issueReviewLoginOtp(reviewPhone)).resolves.toBeNull();
       expect(cache.set).not.toHaveBeenCalled();
-      expect(JSON.stringify(logging.log.mock.calls)).toContain('Review login is off');
+      expect(JSON.stringify(logging.log.mock.calls)).toContain('Review login lookup failed');
     });
 
-    it('stores the fixed code for the review number without delivering anything', async () => {
+    it('stores the review code for the review number without delivering anything', async () => {
       const { review, cache, whatsApp } = setup();
 
       const result = await review.issueReviewLoginOtp(reviewPhone);
@@ -430,25 +438,15 @@ describe('OtpService', () => {
       expect(whatsApp.sendOTP).not.toHaveBeenCalled();
     });
 
-    it('matches the review number in any stored format', async () => {
-      const { review } = setup({ ...reviewEnv, REVIEW_LOGIN_IDENTIFIER: '90000 00001' });
+    it('matches the review number in any format', async () => {
+      const { review } = setup();
 
-      await expect(review.issueReviewLoginOtp(reviewPhone)).resolves.toMatchObject({
+      await expect(review.issueReviewLoginOtp('90000 00001')).resolves.toMatchObject({
         success: true,
       });
     });
 
-    it('can be requested repeatedly', async () => {
-      const { review, cache } = setup();
-
-      await review.issueReviewLoginOtp(reviewPhone);
-      await expect(review.issueReviewLoginOtp(reviewPhone)).resolves.toMatchObject({
-        success: true,
-      });
-      expect(cache.set).toHaveBeenCalledTimes(2);
-    });
-
-    it('accepts the fixed code through the normal verify path', async () => {
+    it('accepts the review code through the normal verify path', async () => {
       const { review, cache } = setup();
       cache.get.mockImplementation(async (key: string) =>
         key === `otp:${reviewPhone}` ? { otp: reviewOtp } : null
