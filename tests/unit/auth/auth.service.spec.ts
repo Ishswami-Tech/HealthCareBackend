@@ -85,6 +85,8 @@ function createHarness() {
   const otpService = {
     verifyOtp: jest.fn().mockResolvedValue({ success: false, message: 'Invalid OTP' }),
     generateOtp: jest.fn().mockReturnValue('123456'),
+    issueReviewLoginOtp: jest.fn().mockResolvedValue(null),
+    sendOtpPhone: jest.fn().mockResolvedValue({ success: true, message: 'OTP sent successfully' }),
   };
 
   const service = new AuthService(
@@ -312,6 +314,77 @@ describe('AuthService', () => {
         h.service.requestOtp({ identifier: 'test@example.com' } as never)
       ).rejects.toThrow('Clinic ID is required for OTP requests');
       expect(h.cacheService.releaseLock).toHaveBeenCalledWith('otp_request_lock:test@example.com');
+    });
+
+    describe('review login', () => {
+      const reviewPhone = '+919000000001';
+      const issued = { success: true, message: 'OTP sent successfully' };
+      const request = (h: ReturnType<typeof createHarness>) =>
+        h.service.requestOtp({ identifier: reviewPhone, clinicId: 'clinic-1' } as never);
+
+      it('sends the normal OTP when the number is not the review number', async () => {
+        const h = createHarness();
+
+        await expect(request(h)).resolves.toMatchObject({ success: true });
+
+        expect(h.otpService.issueReviewLoginOtp).toHaveBeenCalledWith(reviewPhone);
+        expect(h.otpService.sendOtpPhone).toHaveBeenCalledWith(
+          reviewPhone,
+          'login',
+          'clinic-1',
+          '123456'
+        );
+      });
+
+      it('issues the review code without delivery for a new number', async () => {
+        const h = createHarness();
+        h.otpService.issueReviewLoginOtp.mockResolvedValue(issued);
+
+        await expect(request(h)).resolves.toMatchObject({ success: true });
+
+        expect(h.otpService.sendOtpPhone).not.toHaveBeenCalled();
+      });
+
+      it('issues the review code without delivery for an existing patient', async () => {
+        const h = createHarness();
+        h.databaseService.findUsersSafe.mockResolvedValue([
+          { id: 'user-1', role: 'PATIENT', phone: reviewPhone },
+        ]);
+        h.otpService.issueReviewLoginOtp.mockResolvedValue(issued);
+
+        await expect(request(h)).resolves.toMatchObject({ success: true });
+
+        expect(h.otpService.sendOtpPhone).not.toHaveBeenCalled();
+      });
+
+      it.each(['DOCTOR', 'CLINIC_ADMIN', 'SUPER_ADMIN'])(
+        'never gives the review code to a %s account',
+        async role => {
+          const h = createHarness();
+          h.databaseService.findUsersSafe.mockResolvedValue([
+            { id: 'user-1', role, phone: reviewPhone },
+          ]);
+          h.otpService.issueReviewLoginOtp.mockResolvedValue(issued);
+
+          await expect(request(h)).resolves.toMatchObject({ success: true });
+
+          expect(h.otpService.issueReviewLoginOtp).not.toHaveBeenCalled();
+          expect(h.otpService.sendOtpPhone).toHaveBeenCalled();
+        }
+      );
+
+      it('surfaces a locked-out review number as rate limited', async () => {
+        const h = createHarness();
+        h.otpService.issueReviewLoginOtp.mockResolvedValue({
+          success: false,
+          message: 'Too many incorrect codes',
+          rateLimited: true,
+        });
+
+        await expect(request(h)).rejects.toThrow('rateLimitExceeded');
+
+        expect(h.otpService.sendOtpPhone).not.toHaveBeenCalled();
+      });
     });
   });
 
