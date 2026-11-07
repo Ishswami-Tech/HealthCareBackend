@@ -1460,7 +1460,14 @@ export class AuthService {
           clinicId,
         });
 
-        result = await this.otpService.sendOtpPhone(phoneTarget, 'login', clinicId, otpCode);
+        // Only a patient or a new number can use the review code; staff always get a real OTP.
+        const reviewLoginResult =
+          !user || (user.role as Role) === Role.PATIENT
+            ? await this.otpService.issueReviewLoginOtp(phoneTarget)
+            : null;
+        result =
+          reviewLoginResult ??
+          (await this.otpService.sendOtpPhone(phoneTarget, 'login', clinicId, otpCode));
 
         this.logOtp('OTP request channel result', {
           identifier: requestDto.identifier,

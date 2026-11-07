@@ -33,7 +33,7 @@ const mockedQueue = QueueService as jest.MockedClass<typeof QueueService>;
 const mockedEvent = EventService as jest.MockedClass<typeof EventService>;
 const mockedConfig = ConfigService as jest.MockedClass<typeof ConfigService>;
 
-const createService = () => {
+const createService = (env: Record<string, string> = {}) => {
   const mockCache = {
     get: jest.fn(),
     set: jest.fn(),
@@ -84,7 +84,7 @@ const createService = () => {
 
   const mockConfig = {
     get: jest.fn().mockReturnValue(6),
-    getEnv: jest.fn(),
+    getEnv: jest.fn((key: string) => env[key]),
     getEnvNumber: jest.fn().mockReturnValue(6),
     getEnvBoolean: jest.fn().mockReturnValue(false),
     getAppConfig: jest.fn(),
@@ -360,6 +360,141 @@ describe('OtpService', () => {
       const otp2 = (service as unknown as { generateOtp: () => string }).generateOtp();
 
       expect(otp1).not.toBe(otp2);
+    });
+  });
+
+  describe('issueReviewLoginOtp', () => {
+    const reviewPhone = '+919000000001';
+    const reviewOtp = '482915';
+    const reviewEnv = { REVIEW_LOGIN_IDENTIFIER: reviewPhone, REVIEW_LOGIN_OTP: reviewOtp };
+
+    const setup = (env: Record<string, string> = reviewEnv) => {
+      const review = createService(env);
+      const svcAny = review as unknown as Record<string, unknown>;
+      return {
+        review,
+        cache: svcAny['cacheService'] as unknown as {
+          get: jest.Mock;
+          set: jest.Mock;
+          del: jest.Mock;
+          exists: jest.Mock;
+          ttl: jest.Mock;
+          multi: jest.Mock;
+        },
+        whatsApp: svcAny['whatsAppService'] as unknown as { sendOTP: jest.Mock },
+        logging: svcAny['loggingService'] as unknown as { log: jest.Mock },
+      };
+    };
+
+    it('is off when no review login is configured', async () => {
+      const { review, cache } = setup({});
+
+      await expect(review.issueReviewLoginOtp(reviewPhone)).resolves.toBeNull();
+      expect(cache.set).not.toHaveBeenCalled();
+    });
+
+    it('ignores every other number', async () => {
+      const { review, cache } = setup();
+
+      await expect(review.issueReviewLoginOtp('+919000000002')).resolves.toBeNull();
+      expect(cache.set).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['only the number is set', { REVIEW_LOGIN_IDENTIFIER: reviewPhone }],
+      ['only the code is set', { REVIEW_LOGIN_OTP: reviewOtp }],
+      ['the code is too short', { ...reviewEnv, REVIEW_LOGIN_OTP: '1234' }],
+      ['the code is not numeric', { ...reviewEnv, REVIEW_LOGIN_OTP: 'abcdef' }],
+      ['the identifier is an email', { ...reviewEnv, REVIEW_LOGIN_IDENTIFIER: 'a@example.com' }],
+      ['the identifier is not a phone', { ...reviewEnv, REVIEW_LOGIN_IDENTIFIER: '123' }],
+    ])('stays off and warns when %s', async (_name, env) => {
+      const { review, cache, logging } = setup(env as Record<string, string>);
+
+      await expect(review.issueReviewLoginOtp(reviewPhone)).resolves.toBeNull();
+      expect(cache.set).not.toHaveBeenCalled();
+      expect(JSON.stringify(logging.log.mock.calls)).toContain('Review login is off');
+    });
+
+    it('stores the fixed code for the review number without delivering anything', async () => {
+      const { review, cache, whatsApp } = setup();
+
+      const result = await review.issueReviewLoginOtp(reviewPhone);
+
+      expect(result).toMatchObject({ success: true });
+      expect(result).not.toHaveProperty('otp');
+      expect(cache.set).toHaveBeenCalledWith(
+        `otp:${reviewPhone}`,
+        expect.objectContaining({ otp: reviewOtp }),
+        expect.any(Number)
+      );
+      expect(whatsApp.sendOTP).not.toHaveBeenCalled();
+    });
+
+    it('matches the review number in any stored format', async () => {
+      const { review } = setup({ ...reviewEnv, REVIEW_LOGIN_IDENTIFIER: '90000 00001' });
+
+      await expect(review.issueReviewLoginOtp(reviewPhone)).resolves.toMatchObject({
+        success: true,
+      });
+    });
+
+    it('can be requested repeatedly', async () => {
+      const { review, cache } = setup();
+
+      await review.issueReviewLoginOtp(reviewPhone);
+      await expect(review.issueReviewLoginOtp(reviewPhone)).resolves.toMatchObject({
+        success: true,
+      });
+      expect(cache.set).toHaveBeenCalledTimes(2);
+    });
+
+    it('accepts the fixed code through the normal verify path', async () => {
+      const { review, cache } = setup();
+      cache.get.mockImplementation(async (key: string) =>
+        key === `otp:${reviewPhone}` ? { otp: reviewOtp } : null
+      );
+
+      await expect(review.verifyOtp(reviewPhone, reviewOtp)).resolves.toMatchObject({
+        success: true,
+      });
+    });
+
+    it('counts a wrong code like any other OTP', async () => {
+      const { review, cache } = setup();
+      cache.get.mockImplementation(async (key: string) =>
+        key === `otp:${reviewPhone}` ? { otp: reviewOtp } : null
+      );
+
+      await expect(review.verifyOtp(reviewPhone, '000000')).resolves.toMatchObject({
+        success: false,
+        message: 'Invalid OTP',
+      });
+      expect(cache.multi).toHaveBeenCalledWith(
+        expect.arrayContaining([{ command: 'incr', args: [`otp_verify_failures:${reviewPhone}`] }])
+      );
+    });
+
+    it('stays locked out after too many wrong codes', async () => {
+      const { review, cache } = setup();
+      cache.multi.mockImplementation(async () => [[null, 600]]);
+
+      await expect(review.issueReviewLoginOtp(reviewPhone)).resolves.toMatchObject({
+        success: false,
+        rateLimited: true,
+      });
+      expect(cache.set).not.toHaveBeenCalled();
+    });
+
+    it('never writes the review code or number to the logs', async () => {
+      const { review, cache, logging } = setup();
+      cache.get.mockResolvedValue(null);
+
+      await review.issueReviewLoginOtp(reviewPhone);
+
+      const logged = JSON.stringify(logging.log.mock.calls);
+      expect(logged).toContain('Review login code issued');
+      expect(logged).not.toContain(reviewOtp);
+      expect(logged).not.toContain(reviewPhone);
     });
   });
 });
