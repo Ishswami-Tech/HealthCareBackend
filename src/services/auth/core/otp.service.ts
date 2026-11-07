@@ -12,6 +12,7 @@ import { LogType, LogLevel } from '@core/types';
 import { EmailTemplate } from '@core/types/common.types';
 import { QueueService } from '@infrastructure/queue';
 import { normalizeAuthPhoneNumber } from './phone-normalizer.util';
+import { ReviewLoginService } from './review-login.service';
 
 import type { OtpConfig, OtpResult } from '@core/types/auth.types';
 import { withRetryWait } from '@security/rate-limit/retry-wait.util';
@@ -40,8 +41,6 @@ export class OtpService {
    * changing IP or User-Agent does not reset it.
    */
   private readonly lockoutSeconds: number;
-  /** Fixed login for app store reviewers, who cannot receive a real code. Null when off. */
-  private readonly reviewLogin: { phone: string; otp: string } | null;
 
   /**
    * Progressive cooldown schedule (seconds) indexed by stage count.
@@ -74,7 +73,9 @@ export class OtpService {
     @Inject(forwardRef(() => EventService))
     private readonly eventService: EventService,
     @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => ReviewLoginService))
+    private readonly reviewLoginService: ReviewLoginService
   ) {
     // Use ConfigService (which uses dotenv) for all environment variable access
     this.config = {
@@ -93,34 +94,6 @@ export class OtpService {
       this.configService.getEnvBoolean('DEBUG_MODE', false);
 
     this.isDevelopment = this.configService.isDevelopment();
-    this.reviewLogin = this.resolveReviewLogin();
-  }
-
-  /**
-   * Reads the app store reviewer's login from env. Off unless both values are set and valid, so
-   * a partial or mistyped config falls back to normal OTP delivery. Values are never logged.
-   */
-  private resolveReviewLogin(): { phone: string; otp: string } | null {
-    const identifier = this.configService.getEnv('REVIEW_LOGIN_IDENTIFIER')?.trim();
-    const otp = this.configService.getEnv('REVIEW_LOGIN_OTP')?.trim();
-    if (!identifier && !otp) {
-      return null;
-    }
-
-    const phone =
-      identifier && !identifier.includes('@') ? this.normalizeIdentifier(identifier) : '';
-    const validOtp = new RegExp(`^\\d{${this.config.length}}$`).test(otp ?? '');
-    if (!/^\+\d{10,15}$/.test(phone) || !validOtp) {
-      void this.loggingService.log(
-        LogType.SECURITY,
-        LogLevel.WARN,
-        'Review login is off: REVIEW_LOGIN_IDENTIFIER or REVIEW_LOGIN_OTP is missing or invalid',
-        'OtpService'
-      );
-      return null;
-    }
-
-    return { phone, otp: otp as string };
   }
 
   private normalizeIdentifier(identifier: string): string {
@@ -722,14 +695,28 @@ export class OtpService {
   }
 
   /**
-   * Stores the fixed review code when `phone` is the review number, without sending anything.
-   * Returns null for any other number, so the caller delivers a normal OTP. Verification is the
-   * ordinary verifyOtp path, so the wrong-code lockout still applies to this number. The request
-   * cooldown is skipped because nothing is delivered and reviewers may retry from several devices.
+   * Stores the review code when `phone` is the live review number (set by a super admin), without
+   * sending anything. Returns null for any other number or when the review login is off, so the
+   * caller delivers a normal OTP. Verification is the ordinary verifyOtp path, so the wrong-code
+   * lockout still applies. The request cooldown is skipped because nothing is delivered and
+   * reviewers may retry from several devices.
    */
   async issueReviewLoginOtp(phone: string): Promise<OtpResult | null> {
     const normalizedPhone = this.normalizeIdentifier(phone);
-    if (!this.reviewLogin || normalizedPhone !== this.reviewLogin.phone) {
+    let reviewLogin: { phone: string; otp: string } | null = null;
+    try {
+      reviewLogin = await this.reviewLoginService.getActive();
+    } catch (error) {
+      // Never block a real login on this lookup: fall back to normal OTP delivery.
+      void this.loggingService.log(
+        LogType.SECURITY,
+        LogLevel.WARN,
+        'Review login lookup failed; sending a normal OTP',
+        'OtpService',
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+    }
+    if (!reviewLogin || normalizedPhone !== reviewLogin.phone) {
       return null;
     }
 
@@ -743,7 +730,7 @@ export class OtpService {
       this.cacheService.del(`otp_verified:${normalizedPhone}`),
       this.cacheService.set(
         `otp:${normalizedPhone}`,
-        this.buildOtpCacheEntry(this.reviewLogin.otp),
+        this.buildOtpCacheEntry(reviewLogin.otp),
         expirySeconds
       ),
     ]);
