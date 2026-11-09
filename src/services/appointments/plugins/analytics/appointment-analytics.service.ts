@@ -283,7 +283,7 @@ export class AppointmentAnalyticsService {
       await this.cacheService.set(cacheKey, result, this.ANALYTICS_CACHE_TTL);
       return result;
     } catch (_error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to get appointment metrics',
@@ -416,7 +416,7 @@ export class AppointmentAnalyticsService {
       await this.cacheService.set(cacheKey, result, this.ANALYTICS_CACHE_TTL);
       return result;
     } catch (_error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to get doctor metrics',
@@ -581,7 +581,7 @@ export class AppointmentAnalyticsService {
       await this.cacheService.set(cacheKey, result, this.ANALYTICS_CACHE_TTL);
       return result;
     } catch (_error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to get clinic metrics',
@@ -697,7 +697,7 @@ export class AppointmentAnalyticsService {
       await this.cacheService.set(cacheKey, result, this.ANALYTICS_CACHE_TTL);
       return result;
     } catch (_error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to get time slot analytics',
@@ -796,7 +796,7 @@ export class AppointmentAnalyticsService {
       await this.cacheService.set(cacheKey, result, this.ANALYTICS_CACHE_TTL);
       return result;
     } catch (_error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to get patient satisfaction analytics',
@@ -829,7 +829,7 @@ export class AppointmentAnalyticsService {
     reportType: 'summary' | 'detailed' | 'executive'
   ): Promise<AnalyticsResult> {
     try {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         `Generating ${reportType} analytics report`,
@@ -875,7 +875,7 @@ export class AppointmentAnalyticsService {
         },
       };
     } catch (_error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to generate analytics report',

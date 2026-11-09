@@ -508,8 +508,10 @@ export class DoctorsService {
     const specializationSegment = filters?.specialization?.trim() || 'all';
     const locationSegment = filters?.locationId?.trim() || 'all';
 
-    // DEBUG: Log the incoming filters
-    await this.loggingService.log(
+    // DEBUG: Log the incoming filters. Fire-and-forget: this runs on every call (hit or
+    // miss) ahead of the cache lookup, and awaiting it taxed every GET /doctors request
+    // with a cache round-trip before the real work even started.
+    void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.DEBUG,
       `getAllDoctors called with filters: ${JSON.stringify({ filters, clinicSegment, specializationSegment, locationSegment })}`,
@@ -538,8 +540,9 @@ export class DoctorsService {
           };
         }
 
-        // DEBUG: Log the where clause before query
-        await this.loggingService.log(
+        // DEBUG: Log the where clause before query. Fire-and-forget: only runs on a
+        // cache miss, but still shouldn't add a cache round-trip ahead of the DB read.
+        void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.DEBUG,
           `getAllDoctors query - filters: ${JSON.stringify(filters)}, where clause: ${JSON.stringify(where)}`,
@@ -589,7 +592,7 @@ export class DoctorsService {
     let result = await this.cacheService.cache(cacheKey, fetchDoctorsFromDatabase, cacheOptions);
 
     if (Array.isArray(result) && result.length === 0) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.WARN,
         'getAllDoctors cache returned no doctors, forcing direct database refresh',
@@ -603,8 +606,8 @@ export class DoctorsService {
       });
     }
 
-    // DEBUG: Log the final result
-    await this.loggingService.log(
+    // DEBUG: Log the final result. Fire-and-forget: runs on every call, hit or miss.
+    void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.DEBUG,
       `getAllDoctors final result - count: ${Array.isArray(result) ? result.length : 0}`,
