@@ -144,7 +144,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       const cacheKey = this.generateCacheKey(context, options);
 
       if (!cacheKey) {
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.CACHE,
           LogLevel.DEBUG,
           'Could not generate cache key, proceeding without cache',
@@ -170,7 +170,10 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       const cachedResult = await this.getCachedValue(cacheKey, options);
       const cachedIsEmptyArray = isCachedEmptyArray(cachedResult);
       if (cachedResult !== null && !cachedIsEmptyArray) {
-        await this.loggingService.log(
+        // Fire-and-forget: this is the cache HIT path, meant to be the fast one. Awaiting
+        // a DEBUG log here put another cache round-trip on every single hit, taxing the
+        // exact path caching exists to make fast.
+        void this.loggingService.log(
           LogType.CACHE,
           LogLevel.DEBUG,
           'Cache hit for healthcare key',
@@ -200,7 +203,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       }
       return from(shared.then(cloneForFollower)).pipe(catchError(() => next.handle()));
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Error in healthcare cache read handler',
@@ -592,7 +595,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
         }
 
         const ttlValue = effectiveOptions.ttl ?? 1800;
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.CACHE,
           LogLevel.DEBUG,
           'Healthcare data cached',
@@ -615,7 +618,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       }
     } catch (error) {
       const ttlValueForError = options.ttl ?? 1800;
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Error caching healthcare data',
