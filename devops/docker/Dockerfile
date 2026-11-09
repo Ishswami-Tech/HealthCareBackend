@@ -308,11 +308,21 @@ ARG NODE_ENV=production
 ENV NODE_ENV=${NODE_ENV}
 ENV PRISMA_SCHEMA_PATH=/app/src/libs/infrastructure/database/prisma/schema.prisma
 
-# Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users, ~1200-1800 req/s
-# Can run on 6 vCPU/12GB RAM initially (Docker enforces limits)
-ENV NODE_OPTIONS="--max-old-space-size=6144 --max-http-header-size=16384 --expose-gc"
-ENV ENABLE_GC=true
-ENV GC_INTERVAL=10800
+# --max-old-space-size caps V8's heap target, which V8 uses to pace its own GC: set it
+# above the container's actual memory limit and V8 has no reason to collect aggressively
+# until usage nears that (nonexistent) ceiling, so RSS keeps creeping up until the kernel
+# OOM-killer hits the REAL (cgroup) limit first - with no warning and no graceful GC pass.
+# This value was 6144 (6GB), sized for an 8 vCPU/24GB host this service doesn't currently
+# run on - the actual production containers (API and worker, both replicas) are capped at
+# 512MB by their deployment, 12x smaller. Confirmed via dmesg: the worker replica that
+# does sustained cron work was OOM-killed repeatedly (~daily, 9 times observed) with RSS
+# only ~350-415MB at each kill - nowhere near "out of memory" from V8's perspective at a
+# 6GB target, but well past the 512MB container actually had.
+# 320MB leaves ~37% headroom under a 512MB limit for everything old-space doesn't cover
+# (new-space/code-space, native buffers, thread stacks, the Prisma query engine). If this
+# image is ever deployed with a larger memory limit, raise this to match - it should stay
+# meaningfully below whatever the container's actual limit is, never above it.
+ENV NODE_OPTIONS="--max-old-space-size=320 --max-http-header-size=16384 --expose-gc"
 
 # Run as the unprivileged `node` user (uid/gid 1000) that ships with the base image (P0-5).
 # Writable runtime paths: logs, tmp, the local storage fallback (storage/assets,
