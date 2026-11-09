@@ -88,7 +88,7 @@ export class AppointmentPluginInitializer implements OnModuleInit {
     const startTime = Date.now();
 
     try {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Starting appointment plugin initialization',
@@ -106,7 +106,7 @@ export class AppointmentPluginInitializer implements OnModuleInit {
           this.registerPluginInfo(plugin);
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.ERROR,
             LogLevel.ERROR,
             `Failed to register plugin: ${plugin.name}`,
@@ -127,7 +127,7 @@ export class AppointmentPluginInitializer implements OnModuleInit {
       await this.pluginManager.initializePlugins(context);
 
       const duration = Date.now() - startTime;
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Appointment plugins initialized successfully',
@@ -141,7 +141,7 @@ export class AppointmentPluginInitializer implements OnModuleInit {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const duration = Date.now() - startTime;
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to initialize appointment plugins',

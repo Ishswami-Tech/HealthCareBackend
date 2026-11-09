@@ -428,7 +428,7 @@ export class RxDraftService {
         return;
       } catch (error) {
         if (attempt < PUBLISH_ATTEMPTS) continue;
-        await this.loggingService?.log(
+        void this.loggingService?.log(
           LogType.SYSTEM,
           LogLevel.ERROR,
           'Approved draft could not be published to the pharmacy desk',

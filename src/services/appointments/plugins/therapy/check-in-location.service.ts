@@ -365,7 +365,7 @@ export class CheckInLocationService {
         await this.locationCacheService.invalidateLocation(location.locationId, data.clinicId);
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         'Check-in location created successfully',
@@ -380,7 +380,7 @@ export class CheckInLocationService {
 
       return location;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to create check-in location: ${error instanceof Error ? error.message : String(error)}`,
@@ -469,7 +469,7 @@ export class CheckInLocationService {
           }
         } catch (parseError) {
           // Invalid cached data, continue to fetch from database
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.SYSTEM,
             LogLevel.WARN,
             `Failed to parse cached clinic locations: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
@@ -527,7 +527,7 @@ export class CheckInLocationService {
         }
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Clinic check-in locations retrieved successfully',
@@ -541,7 +541,7 @@ export class CheckInLocationService {
 
       return locations;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get clinic locations: ${error instanceof Error ? error.message : String(error)}`,
@@ -573,7 +573,7 @@ export class CheckInLocationService {
           }
         } catch (parseError) {
           // Invalid cached data, continue to fetch from database
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.SYSTEM,
             LogLevel.WARN,
             `Failed to parse cached location: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
@@ -632,7 +632,7 @@ export class CheckInLocationService {
         }
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Location retrieved by ID',
@@ -645,7 +645,7 @@ export class CheckInLocationService {
 
       return location;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get location by ID: ${error instanceof Error ? error.message : String(error)}`,
@@ -677,7 +677,7 @@ export class CheckInLocationService {
           }
         } catch (parseError) {
           // Invalid cached data, continue to fetch from database
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.SYSTEM,
             LogLevel.WARN,
             `Failed to parse cached location by QR: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
@@ -741,7 +741,7 @@ export class CheckInLocationService {
         }
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Location retrieved by QR code',
@@ -755,7 +755,7 @@ export class CheckInLocationService {
 
       return location;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         // An unknown / inactive QR code (404) is a refused scan, not a failure of ours.
         logLevelForError(error),
@@ -841,7 +841,7 @@ export class CheckInLocationService {
         await this.locationCacheService.invalidateLocation(location.locationId, location.clinicId);
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         'Check-in location updated successfully',
@@ -854,7 +854,7 @@ export class CheckInLocationService {
 
       return location;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to update check-in location: ${error instanceof Error ? error.message : String(error)}`,
@@ -932,7 +932,7 @@ export class CheckInLocationService {
       await this.locationCacheService.invalidateLocation(rotated.locationId, clinicId);
     }
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.BUSINESS,
       LogLevel.INFO,
       'Check-in location QR regenerated',
@@ -1016,7 +1016,7 @@ export class CheckInLocationService {
         );
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         'Check-in location deleted successfully',
@@ -1027,7 +1027,7 @@ export class CheckInLocationService {
         }
       );
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to delete check-in location: ${error instanceof Error ? error.message : String(error)}`,
@@ -1196,14 +1196,14 @@ export class CheckInLocationService {
         await this.invalidateCheckInCaches(data.appointmentId, data.patientId, appointment.userId);
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.AUDIT,
         LogLevel.INFO,
         'Appointment check-in recorded',
         'CheckInLocationService',
         { ...audit, checkInId: checkIn.id, status: 'CONFIRMED' }
       );
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         'Check-in processed successfully',
@@ -1219,7 +1219,7 @@ export class CheckInLocationService {
 
       return checkIn;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         // Geofence / window / already-checked-in refusals (4xx) are expected traffic: WARN.
         logLevelForError(error),
@@ -1611,7 +1611,7 @@ export class CheckInLocationService {
       }
     }
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.APPOINTMENT,
       LogLevel.INFO,
       'Check-in request resolved as already checked in',
@@ -1753,7 +1753,7 @@ export class CheckInLocationService {
       if (error instanceof Error && error.message.includes(QUEUE_ENTRY_EXISTS_MARKER)) {
         return false;
       }
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Check-in recorded but the queue update failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -1784,7 +1784,7 @@ export class CheckInLocationService {
       }
     }
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.ERROR,
       LogLevel.ERROR,
       'Check-in recorded but the queue lock could not be acquired',
@@ -1824,7 +1824,7 @@ export class CheckInLocationService {
         await this.cacheService.invalidateCacheByTag(`user:${userId}`);
       }
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.WARN,
         `Cache invalidation after check-in failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -1922,7 +1922,7 @@ export class CheckInLocationService {
         );
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         'Check-in verified successfully',
@@ -1936,7 +1936,7 @@ export class CheckInLocationService {
 
       return checkIn;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to verify check-in: ${error instanceof Error ? error.message : String(error)}`,
@@ -2013,7 +2013,7 @@ export class CheckInLocationService {
         } as never);
       });
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Location check-ins retrieved successfully',
@@ -2027,7 +2027,7 @@ export class CheckInLocationService {
 
       return checkIns;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get location check-ins: ${error instanceof Error ? error.message : String(error)}`,
@@ -2098,7 +2098,7 @@ export class CheckInLocationService {
         averageCheckInTime: 0, // Placeholder - would calculate based on actual data
       };
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Check-in stats retrieved successfully',
@@ -2112,7 +2112,7 @@ export class CheckInLocationService {
 
       return stats;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get check-in stats: ${error instanceof Error ? error.message : String(error)}`,

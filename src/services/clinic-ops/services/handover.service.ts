@@ -462,7 +462,7 @@ export class HandoverService {
         ...(target.patientUserId ? { patientUserId: target.patientUserId } : {}),
       });
     } catch (error) {
-      await this.loggingService?.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.WARN,
         'Hand-over update event could not be emitted',
@@ -497,7 +497,7 @@ export class HandoverService {
         .slice(0, MAX_SHARED_PRESCRIPTIONS - 1)
         .map(summaryOfListRow);
     } catch (error) {
-      await this.loggingService?.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.WARN,
         'Could not list the other ready prescriptions for a shared collection code',

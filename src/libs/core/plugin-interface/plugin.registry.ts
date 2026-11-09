@@ -105,7 +105,7 @@ export class EnterprisePluginRegistry
 
       await Promise.allSettled(destroyPromises);
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Enterprise Plugin Registry destroyed',
@@ -149,7 +149,7 @@ export class EnterprisePluginRegistry
 
       // Check if plugin already exists
       if (this.plugins.has(plugin.name)) {
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.WARN,
           `Plugin ${plugin.name} is already registered, replacing...`,
@@ -180,7 +180,7 @@ export class EnterprisePluginRegistry
       }
 
       const duration = Date.now() - startTime;
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `Plugin ${plugin.name} registered successfully`,
@@ -196,7 +196,7 @@ export class EnterprisePluginRegistry
       const errorMessage = error instanceof Error ? error.message : String(error);
       const duration = Date.now() - startTime;
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to register plugin: ${plugin.name}`,
@@ -232,7 +232,7 @@ export class EnterprisePluginRegistry
     try {
       const plugin = this.plugins.get(pluginName);
       if (!plugin) {
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.WARN,
           `Plugin ${pluginName} not found for unregistration`,
@@ -275,7 +275,7 @@ export class EnterprisePluginRegistry
       }
 
       const duration = Date.now() - startTime;
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `Plugin ${pluginName} unregistered successfully`,
@@ -286,7 +286,7 @@ export class EnterprisePluginRegistry
       const errorMessage = error instanceof Error ? error.message : String(error);
       const duration = Date.now() - startTime;
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to unregister plugin: ${pluginName}`,

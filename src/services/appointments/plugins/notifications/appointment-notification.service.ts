@@ -165,7 +165,7 @@ export class AppointmentNotificationService {
         }
       });
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.WARN,
         'Failed to load notification preferences; sending to all requested channels',
@@ -186,7 +186,7 @@ export class AppointmentNotificationService {
     const failedChannels: string[] = [];
     const errors: string[] = [];
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.NOTIFICATION,
       LogLevel.INFO,
       `Sending appointment notification ${notificationId}`,
@@ -210,7 +210,7 @@ export class AppointmentNotificationService {
       try {
         await this.sendViaChannel(channel, notificationData, notificationId);
         sentChannels.push(channel);
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.NOTIFICATION,
           LogLevel.INFO,
           `Notification sent via ${channel}`,
@@ -221,7 +221,7 @@ export class AppointmentNotificationService {
         failedChannels.push(channel);
         const errorMessage = _error instanceof Error ? _error.message : 'Unknown error';
         errors.push(`${channel}: ${errorMessage}`);
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.ERROR,
           LogLevel.ERROR,
           `Failed to send notification via ${channel}`,
@@ -238,7 +238,7 @@ export class AppointmentNotificationService {
     await this.recordInAppNotification(notificationData, notificationId);
 
     // Log the notification attempt
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.NOTIFICATION,
       LogLevel.INFO,
       `Appointment notification ${notificationData.type} sent`,
@@ -318,7 +318,7 @@ export class AppointmentNotificationService {
         }
       );
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.NOTIFICATION,
         LogLevel.WARN,
         'Failed to record in-app appointment notification',
@@ -342,7 +342,7 @@ export class AppointmentNotificationService {
   ): Promise<NotificationResult> {
     const notificationId = `scheduled_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.NOTIFICATION,
       LogLevel.INFO,
       `Scheduling notification ${notificationId}`,
@@ -381,7 +381,7 @@ export class AppointmentNotificationService {
     clinicId: string,
     hoursBefore: number = 0.25
   ): Promise<{ processed: number; sent: number; failed: number }> {
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.NOTIFICATION,
       LogLevel.INFO,
       `Sending reminder notifications for clinic ${clinicId}`,
@@ -461,7 +461,7 @@ export class AppointmentNotificationService {
           }
         } catch (error) {
           failed++;
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.ERROR,
             LogLevel.ERROR,
             'Failed to send reminder notification for appointment',
@@ -478,7 +478,7 @@ export class AppointmentNotificationService {
       const processed = appointments.length;
       return { processed, sent, failed };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to send reminder notifications: ${error instanceof Error ? error.message : String(error)}`,
@@ -528,7 +528,7 @@ export class AppointmentNotificationService {
       await this.cacheService.set(cacheKey, templateList, this.TEMPLATE_CACHE_TTL);
       return templateList;
     } catch (_error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to get notification templates',
@@ -598,7 +598,7 @@ export class AppointmentNotificationService {
         return directUser.id;
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.NOTIFICATION,
         LogLevel.WARN,
         'Patient notification recipient could not be resolved from patientId or userId',
@@ -611,7 +611,7 @@ export class AppointmentNotificationService {
 
       return null;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.WARN,
         'Failed to resolve patient user mapping',
@@ -648,7 +648,7 @@ export class AppointmentNotificationService {
 
       const directUser = await this.databaseService.findUserByIdSafe(doctorId);
       if (directUser?.id) {
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.NOTIFICATION,
           LogLevel.WARN,
           'Doctor record not found, falling back to doctorId as userId',
@@ -665,7 +665,7 @@ export class AppointmentNotificationService {
 
       return null;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.WARN,
         'Failed to resolve doctor user mapping',
@@ -697,7 +697,7 @@ export class AppointmentNotificationService {
         : null;
       patientEmail = user?.email || undefined;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.WARN,
         `Failed to fetch patient email for notification`,
@@ -712,7 +712,7 @@ export class AppointmentNotificationService {
     }
 
     if (!patientEmail) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.WARN,
         `Skipping email notification - patient email not found`,
@@ -765,7 +765,7 @@ export class AppointmentNotificationService {
       ...(clinicId && { clinicId }), // Pass clinicId for multi-tenant email routing
     });
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.NOTIFICATION,
       LogLevel.INFO,
       `Email notification sent`,
@@ -795,7 +795,7 @@ export class AppointmentNotificationService {
         }),
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.NOTIFICATION,
         LogLevel.WARN,
         'Could not load the appointment to complete notification template data; sending producer values',
@@ -833,7 +833,7 @@ export class AppointmentNotificationService {
     const doctorPhone = doctorUser?.phone || null;
 
     if (!patientPhone && !doctorPhone) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.NOTIFICATION,
         LogLevel.WARN,
         `Skipping WhatsApp notification - no phone number found`,
@@ -858,7 +858,7 @@ export class AppointmentNotificationService {
         phone: string | null
       ): Promise<void> => {
         if (!phone) {
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.NOTIFICATION,
             LogLevel.WARN,
             `Skipping WhatsApp notification - no ${role} phone number found`,
@@ -956,7 +956,7 @@ export class AppointmentNotificationService {
             deliveryResults.push({ role: 'clinic_cc' as const, phone: ccPhone });
           }
         } catch (ccError) {
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.NOTIFICATION,
             LogLevel.WARN,
             `Failed to send CC WhatsApp to clinic phone`,
@@ -975,7 +975,7 @@ export class AppointmentNotificationService {
         throw new Error('No WhatsApp recipients were available for notification');
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.NOTIFICATION,
         LogLevel.INFO,
         `WhatsApp notification sent`,
@@ -988,7 +988,7 @@ export class AppointmentNotificationService {
         }
       );
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to send WhatsApp notification: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -1022,7 +1022,7 @@ export class AppointmentNotificationService {
         : [];
       deviceTokens = tokenData.map(token => token.token);
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.WARN,
         `Failed to fetch device tokens for push notification`,
@@ -1037,7 +1037,7 @@ export class AppointmentNotificationService {
     }
 
     if (deviceTokens.length === 0) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.NOTIFICATION,
         // Expected for patients who only use the web app; nothing to act on, so it is not an error.
         LogLevel.DEBUG,
@@ -1066,7 +1066,7 @@ export class AppointmentNotificationService {
       });
     }
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.NOTIFICATION,
       LogLevel.INFO,
       `Push notification sent`,

@@ -58,7 +58,7 @@ export class ClinicResourcePlugin extends BaseAppointmentPlugin {
     const { operation, ...params } = pluginData;
 
     if (this.loggingService) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         `Processing resource operation: ${operation}`,
@@ -141,7 +141,7 @@ export class ClinicResourcePlugin extends BaseAppointmentPlugin {
       }
     } catch (_error) {
       if (this.loggingService) {
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.ERROR,
           LogLevel.ERROR,
           `Resource operation failed: ${operation}`,

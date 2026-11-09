@@ -161,7 +161,7 @@ export class SessionManagementService implements OnModuleInit {
       }
 
       // 5. Log security event
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SECURITY,
         LogLevel.INFO,
         'Session created',
@@ -176,7 +176,7 @@ export class SessionManagementService implements OnModuleInit {
 
       return sessionData;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to create session',
@@ -253,7 +253,7 @@ export class SessionManagementService implements OnModuleInit {
       await this.addClinicSession(restoreDto.clinicId, sessionId);
     }
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.SECURITY,
       LogLevel.WARN,
       'Session restored after cache miss',
@@ -308,7 +308,7 @@ export class SessionManagementService implements OnModuleInit {
 
       return sessionData;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to get session',
@@ -376,7 +376,7 @@ export class SessionManagementService implements OnModuleInit {
       await this.storeSession(session);
       return true;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to update session activity',
@@ -435,7 +435,7 @@ export class SessionManagementService implements OnModuleInit {
       }
 
       // Log security event
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SECURITY,
         LogLevel.INFO,
         'Session invalidated',
@@ -449,7 +449,7 @@ export class SessionManagementService implements OnModuleInit {
 
       return true;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to invalidate session',
@@ -483,7 +483,7 @@ export class SessionManagementService implements OnModuleInit {
         }
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SECURITY,
         LogLevel.INFO,
         'All user sessions revoked',
@@ -497,7 +497,7 @@ export class SessionManagementService implements OnModuleInit {
 
       return revokedCount;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to revoke all user sessions',
@@ -563,7 +563,7 @@ export class SessionManagementService implements OnModuleInit {
 
       return sessions;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to get user sessions',
@@ -816,7 +816,7 @@ export class SessionManagementService implements OnModuleInit {
         await this.invalidateSession(session.sessionId);
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Session limits enforced',
@@ -849,7 +849,7 @@ export class SessionManagementService implements OnModuleInit {
         {}
       );
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to run session cleanup tick',

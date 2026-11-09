@@ -27,7 +27,7 @@ export abstract class BaseAppointmentPlugin implements BasePlugin {
 
   async initialize(_context: PluginContext): Promise<void> {
     if (this.loggingService) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `🚀 Initializing plugin: ${this.name}`,
@@ -42,7 +42,7 @@ export abstract class BaseAppointmentPlugin implements BasePlugin {
   async validate(data: unknown): Promise<boolean> {
     const pluginData = data as Record<string, unknown>;
     if (this.loggingService) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `✅ Validating data for plugin: ${this.name}`,
@@ -57,7 +57,7 @@ export abstract class BaseAppointmentPlugin implements BasePlugin {
   async process(data: unknown): Promise<unknown> {
     const _pluginData = data as Record<string, unknown>;
     if (this.loggingService) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `🔧 Processing data for plugin: ${this.name}`,
@@ -84,7 +84,7 @@ export abstract class BaseAppointmentPlugin implements BasePlugin {
 
   async destroy(): Promise<void> {
     if (this.loggingService) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `🛑 Destroying plugin: ${this.name}`,

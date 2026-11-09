@@ -67,7 +67,7 @@ export class AppointmentFollowUpService {
     const followUpId = `followup_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const scheduledFor = new Date(Date.now() + daysAfter * 24 * 60 * 60 * 1000);
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.BUSINESS,
       LogLevel.INFO,
       `Creating follow-up plan ${followUpId}`,
@@ -158,7 +158,7 @@ export class AppointmentFollowUpService {
         message: `Follow-up plan created for ${scheduledFor.toISOString()}`,
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to create follow-up plan ${followUpId}`,
@@ -323,7 +323,7 @@ export class AppointmentFollowUpService {
       await this.cacheService.set(cacheKey, result, this.FOLLOWUP_CACHE_TTL);
       return result;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to get patient follow-ups',
@@ -350,7 +350,7 @@ export class AppointmentFollowUpService {
       const followUp = await this.cacheService.get(cacheKey);
 
       if (!followUp) {
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.BUSINESS,
           LogLevel.WARN,
           `Follow-up ${followUpId} not found`,
@@ -369,7 +369,7 @@ export class AppointmentFollowUpService {
 
       await this.cacheService.set(cacheKey, updatedFollowUp, this.FOLLOWUP_CACHE_TTL);
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         `Follow-up ${followUpId} status updated to ${status}`,
@@ -377,7 +377,7 @@ export class AppointmentFollowUpService {
       );
       return true;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to update follow-up status ${followUpId}`,
@@ -412,7 +412,7 @@ export class AppointmentFollowUpService {
       const followUp = await this.cacheService.get(cacheKey);
 
       if (!followUp) {
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.BUSINESS,
           LogLevel.WARN,
           `Follow-up ${followUpId} not found`,
@@ -468,7 +468,7 @@ export class AppointmentFollowUpService {
 
       await this.cacheService.set(cacheKey, updatedFollowUp, this.FOLLOWUP_CACHE_TTL);
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         `Follow-up ${followUpId} updated`,
@@ -481,7 +481,7 @@ export class AppointmentFollowUpService {
 
       return updatedFollowUp;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to update follow-up plan ${followUpId}`,
@@ -512,7 +512,7 @@ export class AppointmentFollowUpService {
       await this.cacheService.set(cacheKey, templates, this.TEMPLATE_CACHE_TTL);
       return templates;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to get follow-up templates',
@@ -593,7 +593,7 @@ export class AppointmentFollowUpService {
 
       await this.cacheService.set(cacheKey, updatedTemplates, this.TEMPLATE_CACHE_TTL);
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         `Created follow-up template ${templateId}`,
@@ -605,7 +605,7 @@ export class AppointmentFollowUpService {
       );
       return newTemplate;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to create follow-up template`,
@@ -652,7 +652,7 @@ export class AppointmentFollowUpService {
       await this.cacheService.set(cacheKey, overdueFollowUps, this.FOLLOWUP_CACHE_TTL);
       return overdueFollowUps;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to get overdue follow-ups',
@@ -670,7 +670,7 @@ export class AppointmentFollowUpService {
    * Schedule follow-up reminders
    */
   private async scheduleFollowUpReminders(followUp: FollowUpPlan): Promise<void> {
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.BUSINESS,
       LogLevel.INFO,
       `Scheduling reminders for follow-up ${followUp.id}`,
@@ -718,7 +718,7 @@ export class AppointmentFollowUpService {
    * Send follow-up notification
    */
   private async sendFollowUpNotification(followUp: FollowUpPlan): Promise<void> {
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.BUSINESS,
       LogLevel.INFO,
       `Sending follow-up notification for ${followUp.id}`,
@@ -752,7 +752,7 @@ export class AppointmentFollowUpService {
         attempts: 3,
       });
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to send follow-up notification for ${followUp.id}`,

@@ -46,7 +46,7 @@ export class ClinicTemplatePlugin extends BaseAppointmentPlugin {
     };
 
     if (this.loggingService) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         `Processing template operation: ${operation}`,
@@ -103,7 +103,7 @@ export class ClinicTemplatePlugin extends BaseAppointmentPlugin {
       }
     } catch (_error) {
       if (this.loggingService) {
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.ERROR,
           LogLevel.ERROR,
           `Template operation failed: ${operation}`,

@@ -387,7 +387,7 @@ export class BillingService implements OnModuleInit {
     const failedTags = tags.filter((_tag, index) => results[index]?.status === 'rejected');
     if (failedTags.length > 0) {
       try {
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.CACHE,
           LogLevel.WARN,
           'Billing cache invalidation failed; entries will expire via TTL',
@@ -428,7 +428,7 @@ export class BillingService implements OnModuleInit {
     const cached = await this.cacheService.get<string | boolean>(recentKey).catch(() => null);
     const recent = cached === null || cached === undefined ? null : String(cached);
     if (recent === 'true' || recent === 'false') {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Skipping invoice WhatsApp send: the same invoice was sent within the last 60 seconds',
@@ -440,7 +440,7 @@ export class BillingService implements OnModuleInit {
 
     const existingTask = this.invoiceWhatsAppSendLocks.get(invoiceId);
     if (existingTask) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Skipping duplicate invoice WhatsApp send while a send is already in progress',
@@ -630,7 +630,7 @@ export class BillingService implements OnModuleInit {
           : Promise.resolve(0),
       ]);
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.WARN,
         'Appointment not found while syncing payment completion',
@@ -1254,7 +1254,7 @@ export class BillingService implements OnModuleInit {
         }),
       });
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Billing plan created',
@@ -1271,7 +1271,7 @@ export class BillingService implements OnModuleInit {
 
       return plan;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to create billing plan',
@@ -1428,7 +1428,7 @@ export class BillingService implements OnModuleInit {
         : data
     );
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Billing plan updated',
@@ -1467,7 +1467,7 @@ export class BillingService implements OnModuleInit {
 
     await this.databaseService.deleteBillingPlanSafe(id);
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Billing plan deleted',
@@ -1620,7 +1620,7 @@ export class BillingService implements OnModuleInit {
         reuseUpdate as unknown as SubscriptionUpdateInput
       );
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Unpaid subscription reused for a new checkout',
@@ -1651,7 +1651,7 @@ export class BillingService implements OnModuleInit {
         ...(data.metadata && { metadata: data.metadata }),
       });
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Subscription created',
@@ -1669,7 +1669,7 @@ export class BillingService implements OnModuleInit {
 
       return subscription;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to create subscription',
@@ -1793,7 +1793,7 @@ export class BillingService implements OnModuleInit {
 
     const subscription = await this.databaseService.updateSubscriptionSafe(id, updateData);
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Subscription updated',
@@ -1835,7 +1835,7 @@ export class BillingService implements OnModuleInit {
 
     const updated = await this.databaseService.updateSubscriptionSafe(id, updateData);
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Subscription cancelled',
@@ -2002,7 +2002,7 @@ export class BillingService implements OnModuleInit {
       } as PrismaDelegateArgs);
     });
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Subscription switched to a new plan',
@@ -2072,7 +2072,7 @@ export class BillingService implements OnModuleInit {
       );
 
       if (expiredSubscriptions.length > 0) {
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
           `Marked ${expiredSubscriptions.length} subscriptions as PAST_DUE due to expiration schedule`,
@@ -2085,7 +2085,7 @@ export class BillingService implements OnModuleInit {
         await Promise.all(userIds.map(id => this.invalidateUserSubscriptionCaches(id)));
       }
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to process expired subscriptions via cron',
@@ -2127,7 +2127,7 @@ export class BillingService implements OnModuleInit {
       cancelAtPeriodEnd: false,
     });
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Subscription renewed',
@@ -2235,7 +2235,7 @@ export class BillingService implements OnModuleInit {
         }
       );
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to create invoice',
@@ -2795,7 +2795,7 @@ export class BillingService implements OnModuleInit {
       )
     );
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Invoice updated',
@@ -2863,7 +2863,7 @@ export class BillingService implements OnModuleInit {
     if (!voided) {
       return false;
     }
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Invoice voided by system',
@@ -3012,7 +3012,7 @@ export class BillingService implements OnModuleInit {
         : {}),
     };
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Invoice marked as paid',
@@ -3025,7 +3025,7 @@ export class BillingService implements OnModuleInit {
     try {
       await this.generateInvoicePDF(id);
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to regenerate invoice PDF after payment',
@@ -3619,7 +3619,7 @@ export class BillingService implements OnModuleInit {
         actorUserId,
         orderId: payment.transactionId || payment.id,
       });
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
         'Plan started from a payment collected at the desk',
@@ -3628,7 +3628,7 @@ export class BillingService implements OnModuleInit {
       );
       await this.eventService.emit('billing.subscription.desk_payment_applied', context);
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.ERROR,
         `Plan activation after a desk payment failed; the finalisation sweeper will retry: ${
@@ -3759,7 +3759,7 @@ export class BillingService implements OnModuleInit {
       actorUserId: actor.userId ?? null,
       actorRole: actor.role ?? null,
     };
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.PAYMENT,
       LogLevel.INFO,
       'Plan bill opened for collection at the desk',
@@ -4082,7 +4082,7 @@ export class BillingService implements OnModuleInit {
         ...(data.metadata && { metadata: data.metadata }),
       });
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Payment created',
@@ -4116,7 +4116,7 @@ export class BillingService implements OnModuleInit {
         }
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to create payment',
@@ -4183,7 +4183,7 @@ export class BillingService implements OnModuleInit {
     }
     const existingPayment = recovery.payment;
     if (!recovery.reopened) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.WARN,
         'Duplicate appointment payment create: existing payment left unchanged',
@@ -4198,7 +4198,7 @@ export class BillingService implements OnModuleInit {
     }
     const updatedPayment = existingPayment;
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.WARN,
       existingPayment.createdAt.getTime() > new Date().getTime() - 60000
@@ -4296,7 +4296,7 @@ export class BillingService implements OnModuleInit {
       ...(data.refundAmount !== undefined && { refundedAt: new Date() }),
     });
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Payment updated',
@@ -5341,7 +5341,7 @@ export class BillingService implements OnModuleInit {
     if (await this.cacheService.exists(lockKey)) {
       throw new ConflictException(busyMessage);
     }
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.PAYMENT,
       LogLevel.WARN,
       'Payment request lock unavailable (cache unreachable); continuing without it',
@@ -5482,7 +5482,7 @@ export class BillingService implements OnModuleInit {
     const customerPhone = user?.phone?.trim() || undefined;
 
     if (!customerPhone) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.WARN,
         'No phone number on file for the patient being billed; phone-dependent payment providers will be skipped',
@@ -6102,7 +6102,7 @@ export class BillingService implements OnModuleInit {
     });
     const { payment } = outcome;
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.PAYMENT,
       outcome.supersededIds.length > 0 ? LogLevel.WARN : LogLevel.INFO,
       outcome.reused
@@ -6157,7 +6157,7 @@ export class BillingService implements OnModuleInit {
     try {
       await this.reconcilePaymentForClinic(clinicId, open.id, provider);
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.WARN,
         `Could not verify the open invoice payment attempt with the gateway: ${
@@ -6197,7 +6197,7 @@ export class BillingService implements OnModuleInit {
         }),
       });
       if (closed.length > 0) {
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.PAYMENT,
           LogLevel.INFO,
           'Closed open payment attempts of a settled invoice',
@@ -6209,7 +6209,7 @@ export class BillingService implements OnModuleInit {
         }
       }
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.WARN,
         `Failed to close open payment attempts of a settled invoice: ${
@@ -6259,7 +6259,7 @@ export class BillingService implements OnModuleInit {
     if (!rejection) {
       return;
     }
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.PAYMENT,
       LogLevel.WARN,
       `Payment callback rejected: ${rejection}`,
@@ -6355,7 +6355,7 @@ export class BillingService implements OnModuleInit {
         payment = await this.findOpenPaymentByGatewayTags(clinicId, paymentStatus);
         if (payment) {
           reboundFromOrderId = this.asSafeString(this.asRecord(payment.metadata)?.['orderId']);
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.PAYMENT,
             LogLevel.WARN,
             `Payment callback bound to appointment payment via gateway order tags: orderId=${orderId}`,
@@ -6377,7 +6377,7 @@ export class BillingService implements OnModuleInit {
         // (e.g. Cashfree rejected the order) but the gateway callback still arrives.
         // We cannot safely create a payment record without an invoice/appointment
         // reference, so we log and return gracefully to avoid breaking the webhook.
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.PAYMENT,
           LogLevel.WARN,
           `Payment callback received but no local payment record exists: orderId=${orderId}, paymentId=${paymentId}`,
@@ -6476,7 +6476,7 @@ export class BillingService implements OnModuleInit {
         },
       });
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.ERROR,
         `Failed to handle payment callback: ${error instanceof Error ? error.message : String(error)}`,
@@ -6538,7 +6538,7 @@ export class BillingService implements OnModuleInit {
         Boolean(target.row.userId) &&
         payment.userId !== target.row.userId;
       if (clinicMismatch || userMismatch) {
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.SECURITY,
           LogLevel.ERROR,
           `Payment ${target.kind} does not belong to the payment's clinic/user; callback rejected`,
@@ -6585,7 +6585,7 @@ export class BillingService implements OnModuleInit {
     const paidMinor = sumCompletedPaymentMinorUnits(counted);
     const requiredMinor = toMinorUnits(invoice.totalAmount);
     if (!isAmountCovered(paidMinor, requiredMinor)) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.WARN,
         'Completed payments do not cover the invoice total; invoice left unpaid',
@@ -6695,7 +6695,7 @@ export class BillingService implements OnModuleInit {
     }
 
     if (dueMinor <= 0 || !Number.isInteger(amountMinorUnits) || amountMinorUnits !== dueMinor) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SECURITY,
         LogLevel.WARN,
         'Public payment intent refused: amount does not match the amount due',
@@ -6738,7 +6738,7 @@ export class BillingService implements OnModuleInit {
       paymentId: payment.id,
     });
     if (duplicate) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.WARN,
         'Second payment for an already paid plan period: flagged for a refund decision, plan not extended',
@@ -6800,7 +6800,7 @@ export class BillingService implements OnModuleInit {
         return; // already recorded by an earlier delivery: no log / event spam on every poll
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.WARN,
         `Payment settlement anomaly: ${flag.reason}`,
@@ -6846,7 +6846,7 @@ export class BillingService implements OnModuleInit {
         reason: flag.reason,
       });
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.WARN,
         `Failed to record payment settlement anomaly: ${
@@ -6883,7 +6883,7 @@ export class BillingService implements OnModuleInit {
           )?.next ?? null
       );
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.WARN,
         `Failed to persist late settlement review: ${
@@ -6930,7 +6930,7 @@ export class BillingService implements OnModuleInit {
     try {
       return await this.finaliser.repairStalled();
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.ERROR,
         `Stalled payment finalisation sweep failed: ${
@@ -6982,7 +6982,7 @@ export class BillingService implements OnModuleInit {
             provider ? { provider } : {}
           );
           confirmed += 1;
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.PAYMENT,
             LogLevel.INFO,
             'Paid booking confirmed by the pending-payment sweep',
@@ -6992,7 +6992,7 @@ export class BillingService implements OnModuleInit {
         } catch (error) {
           // "Not paid yet" is the normal answer for most rows; anything else is worth a warning.
           if (!(error instanceof BadRequestException)) {
-            await this.loggingService.log(
+            void this.loggingService.log(
               LogType.PAYMENT,
               LogLevel.WARN,
               `Pending-payment sweep failed for one payment: ${
@@ -7005,7 +7005,7 @@ export class BillingService implements OnModuleInit {
         }
       }
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.ERROR,
         `Pending-payment sweep failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -7035,7 +7035,7 @@ export class BillingService implements OnModuleInit {
       if (status !== String(PaymentStatus.COMPLETED)) {
         return false;
       }
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
         'Paid invoice settled by the pending-payment sweep',
@@ -7045,7 +7045,7 @@ export class BillingService implements OnModuleInit {
       return true;
     } catch (error) {
       if (!(error instanceof BadRequestException)) {
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.PAYMENT,
           LogLevel.WARN,
           `Pending-payment sweep failed for one invoice payment: ${
@@ -7093,7 +7093,7 @@ export class BillingService implements OnModuleInit {
         }
       }
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.ERROR,
         `Payment-window sweep failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -7259,7 +7259,7 @@ export class BillingService implements OnModuleInit {
       return { gatewayReachable: true };
     } catch (error) {
       const gatewayReachable = this.isGatewayOrderNotFound(error);
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.WARN,
         `Payment-window sweep could not verify a payment with the gateway: ${
@@ -7332,7 +7332,7 @@ export class BillingService implements OnModuleInit {
         actorUserId: 'system-payment-window-sweep',
         orderId,
       });
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.WARN,
         'Gateway-confirmed payment found for a lapsed VIDEO_CALL booking: booking confirmed instead of expired',
@@ -7394,7 +7394,7 @@ export class BillingService implements OnModuleInit {
         await this.invalidateSubscriptionCaches(userId, args.subscriptionId);
       }
     }
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.PAYMENT,
       LogLevel.WARN,
       'Checkout expired: payment not completed within the payment window',
@@ -7923,7 +7923,7 @@ export class BillingService implements OnModuleInit {
         actorUserId,
         orderId,
       });
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
         'Completed payment repaired by clinic admin',
@@ -8010,7 +8010,7 @@ export class BillingService implements OnModuleInit {
         try {
           await this.preparePayoutForAppointmentPayment(payment.id, clinicId);
         } catch (error) {
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.PAYMENT,
             LogLevel.WARN,
             `Failed to prepare payout after manual reconciliation: ${
@@ -8044,7 +8044,7 @@ export class BillingService implements OnModuleInit {
       }
     }
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.PAYMENT,
       LogLevel.INFO,
       'Payment manually reconciled by clinic admin',
@@ -8091,7 +8091,7 @@ export class BillingService implements OnModuleInit {
         options.paymentId &&
         hasSubscriptionRenewalStamp(subscription.metadata, options.paymentId)
       ) {
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
           'Subscription already renewed for this payment; skipping',
@@ -8123,7 +8123,7 @@ export class BillingService implements OnModuleInit {
         continue;
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         renewal.kind === 'activation'
@@ -8354,7 +8354,7 @@ export class BillingService implements OnModuleInit {
         }
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
         'Payment refund processed successfully',
@@ -8383,7 +8383,7 @@ export class BillingService implements OnModuleInit {
       }
       return result;
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.ERROR,
         `Failed to process refund: ${error instanceof Error ? error.message : String(error)}`,
@@ -8445,7 +8445,7 @@ export class BillingService implements OnModuleInit {
             normalizedProvider
           );
         } catch (error) {
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.PAYMENT,
             LogLevel.WARN,
             'Refund status lookup failed; falling back to webhook payload',
@@ -8518,7 +8518,7 @@ export class BillingService implements OnModuleInit {
 
       const updatedPayment = await this.updatePayment(payment.id, updateData);
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
         'Refund callback processed successfully',
@@ -8551,7 +8551,7 @@ export class BillingService implements OnModuleInit {
         },
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.ERROR,
         `Failed to process refund callback: ${error instanceof Error ? error.message : String(error)}`,
@@ -8622,7 +8622,7 @@ export class BillingService implements OnModuleInit {
           continue;
         }
 
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.APPOINTMENT,
           LogLevel.INFO,
           'Reconciling legacy paid appointment to CONFIRMED',
@@ -8648,7 +8648,7 @@ export class BillingService implements OnModuleInit {
       }
 
       if (reconciled > 0) {
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
           `Reconciled ${reconciled} legacy paid appointment(s) to CONFIRMED`,
@@ -8659,7 +8659,7 @@ export class BillingService implements OnModuleInit {
 
       return { reconciled };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to reconcile legacy paid appointments: ${
@@ -8715,7 +8715,7 @@ export class BillingService implements OnModuleInit {
     } catch {
       // Best effort: entries age out via their TTL.
     }
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Subscription appointment cancelled, quota restored',
@@ -8809,7 +8809,7 @@ export class BillingService implements OnModuleInit {
         appointmentsRemaining !== undefined && { appointmentsRemaining }),
     });
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'Subscription quota reset',
@@ -9141,7 +9141,7 @@ export class BillingService implements OnModuleInit {
         pdfUrl,
       });
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Invoice PDF generated',
@@ -9155,7 +9155,7 @@ export class BillingService implements OnModuleInit {
       });
       await this.invalidateUserInvoiceCaches(invoice.userId);
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to generate invoice PDF',
@@ -9182,7 +9182,7 @@ export class BillingService implements OnModuleInit {
         }
 
         if (invoice.sentViaWhatsApp) {
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.SYSTEM,
             LogLevel.INFO,
             'Skipping invoice WhatsApp delivery because invoice was already sent',
@@ -9270,7 +9270,7 @@ export class BillingService implements OnModuleInit {
             whatsappSentAt: new Date(),
           } as InvoiceUpdateInput);
 
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.SYSTEM,
             LogLevel.INFO,
             'Receipt sent via WhatsApp',
@@ -9288,7 +9288,7 @@ export class BillingService implements OnModuleInit {
 
         return success;
       } catch (error) {
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.ERROR,
           LogLevel.ERROR,
           'Failed to send receipt via WhatsApp',
@@ -9309,7 +9309,7 @@ export class BillingService implements OnModuleInit {
   async sendSubscriptionConfirmation(subscriptionId: string): Promise<void> {
     try {
       if (!subscriptionId) {
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.WARN,
           'Skipping subscription confirmation because subscriptionId is missing',
@@ -9340,7 +9340,7 @@ export class BillingService implements OnModuleInit {
 
       if (!user || !user.phone) {
         const userId = user?.id || subscription.userId;
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.WARN,
           `User ${userId} has no phone number, skipping WhatsApp confirmation`,
@@ -9423,7 +9423,7 @@ export class BillingService implements OnModuleInit {
         await this.sendReceiptViaWhatsApp(newInvoice.id);
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Subscription confirmation sent',
@@ -9431,7 +9431,7 @@ export class BillingService implements OnModuleInit {
         { subscriptionId }
       );
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to send subscription confirmation',

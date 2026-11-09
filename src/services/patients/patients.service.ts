@@ -652,7 +652,7 @@ export class PatientsService {
       false
     );
     if (!asset.success || !asset.url) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Profile photo upload was not stored',
@@ -1226,7 +1226,7 @@ export class PatientsService {
     try {
       const deleted = await this.staticAssetService.deleteAsset(ref);
       if (!deleted) {
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.WARN,
           'Patient document file was not removed from storage',
@@ -1235,7 +1235,7 @@ export class PatientsService {
         );
       }
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.WARN,
         'Failed to remove patient document file from storage',
@@ -1306,7 +1306,7 @@ export class PatientsService {
       false
     );
     if (!asset.success || !asset.url) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Patient document upload was not stored',
@@ -1476,7 +1476,7 @@ export class PatientsService {
       await this.cacheService.invalidateCacheByTag('patient_dashboard_summary');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.WARN,
         `Failed to invalidate dashboard summary cache: ${message}`,
@@ -1529,7 +1529,7 @@ export class PatientsService {
     };
     const slowestSubCall = Object.entries(durationsMs).sort((a, b) => b[1] - a[1])[0];
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.SYSTEM,
       // Routine composition telemetry - always INFO. This fires on every
       // request, so tagging it WARN (as a prior revision did whenever the
@@ -1586,7 +1586,7 @@ export class PatientsService {
       return { data };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.WARN,
         `[dashboard-summary] sub-call "${name}" failed: ${message}`,

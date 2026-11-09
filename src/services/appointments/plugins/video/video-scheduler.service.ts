@@ -156,7 +156,7 @@ export class VideoAppointmentSchedulerService {
             'Marked as Doctor No-Show (Session not started)'
           );
 
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.BUSINESS,
             LogLevel.WARN,
             `Marked appointment ${consultation.appointmentId} as Doctor No-Show`,
@@ -220,7 +220,7 @@ export class VideoAppointmentSchedulerService {
             'Marked as Patient No-Show'
           );
 
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.BUSINESS,
             LogLevel.WARN,
             `Marked appointment ${consultation.appointmentId} as Patient No-Show`,
@@ -357,7 +357,7 @@ export class VideoAppointmentSchedulerService {
           'SYSTEM'
         );
 
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.BUSINESS,
           LogLevel.WARN,
           `Auto-expired video appointment ${appointment.id} — join window elapsed`,
@@ -493,7 +493,7 @@ export class VideoAppointmentSchedulerService {
             throw emitError;
           }
 
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.BUSINESS,
             LogLevel.INFO,
             `Reminded doctor to complete open video visit ${visit.id} (${stage} reminder)`,
@@ -517,7 +517,7 @@ export class VideoAppointmentSchedulerService {
     try {
       await this.cacheService.releaseLock(lockKey);
     } catch (releaseError) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.WARN,
         `Failed to release reminder lock: ${releaseError instanceof Error ? releaseError.message : String(releaseError)}`,
@@ -694,7 +694,7 @@ export class VideoAppointmentSchedulerService {
             now,
           });
           if (resolution !== 'unpaid') {
-            await this.loggingService.log(
+            void this.loggingService.log(
               LogType.BUSINESS,
               resolution === 'paid' ? LogLevel.WARN : LogLevel.INFO,
               resolution === 'paid'
@@ -784,7 +784,7 @@ export class VideoAppointmentSchedulerService {
             payload: { appointmentId: row.id },
           } as EnterpriseEventPayload);
 
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.BUSINESS,
             LogLevel.WARN,
             `Auto-cancelled video appointment ${row.id} — payment window expired`,

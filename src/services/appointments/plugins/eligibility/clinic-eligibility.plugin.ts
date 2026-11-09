@@ -104,7 +104,7 @@ export class ClinicEligibilityPlugin extends BaseAppointmentPlugin {
       }
     } catch (_error) {
       if (this.loggingService) {
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.ERROR,
           LogLevel.ERROR,
           `Eligibility operation failed: ${operation}`,

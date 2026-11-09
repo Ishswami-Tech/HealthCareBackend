@@ -429,7 +429,7 @@ export class AppointmentsController {
         };
       }
     } catch (queueError) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.WARN,
         'Failed to get queue position after check-in',
@@ -565,7 +565,7 @@ export class AppointmentsController {
         throw new BadRequestException('User ID is required');
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         `Creating appointment for user ${userId} in clinic ${clinicId}`,
@@ -583,7 +583,7 @@ export class AppointmentsController {
         )
       );
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         `Appointment created successfully: ${result.success ? 'Success' : 'Failed'}`,
@@ -604,7 +604,7 @@ export class AppointmentsController {
     } catch (_error) {
       const errorUserId = req.user?.sub || '';
       const errorClinicId = req.clinicContext?.clinicId || '';
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         // A 409 "slot is being booked" / 400 refusal is expected traffic: WARN, not ERROR.
         logLevelForError(_error),
@@ -1032,7 +1032,7 @@ export class AppointmentsController {
 
       const typeFilter = parseAppointmentTypeFilter(type);
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         `Getting appointments for user ${userId} in clinic ${resolvedClinicId}`,
@@ -1077,7 +1077,7 @@ export class AppointmentsController {
         pageSize
       );
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         `Retrieved ${(result.data as unknown as AppointmentResponseDto[])?.length || 0} appointments for user ${userId}`,
@@ -1088,7 +1088,7 @@ export class AppointmentsController {
     } catch (_error) {
       const errorUserId = req.user?.sub || '';
       const errorClinicId = req.clinicContext?.clinicId || '';
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get my appointments: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -1289,7 +1289,7 @@ export class AppointmentsController {
       };
 
       // Log the operation with proper structure
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.REQUEST,
         LogLevel.INFO,
         'Retrieving appointments list',
@@ -1348,7 +1348,7 @@ export class AppointmentsController {
       );
 
       // Log successful operation
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.RESPONSE,
         LogLevel.INFO,
         `Retrieved ${(result.data as unknown as AppointmentResponseDto[])?.length || 0} appointments successfully`,
@@ -1448,7 +1448,7 @@ export class AppointmentsController {
       }
 
       // Log the error with proper structure
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to retrieve appointments: ${_error instanceof Error ? _error.message : 'Unknown _error'}`,
@@ -1528,7 +1528,7 @@ export class AppointmentsController {
         throw new BadRequestException('Clinic context is required');
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         `Getting upcoming appointments for current user ${currentUserId}`,
@@ -1551,7 +1551,7 @@ export class AppointmentsController {
         result = response as unknown as AppointmentResponseDto[];
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         `Retrieved ${result.length || 0} upcoming appointments for user ${currentUserId}`,
@@ -1562,7 +1562,7 @@ export class AppointmentsController {
     } catch (_error) {
       const errorUserId = req.user?.sub || '';
       const errorClinicId = req.clinicContext?.clinicId || '';
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to retrieve upcoming appointments: ${_error instanceof Error ? _error.message : 'Unknown error'}`,
@@ -1669,7 +1669,7 @@ export class AppointmentsController {
         throw new BadRequestException('Cannot check availability for past dates');
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         `Checking availability for doctor ${doctorId} on ${date}`,
@@ -1759,7 +1759,7 @@ export class AppointmentsController {
 
       const slotsCount = slotsArray.length;
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         `Retrieved availability for doctor ${doctorId}: ${slotsCount} slots available`,
@@ -1769,7 +1769,7 @@ export class AppointmentsController {
       return availabilityResult;
     } catch (_error) {
       const errorClinicId = req.clinicContext?.clinicId || '';
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get doctor availability: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -1852,7 +1852,7 @@ export class AppointmentsController {
         throw new ForbiddenException('Patients can only access their own appointments');
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         `Getting upcoming appointments for user ${userId} (requested by ${currentUserId})`,
@@ -1875,7 +1875,7 @@ export class AppointmentsController {
         result = response as unknown as AppointmentResponseDto[];
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         `Retrieved ${result.length || 0} upcoming appointments for user ${userId}`,
@@ -1886,7 +1886,7 @@ export class AppointmentsController {
     } catch (_error) {
       const errorUserId = userId || '';
       const errorClinicId = req.clinicContext?.clinicId || '';
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get user appointments: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -1968,7 +1968,7 @@ export class AppointmentsController {
         throw new BadRequestException('Clinic context is required');
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         `Getting appointment ${id} for user ${currentUserId} in clinic ${clinicId}`,
@@ -1991,7 +1991,7 @@ export class AppointmentsController {
         }
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         `Retrieved appointment ${id} successfully`,
@@ -2001,7 +2001,7 @@ export class AppointmentsController {
       return result;
     } catch (_error) {
       const errorClinicId = req.clinicContext?.clinicId || '';
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get appointment ${id}: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -2102,7 +2102,7 @@ export class AppointmentsController {
         throw new BadRequestException('Clinic context is required');
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         `Updating appointment ${id} by user ${currentUserId} in clinic ${clinicId}`,
@@ -2148,7 +2148,7 @@ export class AppointmentsController {
         )
       );
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         `Appointment ${id} updated successfully`,
@@ -2165,7 +2165,7 @@ export class AppointmentsController {
       };
     } catch (_error) {
       const errorClinicId = req.clinicContext?.clinicId || '';
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to update appointment ${id}: ${_error instanceof Error ? _error.message : String(_error)}`,
@@ -2315,7 +2315,7 @@ export class AppointmentsController {
       }
 
       // Log the operation with proper structure
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.REQUEST,
         LogLevel.INFO,
         'Cancelling appointment',
@@ -2357,7 +2357,7 @@ export class AppointmentsController {
       );
 
       // Log successful operation
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.RESPONSE,
         LogLevel.INFO,
         'Appointment cancelled successfully',
@@ -2389,7 +2389,7 @@ export class AppointmentsController {
       }
 
       // Log the error with proper structure
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to cancel appointment: ${_error instanceof Error ? _error.message : 'Unknown _error'}`,
@@ -2505,7 +2505,7 @@ export class AppointmentsController {
     }
 
     try {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         `User ${userId} requesting reschedule of appointment ${appointmentId} to ${newDate} ${newTime}`,
@@ -2531,7 +2531,7 @@ export class AppointmentsController {
     } catch (error) {
       // A refused request (slot taken, visit not movable) is the caller's to fix, not a fault.
       const refusedByRule = error instanceof HttpException && error.getStatus() < 500;
-      await this.loggingService.log(
+      void this.loggingService.log(
         refusedByRule ? LogType.APPOINTMENT : LogType.ERROR,
         refusedByRule ? LogLevel.WARN : LogLevel.ERROR,
         `Failed to reschedule appointment ${appointmentId} to ${newDate} ${newTime}: ${error instanceof Error ? error.message : String(error)}`,
@@ -2666,7 +2666,7 @@ export class AppointmentsController {
         )
       );
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         `Appointment status updated to ${updateDto.status}`,
@@ -2690,7 +2690,7 @@ export class AppointmentsController {
       const refused =
         (error instanceof HttpException && error.getStatus() < 500) ||
         (error instanceof HealthcareError && error.getStatus() < 500);
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         refused ? LogLevel.WARN : LogLevel.ERROR,
         `Failed to update status: ${error instanceof Error ? error.message : String(error)}`,
@@ -2920,7 +2920,7 @@ export class AppointmentsController {
         data?: { completed: number; failed: number; refused: string[] };
       };
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         'Bulk complete selected appointments via API',
@@ -2940,7 +2940,7 @@ export class AppointmentsController {
         message: `Bulk completion finished: completed=${result.data?.completed}, failed=${result.data?.failed}`,
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to bulk complete selected appointments: ${error instanceof Error ? error.message : String(error)}`,
@@ -3006,7 +3006,7 @@ export class AppointmentsController {
         req.user?.role || 'USER'
       )) as { success: boolean; data: AppointmentWithRelations };
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         'Appointment completed via API',
@@ -3024,7 +3024,7 @@ export class AppointmentsController {
         data: result.data as unknown as AppointmentResponseDto,
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to complete appointment: ${error instanceof Error ? error.message : String(error)}`,
@@ -3136,7 +3136,7 @@ export class AppointmentsController {
         context,
       });
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         'Appointment check-in processed via API',
@@ -3154,7 +3154,7 @@ export class AppointmentsController {
         data: { message: 'Check-in processed successfully' },
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to process check-in: ${error instanceof Error ? error.message : String(error)}`,
@@ -3281,7 +3281,7 @@ export class AppointmentsController {
         { userId, role: userRole }
       );
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.AUDIT,
         LogLevel.WARN,
         'Staff override: Forced check-in outside time window',
@@ -3314,7 +3314,7 @@ export class AppointmentsController {
       });
 
       // Log successful forced check-in
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         'Staff override check-in completed successfully',
@@ -3339,7 +3339,7 @@ export class AppointmentsController {
         },
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to force check-in: ${error instanceof Error ? error.message : String(error)}`,
@@ -3570,7 +3570,7 @@ export class AppointmentsController {
         isActiveFilter
       );
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.REQUEST,
         LogLevel.INFO,
         'Retrieved check-in locations',
@@ -3588,7 +3588,7 @@ export class AppointmentsController {
         data: locations,
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get check-in locations: ${error instanceof Error ? error.message : String(error)}`,
@@ -3644,7 +3644,7 @@ export class AppointmentsController {
 
       const history = await this.checkInService.getCheckedInAppointments(clinicId);
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.REQUEST,
         LogLevel.INFO,
         'Retrieved check-in history',
@@ -3661,7 +3661,7 @@ export class AppointmentsController {
         data: history,
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get check-in history: ${error instanceof Error ? error.message : String(error)}`,
@@ -3752,7 +3752,7 @@ export class AppointmentsController {
           : {}),
       });
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         'Check-in location created',
@@ -3770,7 +3770,7 @@ export class AppointmentsController {
         data: location,
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to create check-in location: ${error instanceof Error ? error.message : String(error)}`,
@@ -3869,7 +3869,7 @@ export class AppointmentsController {
         throw this.errors.insufficientPermissions(context);
       }
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         'Check-in location updated',
@@ -3886,7 +3886,7 @@ export class AppointmentsController {
         data: location,
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to update check-in location: ${error instanceof Error ? error.message : String(error)}`,
@@ -3963,7 +3963,7 @@ export class AppointmentsController {
 
       await this.checkInLocationService.deleteCheckInLocation(locationId, clinicId);
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         'Check-in location deleted',
@@ -3975,7 +3975,7 @@ export class AppointmentsController {
         }
       );
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to delete check-in location: ${error instanceof Error ? error.message : String(error)}`,
@@ -4089,7 +4089,7 @@ export class AppointmentsController {
       // Generate QR code image using QrService
       const qrCodeDataUrl = await this.qrService.generateQR(qrCodeDataString);
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Location QR code generated successfully',
@@ -4123,7 +4123,7 @@ export class AppointmentsController {
         });
       }
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to generate location QR code: ${error instanceof Error ? error.message : String(error)}`,
@@ -4331,7 +4331,7 @@ export class AppointmentsController {
         userId // Pass authenticated user ID for permission check
       )) as { success: boolean; followUpId: string; scheduledFor: Date; message: string };
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         'Follow-up plan created via API',
@@ -4368,7 +4368,7 @@ export class AppointmentsController {
         } as FollowUpPlanResponseDto,
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to create follow-up plan: ${error instanceof Error ? error.message : String(error)}`,
@@ -4441,7 +4441,7 @@ export class AppointmentsController {
         userId
       )) as { original: AppointmentWithRelations; followUps: AppointmentWithRelations[] };
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Appointment chain retrieved via API',
@@ -4463,7 +4463,7 @@ export class AppointmentsController {
         } as AppointmentChainResponseDto,
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get appointment chain: ${error instanceof Error ? error.message : String(error)}`,
@@ -4539,7 +4539,7 @@ export class AppointmentsController {
         status
       )) as { followUps: FollowUpPlanResponseDto[] };
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Patient follow-up plans retrieved via API',
@@ -4558,7 +4558,7 @@ export class AppointmentsController {
         data: result.followUps,
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get patient follow-up plans: ${error instanceof Error ? error.message : String(error)}`,
@@ -4642,7 +4642,7 @@ export class AppointmentsController {
         clinicId
       )) as { success: boolean; data: AppointmentWithRelations };
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         'Follow-up appointment scheduled via API',
@@ -4661,7 +4661,7 @@ export class AppointmentsController {
         data: result.data as unknown as AppointmentResponseDto,
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to schedule follow-up from plan: ${error instanceof Error ? error.message : String(error)}`,
@@ -4726,7 +4726,7 @@ export class AppointmentsController {
         userId
       )) as { followUps: AppointmentWithRelations[]; count: number };
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Appointment follow-ups retrieved via API',
@@ -4745,7 +4745,7 @@ export class AppointmentsController {
         data: result.followUps.map(apt => apt as unknown as AppointmentResponseDto),
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get appointment follow-ups: ${error instanceof Error ? error.message : String(error)}`,
@@ -4815,7 +4815,7 @@ export class AppointmentsController {
         clinicId
       )) as FollowUpPlanResponseDto;
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         'Follow-up plan updated via API',
@@ -4833,7 +4833,7 @@ export class AppointmentsController {
         data: result,
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to update follow-up plan: ${error instanceof Error ? error.message : String(error)}`,
@@ -4893,7 +4893,7 @@ export class AppointmentsController {
     try {
       await this.appointmentService.cancelFollowUpPlan(followUpPlanId, userId, clinicId);
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         'Follow-up plan cancelled via API',
@@ -4911,7 +4911,7 @@ export class AppointmentsController {
         data: { message: 'Follow-up plan cancelled successfully' },
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to cancel follow-up plan: ${error instanceof Error ? error.message : String(error)}`,
@@ -4981,7 +4981,7 @@ export class AppointmentsController {
         userId
       )) as RecurringSeriesResponseDto;
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         'Recurring series created via API',
@@ -4999,7 +4999,7 @@ export class AppointmentsController {
         data: result,
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to create recurring series: ${error instanceof Error ? error.message : String(error)}`,
@@ -5064,7 +5064,7 @@ export class AppointmentsController {
         userId
       )) as RecurringSeriesResponseDto;
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Recurring series retrieved via API',
@@ -5082,7 +5082,7 @@ export class AppointmentsController {
         data: result,
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get recurring series: ${error instanceof Error ? error.message : String(error)}`,
@@ -5154,7 +5154,7 @@ export class AppointmentsController {
         userId
       )) as RecurringSeriesResponseDto;
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         'Recurring series updated via API',
@@ -5172,7 +5172,7 @@ export class AppointmentsController {
         data: result,
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to update recurring series: ${error instanceof Error ? error.message : String(error)}`,
@@ -5232,7 +5232,7 @@ export class AppointmentsController {
     try {
       await this.appointmentService.cancelRecurringSeries(seriesId, userId, clinicId);
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         'Recurring series cancelled via API',
@@ -5250,7 +5250,7 @@ export class AppointmentsController {
         data: { message: 'Recurring series cancelled successfully' },
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to cancel recurring series: ${error instanceof Error ? error.message : String(error)}`,
@@ -5417,7 +5417,7 @@ export class AppointmentsController {
         doctorId
       );
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Wait time analytics retrieved',
@@ -5437,7 +5437,7 @@ export class AppointmentsController {
         ...(result.error ? { error: result.error } : {}),
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get wait time analytics: ${error instanceof Error ? error.message : String(error)}`,
@@ -5531,7 +5531,7 @@ export class AppointmentsController {
         locationId
       );
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Check-in pattern analytics retrieved',
@@ -5550,7 +5550,7 @@ export class AppointmentsController {
         ...(result.error ? { error: result.error } : {}),
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get check-in pattern analytics: ${error instanceof Error ? error.message : String(error)}`,
@@ -5644,7 +5644,7 @@ export class AppointmentsController {
         locationId
       );
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'No-show correlation analytics retrieved',
@@ -5663,7 +5663,7 @@ export class AppointmentsController {
         ...(result.error ? { error: result.error } : {}),
       };
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get no-show correlation analytics: ${error instanceof Error ? error.message : String(error)}`,

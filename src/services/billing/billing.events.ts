@@ -82,7 +82,7 @@ export class BillingEventsListener {
   @OnEvent('billing.subscription.created')
   async handleSubscriptionCreated(payload: { subscriptionId: string; userId: string }) {
     if (!payload?.subscriptionId) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.WARN,
         'Skipping subscription.created event with missing subscriptionId',
@@ -94,7 +94,7 @@ export class BillingEventsListener {
       return;
     }
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.PAYMENT,
       LogLevel.INFO,
       `Handling subscription.created event for subscription ${payload.subscriptionId}`,
@@ -106,7 +106,7 @@ export class BillingEventsListener {
       // Send subscription confirmation and receipt via WhatsApp
       await this.billingService.sendSubscriptionConfirmation(payload.subscriptionId);
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
         `Subscription confirmation sent successfully for ${payload.subscriptionId}`,
@@ -114,7 +114,7 @@ export class BillingEventsListener {
         { subscriptionId: payload.subscriptionId }
       );
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to send subscription confirmation: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -149,7 +149,7 @@ export class BillingEventsListener {
         'BillingEventsListener'
       );
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to generate invoice PDF: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -188,7 +188,7 @@ export class BillingEventsListener {
       return;
     }
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.PAYMENT,
       LogLevel.INFO,
       `Handling payment.updated event for payment ${paymentId}`,
@@ -200,7 +200,7 @@ export class BillingEventsListener {
       // Payment updates are informational only.
       // Receipt WhatsApp delivery is handled by billing.receipt.paid to avoid duplicate sends.
       void paymentSnapshot;
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
         `Skipping receipt delivery on payment.updated; handled by billing.receipt.paid`,
@@ -208,7 +208,7 @@ export class BillingEventsListener {
         { paymentId }
       );
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to send receipt via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -241,7 +241,7 @@ export class BillingEventsListener {
     const skipWhatsApp = Boolean(payload?.skipWhatsApp ?? payload?.payload?.skipWhatsApp);
 
     if (!receiptId) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.WARN,
         'Skipping receipt.paid event with missing receiptId',
@@ -251,7 +251,7 @@ export class BillingEventsListener {
     }
 
     if (skipWhatsApp) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
         'Skipping receipt.paid WhatsApp delivery — caller requested skipWhatsApp (e.g. manual cash/UPI collection without billingSettings.autoWhatsAppReceipts)',
@@ -261,7 +261,7 @@ export class BillingEventsListener {
       return;
     }
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.PAYMENT,
       LogLevel.INFO,
       `Handling receipt.paid event for receipt ${receiptId}`,
@@ -272,7 +272,7 @@ export class BillingEventsListener {
     try {
       const invoiceRecord = await this.databaseService.findInvoiceByIdSafe(receiptId);
       if (invoiceRecord?.sentViaWhatsApp) {
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.PAYMENT,
           LogLevel.INFO,
           'Skipping receipt.paid delivery because the receipt was already sent via WhatsApp',
@@ -292,7 +292,7 @@ export class BillingEventsListener {
         invoiceSnapshot?.id || receiptId
       );
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         sent ? LogLevel.INFO : LogLevel.WARN,
         sent
@@ -302,7 +302,7 @@ export class BillingEventsListener {
         { receiptId, sent }
       );
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to send receipt via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -331,7 +331,7 @@ export class BillingEventsListener {
     const isBillingEnvelope = source === 'billingservice' || category === 'billing';
 
     if (!isBillingEnvelope) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.INFO,
         'Skipping plain payment.completed event to avoid duplicate confirmation processing',
@@ -374,7 +374,7 @@ export class BillingEventsListener {
       payload.clinicId || payload.appointment?.clinicId || (await this.resolveClinicId(payload));
 
     if (!resolvedClinicId) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.WARN,
         'Skipping payment.completed event because clinicId could not be resolved',
@@ -387,7 +387,7 @@ export class BillingEventsListener {
       return;
     }
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.PAYMENT,
       LogLevel.INFO,
       `Handling payment.completed event for payment ${payload.paymentId}`,
@@ -405,7 +405,7 @@ export class BillingEventsListener {
         const appointmentId = payload.appointmentId;
         const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
 
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.APPOINTMENT,
           LogLevel.INFO,
           'Evaluating appointment status transition after payment completion',
@@ -436,7 +436,7 @@ export class BillingEventsListener {
             return;
           }
 
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.APPOINTMENT,
             LogLevel.INFO,
             'Updating appointment status after payment completion',
@@ -604,7 +604,7 @@ export class BillingEventsListener {
             },
           });
 
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.APPOINTMENT,
             LogLevel.INFO,
             'Appointment confirmed after payment completion',
@@ -640,7 +640,7 @@ export class BillingEventsListener {
           return;
         }
 
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.APPOINTMENT,
           LogLevel.WARN,
           'Payment completed event received but appointment was not found for status transition',
@@ -653,7 +653,7 @@ export class BillingEventsListener {
         );
       }
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to confirm appointment after payment: ${error instanceof Error ? error.message : String(error)}`,
@@ -861,7 +861,7 @@ export class BillingEventsListener {
     appointmentStatus: string;
   }): Promise<void> {
     try {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.WARN,
         `Completed payment received for an appointment that is already ${details.appointmentStatus}; appointment left unchanged and no payout prepared`,
@@ -895,7 +895,7 @@ export class BillingEventsListener {
         reason: `Completed payment received for an appointment that was already ${details.appointmentStatus}`,
       });
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.WARN,
         `Failed to flag late settlement: ${error instanceof Error ? error.message : String(error)}`,
@@ -1047,7 +1047,7 @@ export class BillingEventsListener {
       }
       await this.billingService.markPayoutReadyForCompletedAppointment(appointmentId, clinicId);
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to mark payout ready after appointment completion: ${error instanceof Error ? error.message : String(error)}`,
@@ -1160,7 +1160,7 @@ export class BillingEventsListener {
             appointmentId,
           });
         } catch (error) {
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.ERROR,
             LogLevel.ERROR,
             `Failed to void invoice ${invoice.id} for expired appointment ${appointmentId}: ${error instanceof Error ? error.message : String(error)}`,
@@ -1174,7 +1174,7 @@ export class BillingEventsListener {
         }
       }
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to find draft invoices for appointment ${appointmentId}: ${error instanceof Error ? error.message : String(error)}`,
@@ -1198,7 +1198,7 @@ export class BillingEventsListener {
         try {
           await this.billingService.updatePayment(payment.id, { status: terminalStatus });
         } catch (error) {
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.ERROR,
             LogLevel.ERROR,
             `Failed to move pending payment ${payment.id} to ${terminalStatus}: ${error instanceof Error ? error.message : String(error)}`,
@@ -1213,7 +1213,7 @@ export class BillingEventsListener {
         }
       }
     } catch (error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to look up pending payments for appointment ${appointmentId}: ${error instanceof Error ? error.message : String(error)}`,

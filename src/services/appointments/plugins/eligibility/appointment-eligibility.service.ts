@@ -77,7 +77,7 @@ export class AppointmentEligibilityService {
       const cacheKey = `eligibility_check:${checkId}`;
       await this.cacheService.set(cacheKey, eligibilityCheck, this.ELIGIBILITY_CACHE_TTL);
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         `Checked eligibility for patient ${patientId}`,
@@ -91,7 +91,7 @@ export class AppointmentEligibilityService {
 
       return eligibilityCheck;
     } catch (_error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to check eligibility`,
@@ -166,7 +166,7 @@ export class AppointmentEligibilityService {
       await this.cacheService.set(cacheKey, criteriaList, this.ELIGIBILITY_CACHE_TTL);
       return criteriaList;
     } catch (_error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get eligibility criteria`,
@@ -235,7 +235,7 @@ export class AppointmentEligibilityService {
       // Invalidate criteria cache
       await this.invalidateEligibilityCache(criteriaData.clinicId);
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         `Created eligibility criteria ${criteriaResult.id}`,
@@ -248,7 +248,7 @@ export class AppointmentEligibilityService {
 
       return criteriaResult as EligibilityCriteria;
     } catch (_error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to create eligibility criteria`,
@@ -351,7 +351,7 @@ export class AppointmentEligibilityService {
         lastAppointment: patientWithUser.appointments[0]?.date || null,
       };
     } catch (_error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get patient info`,
@@ -528,7 +528,7 @@ export class AppointmentEligibilityService {
       await this.cacheService.set(cacheKey, historyList, this.ELIGIBILITY_CACHE_TTL);
       return historyList;
     } catch (_error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get eligibility history`,
@@ -597,7 +597,7 @@ export class AppointmentEligibilityService {
       // Invalidate cache
       await this.invalidateEligibilityCache(criteriaResult.clinicId);
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         `Updated eligibility criteria ${criteriaId}`,
@@ -610,7 +610,7 @@ export class AppointmentEligibilityService {
 
       return criteriaResult as EligibilityCriteria;
     } catch (_error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to update eligibility criteria`,
@@ -675,7 +675,7 @@ export class AppointmentEligibilityService {
       // Invalidate cache
       await this.invalidateEligibilityCache(clinicId);
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         `Deleted eligibility criteria ${criteriaId}`,
@@ -688,7 +688,7 @@ export class AppointmentEligibilityService {
 
       return true;
     } catch (_error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to delete eligibility criteria`,
@@ -716,7 +716,7 @@ export class AppointmentEligibilityService {
         'AppointmentEligibilityService'
       );
     } catch (_error) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to invalidate eligibility cache`,

@@ -117,7 +117,7 @@ export class CacheInvalidationRunner {
   private async invalidateOneTag(tag: string): Promise<void> {
     try {
       await this.cacheService.invalidateCacheByTag(tag);
-      await this.loggingService?.log(
+      void this.loggingService?.log(
         LogType.CACHE,
         LogLevel.DEBUG,
         'Invalidated cache tag',
@@ -160,7 +160,7 @@ export class CacheInvalidationRunner {
 
   private async invalidateOnePattern(pattern: string): Promise<void> {
     await this.cacheService.invalidateCacheByPattern(pattern);
-    await this.loggingService?.log(
+    void this.loggingService?.log(
       LogType.CACHE,
       LogLevel.DEBUG,
       'Invalidated cache pattern',

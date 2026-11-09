@@ -45,7 +45,7 @@ export class ClinicWaitlistPlugin extends BaseAppointmentPlugin {
     };
 
     if (this.loggingService) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         `Processing waitlist operation: ${operation}`,
@@ -104,7 +104,7 @@ export class ClinicWaitlistPlugin extends BaseAppointmentPlugin {
       }
     } catch (_error) {
       if (this.loggingService) {
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.ERROR,
           LogLevel.ERROR,
           `Waitlist operation failed: ${operation}`,

@@ -1001,7 +1001,7 @@ export class CoreAppointmentService {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
       // Robust error handling - log synchronously for critical errors
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
         `Failed to get appointments: ${errorMessage}`,

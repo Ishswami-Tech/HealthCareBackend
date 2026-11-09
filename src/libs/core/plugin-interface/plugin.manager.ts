@@ -177,7 +177,7 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
           await plugin.initialize(pluginContext);
           this.initializePluginMetrics(plugin.name);
 
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.SYSTEM,
             LogLevel.INFO,
             `Plugin ${plugin.name} initialized`,
@@ -186,7 +186,7 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
           );
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          await this.loggingService.log(
+          void this.loggingService.log(
             LogType.ERROR,
             LogLevel.ERROR,
             `Failed to initialize plugin: ${plugin.name}`,
@@ -199,7 +199,7 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
       await Promise.allSettled(initPromises);
 
       const duration = Date.now() - startTime;
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'All plugins initialized',
@@ -213,7 +213,7 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
       const errorMessage = error instanceof Error ? error.message : String(error);
       const duration = Date.now() - startTime;
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to initialize plugins',
@@ -265,7 +265,7 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
       const duration = Date.now() - startTime;
       this.updatePluginMetrics(pluginName, true, duration);
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.DEBUG,
         `Plugin ${pluginName} executed successfully`,
@@ -283,7 +283,7 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.updatePluginMetrics(pluginName, false, duration);
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Plugin ${pluginName} execution failed`,
@@ -326,7 +326,7 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
     const plugins = this.registry.getPluginsByFeature(feature);
 
     if (plugins.length === 0) {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.WARN,
         `No plugins found for feature: ${feature}`,
@@ -351,7 +351,7 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
       const results = await Promise.allSettled(executionPromises);
 
       const duration = Date.now() - startTime;
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.DEBUG,
         `Executed ${plugins.length} plugins for feature: ${feature}`,
@@ -375,7 +375,7 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
       const errorMessage = error instanceof Error ? error.message : String(error);
       const duration = Date.now() - startTime;
 
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to execute plugins for feature: ${feature}`,
@@ -466,7 +466,7 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
       await Promise.allSettled(destroyPromises);
 
       const duration = Date.now() - startTime;
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'All plugins shut down',
@@ -478,7 +478,7 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
       );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to shutdown plugins',
@@ -744,7 +744,7 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
           healthStatus.error = errorMessage;
         }
 
-        await this.loggingService.log(
+        void this.loggingService.log(
           LogType.ERROR,
           LogLevel.WARN,
           `Health check failed for plugin: ${plugin.name}`,

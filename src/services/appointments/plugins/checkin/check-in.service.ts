@@ -968,7 +968,7 @@ export class CheckInService {
       }
     }
 
-    await this.loggingService.log(
+    void this.loggingService.log(
       LogType.BUSINESS,
       LogLevel.INFO,
       `Validated appointment order for clinic ${clinicId}`,
