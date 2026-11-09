@@ -478,24 +478,31 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
-      // Check if key exists before executing strategy (for hit tracking)
-      let keyExists = false;
-      try {
-        keyExists = !options.forceRefresh && (await this.cacheRepository.exists(key));
-      } catch (_existsError) {
-        // If exists check fails, continue with cache operation (will be treated as miss)
-        keyExists = false;
-      }
+      // Execute cache operation (strategy handles hit/miss, stale data, SWR internally).
+      // This is L2 (distributed cache). Rather than probing `exists(key)` first to decide
+      // whether to coordinate a fill with other processes (a second, separate round-trip
+      // for a determination the strategy below immediately re-derives itself via its own
+      // read), wrap `fetchFn` so stampede-protection only engages at the exact point a
+      // strategy actually decides it needs fresh data. `missOccurred` flips to true only
+      // if some strategy really calls it, which is a more precise "was this a miss" signal
+      // than a bare exists() check (e.g. a fully-expired SWR entry still "exists" but is
+      // about to trigger its own fetchFn - the old exists()-based check would have wrongly
+      // skipped fill-coordination for exactly that case).
+      let missOccurred = false;
+      const coordinatedFetchFn = options.forceRefresh
+        ? fetchFn
+        : async (): Promise<T> => {
+            missOccurred = true;
+            const releaseFill = await this.coordinateFill(key);
+            try {
+              return await fetchFn();
+            } finally {
+              await releaseFill();
+            }
+          };
 
-      // Execute cache operation (strategy handles hit/miss, stale data, SWR internally)
-      // This is L2 (distributed cache). On a miss, coordinate with other processes first.
-      const releaseFill = keyExists || options.forceRefresh ? null : await this.coordinateFill(key);
-      let result: T;
-      try {
-        result = await this.cacheRepository.cache(key, fetchFn, options);
-      } finally {
-        await releaseFill?.();
-      }
+      const result = await this.cacheRepository.cache(key, coordinatedFetchFn, options);
+      const keyExists = !options.forceRefresh && !missOccurred;
 
       // Populate L1 after L2 cache operation (if enabled)
       if (this.enableL1 && this.l1CacheService) {
