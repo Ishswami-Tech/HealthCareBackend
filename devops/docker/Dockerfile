@@ -318,11 +318,22 @@ ENV PRISMA_SCHEMA_PATH=/app/src/libs/infrastructure/database/prisma/schema.prism
 # does sustained cron work was OOM-killed repeatedly (~daily, 9 times observed) with RSS
 # only ~350-415MB at each kill - nowhere near "out of memory" from V8's perspective at a
 # 6GB target, but well past the 512MB container actually had.
-# 320MB leaves ~37% headroom under a 512MB limit for everything old-space doesn't cover
-# (new-space/code-space, native buffers, thread stacks, the Prisma query engine). If this
-# image is ever deployed with a larger memory limit, raise this to match - it should stay
-# meaningfully below whatever the container's actual limit is, never above it.
-ENV NODE_OPTIONS="--max-old-space-size=320 --max-http-header-size=16384 --expose-gc"
+# --max-old-space-size alone is NOT enough: V8's *total* JS heap ceiling is old-space plus
+# a separate new-space (young generation), and new-space's default size is NOT derived from
+# --max-old-space-size - it scales off the HOST's total RAM, which on this VPS is far larger
+# than this one container's 512MB cgroup limit. Measured directly (Node 24, matching this
+# image's base): --max-old-space-size=320 alone gave a TOTAL heap_size_limit of 512MB - old
+# space (320) plus ~192MB of default new-space/other overhead - i.e. V8's own heap ceiling
+# already equaled the ENTIRE container limit, leaving zero room for anything outside the JS
+# heap (native buffers, thread stacks, the Prisma query engine binary, libuv/OS overhead).
+# That would have reproduced the same class of OOM this fix exists for, just later.
+# Explicitly bounding --max-semi-space-size caps new-space too: 256 old + 16 semi measured at
+# a 304MB total ceiling, leaving ~208MB (~40%) of the 512MB limit for everything off-heap.
+# If this image is ever deployed with a larger memory limit, raise both to match - the total
+# (old-space + ~1.5x max-semi-space-size) should stay meaningfully below the container's
+# actual limit, never above it. Re-measure with `node -e "console.log(require('v8').getHeapStatistics().heap_size_limit)"`
+# under the target NODE_OPTIONS before changing either number.
+ENV NODE_OPTIONS="--max-old-space-size=256 --max-semi-space-size=16 --max-http-header-size=16384 --expose-gc"
 
 # Run as the unprivileged `node` user (uid/gid 1000) that ships with the base image (P0-5).
 # Writable runtime paths: logs, tmp, the local storage fallback (storage/assets,
