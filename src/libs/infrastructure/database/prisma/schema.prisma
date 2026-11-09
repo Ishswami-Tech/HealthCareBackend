@@ -1275,6 +1275,11 @@ model Appointment {
   @@index([clinicId, isFollowUp, type]) // Clinic's follow-ups by type
   @@index([parentAppointmentId, date]) // Follow-up chains chronologically
   @@index([seriesId, seriesSequence]) // Recurring series order
+  // userId has no index of its own: a PATIENT-role list query ORs it with patientId
+  // (CoreAppointmentService.buildAppointmentWhereClause), and with clinicId always ANDed
+  // in, an unindexed OR branch made Postgres fall back to a Seq Scan on the whole table
+  // for every such query instead of using any index.
+  @@index([clinicId, userId]) // Patient's appointments via booking-user fallback
 }
 
 /// Durable in-person token counter: ONE series per clinic location per IST visit day.

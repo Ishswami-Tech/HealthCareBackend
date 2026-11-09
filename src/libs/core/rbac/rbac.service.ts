@@ -134,8 +134,10 @@ export class RbacService {
         hasPermission ? this.CACHE_TTL : this.DENIED_CACHE_TTL
       );
 
-      // Log permission check
-      await this.loggingService.log(
+      // Log permission check. Fire-and-forget like every other diagnostic log in this
+      // service (see getUserRoles/getRolePermissions below) — awaiting it put a cache
+      // round-trip on the latency of every permission check in the request path.
+      void this.loggingService.log(
         LogType.SECURITY,
         hasPermission ? LogLevel.INFO : LogLevel.WARN,
         `Permission check: ${hasPermission ? 'GRANTED' : 'DENIED'}`,

@@ -4165,23 +4165,28 @@ export class AppointmentsService {
     page: number = 1,
     limit: number = 20
   ): Promise<AppointmentResult> {
-    // RBAC: Check permission to read appointments
-    const permissionCheck = await this.rbacService.checkPermission({
-      userId,
-      clinicId,
-      resource: 'appointments',
-      action: 'read',
-    });
+    const isConsultantRole = [Role.DOCTOR, Role.ASSISTANT_DOCTOR].includes(_role as Role);
+
+    // RBAC permission check and role-profile resolution don't depend on each other —
+    // run them concurrently instead of back-to-back. Each one touches the cache (a
+    // network round-trip), so doing this sequentially doubled the wait for no reason.
+    const [permissionCheck, patient, doctor] = await Promise.all([
+      this.rbacService.checkPermission({
+        userId,
+        clinicId,
+        resource: 'appointments',
+        action: 'read',
+      }),
+      _role === 'PATIENT'
+        ? this.resolvePatientProfileForAppointments(userId)
+        : Promise.resolve(null),
+      isConsultantRole ? this.resolveDoctorEntityId(userId, clinicId) : Promise.resolve(null),
+    ]);
 
     if (!permissionCheck.hasPermission) {
       throw this.errors.insufficientPermissions('AppointmentsService.getAppointments');
     }
 
-    const patient =
-      _role === 'PATIENT' ? await this.resolvePatientProfileForAppointments(userId) : null;
-    const isConsultantRole = [Role.DOCTOR, Role.ASSISTANT_DOCTOR].includes(_role as Role);
-
-    const doctor = isConsultantRole ? await this.resolveDoctorEntityId(userId, clinicId) : null;
     // An assistant doctor usually has no Doctor row of their own: they see the doctors they cover
     // (or every doctor of the clinic when no coverage is configured), like the queue page.
     const assistantDoctorIds =
@@ -4189,9 +4194,10 @@ export class AppointmentsService {
         ? await this.resolveAssistantListDoctorIds(userId, clinicId, filters.doctorId)
         : undefined;
 
-    // Log patient resolution for debugging
+    // Log patient resolution for debugging. Fire-and-forget: nothing below depends on
+    // this write completing, and awaiting it added a cache round-trip to every request.
     if (_role === 'PATIENT') {
-      await this.loggingService.log(
+      void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         `[getAppointments] Patient resolution: userId=${userId}, patientId=${patient?.id || 'NOT_FOUND'}`,
