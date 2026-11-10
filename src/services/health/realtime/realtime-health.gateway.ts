@@ -82,7 +82,9 @@ interface SubscribeResponse {
     origin: getSocketCorsOrigin(),
     credentials: true,
   },
-  transports: ['websocket', 'polling'],
+  // Must match main.ts's server-level transports (websocket-only: no sticky-session
+  // routing across replicas - see the comment there for why).
+  transports: ['websocket'],
   pingTimeout: 60000,
   pingInterval: 25000,
   connectTimeout: 45000,

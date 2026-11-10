@@ -13,7 +13,9 @@ import { LoggingService } from '@infrastructure/logging/logging.service';
     origin: getSocketCorsOrigin(),
     credentials: true,
   },
-  transports: ['websocket', 'polling'],
+  // Must match main.ts's server-level transports (websocket-only: no sticky-session
+  // routing across replicas - see the comment there for why).
+  transports: ['websocket'],
   pingInterval: 25000,
   pingTimeout: 60000,
 })

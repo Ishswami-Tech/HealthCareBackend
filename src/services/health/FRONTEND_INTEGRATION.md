@@ -51,7 +51,7 @@ yarn add socket.io-client
 import { io } from 'socket.io-client';
 
 const healthSocket = io('http://your-backend-url/health', {
-  transports: ['websocket', 'polling'],
+  transports: ['websocket'],
   reconnection: true,
 });
 
@@ -71,7 +71,7 @@ import { io, Socket } from 'socket.io-client';
 
 const healthSocket = io('http://your-backend-url/health', {
   // Transport options
-  transports: ['websocket', 'polling'], // Prefer websocket, fallback to polling
+  transports: ['websocket'], // Polling is rejected server-side: no sticky-session routing across replicas
 
   // Reconnection settings
   reconnection: true,
@@ -96,7 +96,7 @@ const healthSocket = io('http://your-backend-url/health', {
 ```typescript
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8088';
 const healthSocket = io(`${API_URL}/health`, {
-  transports: ['websocket', 'polling'],
+  transports: ['websocket'],
   reconnection: true,
 });
 ```
@@ -345,7 +345,7 @@ export function useHealthMonitoring() {
   useEffect(() => {
     const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8088';
     const healthSocket = io(`${API_URL}/health`, {
-      transports: ['websocket', 'polling'],
+      transports: ['websocket'],
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionAttempts: 5,
@@ -527,7 +527,7 @@ export function useHealthMonitoring() {
   onMounted(() => {
     const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8088';
     socket = io(`${API_URL}/health`, {
-      transports: ['websocket', 'polling'],
+      transports: ['websocket'],
       reconnection: true,
     });
 
@@ -569,7 +569,7 @@ export function useHealthMonitoring() {
 ```javascript
 const API_URL = 'http://localhost:8088';
 const healthSocket = io(`${API_URL}/health`, {
-  transports: ['websocket', 'polling'],
+  transports: ['websocket'],
   reconnection: true,
 });
 

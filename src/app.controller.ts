@@ -750,7 +750,7 @@ export class AppController {
                 
                 // Connect to the test namespace
                 socket = io('${baseUrl}/test', {
-                  transports: ['polling', 'websocket'],
+                  transports: ['websocket'],
                   forceNew: true,
                   reconnectionAttempts: 3,
                   timeout: 5000
@@ -1730,7 +1730,7 @@ export class AppController {
                 
                 // Connect to /health namespace for real-time health updates
                 healthSocket = io(BASE_URL + '/health', {
-                    transports: ['websocket', 'polling'],
+                    transports: ['websocket'],
                     reconnection: true,
                     reconnectionAttempts: 5,
                     reconnectionDelay: 1000,

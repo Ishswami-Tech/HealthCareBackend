@@ -407,7 +407,20 @@ async function _setupWebSocketAdapter(
             },
             path: '/socket.io',
             serveClient: true,
-            transports: ['websocket', 'polling'],
+            // WebSocket-only: this service runs multiple replicas behind a load balancer with
+            // no session-affinity (sticky-session) routing configured. HTTP long-polling needs
+            // every request of a session pinned to the same backend process, since each
+            // process's Engine.IO engine only knows the sessions it personally handshook - the
+            // Socket.IO Redis/Dragonfly adapter only broadcasts between already-established
+            // sockets, it does not share that per-process handshake state. Without sticky
+            // sessions, round-robin sends a session's second poll to a different replica, which
+            // has never seen that sid, producing "Session ID unknown" (400) on most requests -
+            // confirmed in production (close to half of polling GETs, most polling POSTs).
+            // A WebSocket connection doesn't have this problem: once a client upgrades, it's a
+            // single long-lived connection pinned to whichever replica accepted it - no further
+            // routing decisions are made for its lifetime. If sticky-session routing is ever
+            // added at the proxy layer, 'polling' can be restored as a fallback transport.
+            transports: ['websocket'],
             allowEIO3: false,
             pingTimeout: 60000,
             pingInterval: 25000,
