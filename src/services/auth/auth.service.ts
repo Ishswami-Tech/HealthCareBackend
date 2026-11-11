@@ -1945,17 +1945,17 @@ export class AuthService {
       { userId: user.id }
     );
 
-    // Validate clinic access
+    // Validate clinic access. For this freshly-created user, validateClinicAccessForAuth's
+    // PATIENT branch just re-resolves the same clinicUUID we already have (the user's
+    // primaryClinicId was set to it at creation, so there's nothing stale to auto-heal) -
+    // it always returns the identical clinicUUID, so there's no need to re-run
+    // ensurePatientRecordForAuth against it: the patient record was already created above
+    // with this exact clinicUUID.
     const validatedClinicUUID = await this.validateClinicAccessForAuth(
       user.id,
       clinicUUID,
       'verifyOtp'
     );
-
-    const otpUserRole = user.role as Role;
-    if (otpUserRole === Role.PATIENT) {
-      await this.ensurePatientRecordForAuth(user.id, validatedClinicUUID, 'verifyOtp');
-    }
 
     // Create session
     const session = await this.sessionService.createSession({
