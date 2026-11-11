@@ -8,6 +8,7 @@ import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { randomUUID } from 'crypto';
+import { SlowRetryScheduler } from '@utils/slow-retry-scheduler.util';
 import {
   SOCKET_RELAY_CHANNEL,
   SOCKET_RELAY_PING_EVENT,
@@ -20,6 +21,11 @@ const RELAY_SUBSCRIBE_MAX_ATTEMPTS = 30;
 const RELAY_SUBSCRIBE_RETRY_MS = 2000;
 const RELAY_SUBSCRIBE_RETRY_MAX_MS = 30000;
 const RELAY_SEEN_IDS_MAX = 2000;
+// Once the fast retry burst above is exhausted, don't give up forever: the cache client may
+// simply not have reached "ready" within that ~11-12 minute bootstrap window (it's a one-shot
+// sequence with nothing else re-arming it). Settle into a slow, indefinite retry instead, same
+// self-heal pattern already used for the client-side websocket reconnection in the frontends.
+const RELAY_SLOW_RETRY_MS = 60000;
 
 export {
   SOCKET_RELAY_CHANNEL,
@@ -48,6 +54,11 @@ export class SocketService implements OnModuleDestroy {
   private relayConfirmed = false;
   private pendingRelayPingId: string | null = null;
   private readonly seenRelayIds = new Set<string>();
+  private readonly relaySlowRetry = new SlowRetryScheduler(
+    RELAY_SLOW_RETRY_MS,
+    () => this.attemptRelaySubscribe(0),
+    () => this.relayConfirmed
+  );
   private healthCheckInterval!: NodeJS.Timeout;
   private readonly HEALTH_CHECK_INTERVAL = 30000; // 30 seconds
 
@@ -304,13 +315,38 @@ export class SocketService implements OnModuleDestroy {
     if (this.relayConfirmed || !this.cacheService) {
       return;
     }
+    await this.attemptRelaySubscribe(attempt);
+
+    const retry = setTimeout(
+      () => {
+        if (this.relayConfirmed) return;
+        if (attempt >= RELAY_SUBSCRIBE_MAX_ATTEMPTS) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.ERROR,
+            'Socket relay not confirmed after fast retries: worker-originated socket events will not reach clients until it self-heals',
+            'SocketService',
+            { attempts: attempt }
+          );
+          this.relaySlowRetry.start();
+          return;
+        }
+        void this.subscribeToRelay(attempt + 1);
+      },
+      Math.min(RELAY_SUBSCRIBE_RETRY_MS * attempt, RELAY_SUBSCRIBE_RETRY_MAX_MS)
+    );
+    retry.unref?.();
+  }
+
+  /** The actual subscribe-then-self-ping attempt, with no retry scheduling of its own. */
+  private async attemptRelaySubscribe(attempt: number): Promise<void> {
     try {
-      await this.cacheService.subscribe(SOCKET_RELAY_CHANNEL, raw => {
+      await this.cacheService?.subscribe(SOCKET_RELAY_CHANNEL, raw => {
         this.deliverRelayedMessage(raw);
       });
       const pingId = randomUUID();
       this.pendingRelayPingId = pingId;
-      await this.cacheService.publish(
+      await this.cacheService?.publish(
         SOCKET_RELAY_CHANNEL,
         JSON.stringify({ id: pingId, rooms: null, event: SOCKET_RELAY_PING_EVENT, data: {} })
       );
@@ -322,25 +358,6 @@ export class SocketService implements OnModuleDestroy {
         'SocketService'
       );
     }
-
-    const retry = setTimeout(
-      () => {
-        if (this.relayConfirmed) return;
-        if (attempt >= RELAY_SUBSCRIBE_MAX_ATTEMPTS) {
-          void this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.ERROR,
-            'Socket relay not confirmed: worker-originated socket events will not reach clients',
-            'SocketService',
-            { attempts: attempt }
-          );
-          return;
-        }
-        void this.subscribeToRelay(attempt + 1);
-      },
-      Math.min(RELAY_SUBSCRIBE_RETRY_MS * attempt, RELAY_SUBSCRIBE_RETRY_MAX_MS)
-    );
-    retry.unref?.();
   }
 
   /** True the first time an id is seen; remembers a bounded window of ids. */
@@ -363,6 +380,7 @@ export class SocketService implements OnModuleDestroy {
     if (message.event === SOCKET_RELAY_PING_EVENT) {
       if (message.id && message.id === this.pendingRelayPingId && !this.relayConfirmed) {
         this.relayConfirmed = true;
+        this.relaySlowRetry.stop();
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
@@ -550,6 +568,7 @@ export class SocketService implements OnModuleDestroy {
     if (this.healthCheckInterval) {
       clearInterval(this.healthCheckInterval);
     }
+    this.relaySlowRetry.stop();
     if (this.server) {
       this.server.close().catch(error => {
         void this.loggingService.log(

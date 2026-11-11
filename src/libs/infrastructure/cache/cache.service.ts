@@ -48,6 +48,7 @@ import {
 import { randomUUID } from 'crypto';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
+import { SlowRetryScheduler } from '@utils/slow-retry-scheduler.util';
 
 // Multi-Layer Cache (L1) - Optional
 import { InMemoryCacheService } from '@infrastructure/cache/layers/in-memory-cache.service';
@@ -89,6 +90,15 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   private static readonly INVALIDATION_SUBSCRIBE_RETRY_MS = 2000;
   private static readonly INVALIDATION_SUBSCRIBE_RETRY_MAX_MS = 30000;
   private static readonly INVALIDATION_SEEN_IDS_MAX = 2000;
+  // Once the fast retry burst above is exhausted, don't give up forever: the cache client may
+  // simply not have reached "ready" within that ~11-12 minute bootstrap window (it's a one-shot
+  // sequence with nothing else re-arming it). Settle into a slow, indefinite retry instead.
+  private static readonly INVALIDATION_SLOW_RETRY_MS = 60000;
+  private readonly invalidationSlowRetry = new SlowRetryScheduler(
+    CacheService.INVALIDATION_SLOW_RETRY_MS,
+    () => this.attemptInvalidationSubscribe(0),
+    () => this.cacheInvalidationSubscribed
+  );
   /** Identifies this process's broadcasts (it ignores its own). */
   private readonly cacheProcessId = randomUUID();
   private readonly seenInvalidationIds = new BoundedIdSet(CacheService.INVALIDATION_SEEN_IDS_MAX);
@@ -168,6 +178,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
+    this.invalidationSlowRetry.stop();
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
@@ -187,6 +198,34 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     if (this.cacheInvalidationSubscribed || !this.l1CacheService || !this.enableL1) {
       return;
     }
+    await this.attemptInvalidationSubscribe(attempt);
+
+    const retry = setTimeout(
+      () => {
+        if (this.cacheInvalidationSubscribed) return;
+        if (attempt >= CacheService.INVALIDATION_SUBSCRIBE_MAX_ATTEMPTS) {
+          void this.loggingService.log(
+            LogType.CACHE,
+            LogLevel.ERROR,
+            'Cache invalidation broadcasts not confirmed after fast retries: L1 entries may stay stale until their TTL, until it self-heals',
+            'CacheService',
+            { channel: CACHE_INVALIDATION_CHANNEL, attempts: attempt }
+          );
+          this.invalidationSlowRetry.start();
+          return;
+        }
+        void this.subscribeToCacheInvalidations(attempt + 1);
+      },
+      Math.min(
+        CacheService.INVALIDATION_SUBSCRIBE_RETRY_MS * attempt,
+        CacheService.INVALIDATION_SUBSCRIBE_RETRY_MAX_MS
+      )
+    );
+    retry.unref?.();
+  }
+
+  /** The actual subscribe-then-self-ping attempt, with no retry scheduling of its own. */
+  private async attemptInvalidationSubscribe(attempt: number): Promise<void> {
     try {
       await this.subscribe(CACHE_INVALIDATION_CHANNEL, message => {
         this.handleCacheInvalidationMessage(message);
@@ -206,28 +245,6 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
         { attempt, error: error instanceof Error ? error.message : String(error) }
       );
     }
-
-    const retry = setTimeout(
-      () => {
-        if (this.cacheInvalidationSubscribed) return;
-        if (attempt >= CacheService.INVALIDATION_SUBSCRIBE_MAX_ATTEMPTS) {
-          void this.loggingService.log(
-            LogType.CACHE,
-            LogLevel.ERROR,
-            'Cache invalidation broadcasts not confirmed: L1 entries may stay stale until their TTL',
-            'CacheService',
-            { channel: CACHE_INVALIDATION_CHANNEL, attempts: attempt }
-          );
-          return;
-        }
-        void this.subscribeToCacheInvalidations(attempt + 1);
-      },
-      Math.min(
-        CacheService.INVALIDATION_SUBSCRIBE_RETRY_MS * attempt,
-        CacheService.INVALIDATION_SUBSCRIBE_RETRY_MAX_MS
-      )
-    );
-    retry.unref?.();
   }
 
   private handleCacheInvalidationMessage(raw: string): void {
@@ -236,6 +253,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     if (action.kind === 'ping') {
       if (!this.cacheInvalidationSubscribed && action.id === this.pendingInvalidationPingId) {
         this.cacheInvalidationSubscribed = true;
+        this.invalidationSlowRetry.stop();
         void this.loggingService.log(
           LogType.CACHE,
           LogLevel.INFO,
