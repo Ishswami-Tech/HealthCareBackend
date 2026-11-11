@@ -371,13 +371,18 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     options?: QueryOptions
   ): Promise<T> {
     const startTime = Date.now();
-    const operationName = 'READ_OPERATION';
+    const defaultOperationName = 'READ_OPERATION';
     const queryOptions = options || {};
+    // An explicit operationName (QueryOptionsBuilder.operation()) both discriminates the cache
+    // key on its own (see hasDiscriminatingParams below) and makes the key more legible than the
+    // generic default; callers that don't set it keep producing the exact same key as before.
+    const operationName = queryOptions.operationName || defaultOperationName;
 
     // Generate cache key if caching is enabled.
     // IMPORTANT: Cache keys MUST include query-defining params (where/include/select/pagination/etc).
     // A coarse key (e.g., only operationName) causes collisions and returns the wrong entity.
     const cacheParams: Record<string, unknown> = {
+      ...(queryOptions.operationName ? { operationName: queryOptions.operationName } : {}),
       ...(queryOptions.clinicId ? { clinicId: queryOptions.clinicId } : {}),
       ...(queryOptions.userId ? { userId: queryOptions.userId } : {}),
       ...(queryOptions.where ? { where: queryOptions.where } : {}),
@@ -409,11 +414,14 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
       'page' in cacheParams ||
       'limit' in cacheParams;
 
-    // Only cache when the options describe the query itself (where/select/include/orderBy/page/limit).
-    // The operation is a closure that is NOT part of the key, so clinicId/userId alone would make every
+    // Only cache when the options describe the query itself (where/select/include/orderBy/page/limit)
+    // OR the caller passed an explicit operationName via QueryOptionsBuilder.operation(). The operation
+    // closure itself is NOT part of the key, so clinicId/userId alone would make every
     // `.clinicId(x).useCache(true)` read in that clinic share ONE key and return each other's results
-    // (patient search ignored, counts returned as arrays, dashboard figures swapped).
-    const hasDiscriminatingParams = hasEntityShapeParams;
+    // (patient search ignored, counts returned as arrays, dashboard figures swapped) - operationName
+    // exists precisely so a read with no real where/select/etc. (a plain count/exists-style query)
+    // can still get a safe, distinct key instead of silently caching nothing at all.
+    const hasDiscriminatingParams = hasEntityShapeParams || 'operationName' in cacheParams;
 
     const cacheKey =
       queryOptions.useCache !== false && this.queryCache && hasDiscriminatingParams

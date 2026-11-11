@@ -15,31 +15,41 @@ export class RoleMethods extends DatabaseMethodsBase {
    * Find role by name
    */
   async findRoleByNameSafe(name: string, clinicId?: string): Promise<RbacRoleEntity | null> {
-    return await this.executeRead<RbacRoleEntity | null>(async prisma => {
-      // For composite unique keys with nullable fields, we need different approaches:
-      // - When clinicId is provided: use findUnique with composite key
-      // - When clinicId is null/undefined: use findFirst since Prisma doesn't allow null in composite unique
-      if (clinicId) {
-        return await prisma.rbacRole.findUnique({
-          where: {
-            name_domain_clinicId: {
-              name,
-              domain: 'healthcare',
-              clinicId,
+    return await this.executeRead<RbacRoleEntity | null>(
+      async prisma => {
+        // For composite unique keys with nullable fields, we need different approaches:
+        // - When clinicId is provided: use findUnique with composite key
+        // - When clinicId is null/undefined: use findFirst since Prisma doesn't allow null in composite unique
+        if (clinicId) {
+          return await prisma.rbacRole.findUnique({
+            where: {
+              name_domain_clinicId: {
+                name,
+                domain: 'healthcare',
+                clinicId,
+              },
             },
+          });
+        }
+
+        // For system roles (no clinicId), use findFirst with explicit null check
+        return await prisma.rbacRole.findFirst({
+          where: {
+            name,
+            domain: 'healthcare',
+            clinicId: null,
           },
         });
-      }
-
-      // For system roles (no clinicId), use findFirst with explicit null check
-      return await prisma.rbacRole.findFirst({
-        where: {
-          name,
-          domain: 'healthcare',
-          clinicId: null,
-        },
-      });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('long').priority('normal').hipaaCompliant(false).build());
+      },
+      this.queryOptionsBuilder
+        .operation('findRoleByNameSafe')
+        .where({ name, clinicId: clinicId ?? null })
+        .useCache(true)
+        .cacheStrategy('long')
+        .priority('normal')
+        .hipaaCompliant(false)
+        .build()
+    );
   }
 
   /**
@@ -50,7 +60,7 @@ export class RoleMethods extends DatabaseMethodsBase {
       return await prisma.rbacRole.findUnique({
         where: { id },
       });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('long').priority('normal').hipaaCompliant(false).build());
+    }, this.queryOptionsBuilder.operation('findRoleByIdSafe').where({ id }).useCache(true).cacheStrategy('long').priority('normal').hipaaCompliant(false).build());
   }
 
   /**
@@ -95,13 +105,23 @@ export class RoleMethods extends DatabaseMethodsBase {
    * Find roles by clinic
    */
   async findRolesByClinicSafe(clinicId?: string): Promise<RbacRoleEntity[]> {
-    return await this.executeRead<RbacRoleEntity[]>(async prisma => {
-      return await prisma.rbacRole.findMany({
-        where: {
-          ...(clinicId && { clinicId }),
-        },
-      });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(false).build());
+    return await this.executeRead<RbacRoleEntity[]>(
+      async prisma => {
+        return await prisma.rbacRole.findMany({
+          where: {
+            ...(clinicId && { clinicId }),
+          },
+        });
+      },
+      this.queryOptionsBuilder
+        .operation('findRolesByClinicSafe')
+        .where({ clinicId: clinicId ?? null })
+        .useCache(true)
+        .cacheStrategy('short')
+        .priority('normal')
+        .hipaaCompliant(false)
+        .build()
+    );
   }
 
   /**
@@ -147,7 +167,7 @@ export class RoleMethods extends DatabaseMethodsBase {
       return await prisma.userRole.count({
         where: { roleId },
       });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(false).build());
+    }, this.queryOptionsBuilder.operation('countUserRolesSafe').where({ roleId }).useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(false).build());
   }
 
   /**

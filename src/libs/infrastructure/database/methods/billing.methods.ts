@@ -47,7 +47,7 @@ export class BillingMethods extends DatabaseMethodsBase {
           payments: true,
         },
       });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
+    }, this.queryOptionsBuilder.operation('findInvoiceByIdSafe').where({ id }).useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
   }
 
   /**
@@ -62,7 +62,7 @@ export class BillingMethods extends DatabaseMethodsBase {
           payments: true,
         },
       });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
+    }, this.queryOptionsBuilder.operation('findInvoicesSafe').where(where).useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
   }
 
   /**
@@ -194,7 +194,7 @@ export class BillingMethods extends DatabaseMethodsBase {
           appointments: true,
         },
       });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
+    }, this.queryOptionsBuilder.operation('findSubscriptionByIdSafe').where({ id }).useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
   }
 
   /**
@@ -211,7 +211,7 @@ export class BillingMethods extends DatabaseMethodsBase {
           appointments: true,
         },
       });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
+    }, this.queryOptionsBuilder.operation('findSubscriptionsSafe').where(where).useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
   }
 
   /**
@@ -297,7 +297,7 @@ export class BillingMethods extends DatabaseMethodsBase {
           subscriptions: true,
         },
       });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
+    }, this.queryOptionsBuilder.operation('findBillingPlanByIdSafe').where({ id }).useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
   }
 
   /**
@@ -311,7 +311,7 @@ export class BillingMethods extends DatabaseMethodsBase {
           subscriptions: true,
         },
       });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
+    }, this.queryOptionsBuilder.operation('findBillingPlansSafe').where(where).useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
   }
 
   /**
@@ -420,7 +420,7 @@ export class BillingMethods extends DatabaseMethodsBase {
           invoice: true,
         },
       });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
+    }, this.queryOptionsBuilder.operation('findPaymentByIdSafe').where({ id }).useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
   }
 
   /**
@@ -445,7 +445,7 @@ export class BillingMethods extends DatabaseMethodsBase {
           },
         },
       });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
+    }, this.queryOptionsBuilder.operation('findPaymentsSafe').where(where).useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
   }
 
   /**

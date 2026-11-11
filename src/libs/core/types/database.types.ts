@@ -892,6 +892,13 @@ export interface QueryOptions {
   include?: Record<string, unknown>;
   select?: Record<string, boolean>;
   where?: Record<string, unknown>;
+  /**
+   * Explicit, caller-supplied operation name. Guarantees a cache key gets built even when
+   * `where`/`select`/`include`/`orderBy`/`page`/`limit` are all absent - without it, a query
+   * identified only by `clinicId`/`userId` silently gets `cacheKey = null` and `useCache(true)`
+   * is a no-op with no error or warning (see executeRead's hasDiscriminatingParams check).
+   */
+  operationName?: string;
 
   // Healthcare-specific options
   clinicId?: string;

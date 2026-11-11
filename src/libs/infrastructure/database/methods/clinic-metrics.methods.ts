@@ -53,6 +53,7 @@ export class ClinicMetricsMethods extends DatabaseMethodsBase {
             }),
           this.queryOptionsBuilder
             .clinicId(clinicId)
+            .operation('totalPatients')
             .useCache(true)
             .cacheStrategy('short')
             .priority('normal')
@@ -64,39 +65,66 @@ export class ClinicMetricsMethods extends DatabaseMethodsBase {
           async prisma => prisma.appointment.count({ where: { clinicId } }),
           this.queryOptionsBuilder
             .clinicId(clinicId)
+            .operation('totalAppointments')
             .useCache(true)
             .cacheStrategy('short')
             .priority('normal')
             .build()
         ),
 
-        // Today's appointments (cached, short TTL)
-        this.executeRead(async prisma => {
-          // IST day (Appointment.date is the IST-midnight day key), not the server UTC day.
+        // Today's appointments (cached, short TTL). Computed once and reused for both the
+        // actual query window and the cache-key day: two independent `new Date()` reads here
+        // could straddle midnight IST and cache the result under a day that doesn't match the
+        // window it was actually computed for.
+        (() => {
           const today = startOfIstDay(new Date()) ?? new Date();
-          const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
+          return this.executeRead(
+            async prisma => {
+              const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
 
-          return prisma.appointment.count({
-            where: {
-              clinicId,
-              date: { gte: today, lt: tomorrow },
+              return prisma.appointment.count({
+                where: {
+                  clinicId,
+                  date: { gte: today, lt: tomorrow },
+                },
+              });
             },
-          });
-        }, this.queryOptionsBuilder.clinicId(clinicId).useCache(true).cacheStrategy('short').priority('normal').build()),
+            this.queryOptionsBuilder
+              .clinicId(clinicId)
+              .operation('todayAppointments')
+              .where({ day: today.toISOString() })
+              .useCache(true)
+              .cacheStrategy('short')
+              .priority('normal')
+              .build()
+          );
+        })(),
 
-        // Upcoming appointments (next 7 days, cached)
-        this.executeRead(async prisma => {
+        // Upcoming appointments (next 7 days, cached). Same single-`today`-read reasoning as above.
+        (() => {
           const today = startOfIstDay(new Date()) ?? new Date();
-          const nextWeek = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
+          return this.executeRead(
+            async prisma => {
+              const nextWeek = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-          return prisma.appointment.count({
-            where: {
-              clinicId,
-              date: { gte: today, lte: nextWeek },
-              status: { notIn: ['CANCELLED', 'COMPLETED'] },
+              return prisma.appointment.count({
+                where: {
+                  clinicId,
+                  date: { gte: today, lte: nextWeek },
+                  status: { notIn: ['CANCELLED', 'COMPLETED'] },
+                },
+              });
             },
-          });
-        }, this.queryOptionsBuilder.clinicId(clinicId).useCache(true).cacheStrategy('short').priority('normal').build()),
+            this.queryOptionsBuilder
+              .clinicId(clinicId)
+              .operation('upcomingAppointments')
+              .where({ day: today.toISOString() })
+              .useCache(true)
+              .cacheStrategy('short')
+              .priority('normal')
+              .build()
+          );
+        })(),
 
         // Total doctors count (cached, long TTL)
         // Doctor model doesn't have direct clinicId - use clinics relation filter
@@ -113,6 +141,7 @@ export class ClinicMetricsMethods extends DatabaseMethodsBase {
             }),
           this.queryOptionsBuilder
             .clinicId(clinicId)
+            .operation('totalDoctors')
             .useCache(true)
             .cacheStrategy('long')
             .priority('normal')
@@ -133,7 +162,7 @@ export class ClinicMetricsMethods extends DatabaseMethodsBase {
           ).clinicLocation.count({
             where: { clinicId },
           });
-        }, this.queryOptionsBuilder.clinicId(clinicId).useCache(true).cacheStrategy('long').priority('normal').build()),
+        }, this.queryOptionsBuilder.clinicId(clinicId).operation('totalLocations').useCache(true).cacheStrategy('long').priority('normal').build()),
 
         // Recent activity (last 10, limited for performance)
         this.executeRead(async prisma => {
@@ -175,7 +204,7 @@ export class ClinicMetricsMethods extends DatabaseMethodsBase {
               },
             },
           }));
-        }, this.queryOptionsBuilder.clinicId(clinicId).useCache(true).cacheStrategy('short').priority('normal').build()),
+        }, this.queryOptionsBuilder.clinicId(clinicId).operation('recentActivity').useCache(true).cacheStrategy('short').priority('normal').build()),
       ]);
 
       return {

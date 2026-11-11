@@ -65,6 +65,18 @@ export class QueryOptionsBuilder {
   }
 
   /**
+   * Explicit operation name. Pass this (instead of a synthetic `.where()`) when a cached read is
+   * identified only by `clinicId`/`userId` with no real `where`/`select`/`include`/`orderBy`/
+   * pagination filter - without an operationName OR one of those fields, executeRead's
+   * hasDiscriminatingParams check treats the call as non-discriminating and silently builds
+   * `cacheKey = null`, so `useCache(true)` never actually caches anything.
+   */
+  operation(name: string): this {
+    this.options.operationName = name;
+    return this;
+  }
+
+  /**
    * Set user ID
    */
   userId(userId: string): this {

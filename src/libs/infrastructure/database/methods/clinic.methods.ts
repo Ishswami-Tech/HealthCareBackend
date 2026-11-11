@@ -44,6 +44,6 @@ export class ClinicMethods extends DatabaseMethodsBase {
         email?: string | null;
         isActive: boolean;
       } | null;
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('long').priority('normal').hipaaCompliant(false).build());
+    }, this.queryOptionsBuilder.operation('findClinicByIdSafe').where({ id }).useCache(true).cacheStrategy('long').priority('normal').hipaaCompliant(false).build());
   }
 }

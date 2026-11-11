@@ -82,7 +82,7 @@ export class PermissionMethods extends DatabaseMethodsBase {
       return await prisma.permission.findUnique({
         where: { id },
       });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('long').priority('normal').hipaaCompliant(false).build());
+    }, this.queryOptionsBuilder.operation('findPermissionByIdSafe').where({ id }).useCache(true).cacheStrategy('long').priority('normal').hipaaCompliant(false).build());
   }
 
   /**
@@ -102,7 +102,7 @@ export class PermissionMethods extends DatabaseMethodsBase {
           },
         },
       });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('long').priority('normal').hipaaCompliant(false).build());
+    }, this.queryOptionsBuilder.operation('findPermissionByResourceActionSafe').where({ resource, action }).useCache(true).cacheStrategy('long').priority('normal').hipaaCompliant(false).build());
   }
 
   /**
@@ -115,7 +115,7 @@ export class PermissionMethods extends DatabaseMethodsBase {
           resource,
         },
       });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('long').priority('normal').hipaaCompliant(false).build());
+    }, this.queryOptionsBuilder.operation('findPermissionsByResourceSafe').where({ resource }).useCache(true).cacheStrategy('long').priority('normal').hipaaCompliant(false).build());
   }
 
   /**
@@ -158,7 +158,7 @@ export class PermissionMethods extends DatabaseMethodsBase {
       return await prisma.rolePermission.count({
         where: { permissionId },
       });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(false).build());
+    }, this.queryOptionsBuilder.operation('countRolePermissionsSafe').where({ permissionId }).useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(false).build());
   }
 
   /**
@@ -169,6 +169,6 @@ export class PermissionMethods extends DatabaseMethodsBase {
       return await prisma.permission.findMany({
         where: { isSystemPermission: true },
       });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('long').priority('normal').hipaaCompliant(false).build());
+    }, this.queryOptionsBuilder.operation('findSystemPermissionsSafe').useCache(true).cacheStrategy('long').priority('normal').hipaaCompliant(false).build());
   }
 }
