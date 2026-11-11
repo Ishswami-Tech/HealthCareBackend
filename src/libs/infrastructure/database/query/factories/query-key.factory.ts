@@ -80,12 +80,39 @@ export class QueryKeyFactory {
   }
 
   /**
+   * Deterministically stringify a value for cache-key hashing: object keys are
+   * sorted recursively so two calls describing the same query (e.g. two
+   * `where: { clinicId, status }` vs `where: { status, clinicId }` literals
+   * built in different field order) hash to the identical key. Plain
+   * JSON.stringify preserves insertion order, which made the cache key depend
+   * on how each call site happened to construct its params object rather than
+   * on the query it actually describes - cache writes and reads for the
+   * "same" query silently landed on different keys and never matched.
+   * Array order is preserved since it's semantically significant (e.g. `in`
+   * filters, orderBy lists).
+   */
+  private static stableStringify(value: unknown): string {
+    if (value === null || typeof value !== 'object') {
+      return JSON.stringify(value);
+    }
+    if (Array.isArray(value)) {
+      return `[${value.map(item => QueryKeyFactory.stableStringify(item)).join(',')}]`;
+    }
+    const keys = Object.keys(value as Record<string, unknown>).sort();
+    const entries = keys.map(
+      key =>
+        `${JSON.stringify(key)}:${QueryKeyFactory.stableStringify((value as Record<string, unknown>)[key])}`
+    );
+    return `{${entries.join(',')}}`;
+  }
+
+  /**
    * Generate query cache key from operation and parameters
    */
   fromOperation(operation: string, params?: Record<string, unknown>): string {
     const parts = [this.KEY_PREFIX, 'operation', operation];
     if (params) {
-      const paramString = JSON.stringify(params);
+      const paramString = QueryKeyFactory.stableStringify(params);
       // Hash long parameter strings to keep keys manageable
       if (paramString.length > 100) {
         // Simple hash for long strings
