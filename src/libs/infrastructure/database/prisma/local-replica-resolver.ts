@@ -24,8 +24,11 @@
  * cluster's networking, not something to assume away.
  */
 
-import { Client } from 'pg';
 import { connect as netConnect } from 'net';
+import {
+  queryMonitor,
+  withResolvedHost,
+} from '@infrastructure/database/prisma/monitor-client.util';
 
 /**
  * Maps every TEMPS_NODE_NAME alias this cluster uses to its mesh IP. The same physical
@@ -77,20 +80,13 @@ export async function resolveLocalHealthCheckUrl(databaseUrl: string): Promise<s
     return null;
   }
 
-  const client = new Client({
-    connectionString: monitorUri,
-    connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
-    query_timeout: CONNECT_TIMEOUT_MS,
-    ssl: { rejectUnauthorized: false },
-  });
-
   try {
-    await client.connect();
-    const result = await client.query<{ nodehost: string; nodeport: number }>(
+    const rows = await queryMonitor(
+      monitorUri,
       'SELECT nodehost, nodeport FROM pgautofailover.node ORDER BY nodeid'
     );
 
-    const localMember = result.rows.find(row => row.nodehost === myMeshIp);
+    const localMember = rows.find(row => row.nodehost === myMeshIp);
     if (!localMember) {
       return null;
     }
@@ -103,14 +99,9 @@ export async function resolveLocalHealthCheckUrl(databaseUrl: string): Promise<s
       return null;
     }
 
-    const url = new URL(databaseUrl);
-    url.hostname = localMember.nodehost;
-    url.port = String(localMember.nodeport);
-    return url.toString();
+    return withResolvedHost(databaseUrl, localMember.nodehost, localMember.nodeport);
   } catch {
     // Any failure (monitor unreachable, bad URL, etc.) - fall back to DATABASE_URL.
     return null;
-  } finally {
-    await client.end().catch(() => undefined);
   }
 }

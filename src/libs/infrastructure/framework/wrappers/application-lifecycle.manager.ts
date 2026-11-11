@@ -19,6 +19,7 @@ import type { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { ServiceContainer } from './service-container';
 import { MiddlewareManager } from './middleware.manager';
+import { resolvePrimaryAtBoot } from '@infrastructure/database/prisma/resolve-primary-at-boot';
 
 /**
  * Application Lifecycle Manager
@@ -78,6 +79,12 @@ export class ApplicationLifecycleManager {
         requestTimeout: config.requestTimeout,
         ...(config.enableHttp2 !== undefined && { enableHttp2: config.enableHttp2 }),
       };
+
+      // Point DATABASE_URL/DIRECT_URL at whichever HA member is the current primary
+      // before the module tree (and PrismaService's constructor within it) is built.
+      // Lives here, not in each entrypoint's bootstrap(), so every caller of
+      // createApplication() gets it for free. See resolve-primary-at-boot.ts.
+      await resolvePrimaryAtBoot(this.logger);
 
       // Add logging before and after to help diagnose hanging issues
       this.logger.log('Starting application creation (this may take up to 120 seconds)...');

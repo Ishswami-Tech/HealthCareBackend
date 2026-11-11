@@ -1,7 +1,7 @@
 import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
-import { Client } from 'pg';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
+import { queryMonitor } from '@infrastructure/database/prisma/monitor-client.util';
 
 export interface DatabaseClusterNode {
   nodeId: number;
@@ -41,10 +41,17 @@ function resolveServerName(host: string): string {
  * monitor every time; MONITOR_URI being unset (most replicas don't have it) degrades to
  * 'unavailable' rather than breaking the rest of the dashboard.
  */
+interface ClusterTopologyRow {
+  nodeid: string;
+  nodename: string;
+  nodehost: string;
+  nodeport: number;
+  reportedstate: string;
+}
+
 @Injectable()
 export class PostgresClusterTopologyService {
   private static readonly CACHE_TTL_MS = 20000;
-  private static readonly CONNECT_TIMEOUT_MS = 3000;
   private cached: { nodes: DatabaseClusterNode[]; timestamp: number } | null = null;
 
   constructor(
@@ -66,31 +73,15 @@ export class PostgresClusterTopologyService {
       return { nodes: this.cached?.nodes ?? [], source: 'unavailable' };
     }
 
-    const client = new Client({
-      connectionString: monitorUri,
-      connectionTimeoutMillis: PostgresClusterTopologyService.CONNECT_TIMEOUT_MS,
-      query_timeout: PostgresClusterTopologyService.CONNECT_TIMEOUT_MS,
-      // The monitor uses pg_autoctl's self-signed cert (--ssl-self-signed) - there's no CA to
-      // verify it against, same as the HA cluster nodes themselves; sslmode=require without
-      // verification is what pg_autoctl's own tooling expects here too.
-      ssl: { rejectUnauthorized: false },
-    });
-
     try {
-      await client.connect();
       // nodeid is bigint in Postgres - node-postgres returns bigint columns as strings by
       // default (to avoid silent precision loss), not numbers.
-      const result = await client.query<{
-        nodeid: string;
-        nodename: string;
-        nodehost: string;
-        nodeport: number;
-        reportedstate: string;
-      }>(
+      const rows = await queryMonitor<ClusterTopologyRow>(
+        monitorUri,
         'SELECT nodeid, nodename, nodehost, nodeport, reportedstate FROM pgautofailover.node ORDER BY nodeid'
       );
 
-      const nodes: DatabaseClusterNode[] = result.rows.map(row => ({
+      const nodes: DatabaseClusterNode[] = rows.map(row => ({
         nodeId: Number(row.nodeid),
         nodeName: row.nodename,
         serverName: resolveServerName(row.nodehost),
@@ -112,8 +103,6 @@ export class PostgresClusterTopologyService {
       // Serve the last known-good snapshot rather than blanking the dashboard on one
       // transient monitor hiccup - same trade-off the app-replica topology view makes.
       return { nodes: this.cached?.nodes ?? [], source: this.cached ? 'live' : 'unavailable' };
-    } finally {
-      await client.end().catch(() => undefined);
     }
   }
 }
