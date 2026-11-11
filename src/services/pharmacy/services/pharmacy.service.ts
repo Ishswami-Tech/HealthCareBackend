@@ -1006,68 +1006,75 @@ export class PharmacyService {
       {}
     );
 
-    for (const [clinicId, clinicPrescriptions] of Object.entries(groupedByClinic)) {
-      clinicPrescriptions.sort((left, right) => {
-        const leftTime = new Date(left.date || 0).getTime();
-        const rightTime = new Date(right.date || 0).getTime();
-        return leftTime - rightTime;
-      });
+    // Each clinic's desk queue is an independent key (queueOwnerId derives from clinicId), so
+    // the per-clinic sync below has no cross-clinic shared state - safe to run concurrently
+    // instead of paying one round-trip-latency-bound iteration per clinic sequentially.
+    await Promise.all(
+      Object.entries(groupedByClinic).map(async ([clinicId, clinicPrescriptions]) => {
+        clinicPrescriptions.sort((left, right) => {
+          const leftTime = new Date(left.date || 0).getTime();
+          const rightTime = new Date(right.date || 0).getTime();
+          return leftTime - rightTime;
+        });
 
-      const queueOwnerId = this.getMedicineDeskQueueOwnerId(clinicId);
-      const existingQueue = await this.appointmentQueueService.getOperationalQueue(
-        queueOwnerId,
-        clinicId,
-        PharmacyService.MEDICINE_QUEUE_DOMAIN
-      );
-      // Finished, cancelled and still-draft prescriptions never sit in the desk queue.
-      const isInactive = (prescription: T): boolean =>
-        isOffMedicineDesk(prescription.status ? String(prescription.status) : null);
-      const activePrescriptionIds = new Set(
-        clinicPrescriptions.filter(prescription => !isInactive(prescription)).map(p => p.id)
-      );
-      const inactivePrescriptionIds = new Set(
-        clinicPrescriptions.filter(isInactive).map(prescription => prescription.id)
-      );
+        const queueOwnerId = this.getMedicineDeskQueueOwnerId(clinicId);
+        const existingQueue = await this.appointmentQueueService.getOperationalQueue(
+          queueOwnerId,
+          clinicId,
+          PharmacyService.MEDICINE_QUEUE_DOMAIN
+        );
+        // Finished, cancelled and still-draft prescriptions never sit in the desk queue.
+        const isInactive = (prescription: T): boolean =>
+          isOffMedicineDesk(prescription.status ? String(prescription.status) : null);
+        const activePrescriptionIds = new Set(
+          clinicPrescriptions.filter(prescription => !isInactive(prescription)).map(p => p.id)
+        );
+        const inactivePrescriptionIds = new Set(
+          clinicPrescriptions.filter(isInactive).map(prescription => prescription.id)
+        );
 
-      for (const queueEntry of existingQueue) {
-        if (!queueEntry.entryId) {
-          continue;
+        // Kept sequential within a clinic: removes/enqueues mutate the same clinic's queue
+        // (position ordering), so concurrent writes here could race each other.
+        for (const queueEntry of existingQueue) {
+          if (!queueEntry.entryId) {
+            continue;
+          }
+          const isStale = options.pruneMissing
+            ? !activePrescriptionIds.has(queueEntry.entryId)
+            : inactivePrescriptionIds.has(queueEntry.entryId);
+          if (isStale) {
+            await this.appointmentQueueService.removeOperationalQueueItem(
+              queueEntry.entryId,
+              queueOwnerId,
+              clinicId,
+              PharmacyService.MEDICINE_QUEUE_DOMAIN
+            );
+          }
         }
-        const isStale = options.pruneMissing
-          ? !activePrescriptionIds.has(queueEntry.entryId)
-          : inactivePrescriptionIds.has(queueEntry.entryId);
-        if (isStale) {
-          await this.appointmentQueueService.removeOperationalQueueItem(
-            queueEntry.entryId,
-            queueOwnerId,
-            clinicId,
+
+        for (const prescription of clinicPrescriptions) {
+          if (isInactive(prescription)) {
+            continue;
+          }
+
+          await this.appointmentQueueService.enqueueOperationalItem(
+            {
+              entryId: prescription.id,
+              appointmentId: prescription.id,
+              queueOwnerId,
+              patientId: prescription.patientId || '',
+              clinicId,
+              ...(prescription.doctorId ? { assignedDoctorId: prescription.doctorId } : {}),
+              ...(prescription.doctorId ? { primaryDoctorId: prescription.doctorId } : {}),
+              ...(prescription.locationId ? { locationId: prescription.locationId } : {}),
+              queueCategory: AppointmentQueueCategory.MEDICINE_DESK,
+              type: AppointmentQueueCategory.MEDICINE_DESK,
+            },
             PharmacyService.MEDICINE_QUEUE_DOMAIN
           );
         }
-      }
-
-      for (const prescription of clinicPrescriptions) {
-        if (isInactive(prescription)) {
-          continue;
-        }
-
-        await this.appointmentQueueService.enqueueOperationalItem(
-          {
-            entryId: prescription.id,
-            appointmentId: prescription.id,
-            queueOwnerId,
-            patientId: prescription.patientId || '',
-            clinicId,
-            ...(prescription.doctorId ? { assignedDoctorId: prescription.doctorId } : {}),
-            ...(prescription.doctorId ? { primaryDoctorId: prescription.doctorId } : {}),
-            ...(prescription.locationId ? { locationId: prescription.locationId } : {}),
-            queueCategory: AppointmentQueueCategory.MEDICINE_DESK,
-            type: AppointmentQueueCategory.MEDICINE_DESK,
-          },
-          PharmacyService.MEDICINE_QUEUE_DOMAIN
-        );
-      }
-    }
+      })
+    );
   }
 
   private async enrichPrescriptionsWithPaymentState<
@@ -1160,24 +1167,29 @@ export class PharmacyService {
       }
     >();
 
+    // Read-only lookups across independent clinics - safe to fetch concurrently instead of
+    // paying one round-trip-latency-bound iteration per distinct clinic sequentially (this
+    // is what made a multi-clinic patient's dashboard load scale with their clinic count).
     const clinicIds = Array.from(new Set(prescriptions.map(prescription => prescription.clinicId)));
-    for (const currentClinicId of clinicIds) {
-      const queueOwnerId = this.getMedicineDeskQueueOwnerId(currentClinicId);
-      const queue = await this.appointmentQueueService.getOperationalQueue(
-        queueOwnerId,
-        currentClinicId,
-        PharmacyService.MEDICINE_QUEUE_DOMAIN
-      );
+    await Promise.all(
+      clinicIds.map(async currentClinicId => {
+        const queueOwnerId = this.getMedicineDeskQueueOwnerId(currentClinicId);
+        const queue = await this.appointmentQueueService.getOperationalQueue(
+          queueOwnerId,
+          currentClinicId,
+          PharmacyService.MEDICINE_QUEUE_DOMAIN
+        );
 
-      queueByClinic.set(currentClinicId, {
-        positions: new Map(
-          queue
-            .filter(queueEntry => queueEntry.entryId)
-            .map(queueEntry => [String(queueEntry.entryId), Number(queueEntry.position || 0)])
-        ),
-        totalInQueue: queue.length,
-      });
-    }
+        queueByClinic.set(currentClinicId, {
+          positions: new Map(
+            queue
+              .filter(queueEntry => queueEntry.entryId)
+              .map(queueEntry => [String(queueEntry.entryId), Number(queueEntry.position || 0)])
+          ),
+          totalInQueue: queue.length,
+        });
+      })
+    );
 
     return prescriptions.map(prescription => {
       const paymentState = this.buildPrescriptionPaymentState(
