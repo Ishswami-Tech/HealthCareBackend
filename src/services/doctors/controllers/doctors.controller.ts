@@ -143,18 +143,22 @@ export class DoctorsController {
   )
   @ApiOperation({ summary: 'Get all doctors (scoped to current clinic)' })
   @ApiQuery({ name: 'specialization', required: false })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiResponse({ status: 200, description: 'List of doctors retrieved successfully' })
   async getAllDoctors(
     @Query('specialization') specialization?: string,
     @Query('locationId') locationId?: string,
+    @Query('limit') limit?: string,
     @Request() req?: ClinicAuthenticatedRequest
   ) {
     // 🔒 TENANT ISOLATION: Always use validated clinicId from guard context
     const clinicId = req?.clinicContext?.clinicId;
+    const parsedLimit = limit !== undefined ? Number.parseInt(limit, 10) : undefined;
     return this.doctorsService.getAllDoctors({
       ...(specialization != null && { specialization }),
       ...(clinicId != null && { clinicId }),
       ...(locationId != null && { locationId }),
+      ...(parsedLimit !== undefined && !Number.isNaN(parsedLimit) && { limit: parsedLimit }),
     });
   }
 

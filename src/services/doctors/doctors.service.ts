@@ -503,10 +503,13 @@ export class DoctorsService {
     specialization?: string | undefined;
     clinicId?: string | undefined;
     locationId?: string | undefined;
+    limit?: number | undefined;
   }) {
     const clinicSegment = filters?.clinicId?.trim() || 'global';
     const specializationSegment = filters?.specialization?.trim() || 'all';
     const locationSegment = filters?.locationId?.trim() || 'all';
+    const hasValidLimit = typeof filters?.limit === 'number' && filters.limit >= 0;
+    const limitSegment = hasValidLimit ? String(filters?.limit) : 'all';
 
     // DEBUG: Log the incoming filters. Fire-and-forget: this runs on every call (hit or
     // miss) ahead of the cache lookup, and awaiting it taxed every GET /doctors request
@@ -520,11 +523,15 @@ export class DoctorsService {
 
     const cacheKey = this.cacheService
       .getKeyFactory()
-      .fromTemplate('clinic:{clinicId}:doctors:spec:{specialization}:loc:{locationId}', {
-        clinicId: clinicSegment,
-        specialization: specializationSegment,
-        locationId: locationSegment,
-      });
+      .fromTemplate(
+        'clinic:{clinicId}:doctors:spec:{specialization}:loc:{locationId}:limit:{limit}',
+        {
+          clinicId: clinicSegment,
+          specialization: specializationSegment,
+          locationId: locationSegment,
+          limit: limitSegment,
+        }
+      );
 
     const fetchDoctorsFromDatabase = async () => {
       return await this.databaseService.executeHealthcareRead(async client => {
@@ -574,6 +581,7 @@ export class DoctorsService {
         return await typedClient.user.findMany({
           where: where as PrismaDelegateArgs,
           select: DOCTOR_PROFILE_USER_SELECT as PrismaDelegateArgs,
+          ...(hasValidLimit && { take: filters?.limit }),
         } as PrismaDelegateArgs);
       });
     };
@@ -585,7 +593,7 @@ export class DoctorsService {
         'doctors',
         `clinic:${clinicSegment}`,
         `clinic:${clinicSegment}:doctors`,
-        `clinic:${clinicSegment}:doctors:spec:${specializationSegment}:loc:${locationSegment}`,
+        `clinic:${clinicSegment}:doctors:spec:${specializationSegment}:loc:${locationSegment}:limit:${limitSegment}`,
       ],
     };
 
