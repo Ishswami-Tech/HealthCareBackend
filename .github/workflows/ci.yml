@@ -518,44 +518,19 @@ jobs:
           # Worker projects — the Worker container picks its own entrypoint
           # at startup via APP_MODE (see devops/docker/Dockerfile), so this
           # needs no manual fix-up afterward. ──
-          #
-          # The API and Worker deploys are independent Temps projects, so they run in
-          # parallel (they used to run one after the other: ~1.5 min + ~5 min). Each
-          # deploy command is unchanged; its output is prefixed [api] / [worker], both
-          # are always waited for, and the step fails if either one fails.
-          # The first `npx` call only resolves/installs the CLI once, so the two
-          # parallel `npx -y` calls don't race each other updating the same npx cache
-          # entry when a new CLI version has been published.
-          echo "Triggering Temps deploy (project=${TEMPS_PROJECT}, worker project=${TEMPS_WORKER_PROJECT}, environment=${TEMPS_ENVIRONMENT})..."
+          echo "Triggering Temps deploy (project=${TEMPS_PROJECT}, environment=${TEMPS_ENVIRONMENT})..."
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
             set -euo pipefail
-            npx -y @temps-sdk/cli --version || true
-            (
-              npx -y @temps-sdk/cli --target-context temps-local deploy:image \
-                --image '${IMAGE_FULL}' \
-                -p '${TEMPS_PROJECT}' \
-                -e '${TEMPS_ENVIRONMENT}' \
-                -y --timeout 600 2>&1 | sed -u 's/^/[api]    /'
-            ) &
-            api_pid=\$!
-            (
-              npx -y @temps-sdk/cli --target-context temps-local deploy:image \
-                --image '${IMAGE_FULL}' \
-                -p '${TEMPS_WORKER_PROJECT}' \
-                -e '${TEMPS_ENVIRONMENT}' \
-                -y --timeout 600 2>&1 | sed -u 's/^/[worker] /'
-            ) &
-            worker_pid=\$!
-            api_rc=0
-            worker_rc=0
-            wait \$api_pid || api_rc=\$?
-            wait \$worker_pid || worker_rc=\$?
-            echo \"API deploy (${TEMPS_PROJECT}) exit code: \$api_rc\"
-            echo \"Worker deploy (${TEMPS_WORKER_PROJECT}) exit code: \$worker_rc\"
-            if [ \$api_rc -ne 0 ] || [ \$worker_rc -ne 0 ]; then
-              echo 'Temps deploy failed (see the [api] / [worker] output above)'
-              exit 1
-            fi
+            npx -y @temps-sdk/cli --target-context temps-local deploy:image \
+              --image '${IMAGE_FULL}' \
+              -p '${TEMPS_PROJECT}' \
+              -e '${TEMPS_ENVIRONMENT}' \
+              -y --timeout 600
+            npx -y @temps-sdk/cli --target-context temps-local deploy:image \
+              --image '${IMAGE_FULL}' \
+              -p '${TEMPS_WORKER_PROJECT}' \
+              -e '${TEMPS_ENVIRONMENT}' \
+              -y --timeout 600
           "
 
           echo "Temps deploy complete for ${DEPLOY_ENV}"
