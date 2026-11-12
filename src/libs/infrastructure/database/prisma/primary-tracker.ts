@@ -26,12 +26,18 @@ import {
 } from '@infrastructure/database/prisma/monitor-client.util';
 
 /**
- * Every state pg_auto_failover (and Temps' own tooling) treats as writable, not just the
- * settled 'primary' - right after a failover the new primary is briefly 'wait_primary' or
- * 'apply_settings', and a strict match would find nothing.
+ * The member the monitor has DECIDED is the writable primary (its goal state), in every
+ * writable state, not just the settled 'primary': right after a failover the new primary is
+ * briefly 'wait_primary' or 'apply_settings'.
+ *
+ * Goal state, not reported state: a node that dies or loses its network keeps its last
+ * reported state ('primary') forever, while the monitor moves its goal to 'demoted' and the
+ * standby's goal to 'wait_primary'. Matching on reported state picked the dead node in the
+ * 2026-11-12 failover drill. Mid-failover no row matches, and callers keep the last known
+ * primary.
  */
 export const CURRENT_PRIMARY_QUERY =
-  "SELECT nodehost, nodeport FROM pgautofailover.node WHERE reportedstate IN ('primary', 'wait_primary', 'single', 'apply_settings') ORDER BY nodeid LIMIT 1";
+  "SELECT nodehost, nodeport FROM pgautofailover.node WHERE goalstate IN ('primary', 'wait_primary', 'single', 'apply_settings') ORDER BY nodeid LIMIT 1";
 
 export const PRIMARY_POLL_INTERVAL_MS = 3000;
 

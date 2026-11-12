@@ -55,6 +55,13 @@ describe('primary tracking', () => {
     expect(CURRENT_PRIMARY_QUERY).toContain("'wait_primary'");
   });
 
+  it("selects by the monitor's goal state, not a dead node's last reported state", () => {
+    // A node that loses its network keeps reportedstate 'primary' while the monitor sets its
+    // goalstate to 'demoted' - the 2026-11-12 drill picked the dead node until this changed.
+    expect(CURRENT_PRIMARY_QUERY).toMatch(/WHERE goalstate IN \(/);
+    expect(CURRENT_PRIMARY_QUERY).not.toMatch(/reportedstate/);
+  });
+
   it('reports a change only when the primary actually moved', async () => {
     monitorReports('10.201.0.1', 6263);
     await expect(refreshCurrentPrimary(MONITOR)).resolves.toBeNull();

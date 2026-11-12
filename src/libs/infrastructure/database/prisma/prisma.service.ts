@@ -1351,6 +1351,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       // Create pg Pool with SSL configuration for health checks
       const healthCheckPoolConfig: {
         connectionString: string;
+        Client?: PgAdapterPoolConfig['Client'];
         max: number;
         ssl?: boolean | { rejectUnauthorized: boolean };
         connectionTimeoutMillis?: number;
@@ -1369,6 +1370,13 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         healthCheckPoolConfig.ssl = isProductionEnv
           ? { rejectUnauthorized: true }
           : { rejectUnauthorized: false };
+      }
+
+      // Checking the primary (no local-replica override): follow it after a failover like the
+      // main pool does, or health keeps reporting the database down once the app has recovered.
+      if (!PrismaService.healthCheckUrlOverride && getEnv('MONITOR_URI')) {
+        healthCheckPoolConfig.Client =
+          PrimaryFollowingClient as unknown as PgAdapterPoolConfig['Client'];
       }
 
       // FIXED: Same as main client — PrismaPg@7.x takes a config object, not a Pool instance.
