@@ -45,6 +45,7 @@ import {
   heartbeatFilePath,
   runHeartbeatCheck,
 } from '@infrastructure/queue/src/worker-lifecycle/worker-heartbeat';
+import { WorkerHealthController } from '@infrastructure/queue/src/worker-lifecycle/worker-health.controller';
 import {
   startWorkerHeartbeat,
   type HeartbeatWorker,
@@ -105,6 +106,8 @@ import { TopologyHeartbeatService } from '@services/health/topology-heartbeat.se
   // Reports this worker replica into the live deployment-topology registry
   // (dashboard's "Cluster & Node Information" panel) — same mechanism the API uses.
   providers: [TopologyHeartbeatService],
+  // GET /health: the same heartbeat verdict as the container healthcheck, over HTTP.
+  controllers: [WorkerHealthController],
   exports: [],
 })
 class WorkerModule {}
