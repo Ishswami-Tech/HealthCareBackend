@@ -706,17 +706,7 @@ export class DragonflyCacheProvider implements IAdvancedCacheProvider {
   }
 
   async subscribe(channel: string, callback: (message: string) => void): Promise<void> {
-    try {
-      const subscriber = this.dragonflyService.duplicate();
-      await subscriber.subscribe(channel);
-      subscriber.on('message', (ch, msg) => {
-        if (ch === channel) {
-          callback(msg);
-        }
-      });
-    } catch {
-      // Fail silently
-    }
+    return this.dragonflyService.subscribe(channel, callback);
   }
 
   // Utility operations

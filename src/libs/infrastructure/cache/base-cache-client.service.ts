@@ -709,8 +709,10 @@ export abstract class BaseCacheClientService {
       );
       return;
     }
+    let subscriber: Redis | undefined;
     try {
-      const subscriber = this.client.duplicate();
+      // Own offline queue: prod disables it, so SUBSCRIBE on a still-connecting duplicate is rejected.
+      subscriber = this.client.duplicate({ enableOfflineQueue: true });
       subscriber.on('error', err => {
         void this.loggingService.log(
           LogType.CACHE,
@@ -727,6 +729,8 @@ export abstract class BaseCacheClientService {
         }
       });
     } catch (error) {
+      // A failed subscriber is never reused; close it so retries don't leak connections.
+      subscriber?.disconnect();
       void this.loggingService.log(
         LogType.CACHE,
         LogLevel.WARN,
@@ -947,13 +951,6 @@ export abstract class BaseCacheClientService {
       throw new Error(`${this.PROVIDER_NAME} client not ready`);
     }
     return this.client.pipeline();
-  }
-
-  duplicate(): Redis {
-    if (!this.client || this.client.status !== 'ready') {
-      throw new Error(`${this.PROVIDER_NAME} client not ready`);
-    }
-    return this.client.duplicate();
   }
 
   getClient(): Redis | null {
