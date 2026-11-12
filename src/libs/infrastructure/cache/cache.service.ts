@@ -671,12 +671,21 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     // for non-PHI values (passes through non-strings, JSON.parses plain
     // strings, only decrypts the "enc:v1:" prefix), so applying it
     // unconditionally here is safe for every caller of get().
-    const rawL2Value = await this.cacheRepository.get<T>(key);
+    const populateL1 = this.enableL1 && Boolean(this.l1CacheService);
+    // Fetch the entry's remaining TTL concurrently with its value, to cap the L1 copy below.
+    const [rawL2Value, remainingTtl] = await Promise.all([
+      this.cacheRepository.get<T>(key),
+      populateL1 ? this.cacheRepository.getTTL(key).catch(() => -1) : Promise.resolve(-1),
+    ]);
     const l2Value = rawL2Value !== null ? decryptPHIValue<T>(rawL2Value) : null;
 
-    // Populate L1 if L2 hit
-    if (l2Value !== null && this.enableL1 && this.l1CacheService) {
-      this.l1CacheService.set(key, l2Value, this.l1TTL);
+    // Never keep the L1 copy longer than the entry lives in L2 (set() already caps this way).
+    // -1 = no expiry or TTL unknown -> default L1 TTL; 0/-2 = expiring/gone -> don't cache in L1.
+    if (l2Value !== null && populateL1 && this.l1CacheService) {
+      const l1TTL = remainingTtl === -1 ? this.l1TTL : Math.min(remainingTtl, this.l1TTL);
+      if (l1TTL > 0) {
+        this.l1CacheService.set(key, l2Value, l1TTL);
+      }
     }
 
     return l2Value;

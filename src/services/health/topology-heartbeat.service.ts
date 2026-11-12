@@ -160,12 +160,8 @@ export class TopologyHeartbeatService implements OnModuleInit, OnModuleDestroy {
       }))
     );
 
-    // Staleness is judged by the payload's own lastHeartbeat, not by whether get() returned
-    // non-null: CacheService's L1 (in-process) layer caches a hit for its own default TTL
-    // (minutes), independent of the much shorter TTL the value was written with, so a dead
-    // replica's last-known snapshot can keep being served long after its real cache entry (and
-    // the replica itself) is gone. Re-checking the embedded timestamp here is what keeps the
-    // view actually live rather than "live until this reader's L1 entry happens to expire".
+    // Defence in depth on top of CacheService.get() capping its L1 copy at the entry's remaining
+    // TTL: judge staleness by the payload's own lastHeartbeat rather than by a non-null get().
     const freshCutoffMs = TopologyHeartbeatService.TTL_SECONDS * 1000;
     const isFresh = (value: TopologyReplica): boolean =>
       Date.now() - new Date(value.lastHeartbeat).getTime() <= freshCutoffMs;
