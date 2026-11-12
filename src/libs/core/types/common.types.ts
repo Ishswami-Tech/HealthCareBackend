@@ -180,6 +180,19 @@ export interface DetailedHealthCheckResponse extends HealthCheckResponse {
         host: string;
         port: number;
         state: string;
+        reportedState?: string;
+        healthy?: boolean;
+      }>;
+      source: 'live' | 'unavailable';
+    };
+    cacheCluster?: {
+      masterName: string;
+      nodes: Array<{
+        role: 'primary' | 'replica';
+        serverName: string;
+        host: string;
+        port: number;
+        healthy: boolean;
       }>;
       source: 'live' | 'unavailable';
     };

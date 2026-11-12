@@ -86,6 +86,21 @@ interface DashboardData {
           host: string;
           port: number;
           state: string;
+          reportedState?: string;
+          healthy?: boolean;
+        }>;
+        source: 'live' | 'unavailable';
+      }
+    | undefined;
+  cacheCluster?:
+    | {
+        masterName: string;
+        nodes: Array<{
+          role: 'primary' | 'replica';
+          serverName: string;
+          host: string;
+          port: number;
+          healthy: boolean;
         }>;
         source: 'live' | 'unavailable';
       }
@@ -484,6 +499,13 @@ export class AppController {
           healthData.processInfo &&
           'databaseCluster' in healthData.processInfo
             ? (healthData.processInfo.databaseCluster as DashboardData['databaseCluster'])
+            : undefined,
+        cacheCluster:
+          healthData &&
+          'processInfo' in healthData &&
+          healthData.processInfo &&
+          'cacheCluster' in healthData.processInfo
+            ? (healthData.processInfo.cacheCluster as DashboardData['cacheCluster'])
             : undefined,
       };
 
@@ -1462,17 +1484,83 @@ export class AppController {
                     <tbody>
                         ${healthData.databaseCluster.nodes
                           .map(node => {
-                            const isPrimary = node.state === 'primary';
+                            const isPrimary = ['primary', 'wait_primary', 'single'].includes(
+                              node.state
+                            );
+                            const dot =
+                              node.healthy === false
+                                ? '#dc2626'
+                                : isPrimary
+                                  ? '#3b82f6'
+                                  : '#22c55e';
+                            const reported =
+                              node.reportedState && node.reportedState !== node.state
+                                ? ` <span style="color: #94a3b8; font-size: 0.75rem;">(reports ${node.reportedState})</span>`
+                                : '';
+                            const down =
+                              node.healthy === false
+                                ? ' <span style="color: #dc2626; font-size: 0.75rem; font-weight: 600;">DOWN</span>'
+                                : '';
                             return `
                         <tr style="border-bottom: 1px solid #f1f5f9;">
                             <td style="padding: 0.5rem;">
                                 <span style="display: inline-flex; align-items: center; gap: 0.4rem;">
-                                    <span style="width: 8px; height: 8px; border-radius: 50%; background: ${isPrimary ? '#3b82f6' : '#22c55e'}; display: inline-block;"></span>
-                                    ${node.state}
+                                    <span style="width: 8px; height: 8px; border-radius: 50%; background: ${dot}; display: inline-block;"></span>
+                                    ${node.state}${reported}${down}
                                 </span>
                             </td>
                             <td style="padding: 0.5rem; font-weight: 600;">${node.serverName}</td>
                             <td style="padding: 0.5rem;">${node.nodeName}</td>
+                            <td style="padding: 0.5rem; font-family: monospace; font-size: 0.8rem;">${node.host}:${node.port}</td>
+                        </tr>
+                        `;
+                          })
+                          .join('')}
+                    </tbody>
+                </table>
+            </div>
+            `
+                : ''
+            }
+            `
+                : ''
+            }
+            ${
+              healthData.cacheCluster
+                ? `
+            <h3 style="font-size: 1.0625rem; font-weight: 600; color: #334155; margin-top: 1.5rem; margin-bottom: 0.5rem;">Cache Cluster (Dragonfly)</h3>
+            <div style="font-size: 0.8rem; color: #64748b; margin-bottom: 0.75rem;">
+                ${healthData.cacheCluster.source === 'unavailable' ? '<span style="color: #dc2626; font-weight: 600;">Unavailable on this replica.</span>' : `Live primary/replica topology from Redis Sentinel (master "${healthData.cacheCluster.masterName}").`}
+            </div>
+            ${
+              healthData.cacheCluster.nodes.length > 0
+                ? `
+            <div style="overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
+                    <thead>
+                        <tr style="text-align: left; border-bottom: 2px solid #e2e8f0;">
+                            <th style="padding: 0.5rem;">Role</th>
+                            <th style="padding: 0.5rem;">Server</th>
+                            <th style="padding: 0.5rem;">Host:Port</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${healthData.cacheCluster.nodes
+                          .map(node => {
+                            const dot = !node.healthy
+                              ? '#dc2626'
+                              : node.role === 'primary'
+                                ? '#3b82f6'
+                                : '#22c55e';
+                            return `
+                        <tr style="border-bottom: 1px solid #f1f5f9;">
+                            <td style="padding: 0.5rem;">
+                                <span style="display: inline-flex; align-items: center; gap: 0.4rem;">
+                                    <span style="width: 8px; height: 8px; border-radius: 50%; background: ${dot}; display: inline-block;"></span>
+                                    ${node.role}${node.healthy ? '' : ' <span style="color: #dc2626; font-size: 0.75rem; font-weight: 600;">DOWN</span>'}
+                                </span>
+                            </td>
+                            <td style="padding: 0.5rem; font-weight: 600;">${node.serverName}</td>
                             <td style="padding: 0.5rem; font-family: monospace; font-size: 0.8rem;">${node.host}:${node.port}</td>
                         </tr>
                         `;

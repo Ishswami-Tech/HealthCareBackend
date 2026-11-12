@@ -27,6 +27,10 @@ import {
   PostgresClusterTopologyService,
   type DatabaseClusterTopology,
 } from './postgres-cluster-topology.service';
+import {
+  DragonflyClusterTopologyService,
+  type CacheClusterTopology,
+} from './dragonfly-cluster-topology.service';
 /**
  * Independent Health Service
  *
@@ -95,7 +99,10 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     private readonly topologyHeartbeat?: TopologyHeartbeatService,
     @Optional()
     @Inject(forwardRef(() => PostgresClusterTopologyService))
-    private readonly postgresClusterTopology?: PostgresClusterTopologyService
+    private readonly postgresClusterTopology?: PostgresClusterTopologyService,
+    @Optional()
+    @Inject(forwardRef(() => DragonflyClusterTopologyService))
+    private readonly dragonflyClusterTopology?: DragonflyClusterTopologyService
   ) {}
 
   /**
@@ -492,6 +499,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       return { nodes: [], source: 'unavailable' };
     }
     return this.postgresClusterTopology.getTopology();
+  }
+
+  /**
+   * Live primary/replica topology of the Dragonfly cache, read on-demand from Redis Sentinel
+   * (see DragonflyClusterTopologyService). 'unavailable' when Sentinel isn't configured or
+   * can't be reached - the rest of the dashboard still renders either way.
+   */
+  private async getCacheClusterTopology(): Promise<CacheClusterTopology> {
+    if (!this.dragonflyClusterTopology) {
+      return { masterName: '', nodes: [], source: 'unavailable' };
+    }
+    return this.dragonflyClusterTopology.getTopology();
   }
 
   /**
@@ -2677,6 +2696,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           ) as Record<string, string>,
           cluster: await this.getDeploymentTopology(),
           databaseCluster: await this.getDatabaseClusterTopology(),
+          cacheCluster: await this.getCacheClusterTopology(),
         },
         memory: {
           heapUsed: memoryUsage.heapUsed,
@@ -2904,6 +2924,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           versions: {},
           cluster: await this.getDeploymentTopology(),
           databaseCluster: await this.getDatabaseClusterTopology(),
+          cacheCluster: await this.getCacheClusterTopology(),
         },
         memory: {
           heapUsed: 0,

@@ -2,6 +2,7 @@ import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { queryMonitor } from '@infrastructure/database/prisma/monitor-client.util';
+import { resolveServerName } from './cluster-server-names';
 
 export interface DatabaseClusterNode {
   nodeId: number;
@@ -9,29 +10,17 @@ export interface DatabaseClusterNode {
   serverName: string;
   host: string;
   port: number;
+  /** The role the HA monitor has decided for this member (its goal state). */
   state: string;
+  /** What the member itself last reported; differs from `state` mid-transition or when it is down. */
+  reportedState: string;
+  /** False when the monitor's health checks fail for this member (down or unreachable). */
+  healthy: boolean;
 }
 
 export interface DatabaseClusterTopology {
   nodes: DatabaseClusterNode[];
   source: 'live' | 'unavailable';
-}
-
-/**
- * Maps the pg_auto_failover mesh IPs (10.201.0.0/16) to the human-readable server names
- * they run on. There is no live discovery for this - these are internal WireGuard mesh
- * addresses the app has no other way to resolve to a friendly name - so it's a short,
- * hand-maintained table. Update it if a node moves to a different physical host.
- */
-const SERVER_NAME_BY_HOST: Readonly<Record<string, string>> = {
-  '10.201.0.1': 'contabo-healthcare',
-  '10.201.0.2': 'oracle-main',
-  '10.201.0.5': 'temps-worker',
-  '10.201.0.6': 'temps-control-plane',
-};
-
-function resolveServerName(host: string): string {
-  return SERVER_NAME_BY_HOST[host] ?? host;
 }
 
 /**
@@ -47,6 +36,8 @@ interface ClusterTopologyRow {
   nodehost: string;
   nodeport: number;
   reportedstate: string;
+  goalstate: string;
+  health: number;
 }
 
 @Injectable()
@@ -78,7 +69,7 @@ export class PostgresClusterTopologyService {
       // default (to avoid silent precision loss), not numbers.
       const rows = await queryMonitor<ClusterTopologyRow>(
         monitorUri,
-        'SELECT nodeid, nodename, nodehost, nodeport, reportedstate FROM pgautofailover.node ORDER BY nodeid'
+        'SELECT nodeid, nodename, nodehost, nodeport, reportedstate, goalstate, health FROM pgautofailover.node ORDER BY nodeid'
       );
 
       const nodes: DatabaseClusterNode[] = rows.map(row => ({
@@ -87,7 +78,11 @@ export class PostgresClusterTopologyService {
         serverName: resolveServerName(row.nodehost),
         host: row.nodehost,
         port: row.nodeport,
-        state: row.reportedstate,
+        // The goal state, not the reported one: a member that has died keeps reporting its
+        // last state ('primary') while the monitor has already demoted it.
+        state: row.goalstate,
+        reportedState: row.reportedstate,
+        healthy: Number(row.health) === 1,
       }));
 
       this.cached = { nodes, timestamp: Date.now() };

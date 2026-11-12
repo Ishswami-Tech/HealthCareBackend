@@ -6,6 +6,7 @@ import { HealthController } from './health.controller';
 import { HealthService } from './health.service';
 import { TopologyHeartbeatService } from './topology-heartbeat.service';
 import { PostgresClusterTopologyService } from './postgres-cluster-topology.service';
+import { DragonflyClusterTopologyService } from './dragonfly-cluster-topology.service';
 // Use direct import to avoid circular dependency with barrel exports
 import { DatabaseModule } from '@infrastructure/database/database.module';
 import { LoggingModule } from '@infrastructure/logging';
@@ -50,6 +51,7 @@ import { HealthBroadcasterService } from './realtime/services/health-broadcaster
     HealthService,
     TopologyHeartbeatService,
     PostgresClusterTopologyService,
+    DragonflyClusterTopologyService,
     // Health indicators (no Terminus dependency - uses only LoggingService)
     DatabaseHealthIndicator,
     CacheHealthIndicator,
