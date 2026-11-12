@@ -257,6 +257,17 @@ export enum HealthRecordType {
 }
 
 /**
+ * Upload state of a HealthRecord's file - PENDING/PROCESSING while a background queue job
+ * uploads it to S3, READY once available, FAILED if the job could not complete it.
+ */
+export enum HealthRecordUploadStatus {
+  PENDING = 'PENDING',
+  PROCESSING = 'PROCESSING',
+  READY = 'READY',
+  FAILED = 'FAILED',
+}
+
+/**
  * Dosha (Ayurvedic principle) enumeration
  */
 export enum Dosha {

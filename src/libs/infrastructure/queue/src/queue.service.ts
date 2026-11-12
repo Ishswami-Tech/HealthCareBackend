@@ -712,6 +712,29 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
           );
         }
       }
+      if (jobType === JobType.PATIENT_DOCUMENT_UPLOAD) {
+        const payload = data as Record<string, unknown>;
+        const recordId = payload['recordId'];
+        const fileBase64 = payload['fileBase64'];
+        if (!recordId || typeof recordId !== 'string' || recordId.trim() === '') {
+          throw new HealthcareError(
+            ErrorCode.VALIDATION_REQUIRED_FIELD,
+            `Refusing to enqueue PATIENT_DOCUMENT_UPLOAD job: recordId is required and must be a non-empty string`,
+            undefined,
+            { jobType, action, recordId: recordId ?? null },
+            'QueueService.addJob'
+          );
+        }
+        if (!fileBase64 || typeof fileBase64 !== 'string' || fileBase64.length === 0) {
+          throw new HealthcareError(
+            ErrorCode.VALIDATION_REQUIRED_FIELD,
+            `Refusing to enqueue PATIENT_DOCUMENT_UPLOAD job: fileBase64 is required and must be a non-empty string`,
+            undefined,
+            { jobType, action, recordId },
+            'QueueService.addJob'
+          );
+        }
+      }
 
       // Note: passing jobType explicitly here is important for the Generic Worker Router
       const job = await queue.add(jobType, canonicalPayload, enhancedOptions);

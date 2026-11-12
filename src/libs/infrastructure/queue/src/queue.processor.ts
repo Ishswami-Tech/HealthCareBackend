@@ -1,5 +1,5 @@
 import { Job } from 'bullmq';
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { EHRService } from '../../../../services/ehr/ehr.service';
 import { AppointmentQueueService } from './services/appointment-queue.service';
@@ -8,23 +8,31 @@ import { EmailService } from '@communication/channels/email/email.service';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
-import { S3StorageService } from '@infrastructure/storage';
+import { S3StorageService, AssetType } from '@infrastructure/storage';
 import { CacheService } from '@infrastructure/cache/cache.service';
 // Use direct import to avoid circular dependency with barrel exports
 import { DatabaseService } from '@infrastructure/database/database.service';
+import { EventService } from '@infrastructure/events/event.service';
 import { AppointmentNotificationService } from '@services/appointments/plugins/notifications/appointment-notification.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { DoctorSummaryService } from '@communication/services/doctor-summary.service';
 
 // Internal imports - Core
-import { LogType, LogLevel } from '@core/types';
-import { AppointmentStatus, AppointmentType } from '@core/types/enums.types';
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
+import { LogType, LogLevel, type IEventService, isEventService } from '@core/types';
+import {
+  AppointmentStatus,
+  AppointmentType,
+  HealthRecordUploadStatus,
+} from '@core/types/enums.types';
 import {
   JobType,
   type CanonicalJobEnvelope,
   type JobData,
   type JobMetadata,
   type DoctorSummaryJobData,
+  type PatientDocumentUploadJobData,
 } from '@core/types/queue.types';
 import { EmailTemplate } from '@core/types/common.types';
 import type { NotificationData } from '@core/types/appointment.types';
@@ -103,6 +111,14 @@ function safeStringify(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/** Prisma's "record to update/delete not found" error (P2025) - duck-typed so this file
+ *  doesn't need a direct dependency on @prisma/client's error classes. */
+function isRecordNotFoundError(error: unknown): boolean {
+  return (
+    typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'P2025'
+  );
+}
+
 @Injectable()
 export class QueueProcessor {
   constructor(
@@ -115,8 +131,19 @@ export class QueueProcessor {
     @Optional()
     @Inject(CacheService)
     private readonly cacheService?: CacheService,
+    @Optional()
+    @Inject(forwardRef(() => EventService))
+    private readonly eventServiceRaw?: unknown,
     private readonly moduleRef?: ModuleRef
   ) {}
+
+  /** `EventService`, narrowed - mirrors the `@Optional() forwardRef` pattern already used
+   *  by AppointmentQueueService/QueueStatusGateway (see queue.module.ts's EventsModule
+   *  import comment): DI miss or a bad instance both fail safe to `null` rather than throw,
+   *  since a missed upload-completion notification is far less harmful than a failed job. */
+  private getEventService(): IEventService | null {
+    return isEventService(this.eventServiceRaw) ? this.eventServiceRaw : null;
+  }
 
   private getInvoicePDFService(): InvoicePDFServiceType | null {
     if (!this.moduleRef) {
@@ -268,6 +295,8 @@ export class QueueProcessor {
           return await this.processBulkEHRImport(job as unknown as Job<JobData>);
         case JobType.INVOICE_PDF:
           return await this.processInvoicePDF(job as unknown as Job<JobData>);
+        case JobType.PATIENT_DOCUMENT_UPLOAD:
+          return await this.processPatientDocumentUpload(job as unknown as Job<JobData>);
         case JobType.VIDEO_RECORDING:
           return await this.processVideoRecording(job as unknown as Job<JobData>);
         case JobType.VIDEO_TRANSCODING:
@@ -1779,6 +1808,207 @@ export class QueueProcessor {
         }
       );
       throw error;
+    }
+  }
+
+  /**
+   * Uploads a patient document's bytes to S3 in the background. The API only creates a
+   * PENDING HealthRecord and enqueues this job - it never blocks the HTTP response on S3
+   * itself, since the configured provider has been observed taking anywhere from under a
+   * second to 90+ seconds per upload. On success the row moves to READY with the real S3
+   * key; on final exhaustion of BullMQ's retries, `queue.module.ts`'s worker 'failed'
+   * listener calls `handlePatientDocumentUploadExhausted` to move it to FAILED.
+   */
+  async processPatientDocumentUpload(job: Job<JobData>): Promise<{ success: boolean }> {
+    const payload = this.extractCanonicalPayload(
+      job.data
+    ) as unknown as PatientDocumentUploadJobData;
+    const { recordId, patientId, clinicId, patientUserId, fileBase64, fileName, mimeType } =
+      payload;
+
+    if (!recordId || typeof recordId !== 'string' || !fileBase64) {
+      throw new HealthcareError(
+        ErrorCode.VALIDATION_REQUIRED_FIELD,
+        'Invalid PATIENT_DOCUMENT_UPLOAD job data: recordId and fileBase64 are required',
+        undefined,
+        { jobId: safeStringify(job.id) },
+        'QueueProcessor.processPatientDocumentUpload'
+      );
+    }
+
+    const buffer = Buffer.from(fileBase64, 'base64');
+    // Uses the long-timeout background client (see s3-storage.service.ts's onModuleInit) -
+    // nothing is waiting on an HTTP response here, so it can tolerate the slow/flaky
+    // provider's worst observed throughput for this app's largest allowed document.
+    const asset = await this.s3StorageService.uploadFile(
+      buffer,
+      fileName,
+      AssetType.DOCUMENT,
+      mimeType,
+      // PRIVATE: clients receive a presigned URL (toClientDocument), never a public one.
+      false,
+      true
+    );
+
+    if (!asset.success || !asset.url) {
+      throw new HealthcareError(
+        ErrorCode.FILE_UPLOAD_FAILED,
+        asset.error || 'Upload did not return a stored URL',
+        undefined,
+        { recordId },
+        'QueueProcessor.processPatientDocumentUpload'
+      );
+    }
+
+    try {
+      await this.prisma.executeHealthcareWrite(
+        async client => {
+          const typedClient = client as unknown as {
+            healthRecord: {
+              update: (args: {
+                where: { id: string };
+                data: {
+                  fileUrl: string;
+                  s3Key?: string | undefined;
+                  uploadStatus: HealthRecordUploadStatus;
+                  failureReason: null;
+                };
+              }) => Promise<unknown>;
+            };
+          };
+          return await typedClient.healthRecord.update({
+            where: { id: recordId },
+            data: {
+              fileUrl: asset.url as string,
+              s3Key: asset.key,
+              uploadStatus: HealthRecordUploadStatus.READY,
+              failureReason: null,
+            },
+          });
+        },
+        {
+          userId: 'system',
+          userRole: 'system',
+          clinicId: clinicId || '',
+          operation: 'ASYNC_UPLOAD_COMPLETE',
+          resourceType: 'HEALTH_RECORD',
+          resourceId: recordId,
+          timestamp: new Date(),
+        }
+      );
+    } catch (dbError) {
+      // The upload itself succeeded - `asset.key` is a real, now-orphaned S3 object unless
+      // we clean it up here. A retry would call uploadFile again under a brand-new key
+      // (uuidv4-based) rather than ever referencing this one again, so this is the only
+      // chance to delete it.
+      if (isRecordNotFoundError(dbError)) {
+        // The patient/staff deleted this document while the upload was still in flight.
+        // Retrying can never succeed (the row is gone for good), so clean up and stop -
+        // rethrowing would just waste every remaining BullMQ attempt on a dead row.
+        await this.s3StorageService.deleteFile(asset.key || '');
+        void this.loggingService.log(
+          LogType.QUEUE,
+          LogLevel.INFO,
+          'Patient document upload finished after its HealthRecord was deleted - discarded the uploaded file',
+          'QueueProcessor',
+          { recordId, patientId }
+        );
+        return { success: false };
+      }
+      await this.s3StorageService.deleteFile(asset.key || '');
+      throw dbError;
+    }
+
+    await this.getEventService()?.emit('ehr.patient_document.upload_completed', {
+      recordId,
+      userId: patientUserId,
+      status: 'ready',
+    });
+
+    void this.loggingService.log(
+      LogType.QUEUE,
+      LogLevel.INFO,
+      'Patient document upload completed',
+      'QueueProcessor',
+      { recordId, patientId }
+    );
+    return { success: true };
+  }
+
+  /**
+   * Called from queue.module.ts's worker 'failed' listener once a PATIENT_DOCUMENT_UPLOAD
+   * job has exhausted every retry (the same point that job moves to the dead-letter queue).
+   * Marks the HealthRecord FAILED and notifies the patient, instead of leaving it stuck
+   * showing PENDING/PROCESSING forever with no record anyone will ever write.
+   */
+  async handlePatientDocumentUploadExhausted(job: Job, err: Error): Promise<void> {
+    const payload = this.extractCanonicalPayload(
+      job.data
+    ) as unknown as PatientDocumentUploadJobData;
+    const { recordId, clinicId, patientUserId } = payload;
+    if (!recordId || typeof recordId !== 'string') {
+      return;
+    }
+
+    try {
+      await this.prisma.executeHealthcareWrite(
+        async client => {
+          const typedClient = client as unknown as {
+            healthRecord: {
+              update: (args: {
+                where: { id: string };
+                data: { uploadStatus: HealthRecordUploadStatus; failureReason: string };
+              }) => Promise<unknown>;
+            };
+          };
+          return await typedClient.healthRecord.update({
+            where: { id: recordId },
+            data: {
+              uploadStatus: HealthRecordUploadStatus.FAILED,
+              failureReason: err.message.slice(0, 500),
+            },
+          });
+        },
+        {
+          userId: 'system',
+          userRole: 'system',
+          clinicId: clinicId || '',
+          operation: 'ASYNC_UPLOAD_EXHAUSTED',
+          resourceType: 'HEALTH_RECORD',
+          resourceId: recordId,
+          timestamp: new Date(),
+        }
+      );
+
+      await this.getEventService()?.emit('ehr.patient_document.upload_failed', {
+        recordId,
+        userId: patientUserId,
+        status: 'failed',
+      });
+    } catch (updateError) {
+      if (isRecordNotFoundError(updateError)) {
+        // The patient/staff deleted this document before the job was ever retried to
+        // exhaustion - nothing left to mark FAILED, and no file was ever uploaded for
+        // this particular job attempt's error, so there's nothing to clean up either.
+        void this.loggingService.log(
+          LogType.QUEUE,
+          LogLevel.INFO,
+          'Exhausted patient document upload job had no HealthRecord left to mark FAILED (already deleted)',
+          'QueueProcessor',
+          { recordId }
+        );
+        return;
+      }
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        'Could not mark exhausted patient document upload as FAILED',
+        'QueueProcessor',
+        {
+          recordId,
+          error: updateError instanceof Error ? updateError.message : safeStringify(updateError),
+        }
+      );
     }
   }
 

@@ -36,6 +36,7 @@ import {
   HeadObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { NodeHttpHandler } from '@smithy/node-http-handler';
 
 // ---------------------------------------------------------------------------
 // Presigned-URL helpers for PRIVATE objects (pure, no AWS SDK).
@@ -219,6 +220,13 @@ export class S3StorageService implements OnModuleInit {
   // TypeScript correctly resolves this type (verified by successful compilation)
   // Using 'unknown' with type guards to satisfy ESLint while maintaining runtime type safety
   private s3Client: unknown = null;
+  // A second client, used only for background-queue uploads (currently: patient documents),
+  // with a much longer per-attempt timeout and no SDK-level retry. This client's timeout is
+  // sized for that one slow/flaky path; the primary client above stays conservative because
+  // every OTHER caller (EHR records, profile photos, health-library assets, video virtual
+  // backgrounds) invokes it synchronously from an HTTP request handler and should fail fast
+  // rather than hold a user's request open for minutes.
+  private s3ClientBackground: unknown = null;
   private config: S3Config;
   private localStoragePath: string;
   /**
@@ -281,34 +289,57 @@ export class S3StorageService implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     if (this.config.enabled && this.config.bucket) {
       try {
-        // Build S3 client configuration with explicit type annotations
-        const clientConfig: S3ClientConfig = {
+        // Shared base: everything except the per-client requestHandler/maxAttempts below.
+        const baseClientConfig: S3ClientConfig = {
           region: this.config.region,
         };
-
-        // Add endpoint for S3-compatible providers (Contabo, Wasabi, etc.)
         if (this.config.endpoint) {
-          clientConfig.endpoint = this.config.endpoint;
+          baseClientConfig.endpoint = this.config.endpoint;
         }
-
-        // Force path-style for S3-compatible providers
         if (this.config.forcePathStyle) {
-          clientConfig.forcePathStyle = true;
+          baseClientConfig.forcePathStyle = true;
         }
-
-        // Add credentials if provided
         if (this.config.accessKeyId && this.config.secretAccessKey) {
-          clientConfig.credentials = {
+          baseClientConfig.credentials = {
             accessKeyId: this.config.accessKeyId,
             secretAccessKey: this.config.secretAccessKey,
           };
         }
 
-        // Create S3 client instance
-        // Type assertion ensures type safety - verified by TypeScript compilation
-        this.s3Client = new S3Client(clientConfig);
+        // Primary client: every synchronous caller (EHR records, profile photos,
+        // health-library assets, video virtual backgrounds) sends through this one from
+        // an HTTP request handler, so it fails fast rather than holding a request open for
+        // minutes against a stalling endpoint.
+        this.s3Client = new S3Client({
+          ...baseClientConfig,
+          requestHandler: new NodeHttpHandler({
+            connectionTimeout: 5000,
+            requestTimeout: 30000,
+          }),
+          maxAttempts: 2,
+        });
 
-        // Test connection
+        // Background client: used only by queued/background uploads (currently: patient
+        // documents via QueueProcessor), which have no user waiting on the HTTP response.
+        // The configured provider's object storage endpoint has been observed to stall
+        // intermittently and unpredictably - a real upload that legitimately succeeded took
+        // 86.5s, and isolated tests saw sustained (not momentary) throughput as low as
+        // 0.06-0.12MB/s for a transfer's entire duration, which a 10MB document (this app's
+        // cap) can take ~167s to clear at the worst rate seen. requestTimeout is sized for
+        // that worst case with margin; maxAttempts is 1 (not the primary client's 2) because
+        // BullMQ's own job-level retry already owns retrying this operation - stacking SDK
+        // retries under job retries would multiply worst-case wait time for no benefit.
+        this.s3ClientBackground = new S3Client({
+          ...baseClientConfig,
+          requestHandler: new NodeHttpHandler({
+            connectionTimeout: 5000,
+            requestTimeout: 200000,
+          }),
+          maxAttempts: 1,
+        });
+
+        // Test connection (primary client only - same endpoint/credentials/bucket, so a
+        // failure here means both clients are equally unusable)
         await this.testConnection();
         void this.loggingService.log(
           LogType.SYSTEM,
@@ -330,6 +361,7 @@ export class S3StorageService implements OnModuleInit {
         );
         this.config.enabled = false;
         this.s3Client = null;
+        this.s3ClientBackground = null;
       }
     } else {
       void this.loggingService.log(
@@ -398,18 +430,23 @@ export class S3StorageService implements OnModuleInit {
    * @param folder - Folder path (e.g., 'qr-codes', 'invoices')
    * @param contentType - MIME type
    * @param isPublic - Whether file should be publicly accessible
+   * @param useBackgroundClient - Use the long-timeout client meant for queued/background
+   *   callers that have no HTTP request waiting on the result (see `onModuleInit`). Leave
+   *   false for anything invoked synchronously from a request handler.
    */
   async uploadFile(
     fileBuffer: Buffer,
     fileName: string,
     folder: string,
     contentType: string,
-    isPublic = false
+    isPublic = false,
+    useBackgroundClient = false
   ): Promise<UploadResult> {
     const fileKey = `${folder}/${uuidv4()}-${fileName}`;
+    const activeClient = useBackgroundClient ? this.s3ClientBackground : this.s3Client;
 
     // Try S3 first if enabled
-    if (this.config.enabled && this.s3Client) {
+    if (this.config.enabled && activeClient) {
       try {
         const command = new PutObjectCommand({
           Bucket: this.config.bucket,
@@ -420,7 +457,7 @@ export class S3StorageService implements OnModuleInit {
         });
 
         // Type assertion - verified safe by TypeScript compilation
-        const client = this.s3Client as S3Client;
+        const client = activeClient as S3Client;
         await client.send(command);
 
         // Generate public URL
@@ -456,7 +493,7 @@ export class S3StorageService implements OnModuleInit {
         LogLevel.ERROR,
         'PHI upload refused: S3 is configured but the object could not be stored there; local fallback is disabled for this folder',
         'S3StorageService.uploadFile',
-        { folder, fileName, s3Initialized: this.s3Client !== null }
+        { folder, fileName, s3Initialized: activeClient !== null }
       );
       return {
         success: false,

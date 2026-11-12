@@ -131,6 +131,8 @@ interface HealthRecordRow {
   doctorId: string;
   notes?: string;
   uploadedBy?: string;
+  uploadStatus?: string;
+  failureReason?: string;
   createdAt: Date;
   updatedAt?: Date | null;
 }
@@ -1240,6 +1242,14 @@ export class EHRService {
     if (r.mimeType) (result as MedicalRecordResponse).mimeType = r.mimeType;
     if (r.notes) (result as MedicalRecordResponse).notes = r.notes;
     if (r.uploadedBy) (result as MedicalRecordResponse).uploadedBy = r.uploadedBy;
+    // Lowercased to match PatientsService.mapHealthRecordToDocument's client shape; absent
+    // for every pre-existing record type since the column defaults to READY.
+    if (r.uploadStatus && r.uploadStatus !== 'READY') {
+      (result as MedicalRecordResponse).uploadStatus = r.uploadStatus.toLowerCase();
+      if (r.uploadStatus === 'FAILED' && r.failureReason) {
+        (result as MedicalRecordResponse).failureReason = r.failureReason;
+      }
+    }
     return result as unknown as MedicalRecordResponse;
   }
 

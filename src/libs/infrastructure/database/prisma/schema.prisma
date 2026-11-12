@@ -1986,22 +1986,29 @@ model WhatsAppSuppressionList {
 }
 
 model HealthRecord {
-  id         String           @id @default(uuid())
-  patientId  String
-  doctorId   String
-  recordType HealthRecordType
-  report     String?
-  fileUrl    String?
-  title      String?
-  content    String?
-  fileSize   Int?
-  mimeType   String?
-  uploadedBy String?
-  notes      String?
-  clinicId   String
-  createdAt  DateTime         @default(now())
-  doctor     Doctor           @relation(fields: [doctorId], references: [id])
-  patient    Patient          @relation(fields: [patientId], references: [id])
+  id            String                   @id @default(uuid())
+  patientId     String
+  doctorId      String
+  recordType    HealthRecordType
+  report        String?
+  fileUrl       String?
+  title         String?
+  content       String?
+  fileSize      Int?
+  mimeType      String?
+  uploadedBy    String?
+  notes         String?
+  clinicId      String
+  createdAt     DateTime                 @default(now())
+  // Upload-flow fields: a document-upload record is created PENDING, before the file has
+  // reached S3, and a background queue job flips it to READY/FAILED once the (slow,
+  // sometimes 90+ second) upload actually completes. Records created outside that flow
+  // (lab reports entered with a report string, etc.) are READY from creation.
+  uploadStatus  HealthRecordUploadStatus @default(READY)
+  failureReason String?
+  s3Key         String?
+  doctor        Doctor                   @relation(fields: [doctorId], references: [id])
+  patient       Patient                  @relation(fields: [patientId], references: [id])
 
   @@index([clinicId])
   @@index([patientId])
@@ -3447,6 +3454,16 @@ enum HealthRecordType {
   DIAGNOSIS_REPORT
   PULSE_DIAGNOSIS
   GENERAL_DOCUMENT
+}
+
+/// A HealthRecord created for an uploaded document starts PENDING (file not yet in S3) while
+/// the actual upload runs as a background queue job, since the S3-compatible provider used
+/// here has been observed to take anywhere from under a second to 90+ seconds per upload.
+enum HealthRecordUploadStatus {
+  PENDING
+  PROCESSING
+  READY
+  FAILED
 }
 
 enum NotificationType {

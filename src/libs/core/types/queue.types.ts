@@ -27,6 +27,19 @@ export interface AppointmentData {
   notes?: string;
 }
 
+// Patient document upload job data - carries the file bytes across the API -> worker
+// process boundary (base64, since BullMQ job data is JSON stored in Redis/Dragonfly; the
+// current 10MB document size cap keeps the worst case around ~13MB per job).
+export interface PatientDocumentUploadJobData {
+  recordId: string;
+  patientId: string;
+  clinicId: string;
+  patientUserId: string;
+  fileBase64: string;
+  fileName: string;
+  mimeType: string;
+}
+
 export interface AppointmentJobData {
   appointment?: AppointmentData;
   appointmentId?: string;
@@ -176,6 +189,7 @@ export enum JobType {
   LAB_REPORT = 'lab_report',
   IMAGING = 'imaging',
   BULK_EHR_IMPORT = 'bulk_ehr_import',
+  PATIENT_DOCUMENT_UPLOAD = 'patient_document_upload',
   INVOICE_PDF = 'invoice_pdf',
   BULK_INVOICE = 'bulk_invoice',
   PAYMENT_RECONCILIATION = 'payment_reconciliation',

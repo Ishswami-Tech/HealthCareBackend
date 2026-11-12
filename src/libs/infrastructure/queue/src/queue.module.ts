@@ -30,6 +30,7 @@ import {
 } from './queue.constants';
 import { runJobOnce, type CompletionMarkerStore } from './worker-lifecycle/job-idempotency.util';
 import { captureError } from '../../../../instrument/sentry';
+import { JobType } from '@core/types/queue.types';
 
 /** The worker's own BullMQ connection (queue DB) as a marker store; null if unavailable. */
 async function resolveMarkerStore(worker: Worker): Promise<CompletionMarkerStore | null> {
@@ -356,7 +357,17 @@ export class QueueModule {
                     worker.on('failed', (job: Job | undefined, err: Error) => {
                       if (!job) return;
                       const maxAttempts = job.opts.attempts ?? 3;
-                      if (job.attemptsMade >= maxAttempts) {
+                      // A job that stalled past maxStalledCount (see the Worker options
+                      // above) is also terminal - BullMQ moves it straight to failed via an
+                      // UnrecoverableError without ever incrementing attemptsMade, so
+                      // attemptsMade can still read well below maxAttempts even though
+                      // nothing will retry it again. Without this check, a worker
+                      // crash/restart mid-job silently skips both dead-lettering and any
+                      // job-type-specific cleanup below, leaving dependent state (e.g. a
+                      // patient document's HealthRecord) stuck PENDING/PROCESSING forever.
+                      const isTerminal =
+                        job.attemptsMade >= maxAttempts || err.name === 'UnrecoverableError';
+                      if (isTerminal) {
                         void deadLetterQueueService.moveToDeadLetter(job, err);
                         captureError(err, {
                           level: 'error',
@@ -369,6 +380,12 @@ export class QueueModule {
                             attemptsMade: job.attemptsMade,
                           },
                         });
+                        // A dead-lettered PATIENT_DOCUMENT_UPLOAD job would otherwise leave its
+                        // HealthRecord stuck showing PENDING/PROCESSING forever, with no record
+                        // anywhere that the upload actually failed.
+                        if (job.name === (JobType.PATIENT_DOCUMENT_UPLOAD as string)) {
+                          void queueProcessor.handlePatientDocumentUploadExhausted(job, err);
+                        }
                       }
                     });
 

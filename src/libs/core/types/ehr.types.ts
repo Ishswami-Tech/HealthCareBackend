@@ -19,6 +19,12 @@ export interface MedicalRecordResponse {
   doctorId: string;
   notes?: string;
   uploadedBy?: string;
+  // Absent/'READY' for every record type except a GENERAL_DOCUMENT uploaded through the
+  // async upload flow (see PatientsService.uploadPatientDocument), where fileUrl is null
+  // until a background job finishes - this distinguishes "still uploading"/"upload failed"
+  // from "no file was ever attached to this record".
+  uploadStatus?: string;
+  failureReason?: string;
   createdAt: string;
   updatedAt: string;
 }

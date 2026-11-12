@@ -12,7 +12,9 @@ import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
 import { PrismaDelegateArgs, PrismaTransactionClientWithDelegates } from '@core/types/prisma.types';
 import { AssetType, StaticAssetService } from '@infrastructure/storage/static-asset.service';
-import { HealthRecordType, Role } from '@core/types/enums.types';
+import { HealthRecordType, HealthRecordUploadStatus, Role } from '@core/types/enums.types';
+import { QueueService } from '@queue/src/queue.service';
+import { JobType } from '@core/types/queue.types';
 import { LogLevel, LogType } from '@core/types/logging.types';
 import type { PatientWithUser } from '@core/types';
 import {
@@ -90,6 +92,10 @@ interface HealthRecordDocumentRow {
   recordType?: string | null;
   uploadedBy?: string | null;
   createdAt: Date | string;
+  // Present once a document upload runs through the async (queued) upload flow; absent/READY
+  // for every other HealthRecord creation path (lab reports entered with a report string, etc).
+  uploadStatus?: string | null;
+  failureReason?: string | null;
 }
 
 @Injectable()
@@ -127,7 +133,12 @@ export class PatientsService {
     // omit it; the document paths fail closed when it is missing.
     @Optional()
     @Inject(forwardRef(() => RbacService))
-    private readonly rbacService?: RbacService
+    private readonly rbacService?: RbacService,
+    // Optional for the same reason as the services above (unit tests mocking
+    // PatientsService without the full module graph); document upload fails closed
+    // (an explicit error, not a silently-dropped upload) when it is missing.
+    @Optional()
+    private readonly queueService?: QueueService
   ) {}
 
   /**
@@ -911,6 +922,9 @@ export class PatientsService {
       recordType: r.recordType || undefined,
       uploadedBy: r.uploadedBy || undefined,
       uploadedAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
+      // Lowercased for the client: 'pending' | 'processing' | 'ready' | 'failed'.
+      uploadStatus: (r.uploadStatus || 'READY').toLowerCase(),
+      ...(r.uploadStatus === 'FAILED' && r.failureReason ? { failureReason: r.failureReason } : {}),
     };
   }
 
@@ -1168,8 +1182,18 @@ export class PatientsService {
         } as PrismaDelegateArgs,
       } as PrismaDelegateArgs);
     })) as HealthRecordDocumentRow | null;
-    if (!record?.fileUrl) {
+    if (!record) {
       throw new NotFoundException('Document not found');
+    }
+    // A record created by the async upload flow (see uploadPatientDocument) exists with
+    // fileUrl null until its background job finishes - that's a different, temporary state
+    // from a document that was never uploaded or was deleted, and the client needs to tell
+    // them apart rather than getting an identical 404 for both.
+    if (record.uploadStatus === 'FAILED') {
+      throw new BadRequestException(record.failureReason || 'This document could not be uploaded.');
+    }
+    if (!record.fileUrl) {
+      throw new BadRequestException('This document is still being uploaded. Try again shortly.');
     }
 
     const source = resolveDocumentContentSource(
@@ -1297,76 +1321,132 @@ export class PatientsService {
     }
 
     const fileName = buildDocumentStorageName(scopedPatient.id, validated.extension);
-    const asset = await this.staticAssetService.uploadFile(
-      file.buffer,
-      fileName,
-      AssetType.DOCUMENT,
-      validated.mimeType,
-      // PRIVATE: clients receive a presigned URL (toClientDocument), never a public one.
-      false
+
+    // The actual S3 write runs as a background queue job, not here: the configured
+    // S3-compatible provider has been observed taking anywhere from under a second to
+    // 90+ seconds per upload, and this request should not hold the connection open for
+    // that. The row is created PENDING (fileUrl null) and flipped to READY/FAILED by
+    // `QueueProcessor.processPatientDocumentUpload` once the job actually runs.
+    const created = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          healthRecord: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.healthRecord.create({
+          data: {
+            patientId: scopedPatient.id,
+            recordType: HealthRecordType.GENERAL_DOCUMENT,
+            fileUrl: null,
+            uploadStatus: HealthRecordUploadStatus.PENDING,
+            clinicId: auditInfo.clinicId,
+            // Required FK to Doctor.id (never the uploader's User.id).
+            doctorId,
+            uploadedBy: auditInfo.userId,
+            title: validated.title,
+            fileSize: validated.size,
+            mimeType: validated.mimeType,
+            report: validated.category,
+            ...(validated.description ? { notes: validated.description } : {}),
+            ...(validated.reportDate
+              ? { content: `${REPORT_DATE_CONTENT_PREFIX}${validated.reportDate}` }
+              : {}),
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        ...auditInfo,
+        resourceType: 'HEALTH_RECORD',
+        operation: 'CREATE',
+        resourceId: 'new',
+        details: { action: 'upload_document' },
+      }
     );
-    if (!asset.success || !asset.url) {
+    const createdRow = created as HealthRecordDocumentRow;
+
+    try {
+      if (!this.queueService) {
+        throw new InternalServerErrorException('Could not store the document. Please try again.');
+      }
+      // attempts: 2 (not QueueService's generic 3-attempt default) because the S3 client
+      // used for this job already has its own, much longer per-attempt timeout with no SDK
+      // retry of its own (see s3-storage.service.ts) - stacking a third BullMQ attempt on
+      // top would only add another multi-minute wait for a connection that has already
+      // failed twice, not meaningfully improve the odds of success.
+      await this.queueService.addJob(
+        JobType.PATIENT_DOCUMENT_UPLOAD,
+        'upload_patient_document',
+        {
+          recordId: createdRow.id,
+          patientId: scopedPatient.id,
+          clinicId: auditInfo.clinicId,
+          patientUserId: scopedPatient.userId,
+          fileBase64: file.buffer.toString('base64'),
+          fileName,
+          mimeType: validated.mimeType,
+        },
+        { attempts: 2 }
+      );
+    } catch (error) {
+      // The row already exists and was returned to the client with a PENDING status - a
+      // job the queue itself refused to accept will never flip it to READY, so mark it
+      // FAILED now rather than leaving it stuck PENDING forever with nothing retrying it.
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        'Patient document upload was not stored',
+        'Could not queue patient document upload',
         'PatientsService',
-        { patientId: scopedPatient.id, clinicId: auditInfo.clinicId, error: asset.error }
-      );
-      throw new InternalServerErrorException('Could not store the document. Please try again.');
-    }
-    const storedUrl = asset.url;
-
-    let created: unknown;
-    try {
-      created = await this.databaseService.executeHealthcareWrite(
-        async client => {
-          const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-            healthRecord: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
-          };
-          return await typedClient.healthRecord.create({
-            data: {
-              patientId: scopedPatient.id,
-              recordType: HealthRecordType.GENERAL_DOCUMENT,
-              fileUrl: storedUrl,
-              clinicId: auditInfo.clinicId,
-              // Required FK to Doctor.id (never the uploader's User.id).
-              doctorId,
-              uploadedBy: auditInfo.userId,
-              title: validated.title,
-              fileSize: validated.size,
-              mimeType: validated.mimeType,
-              report: validated.category,
-              ...(validated.description ? { notes: validated.description } : {}),
-              ...(validated.reportDate
-                ? { content: `${REPORT_DATE_CONTENT_PREFIX}${validated.reportDate}` }
-                : {}),
-            } as PrismaDelegateArgs,
-          } as PrismaDelegateArgs);
-        },
         {
-          ...auditInfo,
-          resourceType: 'HEALTH_RECORD',
-          operation: 'CREATE',
-          resourceId: 'new',
-          details: { action: 'upload_document', assetId: asset.key },
-        }
-      );
-    } catch (error) {
-      // Do not leave an orphaned object behind when the row could not be written.
-      // Relative key / `/storage/...` reference only: an absolute disk path is not an
-      // S3 key (and `asset.localPath` is one).
-      await this.discardStoredFile(
-        asset.key ?? extractStoredFileRef(storedUrl, PHI_FILE_FOLDERS) ?? asset.localPath,
-        {
+          recordId: createdRow.id,
           patientId: scopedPatient.id,
           clinicId: auditInfo.clinicId,
-          reason: 'health record insert failed',
+          error: error instanceof Error ? error.message : String(error),
         }
       );
-      throw error;
+      try {
+        await this.databaseService.executeHealthcareWrite(
+          async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              healthRecord: { update: (args: PrismaDelegateArgs) => Promise<unknown> };
+            };
+            return await typedClient.healthRecord.update({
+              where: { id: createdRow.id },
+              data: {
+                uploadStatus: HealthRecordUploadStatus.FAILED,
+                failureReason: 'Could not queue upload',
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          },
+          {
+            ...auditInfo,
+            resourceType: 'HEALTH_RECORD',
+            operation: 'UPDATE',
+            resourceId: createdRow.id,
+            details: { action: 'upload_document_enqueue_failed' },
+          }
+        );
+      } catch (markFailedError) {
+        // Both the enqueue AND the fallback write failed - the row is stuck PENDING with
+        // nothing left to retry it and no FAILED marker. Returning a fabricated client
+        // document here would misreport the real (inconsistent) DB state, so surface a
+        // clear failure instead of silently masking it as the original enqueue error would.
+        void this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          'Could not mark patient document upload as FAILED after its enqueue also failed',
+          'PatientsService',
+          {
+            recordId: createdRow.id,
+            error:
+              markFailedError instanceof Error ? markFailedError.message : String(markFailedError),
+          }
+        );
+        throw new InternalServerErrorException('Could not store the document. Please try again.');
+      }
+      createdRow.uploadStatus = HealthRecordUploadStatus.FAILED;
+      createdRow.failureReason = 'Could not queue upload';
     }
-    return await this.toClientDocument(created as HealthRecordDocumentRow, scopedPatient);
+
+    return await this.toClientDocument(createdRow, scopedPatient);
   }
 
   /**
