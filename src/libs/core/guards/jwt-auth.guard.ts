@@ -531,10 +531,14 @@ export class JwtAuthGuard implements CanActivate {
   }
 
   private validateRequest(request: FastifyRequestWithUser): void {
-    // Validate Content-Type for POST/PUT/PATCH requests
+    // Validate Content-Type for POST/PUT/PATCH requests. multipart/form-data is
+    // the legitimate content type for file upload endpoints (e.g. documents,
+    // prescriptions) - excluding it made every file upload fail with 400.
+    const contentType = request.headers['content-type'] as string | undefined;
     if (
       ['POST', 'PUT', 'PATCH'].includes(request.method) &&
-      !(request.headers['content-type'] as string)?.includes('application/json')
+      !contentType?.includes('application/json') &&
+      !contentType?.includes('multipart/form-data')
     ) {
       throw new HttpException('Invalid Content-Type', HttpStatus.BAD_REQUEST);
     }
