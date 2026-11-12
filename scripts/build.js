@@ -175,7 +175,21 @@ function copyRuntimeAssets() {
 
 function main() {
   const startTime = Date.now();
-  const args = process.argv.slice(2);
+  const rawArgs = process.argv.slice(2);
+  // --compile-only: skip every validation step and only produce dist/. Used by the Docker
+  //   image build; the same checks run in CI's parallel `verify` job (`--checks-only`) and
+  //   gate the deploy there, so nothing is skipped overall.
+  // --checks-only: run every validation step against the source exactly as committed, then
+  //   stop before compiling. The ESLint --fix / Prettier --write passes are skipped because
+  //   their edits would be discarded: the image is compiled from the committed source, so
+  //   that is the source the lint/format verification must pass on.
+  const compileOnly = rawArgs.includes('--compile-only');
+  const checksOnly = rawArgs.includes('--checks-only');
+  if (compileOnly && checksOnly) {
+    logError('--compile-only and --checks-only are mutually exclusive');
+    process.exit(1);
+  }
+  const args = rawArgs.filter(arg => !arg.startsWith('--'));
   const environment =
     args[0] ||
     process.env.BUILD_ENV ||
@@ -202,161 +216,177 @@ function main() {
   log('='.repeat(60) + '\n', 'bright');
 
   try {
-    // Pre-build validation steps
-    // Note: Prisma Client generation is handled by Dockerfile during Docker builds
-    // For local builds, ensure Prisma Client is generated before running this script
-    log('Pre-Build Validation', 'blue');
-    log('-'.repeat(60), 'blue');
-
-    const envResult = runCommand('yarn run env:validate', 'Environment variables validation');
-    stepTimes['Environment Validation'] = envResult.time;
-    validationCount++;
-
-    // Check for forbidden comments and code quality (consolidated validation)
-    logStep('→', 'Validating code quality (forbidden comments, TODOs, outdated deps)');
-    const codeValidationResult = runCommand(
-      'node scripts/validate-code.js',
-      'Code validation check'
-    );
-    stepTimes['Code Validation'] = codeValidationResult.time;
-    validationCount++;
-
-    const typeCheckResult = runCommand('yarn run type-check', 'TypeScript type checking');
-    stepTimes['TypeScript Check'] = typeCheckResult.time;
-    validationCount++;
-
-    const lintResult = runCommand('yarn run lint', 'ESLint code quality check and fix');
-    stepTimes['ESLint Fix'] = lintResult.time;
-    validationCount++;
-
-    const formatResult = runCommand('yarn run format', 'Prettier formatting check and fix');
-    stepTimes['Prettier Format'] = formatResult.time;
-    validationCount++;
-
-    // Verify fixes were successful
-    const lintCheckResult = runCommand('yarn run lint:check', 'ESLint verification (after fixes)');
-    stepTimes['ESLint Verification'] = lintCheckResult.time;
-    validationCount++;
-
-    const formatCheckResult = runCommand(
-      'yarn run format:check',
-      'Prettier verification (after fixes)'
-    );
-    stepTimes['Prettier Verification'] = formatCheckResult.time;
-    validationCount++;
-
-    const circularCheckResult = runCommand(
-      'yarn run deps:cycles:all',
-      'Circular dependency check (strict)'
-    );
-    stepTimes['Circular Dependency Check'] = circularCheckResult.time;
-    validationCount++;
-
-    // Security and dependency checks
-    log('\nSecurity & Dependency Checks', 'blue');
-    log('-'.repeat(60), 'blue');
-
-    // Auto-fix vulnerabilities first
-    logStep('→', 'Auto-fixing security vulnerabilities');
-    const vulnFixResult = runCommand(
-      'node scripts/fix-vulnerabilities.js',
-      'Vulnerability auto-fix',
-      true
-    );
-    stepTimes['Vulnerability Fix'] = vulnFixResult.time;
-    if (!vulnFixResult.success) warningCount++;
-
-    // Security audit - fail if vulnerabilities are found
-    if (skipSecurityAudit) {
-      logWarning('Security audit skipped because SKIP_SECURITY_AUDIT=true');
+    if (compileOnly) {
+      logWarning('Skipping validation (--compile-only); CI runs it in the verify job');
     } else {
-      const auditResult = runCommand('yarn run security:audit', 'Security audit');
-      stepTimes['Security Audit'] = auditResult.time;
+      // Pre-build validation steps
+      // Note: Prisma Client generation is handled by Dockerfile during Docker builds
+      // For local builds, ensure Prisma Client is generated before running this script
+      log('Pre-Build Validation', 'blue');
+      log('-'.repeat(60), 'blue');
+
+      const envResult = runCommand('yarn run env:validate', 'Environment variables validation');
+      stepTimes['Environment Validation'] = envResult.time;
       validationCount++;
-    }
 
-    const depsResult = runCommand('yarn run deps:check', 'Dependency check', true);
-    stepTimes['Dependency Check'] = depsResult.time;
-    if (!depsResult.success) warningCount++;
+      // Check for forbidden comments and code quality (consolidated validation)
+      logStep('→', 'Validating code quality (forbidden comments, TODOs, outdated deps)');
+      const codeValidationResult = runCommand(
+        'node scripts/validate-code.js',
+        'Code validation check'
+      );
+      stepTimes['Code Validation'] = codeValidationResult.time;
+      validationCount++;
 
-    const outdatedResult = runCommand(
-      'yarn run outdated:check',
-      'Outdated dependencies check',
-      true
-    );
-    stepTimes['Outdated Check'] = outdatedResult.time;
-    if (!outdatedResult.success) warningCount++;
+      const typeCheckResult = runCommand('yarn run type-check', 'TypeScript type checking');
+      stepTimes['TypeScript Check'] = typeCheckResult.time;
+      validationCount++;
 
-    const todoResult = runCommand('yarn run todo:check', 'TODO/FIXME check', true);
-    stepTimes['TODO Check'] = todoResult.time;
-    if (!todoResult.success) warningCount++;
+      if (checksOnly) {
+        logWarning(
+          'Skipping ESLint --fix / Prettier --write (--checks-only verifies the committed source)'
+        );
+      } else {
+        const lintResult = runCommand('yarn run lint', 'ESLint code quality check and fix');
+        stepTimes['ESLint Fix'] = lintResult.time;
+        validationCount++;
 
-    // Build step
-    log('\nBuilding Application', 'blue');
-    log('-'.repeat(60), 'blue');
-
-    // Set environment variable and run the direct SWC build pipeline
-    const envPrefix =
-      environment === 'production'
-        ? 'cross-env NODE_ENV=production'
-        : environment === 'staging'
-          ? 'cross-env NODE_ENV=staging'
-          : 'cross-env NODE_ENV=development';
-
-    // Clean output
-    fs.rmSync(path.join(process.cwd(), 'dist'), { recursive: true, force: true });
-    // @swc/core >= 1.16 materialises its native binary into a cache directory and refuses any
-    // directory whose ancestor chain grants write/delete rights to other accounts. On Windows the
-    // default root (%LOCALAPPDATA%\swc) fails that check whenever an app-container SID has rights on
-    // AppData\Local, and drive roots fail because of Authenticated Users. A directory directly under
-    // the user profile passes, so point SWC there unless the caller already chose a root. The
-    // directory is created with inheritance removed (user, SYSTEM, Administrators only) when missing.
-    if (process.platform === 'win32' && !process.env.SWC_NATIVE_BINDING_CACHE) {
-      const profileDir = process.env.USERPROFILE;
-      if (profileDir) {
-        const swcCacheDir = path.join(profileDir, '.swc-native-cache');
-        if (!fs.existsSync(swcCacheDir)) {
-          fs.mkdirSync(swcCacheDir, { recursive: true });
-          try {
-            const owner = process.env.USERNAME || '';
-            execSync(
-              `icacls "${swcCacheDir}" /inheritance:r /grant:r "${owner}:(OI)(CI)F" /grant:r "SYSTEM:(OI)(CI)F" /grant:r "Administrators:(OI)(CI)F"`,
-              { stdio: 'ignore' }
-            );
-          } catch {
-            logWarning('Could not tighten the SWC native cache ACL; SWC may refuse the cache');
-          }
-        }
-        process.env.SWC_NATIVE_BINDING_CACHE = swcCacheDir;
+        const formatResult = runCommand('yarn run format', 'Prettier formatting check and fix');
+        stepTimes['Prettier Format'] = formatResult.time;
+        validationCount++;
       }
+
+      // Verify fixes were successful
+      const lintCheckResult = runCommand(
+        'yarn run lint:check',
+        'ESLint verification (after fixes)'
+      );
+      stepTimes['ESLint Verification'] = lintCheckResult.time;
+      validationCount++;
+
+      const formatCheckResult = runCommand(
+        'yarn run format:check',
+        'Prettier verification (after fixes)'
+      );
+      stepTimes['Prettier Verification'] = formatCheckResult.time;
+      validationCount++;
+
+      const circularCheckResult = runCommand(
+        'yarn run deps:cycles:all',
+        'Circular dependency check (strict)'
+      );
+      stepTimes['Circular Dependency Check'] = circularCheckResult.time;
+      validationCount++;
+
+      // Security and dependency checks
+      log('\nSecurity & Dependency Checks', 'blue');
+      log('-'.repeat(60), 'blue');
+
+      // Auto-fix vulnerabilities first
+      logStep('→', 'Auto-fixing security vulnerabilities');
+      const vulnFixResult = runCommand(
+        'node scripts/fix-vulnerabilities.js',
+        'Vulnerability auto-fix',
+        true
+      );
+      stepTimes['Vulnerability Fix'] = vulnFixResult.time;
+      if (!vulnFixResult.success) warningCount++;
+
+      // Security audit - fail if vulnerabilities are found
+      if (skipSecurityAudit) {
+        logWarning('Security audit skipped because SKIP_SECURITY_AUDIT=true');
+      } else {
+        const auditResult = runCommand('yarn run security:audit', 'Security audit');
+        stepTimes['Security Audit'] = auditResult.time;
+        validationCount++;
+      }
+
+      const depsResult = runCommand('yarn run deps:check', 'Dependency check', true);
+      stepTimes['Dependency Check'] = depsResult.time;
+      if (!depsResult.success) warningCount++;
+
+      const outdatedResult = runCommand(
+        'yarn run outdated:check',
+        'Outdated dependencies check',
+        true
+      );
+      stepTimes['Outdated Check'] = outdatedResult.time;
+      if (!outdatedResult.success) warningCount++;
+
+      const todoResult = runCommand('yarn run todo:check', 'TODO/FIXME check', true);
+      stepTimes['TODO Check'] = todoResult.time;
+      if (!todoResult.success) warningCount++;
     }
-    const buildResult = runCommand(
-      `${envPrefix} swc src -d dist --copy-files --strip-leading-paths --config-file .swcrc`,
-      `Building for ${environment} environment`
-    );
-    stepTimes['SWC Compilation'] = buildResult.time;
-    const aliasResult = runCommand(
-      'yarn run tsc-alias -p tsconfig.build.json --outDir dist',
-      'Rewriting path aliases'
-    );
-    stepTimes['Alias Rewrite'] = aliasResult.time;
-    copyRuntimeAssets();
-    validationCount++;
 
-    // Post-build verification
-    log('\nPost-Build Verification', 'blue');
-    log('-'.repeat(60), 'blue');
+    let buildSize = 'N/A';
+    if (!checksOnly) {
+      // Build step
+      log('\nBuilding Application', 'blue');
+      log('-'.repeat(60), 'blue');
 
-    verifyBuildArtifacts();
-    const buildSize = getBuildSize();
-    stepTimes['Artifact Verification'] = 0.1; // Minimal time
+      // Set environment variable and run the direct SWC build pipeline
+      const envPrefix =
+        environment === 'production'
+          ? 'cross-env NODE_ENV=production'
+          : environment === 'staging'
+            ? 'cross-env NODE_ENV=staging'
+            : 'cross-env NODE_ENV=development';
+
+      // Clean output
+      fs.rmSync(path.join(process.cwd(), 'dist'), { recursive: true, force: true });
+      // @swc/core >= 1.16 materialises its native binary into a cache directory and refuses any
+      // directory whose ancestor chain grants write/delete rights to other accounts. On Windows the
+      // default root (%LOCALAPPDATA%\swc) fails that check whenever an app-container SID has rights on
+      // AppData\Local, and drive roots fail because of Authenticated Users. A directory directly under
+      // the user profile passes, so point SWC there unless the caller already chose a root. The
+      // directory is created with inheritance removed (user, SYSTEM, Administrators only) when missing.
+      if (process.platform === 'win32' && !process.env.SWC_NATIVE_BINDING_CACHE) {
+        const profileDir = process.env.USERPROFILE;
+        if (profileDir) {
+          const swcCacheDir = path.join(profileDir, '.swc-native-cache');
+          if (!fs.existsSync(swcCacheDir)) {
+            fs.mkdirSync(swcCacheDir, { recursive: true });
+            try {
+              const owner = process.env.USERNAME || '';
+              execSync(
+                `icacls "${swcCacheDir}" /inheritance:r /grant:r "${owner}:(OI)(CI)F" /grant:r "SYSTEM:(OI)(CI)F" /grant:r "Administrators:(OI)(CI)F"`,
+                { stdio: 'ignore' }
+              );
+            } catch {
+              logWarning('Could not tighten the SWC native cache ACL; SWC may refuse the cache');
+            }
+          }
+          process.env.SWC_NATIVE_BINDING_CACHE = swcCacheDir;
+        }
+      }
+      const buildResult = runCommand(
+        `${envPrefix} swc src -d dist --copy-files --strip-leading-paths --config-file .swcrc`,
+        `Building for ${environment} environment`
+      );
+      stepTimes['SWC Compilation'] = buildResult.time;
+      const aliasResult = runCommand(
+        'yarn run tsc-alias -p tsconfig.build.json --outDir dist',
+        'Rewriting path aliases'
+      );
+      stepTimes['Alias Rewrite'] = aliasResult.time;
+      copyRuntimeAssets();
+      validationCount++;
+
+      // Post-build verification
+      log('\nPost-Build Verification', 'blue');
+      log('-'.repeat(60), 'blue');
+
+      verifyBuildArtifacts();
+      buildSize = getBuildSize();
+      stepTimes['Artifact Verification'] = 0.1; // Minimal time
+    }
 
     // Calculate build time
     const buildTime = ((Date.now() - startTime) / 1000).toFixed(2);
 
     // Success message with detailed summary
     log('\n' + '='.repeat(60), 'green');
-    log(`BUILD COMPLETE!`, 'green');
+    log(checksOnly ? 'CHECKS PASSED!' : `BUILD COMPLETE!`, 'green');
     log('='.repeat(60), 'green');
 
     log('\n📊 Build Summary:', 'bright');

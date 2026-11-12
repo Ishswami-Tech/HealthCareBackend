@@ -128,14 +128,14 @@ RUN mkdir -p /app/node_modules_real/@prisma && \
   fi
 
 # Build using SWC compiler (configured in nest-cli.json with explicit configFile path)
-# Type checking runs in parallel with SWC compilation
 # Works on all platforms: Windows, Linux (Docker), macOS
-# Prisma Client is already generated above (line 34) - no need to regenerate
-# Use yarn build to run all optimizations, linting, and formatting ONCE in Docker
-# CI skips linting for production, so this is the only place it runs (no duplication)
-ARG SKIP_SECURITY_AUDIT=false
-ENV SKIP_SECURITY_AUDIT=${SKIP_SECURITY_AUDIT}
-RUN yarn build
+# Prisma Client is already generated above - no need to regenerate
+# Compile only (SWC + path-alias rewrite + runtime assets + artifact check). The validation
+# half of `yarn build` (env/code validation, type-check, ESLint, Prettier, circular deps,
+# security audit, dependency checks) runs in CI's `verify` job in parallel with this image
+# build, against the same commit, and gates the image tags and the deploy. Locally the
+# pre-push hook still runs the full `yarn build`.
+RUN yarn build:compile
 
 # Ensure Prisma schema is available in dist
 RUN mkdir -p /app/dist/libs/infrastructure/database/prisma && \

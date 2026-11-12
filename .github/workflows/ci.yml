@@ -2,7 +2,9 @@
 #
 # TRIGGER FLOW:
 #   PR  to main        → lint/type-check (no deploy)
-#   push to main       → detect → security → docker-build → deploy PRODUCTION
+#   push to main       → detect → security → docker-build → merge → deploy PRODUCTION
+#                        (verify — lint/format/type-check/validation — runs in parallel
+#                        with the image build; image tags and the deploy wait for it)
 #
 # There is no preprod environment: Temps hosts only the production project, so
 # work merges straight into main. Pushes to other branches (including the old
@@ -156,6 +158,73 @@ jobs:
           echo "Dependency audit passed" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
+  # JOB: verify — Lint, format, type-check and validation gate (push only)
+  # ============================================================================
+  # These checks used to run inside the Docker build (`RUN yarn build`), in series
+  # in front of the compile. The image now runs only the compile step
+  # (`yarn build:compile`), and the same checks run here, in parallel with
+  # docker-build, against the same commit. They still gate publishing:
+  # docker-build-merge (which creates the `main-<sha>` and `latest` tags) and
+  # deploy both need this job, so a failure here blocks the deploy exactly like a
+  # failing `yarn build` inside the image build did.
+  verify:
+    name: "Verify (lint, format, type-check, validation)"
+    runs-on: ubuntu-latest
+    needs: [detect-changes]
+    if: github.event_name == 'push'
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: yarn
+
+      - name: Install Yarn
+        run: npm install -g yarn@${{ env.YARN_VERSION }} --force
+
+      - name: Validate Prisma schema/migration sync
+        run: |
+          node scripts/validate-prisma-generated.js --check-migration-sync
+          echo "Prisma schema/migration sync OK" >> $GITHUB_STEP_SUMMARY
+
+      # Same flags as the Docker builder stage's install.
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --ignore-scripts --ignore-engines --network-timeout 600000
+
+      - name: Validate Prisma configuration
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          test -f src/libs/infrastructure/database/prisma/schema.prisma || (echo "Schema file not found!" && exit 1)
+          test -f src/libs/infrastructure/database/prisma/prisma.config.js || (echo "Config file not found!" && exit 1)
+          yarn prisma format --schema=./src/libs/infrastructure/database/prisma/schema.prisma \
+            --config=./src/libs/infrastructure/database/prisma/prisma.config.js \
+            || (echo "Prisma schema validation failed!" && exit 1)
+          echo "Prisma schema valid" >> $GITHUB_STEP_SUMMARY
+
+      # type-check needs the generated client, exactly as in the Docker builder stage
+      # (placeholder URL: generate never connects).
+      - name: Generate Prisma Client
+        env:
+          DATABASE_URL: postgresql://placeholder:placeholder@db:5432/placeholder?schema=public
+        run: yarn prisma:generate
+
+      # Every validation step of `yarn build`, on the committed source (no ESLint --fix /
+      # Prettier --write pass first: the image is compiled from the committed source, so that
+      # is what must pass). BUILD_ENV=development is the environment `yarn build` resolved
+      # inside the Docker builder (no NODE_ENV / CI there), so env:validate applies the same
+      # rules it always has.
+      - name: Lint, format, type-check and validation checks
+        env:
+          BUILD_ENV: development
+        run: yarn build:checks
+
+  # ============================================================================
   # JOB: docker-build — Build and push by digest
   # ============================================================================
   # amd64-only: every node that actually runs this image (temps-worker-ubuntu,
@@ -176,39 +245,15 @@ jobs:
     outputs:
       image_name: ${{ steps.image.outputs.image }}
     steps:
+      # The Prisma schema/migration-sync and schema-format validations that used to run
+      # here (with their own uncached ~70s yarn install) moved to the `verify` job, which
+      # gates the image tags and the deploy the same way.
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set platform pair
         run: |
           platform="${{ matrix.platform }}"
           echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Install Yarn
-        run: npm install -g yarn@${{ env.YARN_VERSION }} --force
-
-      - name: Validate Prisma schema/migration sync
-        run: |
-          node scripts/validate-prisma-generated.js --check-migration-sync
-          echo "Prisma schema/migration sync OK" >> $GITHUB_STEP_SUMMARY
-
-      - name: Validate Prisma configuration
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: |
-          test -f src/libs/infrastructure/database/prisma/schema.prisma || (echo "Schema file not found!" && exit 1)
-          test -f src/libs/infrastructure/database/prisma/prisma.config.js || (echo "Config file not found!" && exit 1)
-          yarn install --frozen-lockfile --ignore-scripts --silent
-          yarn prisma format --schema=./src/libs/infrastructure/database/prisma/schema.prisma \
-            --config=./src/libs/infrastructure/database/prisma/prisma.config.js \
-            || (echo "Prisma schema validation failed!" && exit 1)
-          echo "Prisma schema valid" >> $GITHUB_STEP_SUMMARY
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -269,7 +314,9 @@ jobs:
   docker-build-merge:
     name: "Docker Build and Push (Merge Manifest)"
     runs-on: ubuntu-latest
-    needs: [docker-build]
+    # verify gates the tags: docker-build only pushes an untagged digest, and this job is
+    # what publishes `main-<sha>` / `latest`, so nothing tagged exists until verify passed.
+    needs: [docker-build, verify]
     timeout-minutes: 10
     outputs:
       image_tag: ${{ steps.meta.outputs.tags }}
@@ -402,7 +449,7 @@ jobs:
   deploy:
     name: "Deploy"
     runs-on: ubuntu-latest
-    needs: [docker-build-merge, ensure-infrastructure-health, pre-deployment-backup]
+    needs: [docker-build-merge, ensure-infrastructure-health, pre-deployment-backup, verify]
     if: github.event_name == 'push'
     timeout-minutes: 60
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
