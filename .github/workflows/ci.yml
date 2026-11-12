@@ -2,9 +2,10 @@
 #
 # TRIGGER FLOW:
 #   PR  to main        → lint/type-check (no deploy)
-#   push to main       → detect → security → docker-build → merge → deploy PRODUCTION
-#                        (verify — lint/format/type-check/validation — runs in parallel
-#                        with the image build; image tags and the deploy wait for it)
+#   push to main       → detect → { security | verify | docker-build } → merge → deploy PRODUCTION
+#                        (security, verify — lint/format/type-check/validation — and the
+#                        image build run in parallel; image tags and the deploy wait for
+#                        all three)
 #
 # There is no preprod environment: Temps hosts only the production project, so
 # work merges straight into main. Pushes to other branches (including the old
@@ -233,10 +234,15 @@ jobs:
   # just produce an image nothing deploys to. Still matrixed/digest-merged
   # (see docker-build-merge below) so a second platform can be added back the
   # same way if an arm64 node ever rejoins.
+  # Runs in parallel with security and verify instead of after security: it only
+  # pushes an untagged digest, and docker-build-merge (tags) + deploy need all three.
+  # The explicit push-only `if` replaces the one this job used to inherit from
+  # needing `security` (which is push-only), so PRs still never build the image.
   docker-build:
     name: "Docker Build and Push (${{ matrix.platform }})"
     runs-on: ubuntu-latest
-    needs: [detect-changes, security]
+    needs: [detect-changes]
+    if: github.event_name == 'push'
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -314,9 +320,9 @@ jobs:
   docker-build-merge:
     name: "Docker Build and Push (Merge Manifest)"
     runs-on: ubuntu-latest
-    # verify gates the tags: docker-build only pushes an untagged digest, and this job is
-    # what publishes `main-<sha>` / `latest`, so nothing tagged exists until verify passed.
-    needs: [docker-build, verify]
+    # security + verify gate the tags: docker-build only pushes an untagged digest, and this
+    # job is what publishes `main-<sha>` / `latest`, so nothing tagged exists until both passed.
+    needs: [docker-build, security, verify]
     timeout-minutes: 10
     outputs:
       image_tag: ${{ steps.meta.outputs.tags }}
@@ -449,7 +455,7 @@ jobs:
   deploy:
     name: "Deploy"
     runs-on: ubuntu-latest
-    needs: [docker-build-merge, ensure-infrastructure-health, pre-deployment-backup, verify]
+    needs: [docker-build-merge, ensure-infrastructure-health, pre-deployment-backup, security, verify]
     if: github.event_name == 'push'
     timeout-minutes: 60
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
