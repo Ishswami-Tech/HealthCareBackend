@@ -48,6 +48,11 @@ import cluster from 'cluster';
 import * as os from 'os';
 import { SocketConnection, WorkerProcess } from '@core/types';
 import type { RedisClient } from '@core/types/common.types';
+import {
+  describeCacheTarget,
+  getCacheConnectionTarget,
+  type CacheConnectionTarget,
+} from '@infrastructure/cache/utils/cache-connection-target.util';
 import { SecurityConfigService } from '@security/security-config.service';
 import {
   GracefulShutdownService,
@@ -128,7 +133,7 @@ async function _setupWebSocketAdapter(
     }
 
     const { createAdapter } = await import('@socket.io/redis-adapter');
-    const { createClient } = await import('redis');
+    const { default: Redis } = await import('ioredis');
 
     // Use ConfigService for all cache configuration (single source of truth)
     if (!configService) {
@@ -141,19 +146,25 @@ async function _setupWebSocketAdapter(
     const cacheHost: string = configService.getCacheHost();
     const cachePort: number = configService.getCachePort();
     const cachePassword: string | undefined = configService.getCachePassword();
+    const cacheTarget = getCacheConnectionTarget(key => configService.getEnv(key), {
+      host: cacheHost.trim(),
+      port: cachePort,
+    });
 
     // Debug logging
     logger.log(
-      `[WebSocket] Using ${useDragonfly ? 'Dragonfly' : 'Redis'} for pub/sub: ${cacheHost}:${cachePort} (CACHE_PROVIDER=${cacheProvider})`
+      `[WebSocket] Using ${useDragonfly ? 'Dragonfly' : 'Redis'} for pub/sub: ${describeCacheTarget(cacheTarget)} (CACHE_PROVIDER=${cacheProvider})`
     );
 
-    const redisConfig: {
-      url: string;
+    const redisConfig: CacheConnectionTarget & {
       password?: string;
+      lazyConnect: true;
       retryStrategy: (times: number) => number | null;
     } = {
-      url: `redis://${cacheHost.trim()}:${cachePort}`,
+      ...cacheTarget,
       ...(cachePassword && cachePassword.trim() && { password: cachePassword }),
+      // connect() is called explicitly below, with a timeout.
+      lazyConnect: true,
       retryStrategy: (times: number) => {
         const maxRetries = 5;
         if (times > maxRetries) {
@@ -187,7 +198,7 @@ async function _setupWebSocketAdapter(
         );
       };
 
-      const client = createClient(redisConfig);
+      const client = new Redis(redisConfig);
 
       // Verify client has required methods before assignment
       if (isRedisClient(client)) {

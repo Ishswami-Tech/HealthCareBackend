@@ -50,6 +50,10 @@ import { AppointmentQueueService } from './services/appointment-queue.service';
 import { QueueController } from './controllers/queue.controller';
 import { DeadLetterQueueService } from './services/dead-letter-queue.service';
 import { CacheModule } from '@infrastructure/cache';
+import {
+  getCacheConnectionTarget,
+  type CacheConnectionTarget,
+} from '@infrastructure/cache/utils/cache-connection-target.util';
 
 @Module({})
 export class QueueModule {
@@ -138,14 +142,11 @@ export class QueueModule {
             const serviceName = configService.getEnv('SERVICE_NAME', 'clinic');
 
             // Build Redis config based on service
-            const redisConfig: {
-              host: string;
-              port: number;
-              password?: string;
-              db: number;
-            } = {
-              host: cacheHost,
-              port: cachePort,
+            const redisConfig: CacheConnectionTarget & { password?: string; db: number } = {
+              ...getCacheConnectionTarget(key => configService.getEnv(key), {
+                host: cacheHost,
+                port: cachePort,
+              }),
               db: configService.getEnvNumber('REDIS_DB', serviceName === 'clinic' ? 2 : 1),
             };
 
@@ -272,14 +273,14 @@ export class QueueModule {
                   const cachePassword = configService.getCachePassword();
                   const workerServiceName = configService.getEnv('SERVICE_NAME', 'clinic');
 
-                  const workerRedisConfig: {
-                    host: string;
-                    port: number;
+                  const workerRedisConfig: CacheConnectionTarget & {
                     password?: string;
                     db: number;
                   } = {
-                    host: cacheHost,
-                    port: cachePort,
+                    ...getCacheConnectionTarget(key => configService.getEnv(key), {
+                      host: cacheHost,
+                      port: cachePort,
+                    }),
                     db: configService.getEnvNumber(
                       'REDIS_DB',
                       workerServiceName === 'clinic' ? 2 : 1
@@ -291,12 +292,7 @@ export class QueueModule {
                   }
 
                   // Initialize Dead Letter Queue so failed jobs can be moved out of the main queue
-                  void deadLetterQueueService.initialize({
-                    host: workerRedisConfig.host,
-                    port: workerRedisConfig.port,
-                    ...(workerRedisConfig.password ? { password: workerRedisConfig.password } : {}),
-                    db: workerRedisConfig.db,
-                  });
+                  void deadLetterQueueService.initialize({ ...workerRedisConfig });
 
                   // Create workers for each queue with enhanced concurrency
                   for (const queueName of queueNames) {

@@ -23,6 +23,10 @@ import {
   listKeysByPattern,
 } from './utils/pattern-delete.util';
 import type { PatternDeleteOptions, PatternDeleteResult } from './utils/pattern-delete.util';
+import {
+  getCacheConnectionTarget,
+  type CacheConnectionTarget,
+} from './utils/cache-connection-target.util';
 
 /**
  * Base class for cache client services (Redis/Dragonfly)
@@ -174,9 +178,7 @@ export abstract class BaseCacheClientService {
           });
       }
 
-      const options: {
-        host: string;
-        port: number;
+      const options: CacheConnectionTarget & {
         password?: string;
         keyPrefix: string;
         retryStrategy: (times: number) => number | null;
@@ -192,8 +194,7 @@ export abstract class BaseCacheClientService {
         family: number;
         enableOfflineQueue?: boolean;
       } = {
-        host,
-        port,
+        ...getCacheConnectionTarget(key => this.configService.getEnv(key), { host, port }),
         ...(hasPassword && password && { password }),
         keyPrefix: this.PRODUCTION_CONFIG.keyPrefix,
         retryStrategy: times => {

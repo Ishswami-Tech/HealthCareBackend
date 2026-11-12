@@ -29,6 +29,7 @@ import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { DEAD_LETTER_QUEUE, DLQ_CONFIG, JOB_RETENTION } from '../queue.constants';
+import type { CacheConnectionTarget } from '@infrastructure/cache/utils/cache-connection-target.util';
 
 export interface DeadLetterEntry {
   jobId: string;
@@ -50,12 +51,10 @@ export interface DeadLetterRetryResult {
   readonly jobId: string;
 }
 
-export interface DeadLetterConnection {
-  host: string;
-  port: number;
+export type DeadLetterConnection = CacheConnectionTarget & {
   password?: string;
   db: number;
-}
+};
 
 /** The slice of a BullMQ Queue the DLQ needs; lets unit tests inject fakes. */
 export type DeadLetterQueueLike = Pick<

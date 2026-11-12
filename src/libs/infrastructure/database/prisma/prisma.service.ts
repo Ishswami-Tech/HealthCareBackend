@@ -16,6 +16,13 @@ import type { PrismaClient as GeneratedPrismaClient } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { resolveLocalHealthCheckUrl } from './local-replica-resolver';
+import { PrimaryFollowingClient, startPrimaryTracking } from './primary-tracker';
+
+/** The pool-config form of PrismaPg's constructor argument (typed by the adapter's own @types/pg). */
+type PgAdapterPoolConfig = Extract<
+  ConstructorParameters<typeof PrismaPg>[0],
+  { connectionString?: unknown }
+>;
 // Pool import removed: @prisma/adapter-pg@7.x takes a pool config directly and
 // creates its own pg.Pool internally. Passing a Pool instance was the root cause
 // of the "Can't reach database server at 127.0.0.1:5432" error.
@@ -968,6 +975,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
     const poolConfig: {
       connectionString: string;
+      Client?: PgAdapterPoolConfig['Client'];
       ssl?: boolean | { rejectUnauthorized: boolean };
       max?: number;
       connectionTimeoutMillis?: number;
@@ -1001,6 +1009,35 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     // stored inside pool.options, not as a direct property), and defaulted to
     // localhost:5432 → "Can't reach database server at 127.0.0.1:5432".
     // PrismaPg creates and manages its own pg.Pool internally from the config.
+    // HA cluster: keep following the pg_auto_failover primary after boot (see primary-tracker.ts).
+    const monitorUri = getEnv('MONITOR_URI');
+    if (monitorUri) {
+      // The adapter's own @types/pg copy types this as `new () => ClientBase`, which pg.Client's
+      // typings don't match exactly; at runtime pg.Pool simply calls `new Client(options)`.
+      poolConfig.Client = PrimaryFollowingClient as unknown as PgAdapterPoolConfig['Client'];
+      startPrimaryTracking(
+        monitorUri,
+        primary => {
+          void this.loggingService?.log(
+            LogType.DATABASE,
+            LogLevel.WARN,
+            `Postgres primary moved to ${primary.host}:${primary.port}; new connections follow it`,
+            'PrismaService',
+            { host: primary.host, port: primary.port }
+          );
+        },
+        error => {
+          void this.loggingService?.log(
+            LogType.DATABASE,
+            LogLevel.WARN,
+            'Could not check the current Postgres primary; keeping the last known one',
+            'PrismaService',
+            { error: error instanceof Error ? error.message : String(error) }
+          );
+        }
+      );
+    }
+
     const adapter = new PrismaPg(poolConfig);
 
     const prismaConstructorArgs: PrismaClientConstructorArgs = {

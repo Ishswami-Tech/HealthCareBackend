@@ -10,6 +10,7 @@ import {
   resolveGlobalRateLimitKey,
   type RateLimitRequestLike,
 } from '@security/rate-limit/rate-limit-keys.util';
+import { getCacheConnectionTarget } from '@infrastructure/cache/utils/cache-connection-target.util';
 
 /**
  * Security Configuration Service
@@ -170,8 +171,10 @@ export class SecurityConfigService {
     const cachePassword = this.configService.getCachePassword();
     const { default: Redis } = await import('ioredis');
     const rateLimitRedisClient = new Redis({
-      host: cacheHost,
-      port: cachePort,
+      ...getCacheConnectionTarget(key => this.configService.getEnv(key), {
+        host: cacheHost,
+        port: cachePort,
+      }),
       ...(cachePassword?.trim() && { password: cachePassword.trim() }),
       connectTimeout: 5000,
       // Fail fast instead of queuing commands indefinitely while
