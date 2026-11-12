@@ -19,7 +19,13 @@ COPY package.json yarn.lock ./
 # Skip postinstall during install - source files (including prisma.config.js) aren't copied yet
 # Prisma generate is called manually after COPY . . below
 # --ignore-engines suppresses warnings about invalid engine specifications
-RUN yarn install --frozen-lockfile --ignore-scripts --ignore-engines --network-timeout 600000
+# The yarn cache lives in a BuildKit cache mount, not in this layer: the layer is only
+# node_modules, so it is smaller to export to / restore from the CI layer cache (it used to
+# also carry the whole yarn cache), and local rebuilds after a lockfile change reuse the
+# downloaded packages. sharing=locked: yarn v1's cache is not safe for concurrent writers and
+# the production stage below installs into the same cache.
+RUN --mount=type=cache,id=yarn-cache,target=/usr/local/share/.cache/yarn,sharing=locked \
+  yarn install --frozen-lockfile --ignore-scripts --ignore-engines --network-timeout 600000
 
 # Copy all source files including SWC configuration
 # .swcrc and nest-cli.json are required for SWC compiler (20x faster than tsc)
@@ -140,6 +146,22 @@ RUN mkdir -p /app/dist/libs/infrastructure/database/prisma && \
 RUN mkdir -p /app/dist/libs/infrastructure/database/prisma && \
   cp -r /app/src/libs/infrastructure/database/prisma/generated /app/dist/libs/infrastructure/database/prisma/
 
+# Verify the Prisma Client the production stage copies (same check that used to run in the
+# production stage after its COPY steps; it runs here, on the exact paths those COPY steps
+# read, so the production stage needs no RUN after its COPY --link steps - see there).
+RUN if [ ! -d /app/src/libs/infrastructure/database/prisma/generated ]; then \
+  echo "[ERROR] Prisma Client not found in copied files!" && exit 1; \
+  elif [ ! -f /app/src/libs/infrastructure/database/prisma/generated/index.js ] && \
+  [ ! -f /app/src/libs/infrastructure/database/prisma/generated/index.mjs ] && \
+  [ ! -f /app/src/libs/infrastructure/database/prisma/generated/index.d.ts ]; then \
+  echo "[WARN] Prisma Client entry point not found in src, checking dist..." && \
+  if [ ! -d /app/dist/libs/infrastructure/database/prisma/generated ]; then \
+  echo "[ERROR] Prisma Client not found in dist either!" && exit 1; \
+  fi; \
+  else \
+  echo "[OK] Prisma Client verified - generated during build, copied to production stage"; \
+  fi
+
 # Production stage — Ubuntu server–optimized: same base as builder for consistency
 FROM node:24-bookworm-slim AS production
 
@@ -147,16 +169,9 @@ LABEL app.component=backend
 LABEL app.stage=production
 LABEL com.docker.compose.service=api
 
-# Build metadata — injected by CI, also exported as ENV for runtime access
-ARG GIT_SHA=unknown
-ARG GIT_REF=unknown
-ARG BUILD_TIMESTAMP=unknown
-ENV GIT_SHA=${GIT_SHA}
-ENV GIT_REF=${GIT_REF}
-ENV BUILD_TIMESTAMP=${BUILD_TIMESTAMP}
-LABEL org.opencontainers.image.revision=$GIT_SHA
-LABEL org.opencontainers.image.source=$GIT_REF
-LABEL org.opencontainers.image.created=$BUILD_TIMESTAMP
+# Build metadata (GIT_SHA / GIT_REF / BUILD_TIMESTAMP) is declared at the END of this stage:
+# BUILD_TIMESTAMP changes on every build, and declaring it here invalidated every layer
+# below it (including the production yarn install) on every CI run.
 
 RUN npm install -g yarn@1.22.22 --force
 
@@ -172,7 +187,10 @@ WORKDIR /app
 COPY package.json yarn.lock ./
 # Skip postinstall script in production - Prisma client is already generated in builder stage
 # Prisma Client is in src/libs/infrastructure/database/prisma/generated (app-local directory), not in node_modules
-RUN yarn install --production --frozen-lockfile --ignore-scripts --ignore-engines --network-timeout 600000 && yarn cache clean
+# The yarn cache is a BuildKit cache mount (shared with the builder stage), so it never lands
+# in this layer and the old `yarn cache clean` is no longer needed to keep the image small.
+RUN --mount=type=cache,id=yarn-cache,target=/usr/local/share/.cache/yarn,sharing=locked \
+  yarn install --production --frozen-lockfile --ignore-scripts --ignore-engines --network-timeout 600000
 
 # Remove yarn-installed @prisma packages to avoid conflicts
 # We'll copy only the necessary @prisma packages from builder stage
@@ -201,38 +219,6 @@ COPY --from=builder /app/node_modules_real/pg-types ./node_modules/pg-types
 COPY --from=builder /app/node_modules_real/postgres-bytea ./node_modules/postgres-bytea
 COPY --from=builder /app/node_modules_real/postgres-date ./node_modules/postgres-date
 COPY --from=builder /app/node_modules_real/postgres-interval ./node_modules/postgres-interval
-# tsconfig-paths is now a production dependency - installed automatically by yarn
-# Copy tsconfig.json for runtime path alias resolution
-COPY --from=builder /app/tsconfig.json ./tsconfig.json
-# Copy compiled code including generated Prisma client
-COPY --from=builder /app/dist ./dist
-# Copy scripts folder for migration scripts
-COPY --from=builder /app/scripts ./scripts
-# Copy Prisma schema, config, migrations, and generated client to expected paths
-COPY --from=builder /app/src/libs/infrastructure/database/prisma/schema.prisma ./src/libs/infrastructure/database/prisma/schema.prisma
-COPY --from=builder /app/src/libs/infrastructure/database/prisma/prisma.config.js ./src/libs/infrastructure/database/prisma/prisma.config.js
-# Copy migrations folder for deploy-time prisma migrate deploy (CRITICAL for production deployments)
-# Without this, P3005 error occurs: "database schema is not empty" with no migrations
-COPY --from=builder /app/src/libs/infrastructure/database/prisma/migrations ./src/libs/infrastructure/database/prisma/migrations
-# Copy Prisma generated client from builder stage (generated during build to src/libs/infrastructure/database/prisma/generated)
-COPY --from=builder /app/src/libs/infrastructure/database/prisma/generated ./src/libs/infrastructure/database/prisma/generated
-COPY --from=builder /app/dist/libs/infrastructure/database/prisma/generated ./dist/libs/infrastructure/database/prisma/generated
-COPY --from=builder /app/dist/libs/infrastructure/database/prisma/schema.prisma ./dist/libs/infrastructure/database/prisma/schema.prisma
-
-# Verify Prisma Client was copied correctly from builder stage
-RUN if [ ! -d /app/src/libs/infrastructure/database/prisma/generated ]; then \
-  echo "[ERROR] Prisma Client not found in copied files!" && exit 1; \
-  elif [ ! -f /app/src/libs/infrastructure/database/prisma/generated/index.js ] && \
-  [ ! -f /app/src/libs/infrastructure/database/prisma/generated/index.mjs ] && \
-  [ ! -f /app/src/libs/infrastructure/database/prisma/generated/index.d.ts ]; then \
-  echo "[WARN] Prisma Client entry point not found in src, checking dist..." && \
-  if [ ! -d /app/dist/libs/infrastructure/database/prisma/generated ]; then \
-  echo "[ERROR] Prisma Client not found in dist either!" && exit 1; \
-  fi; \
-  else \
-  echo "[OK] Prisma Client verified - generated during build, copied to production stage"; \
-  fi
-
 # Create entrypoint script - simplified for app-local Prisma Client location
 # Prisma Client is generated at build time to src/libs/infrastructure/database/prisma/generated and compiled to dist/libs/infrastructure/database/prisma/generated
 RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
@@ -287,22 +273,50 @@ RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
 
 # Ensure @prisma/client symlink exists for TypeScript resolution
 # Prisma Client is in src/libs/infrastructure/database/prisma/generated (app-local directory)
+# This runs before the generated client is copied in (see the COPY --link block below), so the
+# link target does not exist yet here; the builder stage already failed the build if the
+# generated client is missing, and the entrypoint re-checks both at container start.
 RUN mkdir -p /app/node_modules/@prisma && \
-  if [ ! -d /app/src/libs/infrastructure/database/prisma/generated ]; then \
-  echo "[ERROR] Generated Prisma Client directory not found!" && exit 1; \
-  fi && \
   if [ -L /app/node_modules/@prisma/client ] || [ -d /app/node_modules/@prisma/client ]; then \
   rm -rf /app/node_modules/@prisma/client; \
   fi && \
   ln -sf /app/src/libs/infrastructure/database/prisma/generated /app/node_modules/@prisma/client && \
-  echo "[OK] @prisma/client symlink created to app-local location" && \
-  if [ -L /app/node_modules/@prisma/client ] && [ -e /app/node_modules/@prisma/client ] && [ "$(ls -A /app/node_modules/@prisma/client 2>/dev/null)" ]; then \
-  echo "[OK] @prisma/client symlink verified and accessible"; \
-  elif [ -L /app/node_modules/@prisma/client ]; then \
-  echo "[WARN] @prisma/client symlink exists but target may not be accessible (entrypoint will verify at runtime)"; \
+  if [ -L /app/node_modules/@prisma/client ]; then \
+  echo "[OK] @prisma/client symlink created to app-local location"; \
   else \
   echo "[ERROR] @prisma/client symlink creation failed!" && exit 1; \
   fi
+
+# Writable runtime paths for the unprivileged `node` user (uid/gid 1000, see USER below):
+# logs, tmp, the local storage fallback (storage/assets, storage/invoices) and the @prisma dir
+# so the entrypoint can repair the client symlink.
+# Any host bind mount on these paths must be writable by uid 1000 (chown 1000:1000 on the host).
+RUN mkdir -p /app/logs /app/tmp /app/storage/assets /app/storage/invoices && \
+  chown -R node:node /app/logs /app/tmp /app/storage && \
+  chown node:node /app/node_modules/@prisma
+
+# Build output and Prisma files. These change on every commit, so they come LAST and use
+# COPY --link: each becomes an independent layer that BuildKit stacks on top without having to
+# unpack the (cached) layers below it. With no RUN after this point, a CI build whose
+# dependency layers are cache hits never has to download/extract the production node_modules
+# layer from the CI cache just to add the new dist/ on top.
+# tsconfig-paths is now a production dependency - installed automatically by yarn
+# Copy tsconfig.json for runtime path alias resolution
+COPY --link --from=builder /app/tsconfig.json ./tsconfig.json
+# Copy compiled code including generated Prisma client
+COPY --link --from=builder /app/dist ./dist
+# Copy scripts folder for migration scripts
+COPY --link --from=builder /app/scripts ./scripts
+# Copy Prisma schema, config, migrations, and generated client to expected paths
+COPY --link --from=builder /app/src/libs/infrastructure/database/prisma/schema.prisma ./src/libs/infrastructure/database/prisma/schema.prisma
+COPY --link --from=builder /app/src/libs/infrastructure/database/prisma/prisma.config.js ./src/libs/infrastructure/database/prisma/prisma.config.js
+# Copy migrations folder for deploy-time prisma migrate deploy (CRITICAL for production deployments)
+# Without this, P3005 error occurs: "database schema is not empty" with no migrations
+COPY --link --from=builder /app/src/libs/infrastructure/database/prisma/migrations ./src/libs/infrastructure/database/prisma/migrations
+# Copy Prisma generated client from builder stage (generated during build to src/libs/infrastructure/database/prisma/generated)
+COPY --link --from=builder /app/src/libs/infrastructure/database/prisma/generated ./src/libs/infrastructure/database/prisma/generated
+COPY --link --from=builder /app/dist/libs/infrastructure/database/prisma/generated ./dist/libs/infrastructure/database/prisma/generated
+COPY --link --from=builder /app/dist/libs/infrastructure/database/prisma/schema.prisma ./dist/libs/infrastructure/database/prisma/schema.prisma
 
 ARG NODE_ENV=production
 ENV NODE_ENV=${NODE_ENV}
@@ -336,12 +350,7 @@ ENV PRISMA_SCHEMA_PATH=/app/src/libs/infrastructure/database/prisma/schema.prism
 ENV NODE_OPTIONS="--max-old-space-size=256 --max-semi-space-size=16 --max-http-header-size=16384 --expose-gc"
 
 # Run as the unprivileged `node` user (uid/gid 1000) that ships with the base image (P0-5).
-# Writable runtime paths: logs, tmp, the local storage fallback (storage/assets,
-# storage/invoices) and the @prisma dir so the entrypoint can repair the client symlink.
-# Any host bind mount on these paths must be writable by uid 1000 (chown 1000:1000 on the host).
-RUN mkdir -p /app/logs /app/tmp /app/storage/assets /app/storage/invoices && \
-  chown -R node:node /app/logs /app/tmp /app/storage && \
-  chown node:node /app/node_modules/@prisma
+# The writable runtime paths are prepared above, before the COPY --link block.
 USER node
 
 EXPOSE 8088
@@ -359,3 +368,15 @@ ENTRYPOINT ["/app/entrypoint.sh"]
 # RUN_MIGRATIONS=true.
 CMD ["node", "dist/main.js"]
 
+# Build metadata — injected by CI, also exported as ENV for runtime access.
+# Declared last on purpose: BUILD_TIMESTAMP differs on every build, and anything declared
+# after it would never be a cache hit.
+ARG GIT_SHA=unknown
+ARG GIT_REF=unknown
+ARG BUILD_TIMESTAMP=unknown
+ENV GIT_SHA=${GIT_SHA}
+ENV GIT_REF=${GIT_REF}
+ENV BUILD_TIMESTAMP=${BUILD_TIMESTAMP}
+LABEL org.opencontainers.image.revision=$GIT_SHA
+LABEL org.opencontainers.image.source=$GIT_REF
+LABEL org.opencontainers.image.created=$BUILD_TIMESTAMP
