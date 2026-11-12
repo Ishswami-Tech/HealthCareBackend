@@ -180,6 +180,21 @@ export class LoggingInterceptor implements NestInterceptor {
       }
     });
 
+    // Multipart file fields (fastify-multipart's attachFieldsToBody) carry the raw file
+    // buffer on the request body - e.g. { buffer, mimetype, originalname, size }. Logging
+    // that buffer briefly holds/copies multi-MB (patient document / PHI) bytes in the log
+    // pipeline for no benefit, so omit it here rather than relying only on redaction.
+    Object.keys(sanitized).forEach(key => {
+      const value = sanitized[key];
+      const nestedBuffer =
+        value && typeof value === 'object'
+          ? (value as Record<string, unknown>)['buffer']
+          : undefined;
+      if (ArrayBuffer.isView(value) || ArrayBuffer.isView(nestedBuffer)) {
+        sanitized[key] = '[file omitted]';
+      }
+    });
+
     return sanitized;
   }
 

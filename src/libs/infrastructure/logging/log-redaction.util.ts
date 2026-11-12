@@ -119,6 +119,12 @@ function redactValue(value: unknown, depth: number, seen: WeakSet<object>): unkn
   if (typeof value === 'string') return redactText(value);
   if (value === null || typeof value !== 'object') return value;
   if (value instanceof Date) return value;
+  // Buffers/typed arrays (file uploads, binary payloads) are Uint8Array subclasses, not
+  // plain objects or Arrays. Without this check, Object.entries() below walks them byte by
+  // byte - a multi-MB file becomes a plain object with one property per byte, which is
+  // catastrophic for V8 memory (each dictionary-mode property costs ~50-100+ bytes of
+  // overhead), causing OOM crashes when any endpoint logs a body containing file bytes.
+  if (ArrayBuffer.isView(value)) return `[Binary ${(value as ArrayBufferView).byteLength} bytes]`;
   if (seen.has(value)) return '[Circular]';
   if (depth >= MAX_DEPTH) return '[Truncated]';
   seen.add(value);
