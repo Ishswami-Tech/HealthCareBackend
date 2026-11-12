@@ -451,6 +451,9 @@ jobs:
         env:
           DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
         run: |
+          # pipefail: without it `| tee` reports success even when backup.sh exits 1, which hid a
+          # backup that had been aborting on every deploy. A failed backup must block the deploy.
+          set -o pipefail
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
             "cd '${DEPLOY_PATH}' && BASE_DIR='${DEPLOY_PATH}' bash devops/scripts/docker-infra/backup.sh pre-deployment" | tee /tmp/pre-deploy-backup.log
 

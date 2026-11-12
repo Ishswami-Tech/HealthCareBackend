@@ -34,6 +34,44 @@ POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-$(docker ps --filter 'ancestor=postgre
 DRAGONFLY_CONTAINER="${DRAGONFLY_CONTAINER:-$(docker ps --filter 'ancestor=docker.dragonflydb.io/dragonflydb/dragonfly' --format '{{.Names}}' | head -1)}"
 REDIS_CONTAINER="redis"  # Optional: for redis-cli tool access
 
+# Temps HA Postgres (pg_auto_failover): when BACKUP_PG_MONITOR_URI and BACKUP_DATABASE_URL are set
+# (in the env file), the dump is taken over the network from whichever cluster member is the
+# primary right now - it moves on failover, and may run on another node - using the client tools
+# from PG_CLIENT_IMAGE. Without them, the single local POSTGRES_CONTAINER is used as before.
+PG_CLIENT_IMAGE="${PG_CLIENT_IMAGE:-postgres:18-bookworm}"
+PG_TARGET=""  # host:port of the current primary (Temps HA mode)
+
+temps_ha_postgres_enabled() {
+    [[ -n "${BACKUP_PG_MONITOR_URI:-}" && -n "${BACKUP_DATABASE_URL:-}" ]]
+}
+
+# The member the monitor has decided is primary (its goal state): a member that died keeps
+# reporting 'primary' while the monitor has already demoted it.
+resolve_postgres_primary() {
+    local query="SELECT nodehost, nodeport FROM pgautofailover.node WHERE goalstate IN ('primary', 'wait_primary', 'single', 'apply_settings') ORDER BY nodeid LIMIT 1"
+    local row
+    row=$(PGCONN="$BACKUP_PG_MONITOR_URI" PGQUERY="$query" \
+        docker run --rm --network host -e PGCONN -e PGQUERY "$PG_CLIENT_IMAGE" \
+        sh -c 'exec psql "$PGCONN" -XAt -F: -c "$PGQUERY"' 2>/dev/null) || return 1
+    [[ "$row" =~ ^[A-Za-z0-9.-]+:[0-9]+$ ]] || return 1
+    PG_TARGET="$row"
+}
+
+# Runs a Postgres client tool (pg_dump, psql) against the backup source; extra arguments follow.
+# The connection string is passed through the environment, never on the command line.
+pg_tool() {
+    local tool="$1"
+    shift
+    if temps_ha_postgres_enabled; then
+        local conn
+        conn=$(printf '%s' "$BACKUP_DATABASE_URL" | sed -E "s#@[^/@]+/#@${PG_TARGET}/#; s#\?.*##")
+        PGCONN="$conn" docker run --rm -i --network host -e PGCONN "$PG_CLIENT_IMAGE" \
+            sh -c 'exec "$0" "$PGCONN" "$@"' "$tool" "$@"
+    else
+        docker exec "$POSTGRES_CONTAINER" "$tool" -U postgres -d userdb "$@"
+    fi
+}
+
 BACKUP_ID=$(create_backup_id)
 TIMESTAMP=$(get_timestamp)
 METADATA_FILE="${BACKUP_DIR}/metadata/${BACKUP_ID}.json"
@@ -381,26 +419,36 @@ main_backup() {
 backup_postgres_to_path() {
     local backup_file="$1"
     local container="${POSTGRES_CONTAINER}"
-    
-    if ! validate_container_name "$container"; then
-        log_error "Invalid container name: ${container}"
-        return 1
+    local source="$container"
+
+    if temps_ha_postgres_enabled; then
+        if ! resolve_postgres_primary; then
+            log_error "Could not resolve the current Postgres primary from the HA monitor"
+            return 1
+        fi
+        source="$PG_TARGET"
+        log_info "Starting PostgreSQL backup from the current primary ${PG_TARGET}..."
+    else
+        if ! validate_container_name "$container"; then
+            log_error "Invalid container name: ${container}"
+            return 1
+        fi
+
+        log_info "Starting PostgreSQL backup..."
+
+        if ! container_running "$container"; then
+            log_error "PostgreSQL container is not running"
+            return 1
+        fi
     fi
-    
-    log_info "Starting PostgreSQL backup..."
-    
-    if ! container_running "$container"; then
-        log_error "PostgreSQL container is not running"
-        return 1
-    fi
-    
+
     # Create backup
-    if docker exec "$container" pg_dump -U postgres userdb | gzip > "$backup_file"; then
+    if pg_tool pg_dump | gzip > "$backup_file"; then
         chmod 600 "$backup_file"
         local checksum=$(calculate_checksum "$backup_file")
         local size=$(get_file_size "$backup_file")
-        local db_size=$(docker exec "$container" psql -U postgres -d userdb -t -c "SELECT pg_size_pretty(pg_database_size('userdb'));" 2>/dev/null | xargs || echo "unknown")
-        local table_count=$(docker exec "$container" psql -U postgres -d userdb -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public';" 2>/dev/null | xargs || echo "0")
+        local db_size=$(pg_tool psql -t -c "SELECT pg_size_pretty(pg_database_size(current_database()));" 2>/dev/null | xargs || echo "unknown")
+        local table_count=$(pg_tool psql -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public';" 2>/dev/null | xargs || echo "0")
         
         BACKUP_RESULTS[postgres_local]="success"
         log_success "PostgreSQL backup created: ${backup_file}"
@@ -441,6 +489,7 @@ backup_postgres_to_path() {
   "checksum": "sha256:${checksum}",
   "database_size": "${db_size}",
   "table_count": ${table_count},
+  "source": "${source}",
   "local_path": "${backup_file}",
   "s3_path": "${s3_path}",
   "storage": {
