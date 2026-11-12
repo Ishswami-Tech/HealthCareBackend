@@ -607,28 +607,10 @@ jobs:
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
             "cd '${DEPLOY_PATH}' && BASE_DIR='${DEPLOY_PATH}' bash devops/scripts/docker-infra/backup.sh success"
 
-  # ============================================================================
-  # JOB: failure-recovery — Roll back after deployment or verification failure
-  # ============================================================================
-  failure-recovery:
-    name: "Failure Recovery"
-    runs-on: ubuntu-latest
-    needs: [deploy, post-deploy]
-    if: always() && (needs.deploy.result == 'failure' || needs.post-deploy.result == 'failure')
-    timeout-minutes: 20
-    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up SSH key
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-
-      - name: Trigger VPS incident recovery
-        env:
-          DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
-        run: |
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "cd '${DEPLOY_PATH}' && BASE_DIR='${DEPLOY_PATH}' bash devops/scripts/docker-infra/incident-response.sh deployment-failed"
+  # No automatic failure-recovery job. The old one ran the Coolify-era
+  # incident-response.sh, which on ANY failed deploy restored the production
+  # database from the last "pre-deployment" backup it could find (a 12-day-old one
+  # on 2026-11-12) and redeployed through Coolify. A failed run is already marked
+  # failed here; recovering is a deliberate redeploy of the previous image tag
+  # (Temps keeps the running containers when a deploy fails), and restoring the
+  # database is a human decision, never an automatic one.
