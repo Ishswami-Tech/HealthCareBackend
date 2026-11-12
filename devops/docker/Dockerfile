@@ -5,7 +5,11 @@ LABEL stage=builder
 LABEL app.component=backend
 LABEL app.stage=build
 
-RUN npm install -g yarn@1.22.22 --force
+# node:24-bookworm-slim already ships yarn 1.22.22 (/usr/local/bin/yarn); only (re)install it
+# if the base image's yarn is missing or a different version, so the pinned version still holds.
+# (Not corepack: it would swap the binary for a shim that downloads yarn on first use, and
+# Node 25+ no longer bundles corepack.)
+RUN [ "$(yarn --version 2>/dev/null)" = "1.22.22" ] || npm install -g yarn@1.22.22 --force
 
 RUN apt-get update && apt-get install -y \
   python3 \
@@ -173,7 +177,11 @@ LABEL com.docker.compose.service=api
 # BUILD_TIMESTAMP changes on every build, and declaring it here invalidated every layer
 # below it (including the production yarn install) on every CI run.
 
-RUN npm install -g yarn@1.22.22 --force
+# node:24-bookworm-slim already ships yarn 1.22.22 (/usr/local/bin/yarn); only (re)install it
+# if the base image's yarn is missing or a different version, so the pinned version still holds.
+# (Not corepack: it would swap the binary for a shim that downloads yarn on first use, and
+# Node 25+ no longer bundles corepack.)
+RUN [ "$(yarn --version 2>/dev/null)" = "1.22.22" ] || npm install -g yarn@1.22.22 --force
 
 RUN apt-get update && apt-get install -y \
   openssl \
