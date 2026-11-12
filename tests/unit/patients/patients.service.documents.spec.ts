@@ -17,6 +17,7 @@ import {
 } from '@nestjs/common';
 import { PatientsService } from '@services/patients/patients.service';
 import { RbacService } from '@core/rbac/rbac.service';
+import { JobType } from '@core/types/queue.types';
 
 jest.mock('@infrastructure/database', () => ({ DatabaseService: class DatabaseService {} }));
 jest.mock('@infrastructure/database/database.service', () => ({
@@ -117,8 +118,11 @@ interface HarnessOptions {
   patients?: PatientRow[];
   /** Initial health-record rows. */
   documents?: DocumentRow[];
-  uploaded?: { success: boolean; url?: string; key?: string; localPath?: string; error?: string };
   deleteAssetResult?: boolean | Error;
+  /** What `QueueService.addJob` does with the upload job (default: accepts it). */
+  enqueue?: 'accept' | Error;
+  /** No QueueService wired at all. */
+  withoutQueue?: boolean;
 }
 
 interface WhereClause {
@@ -179,6 +183,12 @@ function createHarness(options: HarnessOptions = {}) {
         recordType: 'GENERAL_DOCUMENT',
         ...data,
       })),
+      update: jest.fn(
+        async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => ({
+          id: where.id,
+          ...data,
+        })
+      ),
       delete: jest.fn(async ({ where }: { where: { id: string } }) => {
         const index = documents.findIndex(row => row.id === where.id);
         if (index >= 0) documents.splice(index, 1);
@@ -245,13 +255,8 @@ function createHarness(options: HarnessOptions = {}) {
   };
   const loggingService = { log: jest.fn().mockResolvedValue(undefined) };
   const staticAssetService = {
-    uploadFile: jest.fn().mockResolvedValue(
-      options.uploaded ?? {
-        success: true,
-        url: '/storage/assets/documents/u-doc.pdf',
-        key: 'documents/u-doc.pdf',
-      }
-    ),
+    // The request path never stores bytes itself (the queue job does); kept to assert that.
+    uploadFile: jest.fn(),
     deleteAsset:
       options.deleteAssetResult instanceof Error
         ? jest.fn().mockRejectedValue(options.deleteAssetResult)
@@ -262,6 +267,12 @@ function createHarness(options: HarnessOptions = {}) {
     ),
   };
   const cacheService = { cache: jest.fn() };
+  const queueService = {
+    addJob:
+      options.enqueue instanceof Error
+        ? jest.fn().mockRejectedValue(options.enqueue)
+        : jest.fn().mockResolvedValue({ id: 'job-1' }),
+  };
 
   const rbacMode = options.rbac ?? 'real';
   const realRbac = createRealRbac();
@@ -283,7 +294,8 @@ function createHarness(options: HarnessOptions = {}) {
     undefined,
     undefined,
     undefined,
-    rbacMode === 'missing' ? undefined : (realRbac as never)
+    rbacMode === 'missing' ? undefined : (realRbac as never),
+    options.withoutQueue ? undefined : (queueService as never)
   );
 
   return {
@@ -293,6 +305,7 @@ function createHarness(options: HarnessOptions = {}) {
     databaseService,
     loggingService,
     staticAssetService,
+    queueService,
     checkPermission,
     realRbac,
   };
@@ -819,12 +832,21 @@ describe('PatientsService.uploadPatientDocument hardening', () => {
     );
   }
 
+  const PDF_FILE = { buffer: PDF, mimetype: 'application/pdf', originalname: 'a.pdf' };
+
+  /** Nothing was written and nothing was queued. */
+  function expectNothingStored(h: ReturnType<typeof createHarness>): void {
+    expect(h.client.healthRecord.create).not.toHaveBeenCalled();
+    expect(h.queueService.addJob).not.toHaveBeenCalled();
+    expect(h.staticAssetService.uploadFile).not.toHaveBeenCalled();
+  }
+
   it('rejects an empty buffer (400) before anything is stored', async () => {
     const h = createHarness();
     await expect(
       upload(h, { buffer: Buffer.alloc(0), mimetype: 'application/pdf', originalname: 'a.pdf' })
     ).rejects.toBeInstanceOf(BadRequestException);
-    expect(h.staticAssetService.uploadFile).not.toHaveBeenCalled();
+    expectNothingStored(h);
   });
 
   it('rejects files over 10 MB with 413', async () => {
@@ -833,7 +855,7 @@ describe('PatientsService.uploadPatientDocument hardening', () => {
     await expect(
       upload(h, { buffer: big, mimetype: 'application/pdf', originalname: 'a.pdf' })
     ).rejects.toBeInstanceOf(PayloadTooLargeException);
-    expect(h.staticAssetService.uploadFile).not.toHaveBeenCalled();
+    expectNothingStored(h);
   });
 
   it('rejects a disallowed type (400)', async () => {
@@ -845,20 +867,21 @@ describe('PatientsService.uploadPatientDocument hardening', () => {
         originalname: 'a.html',
       })
     ).rejects.toBeInstanceOf(BadRequestException);
-    expect(h.staticAssetService.uploadFile).not.toHaveBeenCalled();
+    expectNothingStored(h);
   });
 
   it('rejects an invalid category and an over-long description (400)', async () => {
     const h = createHarness();
-    const file = { buffer: PDF, mimetype: 'application/pdf', originalname: 'a.pdf' };
-    await expect(upload(h, file, { category: 'NOPE' })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(upload(h, file, { description: 'x'.repeat(501) })).rejects.toBeInstanceOf(
+    await expect(upload(h, PDF_FILE, { category: 'NOPE' })).rejects.toBeInstanceOf(
       BadRequestException
     );
-    expect(h.staticAssetService.uploadFile).not.toHaveBeenCalled();
+    await expect(upload(h, PDF_FILE, { description: 'x'.repeat(501) })).rejects.toBeInstanceOf(
+      BadRequestException
+    );
+    expectNothingStored(h);
   });
 
-  it('stores with the canonical mime type, sanitised title and category, and audits the real role', async () => {
+  it('creates a PENDING row with the canonical mime type, sanitised title and category, audits the real role, and queues the bytes', async () => {
     const h = createHarness();
 
     const result = await upload(
@@ -871,13 +894,6 @@ describe('PatientsService.uploadPatientDocument hardening', () => {
       { category: 'lab_report', description: ' fasting ' }
     );
 
-    expect(h.staticAssetService.uploadFile).toHaveBeenCalledWith(
-      PDF,
-      expect.stringMatching(/^doc-patient-self-\d+\.pdf$/),
-      'documents',
-      'application/pdf',
-      false
-    );
     const created = h.client.healthRecord.create.mock.calls[0]?.[0] as {
       data: Record<string, unknown>;
     };
@@ -891,58 +907,76 @@ describe('PatientsService.uploadPatientDocument hardening', () => {
       notes: 'fasting',
       mimeType: 'application/pdf',
       fileSize: PDF.length,
+      fileUrl: null,
+      uploadStatus: 'PENDING',
     });
     const audit = h.databaseService.executeHealthcareWrite.mock.calls[0]?.[1] as {
       userRole: string;
     };
     expect(audit.userRole).toBe('PATIENT');
+
+    // The request never talks to storage: the queue job uploads the bytes.
+    expect(h.staticAssetService.uploadFile).not.toHaveBeenCalled();
+    expect(h.queueService.addJob).toHaveBeenCalledWith(
+      JobType.PATIENT_DOCUMENT_UPLOAD,
+      'upload_patient_document',
+      {
+        recordId: 'doc-new',
+        patientId: 'patient-self',
+        clinicId: CLINIC,
+        patientUserId: 'user-self',
+        fileBase64: PDF.toString('base64'),
+        fileName: expect.stringMatching(/^doc-patient-self-\d+\.pdf$/),
+        mimeType: 'application/pdf',
+      },
+      { attempts: 2 }
+    );
     expect(result).toMatchObject({
       id: 'doc-new',
       category: 'LAB_REPORT',
       fileName: 'Blood Report.pdf',
+      uploadStatus: 'pending',
     });
   });
 
-  it.each([
-    ['success=false', { success: false, error: 'disk full' }],
-    ['no url', { success: true, key: 'documents/x' }],
-  ])(
-    'throws when the storage result is unusable (%s) and writes no row',
-    async (_label, uploaded) => {
-      const h = createHarness({ uploaded });
-      await expect(
-        upload(h, { buffer: PDF, mimetype: 'application/pdf', originalname: 'a.pdf' })
-      ).rejects.toBeInstanceOf(InternalServerErrorException);
-      expect(h.client.healthRecord.create).not.toHaveBeenCalled();
-    }
-  );
+  it('marks the row FAILED and returns it as failed when the queue refuses the job', async () => {
+    const h = createHarness({ enqueue: new Error('queue unavailable') });
 
-  it('removes the stored object when the row cannot be written, and rethrows', async () => {
+    const result = await upload(h, PDF_FILE);
+
+    expect(h.client.healthRecord.update).toHaveBeenCalledWith({
+      where: { id: 'doc-new' },
+      data: { uploadStatus: 'FAILED', failureReason: 'Could not queue upload' },
+    });
+    expect(result).toMatchObject({
+      id: 'doc-new',
+      uploadStatus: 'failed',
+      failureReason: 'Could not queue upload',
+    });
+  });
+
+  it('fails closed (row marked FAILED) when no queue is wired', async () => {
+    const h = createHarness({ withoutQueue: true });
+
+    await expect(upload(h, PDF_FILE)).resolves.toMatchObject({ uploadStatus: 'failed' });
+    expect(h.client.healthRecord.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ uploadStatus: 'FAILED' }) })
+    );
+  });
+
+  it('returns a 500 when the job is refused AND the row cannot be marked FAILED', async () => {
+    const h = createHarness({ enqueue: new Error('queue unavailable') });
+    h.client.healthRecord.update.mockRejectedValue(new Error('update failed'));
+
+    await expect(upload(h, PDF_FILE)).rejects.toBeInstanceOf(InternalServerErrorException);
+  });
+
+  it('queues nothing when the row cannot be written, and rethrows', async () => {
     const h = createHarness();
     h.client.healthRecord.create.mockRejectedValue(new Error('insert failed'));
 
-    await expect(
-      upload(h, { buffer: PDF, mimetype: 'application/pdf', originalname: 'a.pdf' })
-    ).rejects.toThrow('insert failed');
-    expect(h.staticAssetService.deleteAsset).toHaveBeenCalledWith('documents/u-doc.pdf');
-  });
-
-  it('cleans up a local-disk upload through its relative /storage reference, never the absolute disk path', async () => {
-    const h = createHarness({
-      uploaded: {
-        success: true,
-        url: '/storage/assets/documents/u-doc.pdf',
-        localPath: 'C:/work/storage/assets/documents/u-doc.pdf',
-      },
-    });
-    h.client.healthRecord.create.mockRejectedValue(new Error('insert failed'));
-
-    await expect(
-      upload(h, { buffer: PDF, mimetype: 'application/pdf', originalname: 'a.pdf' })
-    ).rejects.toThrow('insert failed');
-    expect(h.staticAssetService.deleteAsset).toHaveBeenCalledWith(
-      '/storage/assets/documents/u-doc.pdf'
-    );
+    await expect(upload(h, PDF_FILE)).rejects.toThrow('insert failed');
+    expect(h.queueService.addJob).not.toHaveBeenCalled();
   });
 
   it('a PATIENT cannot upload to another patient record (403) and nothing is validated or stored', async () => {
@@ -955,7 +989,7 @@ describe('PatientsService.uploadPatientDocument hardening', () => {
         auditFor('PATIENT', 'CREATE')
       )
     ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(h.staticAssetService.uploadFile).not.toHaveBeenCalled();
+    expectNothingStored(h);
   });
 
   it('rejects the upload with a clear message when no doctor can be attributed', async () => {
@@ -963,10 +997,10 @@ describe('PatientsService.uploadPatientDocument hardening', () => {
     h.client.appointment.findFirst.mockResolvedValue(null);
     h.client.doctorClinic.findFirst.mockResolvedValue(null);
 
-    await expect(
-      upload(h, { buffer: PDF, mimetype: 'application/pdf', originalname: 'a.pdf' })
-    ).rejects.toThrow('No doctor is linked to your record in this clinic yet');
-    expect(h.staticAssetService.uploadFile).not.toHaveBeenCalled();
+    await expect(upload(h, PDF_FILE)).rejects.toThrow(
+      'No doctor is linked to your record in this clinic yet'
+    );
+    expectNothingStored(h);
   });
 });
 
@@ -1073,12 +1107,17 @@ describe('PatientsService.uploadPatientDocument for a dependent', () => {
     expect(h.client.appointment.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: { patientId: 'patient-child', clinicId: CLINIC } })
     );
-    expect(h.staticAssetService.uploadFile).toHaveBeenCalledWith(
-      PDF,
-      expect.stringMatching(/^doc-patient-child-\d+\.pdf$/),
-      'documents',
-      'application/pdf',
-      false
+    // the bytes are queued under the dependent's own record
+    expect(h.queueService.addJob).toHaveBeenCalledWith(
+      JobType.PATIENT_DOCUMENT_UPLOAD,
+      'upload_patient_document',
+      expect.objectContaining({
+        recordId: 'doc-new',
+        patientId: 'patient-child',
+        patientUserId: 'user-child',
+        fileName: expect.stringMatching(/^doc-patient-child-\d+\.pdf$/),
+      }),
+      { attempts: 2 }
     );
   });
 
@@ -1105,7 +1144,7 @@ describe('PatientsService.uploadPatientDocument for a dependent', () => {
 
     await expect(uploadTo(h, 'patient-other')).rejects.toBeInstanceOf(ForbiddenException);
 
-    expect(h.staticAssetService.uploadFile).not.toHaveBeenCalled();
+    expect(h.queueService.addJob).not.toHaveBeenCalled();
     expect(h.client.healthRecord.create).not.toHaveBeenCalled();
   });
 
@@ -1120,7 +1159,7 @@ describe('PatientsService.uploadPatientDocument for a dependent', () => {
         where: { patientId: 'patient-self', isActive: true, deletedAt: null },
       })
     );
-    expect(h.staticAssetService.uploadFile).not.toHaveBeenCalled();
+    expect(h.queueService.addJob).not.toHaveBeenCalled();
     expect(h.client.healthRecord.create).not.toHaveBeenCalled();
   });
 
@@ -1159,10 +1198,8 @@ describe('PatientsService patient documents are private and served via presigned
     'https://cdn.example.com/documents/0f8fad5b-d9cb-469f-a165-70867728950e-doc-patient-self-1.pdf';
   const SIGNED_OWN_BUCKET_URL = `${OWN_BUCKET_URL}?X-Amz-Signature=sig`;
 
-  it('stores the upload PRIVATE, persists the stored URL and returns the presigned URL', async () => {
-    const h = createHarness({
-      uploaded: { success: true, url: OWN_BUCKET_URL, key: 'documents/u-doc.pdf' },
-    });
+  it('returns the new document PENDING with no URL; nothing is presigned until the upload job stores it', async () => {
+    const h = createHarness();
 
     const result = await h.service.uploadPatientDocument(
       'patient-self',
@@ -1170,12 +1207,13 @@ describe('PatientsService patient documents are private and served via presigned
       auditFor('PATIENT', 'CREATE')
     );
 
-    expect(h.staticAssetService.uploadFile.mock.calls[0]?.[4]).toBe(false);
     const created = h.client.healthRecord.create.mock.calls[0]?.[0] as {
-      data: { fileUrl: string };
+      data: { fileUrl: string | null };
     };
-    expect(created.data.fileUrl).toBe(OWN_BUCKET_URL);
-    expect(result.url).toBe(SIGNED_OWN_BUCKET_URL);
+    expect(created.data.fileUrl).toBeNull();
+    expect(result.url).toBeUndefined();
+    expect(result.uploadStatus).toBe('pending');
+    expect(h.staticAssetService.resolveSignedUrl).not.toHaveBeenCalled();
   });
 
   it('binds every presign to the row owner: the object key must carry the Patient.id or User.id', async () => {
@@ -1241,6 +1279,7 @@ describe('PatientsService patient documents are private and served via presigned
         'fileType',
         'id',
         'recordType',
+        'uploadStatus',
         'uploadedAt',
         'uploadedBy',
         'url',
