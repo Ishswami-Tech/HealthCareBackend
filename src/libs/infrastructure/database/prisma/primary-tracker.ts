@@ -8,10 +8,11 @@
  * resolve-primary-at-boot.ts picks the primary once, before the pool is built.
  * After that, this module polls the same monitor every few seconds and records
  * the current primary; `PrimaryFollowingClient` (handed to pg.Pool through
- * PrismaPg's pool config) points every NEW pooled connection at it. Existing
- * connections to a demoted primary are not touched here: pg_auto_failover
- * restarts a demoted node as a standby (or the node is gone), which closes
- * them, and the pool replaces them with new, correctly-routed connections.
+ * PrismaPg's pool config) points every NEW pooled connection at it. When the
+ * primary moves, connections still open to any other node are closed: a
+ * restarted node closes them itself, but a partitioned one does not, and each
+ * would otherwise hang a request until the TCP timeout. pg.Pool drops a client
+ * whose socket fails and replaces it with a correctly-routed one.
  *
  * Fail-safe like the boot resolver: a monitor that is unreachable or reports
  * no primary (the brief window mid-failover) leaves the last known primary in
@@ -21,6 +22,7 @@
 import { Client, type ClientConfig } from 'pg';
 
 import {
+  MONITOR_NODE_FILTER,
   queryMonitor,
   withResolvedHost,
 } from '@infrastructure/database/prisma/monitor-client.util';
@@ -36,8 +38,7 @@ import {
  * 2026-11-12 failover drill. Mid-failover no row matches, and callers keep the last known
  * primary.
  */
-export const CURRENT_PRIMARY_QUERY =
-  "SELECT nodehost, nodeport FROM pgautofailover.node WHERE goalstate IN ('primary', 'wait_primary', 'single', 'apply_settings') ORDER BY nodeid LIMIT 1";
+export const CURRENT_PRIMARY_QUERY = `SELECT nodehost, nodeport FROM pgautofailover.node WHERE ${MONITOR_NODE_FILTER} AND goalstate IN ('primary', 'wait_primary', 'single', 'apply_settings') ORDER BY nodeid LIMIT 1`;
 
 export const PRIMARY_POLL_INTERVAL_MS = 3000;
 
@@ -46,8 +47,20 @@ export interface PrimaryEndpoint {
   readonly port: number;
 }
 
+export interface PrimaryTrackingHandlers {
+  /** The primary moved; `closedConnections` connections to other nodes were closed. */
+  onChange: (primary: PrimaryEndpoint, closedConnections: number) => void;
+  /** The monitor could not be read. Called once per outage, not on every poll. */
+  onError: (error: Error) => void;
+  /** The monitor answered again after onError. */
+  onRecovered: () => void;
+}
+
 let currentPrimary: PrimaryEndpoint | null = null;
 let pollTimer: NodeJS.Timeout | null = null;
+let monitorFailing = false;
+/** Every PrimaryFollowingClient that has not ended, so a primary move can close the stale ones. */
+const liveClients = new Set<PrimaryFollowingClient>();
 
 export function getCurrentPrimary(): PrimaryEndpoint | null {
   return currentPrimary;
@@ -73,23 +86,44 @@ export async function refreshCurrentPrimary(monitorUri: string): Promise<Primary
   return next;
 }
 
+/**
+ * Closes every open connection that is not to `primary`. Destroying the socket makes pg.Pool drop
+ * an idle client, and fails an in-flight query at once instead of after the TCP timeout.
+ */
+export function closeConnectionsNotTo(primary: PrimaryEndpoint): number {
+  let closed = 0;
+  for (const client of liveClients) {
+    if (client.host !== primary.host || client.port !== primary.port) {
+      liveClients.delete(client);
+      client.connection.stream.destroy();
+      closed++;
+    }
+  }
+  return closed;
+}
+
 /** Starts polling the monitor (idempotent). The timer never keeps the process alive. */
-export function startPrimaryTracking(
-  monitorUri: string,
-  onChange: (primary: PrimaryEndpoint) => void,
-  onError: (error: unknown) => void
-): void {
+export function startPrimaryTracking(monitorUri: string, handlers: PrimaryTrackingHandlers): void {
   if (pollTimer) {
     return;
   }
   pollTimer = setInterval(() => {
     refreshCurrentPrimary(monitorUri)
       .then(changed => {
+        if (monitorFailing) {
+          monitorFailing = false;
+          handlers.onRecovered();
+        }
         if (changed) {
-          onChange(changed);
+          handlers.onChange(changed, closeConnectionsNotTo(changed));
         }
       })
-      .catch(onError);
+      .catch((error: Error) => {
+        if (!monitorFailing) {
+          monitorFailing = true;
+          handlers.onError(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
   }, PRIMARY_POLL_INTERVAL_MS);
   pollTimer.unref();
 }
@@ -99,6 +133,7 @@ export function stopPrimaryTracking(): void {
     clearInterval(pollTimer);
     pollTimer = null;
   }
+  monitorFailing = false;
 }
 
 /** A pg Client whose connection goes to the current primary (pg.Pool builds one per connection). */
@@ -114,5 +149,7 @@ export class PrimaryFollowingClient extends Client {
     } else {
       super(config);
     }
+    liveClients.add(this);
+    this.once('end', () => liveClients.delete(this));
   }
 }

@@ -16,6 +16,13 @@ import { Client, type QueryResultRow } from 'pg';
 // this extraction must not change that resolver's existing timeout behavior.
 export const MONITOR_QUERY_TIMEOUT_MS = 2000;
 
+/**
+ * Restricts a pgautofailover.node query to the app's own cluster: pg_autoctl's default formation,
+ * group 0. A monitor can host more than one formation; without this a query could pick another
+ * formation's primary and send healthcare writes to the wrong database.
+ */
+export const MONITOR_NODE_FILTER = "formationid = 'default' AND groupid = 0";
+
 /** The one row shape every current caller selects: a cluster member's host and port. */
 export interface MonitorNodeRow extends QueryResultRow {
   nodehost: string;

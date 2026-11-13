@@ -26,6 +26,7 @@
 
 import { connect as netConnect } from 'net';
 import {
+  MONITOR_NODE_FILTER,
   queryMonitor,
   withResolvedHost,
 } from '@infrastructure/database/prisma/monitor-client.util';
@@ -83,7 +84,7 @@ export async function resolveLocalHealthCheckUrl(databaseUrl: string): Promise<s
   try {
     const rows = await queryMonitor(
       monitorUri,
-      'SELECT nodehost, nodeport FROM pgautofailover.node ORDER BY nodeid'
+      `SELECT nodehost, nodeport FROM pgautofailover.node WHERE ${MONITOR_NODE_FILTER} ORDER BY nodeid`
     );
 
     const localMember = rows.find(row => row.nodehost === myMeshIp);

@@ -16,6 +16,7 @@ import {
   CURRENT_PRIMARY_QUERY,
   PRIMARY_POLL_INTERVAL_MS,
   PrimaryFollowingClient,
+  closeConnectionsNotTo,
   getCurrentPrimary,
   refreshCurrentPrimary,
   setCurrentPrimary,
@@ -58,8 +59,12 @@ describe('primary tracking', () => {
   it("selects by the monitor's goal state, not a dead node's last reported state", () => {
     // A node that loses its network keeps reportedstate 'primary' while the monitor sets its
     // goalstate to 'demoted' - the 2026-11-12 drill picked the dead node until this changed.
-    expect(CURRENT_PRIMARY_QUERY).toMatch(/WHERE goalstate IN \(/);
+    expect(CURRENT_PRIMARY_QUERY).toMatch(/AND goalstate IN \(/);
     expect(CURRENT_PRIMARY_QUERY).not.toMatch(/reportedstate/);
+  });
+
+  it("only considers the app's own formation, so another formation's primary is never picked", () => {
+    expect(CURRENT_PRIMARY_QUERY).toContain("WHERE formationid = 'default' AND groupid = 0");
   });
 
   it('reports a change only when the primary actually moved', async () => {
@@ -81,27 +86,80 @@ describe('primary tracking', () => {
     expect(getCurrentPrimary()).toEqual({ host: '10.201.0.1', port: 6263 });
   });
 
-  it('polls on an interval, reports a move once, and passes monitor errors to onError', async () => {
+  it('polls on an interval, reports a move once, and reports a monitor outage once', async () => {
     jest.useFakeTimers();
     try {
-      const onChange = jest.fn();
-      const onError = jest.fn();
-      startPrimaryTracking(MONITOR, onChange, onError);
-      startPrimaryTracking(MONITOR, onChange, onError); // idempotent: still one timer
+      const handlers = { onChange: jest.fn(), onError: jest.fn(), onRecovered: jest.fn() };
+      startPrimaryTracking(MONITOR, handlers);
+      startPrimaryTracking(MONITOR, handlers); // idempotent: still one timer
 
       monitorReports('10.201.0.5', 6261);
       await jest.advanceTimersByTimeAsync(PRIMARY_POLL_INTERVAL_MS);
       await jest.advanceTimersByTimeAsync(PRIMARY_POLL_INTERVAL_MS);
       expect(queryMonitorMock).toHaveBeenCalledTimes(2);
-      expect(onChange).toHaveBeenCalledTimes(1);
-      expect(onChange).toHaveBeenCalledWith({ host: '10.201.0.5', port: 6261 });
+      expect(handlers.onChange).toHaveBeenCalledTimes(1);
+      expect(handlers.onChange).toHaveBeenCalledWith(
+        { host: '10.201.0.5', port: 6261 },
+        expect.any(Number)
+      );
 
+      // Three failed polls in a row: one report, not one every 3s.
       queryMonitorMock.mockRejectedValue(new Error('monitor unreachable'));
-      await jest.advanceTimersByTimeAsync(PRIMARY_POLL_INTERVAL_MS);
-      expect(onError).toHaveBeenCalledWith(
+      await jest.advanceTimersByTimeAsync(PRIMARY_POLL_INTERVAL_MS * 3);
+      expect(handlers.onError).toHaveBeenCalledTimes(1);
+      expect(handlers.onError).toHaveBeenCalledWith(
         expect.objectContaining({ message: 'monitor unreachable' })
       );
       expect(getCurrentPrimary()).toEqual({ host: '10.201.0.5', port: 6261 });
+
+      monitorReports('10.201.0.5', 6261);
+      await jest.advanceTimersByTimeAsync(PRIMARY_POLL_INTERVAL_MS * 2);
+      expect(handlers.onRecovered).toHaveBeenCalledTimes(1);
+
+      // A second outage is reported again.
+      queryMonitorMock.mockRejectedValue(new Error('monitor unreachable'));
+      await jest.advanceTimersByTimeAsync(PRIMARY_POLL_INTERVAL_MS);
+      expect(handlers.onError).toHaveBeenCalledTimes(2);
+    } finally {
+      stopPrimaryTracking();
+      jest.useRealTimers();
+    }
+  });
+});
+
+describe('closing connections to a former primary', () => {
+  it('destroys open connections to any other node and keeps those to the new primary', () => {
+    setCurrentPrimary({ host: '10.201.0.5', port: 6261 });
+    const toOldPrimary = new PrimaryFollowingClient({ connectionString: URL_AT_OLD });
+    setCurrentPrimary({ host: '10.201.0.7', port: 6262 });
+    const toNewPrimary = new PrimaryFollowingClient({ connectionString: URL_AT_OLD });
+    const destroyOld = jest.spyOn(toOldPrimary.connection.stream, 'destroy');
+    const destroyNew = jest.spyOn(toNewPrimary.connection.stream, 'destroy');
+
+    const closed = closeConnectionsNotTo({ host: '10.201.0.7', port: 6262 });
+
+    expect(closed).toBeGreaterThanOrEqual(1);
+    expect(destroyOld).toHaveBeenCalled();
+    expect(destroyNew).not.toHaveBeenCalled();
+  });
+
+  it('closes them as soon as the tracker sees the primary move', async () => {
+    jest.useFakeTimers();
+    try {
+      setCurrentPrimary({ host: '10.201.0.5', port: 6261 });
+      const stale = new PrimaryFollowingClient({ connectionString: URL_AT_OLD });
+      const destroy = jest.spyOn(stale.connection.stream, 'destroy');
+      const handlers = { onChange: jest.fn(), onError: jest.fn(), onRecovered: jest.fn() };
+      startPrimaryTracking(MONITOR, handlers);
+
+      monitorReports('10.201.0.7', 6262);
+      await jest.advanceTimersByTimeAsync(PRIMARY_POLL_INTERVAL_MS);
+
+      expect(destroy).toHaveBeenCalled();
+      expect(handlers.onChange).toHaveBeenCalledWith(
+        { host: '10.201.0.7', port: 6262 },
+        expect.any(Number)
+      );
     } finally {
       stopPrimaryTracking();
       jest.useRealTimers();

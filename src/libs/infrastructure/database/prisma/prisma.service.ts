@@ -15,13 +15,16 @@ import type { PrismaClient as GeneratedPrismaClient } from '@prisma/client';
 // Import PrismaClient type from @prisma/client for static properties and type annotations
 import type { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { resolveLocalHealthCheckUrl } from './local-replica-resolver';
-import { PrimaryFollowingClient, startPrimaryTracking } from './primary-tracker';
+import { resolveLocalHealthCheckUrl } from '@infrastructure/database/prisma/local-replica-resolver';
+import {
+  PrimaryFollowingClient,
+  startPrimaryTracking,
+} from '@infrastructure/database/prisma/primary-tracker';
 
 /** The pool-config form of PrismaPg's constructor argument (typed by the adapter's own @types/pg). */
 type PgAdapterPoolConfig = Extract<
   ConstructorParameters<typeof PrismaPg>[0],
-  { connectionString?: unknown }
+  { connectionString?: string }
 >;
 // Pool import removed: @prisma/adapter-pg@7.x takes a pool config directly and
 // creates its own pg.Pool internally. Passing a Pool instance was the root cause
@@ -1014,28 +1017,35 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     if (monitorUri) {
       // The adapter's own @types/pg copy types this as `new () => ClientBase`, which pg.Client's
       // typings don't match exactly; at runtime pg.Pool simply calls `new Client(options)`.
-      poolConfig.Client = PrimaryFollowingClient as unknown as PgAdapterPoolConfig['Client'];
-      startPrimaryTracking(
-        monitorUri,
-        primary => {
+      poolConfig.Client = PrimaryFollowingClient as PgAdapterPoolConfig['Client'];
+      startPrimaryTracking(monitorUri, {
+        onChange: (primary, closedConnections) => {
           void this.loggingService?.log(
             LogType.DATABASE,
             LogLevel.WARN,
             `Postgres primary moved to ${primary.host}:${primary.port}; new connections follow it`,
             'PrismaService',
-            { host: primary.host, port: primary.port }
+            { host: primary.host, port: primary.port, closedConnections }
           );
         },
-        error => {
+        onError: error => {
           void this.loggingService?.log(
             LogType.DATABASE,
             LogLevel.WARN,
-            'Could not check the current Postgres primary; keeping the last known one',
+            'Could not check the current Postgres primary; keeping the last known one until the monitor answers again',
             'PrismaService',
-            { error: error instanceof Error ? error.message : String(error) }
+            { error: error.message }
           );
-        }
-      );
+        },
+        onRecovered: () => {
+          void this.loggingService?.log(
+            LogType.DATABASE,
+            LogLevel.INFO,
+            'Postgres monitor reachable again; following the primary',
+            'PrismaService'
+          );
+        },
+      });
     }
 
     const adapter = new PrismaPg(poolConfig);
@@ -1375,8 +1385,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       // Checking the primary (no local-replica override): follow it after a failover like the
       // main pool does, or health keeps reporting the database down once the app has recovered.
       if (!PrismaService.healthCheckUrlOverride && getEnv('MONITOR_URI')) {
-        healthCheckPoolConfig.Client =
-          PrimaryFollowingClient as unknown as PgAdapterPoolConfig['Client'];
+        healthCheckPoolConfig.Client = PrimaryFollowingClient as PgAdapterPoolConfig['Client'];
       }
 
       // FIXED: Same as main client — PrismaPg@7.x takes a config object, not a Pool instance.
