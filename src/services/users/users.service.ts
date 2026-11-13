@@ -6,11 +6,7 @@ import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events/event.service';
 import { LogLevel, LogType, type IEventService, isEventService } from '@core/types';
 
-import type {
-  RecentUserSummary,
-  UserStatsSummary,
-  UserWithRelations,
-} from '@core/types/user.types';
+import type { UserWithRelations } from '@core/types/user.types';
 import { isPrismaDatabaseError } from '@core/types/infrastructure.types';
 import { Role } from '@core/types/enums.types';
 import type { User } from '@core/types/database.types';
@@ -61,21 +57,6 @@ type UsersAuthServiceLike = {
   ) => Promise<unknown>;
   logout: (userId: string) => Promise<unknown>;
 };
-
-/** How many recently registered users GET /user/stats returns. */
-const RECENT_USERS_LIMIT = 5;
-
-/** The columns GET /user/stats reads for its recently registered users. */
-interface RecentUserRow {
-  id: string;
-  name: string;
-  firstName: string | null;
-  lastName: string | null;
-  role: string;
-  isActive: boolean;
-  createdAt: Date;
-  primaryClinic: { name: string } | null;
-}
 
 @Injectable()
 export class UsersService {
@@ -2335,9 +2316,10 @@ export class UsersService {
   /**
    * Get user statistics
    */
-  async getStats(clinicId?: string): Promise<UserStatsSummary> {
-    // v2: the response gained recentUsers; older cached entries do not have it.
-    const cacheKey = `users:stats:v2:${clinicId || 'all'}`;
+  async getStats(
+    clinicId?: string
+  ): Promise<{ total: number; active: number; byRole: Record<string, number> }> {
+    const cacheKey = `users:stats:${clinicId || 'all'}`;
 
     return this.cacheService.cache(
       cacheKey,
@@ -2378,40 +2360,10 @@ export class UsersService {
           }
         );
 
-        const recentRows = await this.databaseService.executeHealthcareRead<RecentUserRow[]>(
-          async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-            return (await typedClient.user.findMany({
-              where: { ...where, deletedAt: null },
-              orderBy: { createdAt: 'desc' },
-              take: RECENT_USERS_LIMIT,
-              select: {
-                id: true,
-                name: true,
-                firstName: true,
-                lastName: true,
-                role: true,
-                isActive: true,
-                createdAt: true,
-                primaryClinic: { select: { name: true } },
-              },
-            } as PrismaDelegateArgs)) as unknown as RecentUserRow[];
-          }
-        );
-        const recentUsers: RecentUserSummary[] = recentRows.map(row => ({
-          id: row.id,
-          name: row.name?.trim() || [row.firstName, row.lastName].filter(Boolean).join(' ').trim(),
-          role: row.role,
-          isActive: row.isActive,
-          createdAt: new Date(row.createdAt).toISOString(),
-          clinicName: row.primaryClinic?.name ?? null,
-        }));
-
-        return { total, active, byRole, recentUsers };
+        return { total, active, byRole };
       },
       {
-        // Dashboard totals: short enough to follow new registrations, still cached.
-        ttl: 300,
+        ttl: 1800, // 30 minutes
         tags: ['users', 'stats'],
         priority: 'low',
         enableSwr: true,

@@ -1,8 +1,15 @@
-import { Injectable, BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  ForbiddenException,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { AppointmentAnalyticsService } from '../appointments/plugins/analytics/appointment-analytics.service';
 import { DatabaseService } from '@infrastructure/database';
 import type { AnalyticsFilter, AppointmentMetrics } from '@core/types/appointment.types';
 import { LoggingService } from '@infrastructure/logging';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { LogType, LogLevel } from '@core/types';
 import { formatDateKeyInIST } from '@utils/date-time.util';
 import { startOfIstDay } from '@utils/clock.util';
@@ -77,6 +84,67 @@ interface RangeFinancialsClient {
   };
 }
 
+/** How many of the newest clinics and users the Super Admin dashboard lists. */
+const SYSTEM_DASHBOARD_RECENT_LIMIT = 5;
+const DASHBOARD_PERIODS = new Set(['day', 'week', 'month', 'year']);
+
+interface RecentClinicRow {
+  id: string;
+  name: string;
+  isActive: boolean;
+  createdAt: Date;
+}
+
+interface RecentUserRow {
+  id: string;
+  name: string;
+  firstName: string | null;
+  lastName: string | null;
+  isActive: boolean;
+  createdAt: Date;
+  primaryClinic: { name: string } | null;
+}
+
+interface SystemDashboardClient {
+  clinic: {
+    count(args: unknown): Promise<number>;
+    findMany(args: unknown): Promise<RecentClinicRow[]>;
+  };
+  user: {
+    groupBy(args: unknown): Promise<Array<{ role: string; _count: { _all: number } }>>;
+    findMany(args: unknown): Promise<RecentUserRow[]>;
+  };
+}
+
+export interface SystemDashboardRecentEntry {
+  id: string;
+  name: string;
+  isActive: boolean;
+  createdAt: string;
+  clinicName: string | null;
+}
+
+/** GET /analytics/dashboard for a Super Admin: the whole system, every clinic. */
+export interface SystemDashboardStats {
+  billing: RangeFinancials;
+  summary: {
+    /** Appointments dated inside the window, all clinics. */
+    totalAppointments: number;
+    revenue: number;
+    netRevenue: number;
+    from: string;
+    to: string;
+  };
+  system: {
+    totalClinics: number;
+    /** Users that are not soft-deleted, all clinics. */
+    totalUsers: number;
+    usersByRole: Record<string, number>;
+    recentClinics: SystemDashboardRecentEntry[];
+    recentUsers: SystemDashboardRecentEntry[];
+  };
+}
+
 interface PatientAnalyticsClient {
   patient: {
     count(args: { where: Record<string, unknown> }): Promise<number>;
@@ -100,7 +168,9 @@ export class AnalyticsService {
   constructor(
     private readonly appointmentAnalytics: AppointmentAnalyticsService,
     private readonly databaseService: DatabaseService,
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => CacheService))
+    private readonly cacheService: CacheService
   ) {}
 
   async getDashboardStats(clinicId: string, period: string = 'month') {
@@ -134,6 +204,110 @@ export class AnalyticsService {
     };
   }
 
+  /**
+   * The Super Admin dashboard in one request: totals over every clinic. Appointments and money
+   * cover the selected window, as on a clinic dashboard; soft-deleted clinics and users are not
+   * counted. Cached for 5 minutes and dropped earlier by any user, clinic, appointment or payment
+   * write; the newest users carry names, so the entry is cached as PHI (encrypted).
+   */
+  async getSystemDashboardStats(period: string = 'month'): Promise<SystemDashboardStats> {
+    const windowName = DASHBOARD_PERIODS.has(period) ? period : 'month';
+    return this.cacheService.cache(
+      `analytics:dashboard:system:${windowName}`,
+      () => this.fetchSystemDashboardStats(this.getDateRange(windowName)),
+      {
+        ttl: 300,
+        tags: ['analytics', 'clinics', 'users', 'appointments', 'payments'],
+        containsPHI: true,
+        priority: 'low',
+        enableSwr: true,
+      }
+    );
+  }
+
+  private async fetchSystemDashboardStats(
+    range: AnalyticsDateRange
+  ): Promise<SystemDashboardStats> {
+    const notDeleted = { deletedAt: null };
+    const newestFirst = { createdAt: 'desc' };
+    const [clinics, users, totalAppointments, billing] = await Promise.all([
+      this.databaseService.executeHealthcareRead(async client => {
+        const db = client as unknown as SystemDashboardClient;
+        const [total, recent] = await Promise.all([
+          db.clinic.count({ where: notDeleted }),
+          db.clinic.findMany({
+            where: notDeleted,
+            orderBy: newestFirst,
+            take: SYSTEM_DASHBOARD_RECENT_LIMIT,
+            select: { id: true, name: true, isActive: true, createdAt: true },
+          }),
+        ]);
+        return { total, recent };
+      }),
+      this.databaseService.executeHealthcareRead(async client => {
+        const db = client as unknown as SystemDashboardClient;
+        const [byRole, recent] = await Promise.all([
+          db.user.groupBy({ by: ['role'], where: notDeleted, _count: { _all: true } }),
+          db.user.findMany({
+            where: notDeleted,
+            orderBy: newestFirst,
+            take: SYSTEM_DASHBOARD_RECENT_LIMIT,
+            select: {
+              id: true,
+              name: true,
+              firstName: true,
+              lastName: true,
+              isActive: true,
+              createdAt: true,
+              primaryClinic: { select: { name: true } },
+            },
+          }),
+        ]);
+        return { byRole, recent };
+      }),
+      this.databaseService.countAppointmentsSafe({ date: { gte: range.from, lte: range.to } }),
+      this.getRangeFinancials(null, range),
+    ]);
+
+    const usersByRole: Record<string, number> = {};
+    let totalUsers = 0;
+    for (const row of users.byRole) {
+      usersByRole[row.role] = row._count._all;
+      totalUsers += row._count._all;
+    }
+
+    return {
+      billing,
+      summary: {
+        totalAppointments,
+        revenue: billing.totalRevenue,
+        netRevenue: billing.netRevenue,
+        from: billing.from,
+        to: billing.to,
+      },
+      system: {
+        totalClinics: clinics.total,
+        totalUsers,
+        usersByRole,
+        recentClinics: clinics.recent.map(clinic => ({
+          id: clinic.id,
+          name: clinic.name,
+          isActive: clinic.isActive,
+          createdAt: new Date(clinic.createdAt).toISOString(),
+          clinicName: clinic.name,
+        })),
+        recentUsers: users.recent.map(user => ({
+          id: user.id,
+          name:
+            user.name?.trim() || [user.firstName, user.lastName].filter(Boolean).join(' ').trim(),
+          isActive: user.isActive,
+          createdAt: new Date(user.createdAt).toISOString(),
+          clinicName: user.primaryClinic?.name ?? null,
+        })),
+      },
+    };
+  }
+
   async getAppointmentAnalytics(clinicId: string, filters: AnalyticsQueryFilters = {}) {
     const range = this.getDateRange(filters.period ?? 'month');
     return await this.appointmentAnalytics.getAppointmentMetrics(clinicId, range, filters);
@@ -151,25 +325,29 @@ export class AnalyticsService {
     return await this.getRangeFinancials(clinicId, range);
   }
 
-  /** Completed payments (by payment time), refunds (by refund time) and expenses of a window. */
+  /**
+   * Completed payments (by payment time), refunds (by refund time) and expenses of a window.
+   * `clinicId: null` means every clinic (Super Admin dashboard only).
+   */
   private async getRangeFinancials(
-    clinicId: string,
+    clinicId: string | null,
     range: AnalyticsDateRange
   ): Promise<RangeFinancials> {
     const window = { gte: range.from, lte: range.to };
+    const scope = clinicId === null ? {} : { clinicId };
     const sums = await this.databaseService.executeHealthcareRead(async client => {
       const db = client as unknown as RangeFinancialsClient;
       const [revenue, refunds, expenses] = await Promise.all([
         db.payment.aggregate({
-          where: { clinicId, status: 'COMPLETED', createdAt: window },
+          where: { ...scope, status: 'COMPLETED', createdAt: window },
           _sum: { amount: true },
         }),
         db.payment.aggregate({
-          where: { clinicId, refundedAt: window },
+          where: { ...scope, refundedAt: window },
           _sum: { refundAmount: true },
         }),
         db.clinicExpense.aggregate({
-          where: { clinicId, date: window },
+          where: { ...scope, date: window },
           _sum: { amount: true },
         }),
       ]);

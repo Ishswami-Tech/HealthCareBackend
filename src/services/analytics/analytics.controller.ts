@@ -33,13 +33,27 @@ export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}
 
   @Get('dashboard')
-  @Roles(Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.NURSE)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.RECEPTIONIST,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE
+  )
   @RequireResourcePermission('analytics', 'read')
-  @ApiOperation({ summary: 'Get dashboard summary stats' })
+  @ApiOperation({
+    summary: 'Get dashboard summary stats',
+    description:
+      "A Super Admin gets the whole system (every clinic); the X-Clinic-ID header only selects a working context. Everyone else gets their clinic's stats.",
+  })
   async getDashboardStats(
     @Request() req: ClinicAuthenticatedRequest,
     @Query('period') period?: string
   ) {
+    if (req.user?.role === Role.SUPER_ADMIN) {
+      return await this.analyticsService.getSystemDashboardStats(period);
+    }
     const clinicId = req.clinicContext?.clinicId;
     if (!clinicId) throw new BadRequestException('Clinic ID is required');
     return await this.analyticsService.getDashboardStats(clinicId, period);
