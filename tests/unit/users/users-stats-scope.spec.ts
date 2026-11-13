@@ -26,6 +26,7 @@ jest.mock('@services/users/services/location-management.service', () => ({
   LocationManagementService: class {},
 }));
 
+import { BadRequestException } from '@nestjs/common';
 import { UsersController } from '@services/users/controllers/users.controller';
 import { Role } from '@core/types/enums.types';
 import type { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
@@ -63,9 +64,17 @@ describe('UsersController GET user/stats scope', () => {
     }
   });
 
-  it('stays global when no clinic is given', async () => {
+  it('refuses a non-Super Admin without a clinic instead of returning platform totals', async () => {
     const { controller, getStats } = build();
-    await controller.getStats(requestAs(Role.CLINIC_ADMIN), undefined);
+    await expect(controller.getStats(requestAs(Role.CLINIC_ADMIN), undefined)).rejects.toThrow(
+      BadRequestException
+    );
+    expect(getStats).not.toHaveBeenCalled();
+  });
+
+  it('gives a Super Admin system-wide totals with no clinic selected', async () => {
+    const { controller, getStats } = build();
+    await controller.getStats(requestAs(Role.SUPER_ADMIN), undefined);
     expect(getStats).toHaveBeenCalledWith(undefined);
   });
 });

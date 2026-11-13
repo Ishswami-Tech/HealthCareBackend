@@ -286,3 +286,22 @@ export interface PrismaError extends Error {
     cause?: string;
   };
 }
+
+/** One recently registered user, as shown in the Super Admin dashboard's recent activity. */
+export interface RecentUserSummary {
+  id: string;
+  name: string;
+  role: string;
+  isActive: boolean;
+  createdAt: string;
+  clinicName: string | null;
+}
+
+/** GET /user/stats: user counts (system-wide for Super Admin, else the caller's clinic). */
+export interface UserStatsSummary {
+  total: number;
+  active: number;
+  byRole: Record<string, number>;
+  /** The most recently registered users (newest first), deleted users excluded. */
+  recentUsers: RecentUserSummary[];
+}

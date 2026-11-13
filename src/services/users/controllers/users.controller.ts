@@ -191,8 +191,10 @@ export class UsersController {
   ) {
     // A Super Admin sees the whole system: the clinic header (or the clinic in their token)
     // only selects a working context and must not narrow these totals.
-    const scopedClinicId = req.user?.role === Role.SUPER_ADMIN ? undefined : clinicId;
-    return this.usersService.getStats(scopedClinicId);
+    if (req.user?.role === Role.SUPER_ADMIN) return this.usersService.getStats(undefined);
+    // Everyone else gets their clinic's numbers - never the whole platform's.
+    if (!clinicId) throw new BadRequestException('Clinic context is required');
+    return this.usersService.getStats(clinicId);
   }
 
   @Get('profile')
