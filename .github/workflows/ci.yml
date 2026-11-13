@@ -228,26 +228,31 @@ jobs:
   # ============================================================================
   # JOB: docker-build — Build and push by digest
   # ============================================================================
-  # amd64-only: every node that actually runs this image (temps-worker-ubuntu,
-  # contabo-ds, contabo-healthcare, test-x86-micro) is amd64. The last arm64
-  # node (oracle-main) was decommissioned; building that platform further would
-  # just produce an image nothing deploys to. Still matrixed/digest-merged
-  # (see docker-build-merge below) so a second platform can be added back the
-  # same way if an arm64 node ever rejoins.
+  # linux/amd64 and linux/arm64: the arm64 node (oracle-main) is rejoining the cluster
+  # as a standby, and Temps only places a replica on a node the image has a platform
+  # for. Each platform builds natively on its own runner (ubuntu-24.04-arm for arm64),
+  # as on preprod: building arm64 under QEMU on ubuntu-latest hung in
+  # `yarn prisma:generate` for 20+ minutes. docker-build-merge below combines the
+  # per-platform digests into one multi-arch tag.
   # Runs in parallel with security and verify instead of after security: it only
   # pushes an untagged digest, and docker-build-merge (tags) + deploy need all three.
   # The explicit push-only `if` replaces the one this job used to inherit from
   # needing `security` (which is push-only), so PRs still never build the image.
   docker-build:
     name: "Docker Build and Push (${{ matrix.platform }})"
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     needs: [detect-changes]
     if: github.event_name == 'push'
     timeout-minutes: 30
+    # Production runs on amd64 only; arm64 is for the standby. A failed arm64 leg (runner
+    # outage, an arm-only build break) must never hold up a production deploy: the job
+    # still succeeds, and docker-build-merge publishes the digests that were built
+    # (amd64 alone for that run).
+    continue-on-error: ${{ matrix.platform == 'linux/arm64' }}
     strategy:
       fail-fast: false
       matrix:
-        platform: [linux/amd64]
+        platform: [linux/amd64, linux/arm64]
     outputs:
       image_name: ${{ steps.image.outputs.image }}
     steps:
