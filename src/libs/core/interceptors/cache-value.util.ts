@@ -8,17 +8,25 @@ import type { UnifiedCacheOptions } from '@core/types';
 const DEFAULT_TTL_SECONDS = 3600;
 
 /**
- * Unwrap SWR-wrapped cache values ({ data, timestamp }) to return the underlying data. If the
- * value isn't wrapped, return it as-is.
+ * True for an SWR entry written before envelopes were marked: exactly `{ data, timestamp }`.
+ * CacheService.get() already returns the value inside a marked envelope, so anything else - in
+ * particular an API response that has its own `data` and `timestamp` fields among others - is a
+ * value, not a wrapper.
  */
+function isLegacySwrEnvelope(value: object): value is { data: unknown; timestamp: number } {
+  const keys = Object.keys(value);
+  return (
+    keys.length === 2 &&
+    'data' in value &&
+    'timestamp' in value &&
+    typeof value.timestamp === 'number'
+  );
+}
+
+/** Unwraps a legacy SWR entry (see isLegacySwrEnvelope); any other value is returned as-is. */
 export function unwrapCacheValue(value: unknown): unknown {
-  if (value === null || value === undefined) return value;
-  if (typeof value !== 'object') return value;
-  const obj = value as Record<string, unknown>;
-  if ('data' in obj && 'timestamp' in obj) {
-    return obj['data'];
-  }
-  return value;
+  if (value === null || value === undefined || typeof value !== 'object') return value;
+  return isLegacySwrEnvelope(value) ? value.data : value;
 }
 
 function tryParseJson(raw: string): unknown {
@@ -29,20 +37,20 @@ function tryParseJson(raw: string): unknown {
   }
 }
 
-/** True for `[]`, a JSON string of `[]`, and an SWR-wrapped `{ data: [], timestamp }`. */
+/** True for `[]`, a JSON string of `[]`, and a legacy SWR-wrapped `{ data: [], timestamp }`. */
 export function isCachedEmptyArray(value: unknown): boolean {
   if (value === null || value === undefined) return false;
   // Handle raw JSON strings (from setCacheValue's JSON.stringify)
   const parsed: unknown = typeof value === 'string' ? tryParseJson(value) : value;
   // Direct empty array
   if (Array.isArray(parsed) && parsed.length === 0) return true;
-  // SWR-wrapped empty array: { data: [], timestamp: number }
+  // Legacy SWR-wrapped empty array: { data: [], timestamp: number }
   return (
     typeof parsed === 'object' &&
     parsed !== null &&
-    'data' in parsed &&
-    Array.isArray((parsed as { data: unknown }).data) &&
-    (parsed as { data: unknown[] }).data.length === 0
+    isLegacySwrEnvelope(parsed) &&
+    Array.isArray(parsed.data) &&
+    parsed.data.length === 0
   );
 }
 

@@ -26,7 +26,7 @@ import type { PatternDeleteOptions, PatternDeleteResult } from './utils/pattern-
 import {
   getCacheConnectionTarget,
   type CacheConnectionTarget,
-} from './utils/cache-connection-target.util';
+} from '@infrastructure/cache/utils/cache-connection-target.util';
 
 /**
  * Base class for cache client services (Redis/Dragonfly)

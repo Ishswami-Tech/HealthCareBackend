@@ -16,7 +16,10 @@ import { Injectable } from '@nestjs/common';
 @Injectable()
 export class QueryKeyFactory {
   private readonly KEY_SEPARATOR = ':';
-  private readonly KEY_PREFIX = 'healthcare:query';
+  // v2: query results are stored as the value itself. Entries written before that were wrapped
+  // by the SWR strategy as { data, timestamp } and read back unwrapped, so a cache hit returned
+  // the wrapper; the new prefix makes those old entries unreachable until they expire.
+  private readonly KEY_PREFIX = 'healthcare:query:v2';
 
   /**
    * Generate user-specific query cache key

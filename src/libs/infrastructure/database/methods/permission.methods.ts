@@ -9,6 +9,10 @@ import type { PermissionEntity } from '@core/types/rbac.types';
 /**
  * Permission methods implementation
  * All methods use executeRead/Write for full optimization layers
+ *
+ * Reads are cached 'short' (5 min), not 'long': writes through executeWrite clear the query
+ * cache at once, but an authorization change made outside the app (seed, manual SQL) must not
+ * keep granting or denying access for up to an hour.
  */
 export class PermissionMethods extends DatabaseMethodsBase {
   /**
@@ -82,7 +86,7 @@ export class PermissionMethods extends DatabaseMethodsBase {
       return await prisma.permission.findUnique({
         where: { id },
       });
-    }, this.queryOptionsBuilder.operation('findPermissionByIdSafe').where({ id }).useCache(true).cacheStrategy('long').priority('normal').hipaaCompliant(false).build());
+    }, this.queryOptionsBuilder.operation('findPermissionByIdSafe').where({ id }).useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(false).build());
   }
 
   /**
@@ -102,7 +106,7 @@ export class PermissionMethods extends DatabaseMethodsBase {
           },
         },
       });
-    }, this.queryOptionsBuilder.operation('findPermissionByResourceActionSafe').where({ resource, action }).useCache(true).cacheStrategy('long').priority('normal').hipaaCompliant(false).build());
+    }, this.queryOptionsBuilder.operation('findPermissionByResourceActionSafe').where({ resource, action }).useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(false).build());
   }
 
   /**
@@ -115,7 +119,7 @@ export class PermissionMethods extends DatabaseMethodsBase {
           resource,
         },
       });
-    }, this.queryOptionsBuilder.operation('findPermissionsByResourceSafe').where({ resource }).useCache(true).cacheStrategy('long').priority('normal').hipaaCompliant(false).build());
+    }, this.queryOptionsBuilder.operation('findPermissionsByResourceSafe').where({ resource }).useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(false).build());
   }
 
   /**
@@ -169,6 +173,6 @@ export class PermissionMethods extends DatabaseMethodsBase {
       return await prisma.permission.findMany({
         where: { isSystemPermission: true },
       });
-    }, this.queryOptionsBuilder.operation('findSystemPermissionsSafe').useCache(true).cacheStrategy('long').priority('normal').hipaaCompliant(false).build());
+    }, this.queryOptionsBuilder.operation('findSystemPermissionsSafe').useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(false).build());
   }
 }

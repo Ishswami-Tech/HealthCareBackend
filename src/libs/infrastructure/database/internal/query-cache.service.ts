@@ -92,12 +92,17 @@ export class QueryCacheService {
         ? (options.ttl ?? this.defaultPHITTL)
         : (options.ttl ?? this.defaultTTL);
 
-      // Use cache() method which accepts CacheOperationOptions
+      // Use cache() method which accepts CacheOperationOptions.
+      // enableSwr: false - getCached() reads with CacheService.get(), which returns the stored
+      // value as-is, so the value must be stored as-is: the SWR strategy would store it wrapped
+      // as { data, timestamp }. PHI results still go through the PHI strategy (encrypted, and
+      // decrypted by get()).
       await this.cacheService.cache(cacheKey, () => Promise.resolve(data), {
         ttl,
         tags: options.tags ?? ['database', 'query'],
         priority: options.priority ?? 'normal',
         containsPHI: options.containsPHI ?? false,
+        enableSwr: false,
       });
 
       void this.loggingService.log(

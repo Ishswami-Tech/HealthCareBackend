@@ -9,6 +9,10 @@ import type { RbacRoleEntity } from '@core/types/database.types';
 /**
  * Role methods implementation
  * All methods use executeRead/Write for full optimization layers
+ *
+ * Reads are cached 'short' (5 min), not 'long': writes through executeWrite clear the query
+ * cache at once, but an authorization change made outside the app (seed, manual SQL) must not
+ * keep granting or denying access for up to an hour.
  */
 export class RoleMethods extends DatabaseMethodsBase {
   /**
@@ -45,7 +49,7 @@ export class RoleMethods extends DatabaseMethodsBase {
         .operation('findRoleByNameSafe')
         .where({ name, clinicId: clinicId ?? null })
         .useCache(true)
-        .cacheStrategy('long')
+        .cacheStrategy('short')
         .priority('normal')
         .hipaaCompliant(false)
         .build()
@@ -60,7 +64,7 @@ export class RoleMethods extends DatabaseMethodsBase {
       return await prisma.rbacRole.findUnique({
         where: { id },
       });
-    }, this.queryOptionsBuilder.operation('findRoleByIdSafe').where({ id }).useCache(true).cacheStrategy('long').priority('normal').hipaaCompliant(false).build());
+    }, this.queryOptionsBuilder.operation('findRoleByIdSafe').where({ id }).useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(false).build());
   }
 
   /**

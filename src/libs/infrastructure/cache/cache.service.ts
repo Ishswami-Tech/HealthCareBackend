@@ -53,6 +53,7 @@ import { SlowRetryScheduler } from '@utils/slow-retry-scheduler.util';
 // Multi-Layer Cache (L1) - Optional
 import { InMemoryCacheService } from '@infrastructure/cache/layers/in-memory-cache.service';
 import { decryptPHIValue } from '@infrastructure/cache/utils/phi-encryption.util';
+import { unwrapSwrEnvelope } from '@infrastructure/cache/strategies/swr-cache.strategy';
 
 // Types
 import type { CacheOperationOptions, HealthcareCacheConfig } from '@core/types';
@@ -677,7 +678,10 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       this.cacheRepository.get<T>(key),
       populateL1 ? this.cacheRepository.getTTL(key).catch(() => -1) : Promise.resolve(-1),
     ]);
-    const l2Value = rawL2Value !== null ? decryptPHIValue<T>(rawL2Value) : null;
+    // Same for SWR: cache() stores an SWR entry as an envelope ({ data, timestamp, __swr }), and
+    // get() returns the value inside, so a get() after a cache() returns what cache() returned
+    // (and the L1 copy below holds the value, not the envelope).
+    const l2Value = rawL2Value !== null ? unwrapSwrEnvelope(decryptPHIValue<T>(rawL2Value)) : null;
 
     // Never keep the L1 copy longer than the entry lives in L2 (set() already caps this way).
     // -1 = no expiry or TTL unknown -> default L1 TTL; 0/-2 = expiring/gone -> don't cache in L1.

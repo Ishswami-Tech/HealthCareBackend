@@ -10,6 +10,35 @@ import type { CacheOperationOptions } from '@core/types';
 import type { ICacheProvider } from '@core/types';
 
 /**
+ * How an SWR entry is stored. `__swr` marks it as an envelope, so CacheService.get() can return
+ * the value inside without mistaking a cached value that merely has `data` and `timestamp`
+ * fields for one.
+ */
+export interface SwrEnvelope<T> {
+  data: T;
+  timestamp: number;
+  __swr: 1;
+}
+
+function toSwrEnvelope<T>(data: T): SwrEnvelope<T> {
+  return { data, timestamp: Date.now(), __swr: 1 };
+}
+
+/** The value inside an SWR envelope; any other value is returned unchanged. */
+export function unwrapSwrEnvelope<T>(value: T): T {
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    '__swr' in value &&
+    value.__swr === 1 &&
+    'data' in value
+  ) {
+    return value.data as T;
+  }
+  return value;
+}
+
+/**
  * SWR (Stale-While-Revalidate) cache strategy
  * Returns stale data immediately while refreshing in background
  */
@@ -86,7 +115,7 @@ export class SWRCacheStrategy extends BaseCacheStrategy {
       const data = await fetchFn();
 
       // Update cache
-      await this.setCached(key, { data, timestamp: Date.now() }, ttl);
+      await this.setCached(key, toSwrEnvelope(data), ttl);
 
       // Remove revalidation lock
       await this.cacheProvider.del(revalidationKey);
@@ -101,7 +130,7 @@ export class SWRCacheStrategy extends BaseCacheStrategy {
    */
   private async fetchAndCache<T>(key: string, fetchFn: () => Promise<T>, ttl: number): Promise<T> {
     const data = await fetchFn();
-    await this.setCached(key, { data, timestamp: Date.now() }, ttl);
+    await this.setCached(key, toSwrEnvelope(data), ttl);
     return data;
   }
 }

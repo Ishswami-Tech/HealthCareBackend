@@ -21,7 +21,9 @@ import type { ClinicLocationResponseDto, ClinicLocation } from '@core/types/clin
  */
 @Injectable()
 export class LocationCacheService {
-  private readonly CACHE_PREFIX = 'location';
+  // v2: entries written before SWR envelopes were marked came back from get() still wrapped;
+  // the new prefix leaves them unread until they expire.
+  private readonly CACHE_PREFIX = 'location:v2';
   private readonly DEFAULT_TTL = 7200; // Increased from 3600 to 2 hours for better hit rate
   private readonly LOCATIONS_LIST_TTL = 3600; // Increased from 1800 to 1 hour for better hit rate
 
