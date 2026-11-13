@@ -165,19 +165,17 @@ async function _setupWebSocketAdapter(
       ...(cachePassword && cachePassword.trim() && { password: cachePassword }),
       // connect() is called explicitly below, with a timeout.
       lazyConnect: true,
+      // Never give up: a Dragonfly master failover takes Sentinel 5-7s, and an ioredis client whose
+      // retryStrategy returns null stays closed for good, which would silently stop cross-replica
+      // Socket.IO broadcasts until a restart. Back off to 3s and keep reconnecting; log the first
+      // attempt and then every 20th so a long outage doesn't flood the logs.
       retryStrategy: (times: number) => {
-        const maxRetries = 5;
-        if (times > maxRetries) {
-          logger.error(
-            `${useDragonfly ? 'Dragonfly' : 'Redis'} connection failed after ${maxRetries} retries`
+        const delay = Math.min(times * 100, 3000);
+        if (times === 1 || times % 20 === 0) {
+          logger.log(
+            `${useDragonfly ? 'Dragonfly' : 'Redis'} reconnection attempt ${times}, delay: ${delay}ms`
           );
-          return null;
         }
-        const maxDelay = 3000;
-        const delay = Math.min(times * 100, maxDelay);
-        logger.log(
-          `${useDragonfly ? 'Dragonfly' : 'Redis'} reconnection attempt ${times}, delay: ${delay}ms`
-        );
         return delay;
       },
     };
@@ -318,6 +316,9 @@ async function _setupWebSocketAdapter(
                 // Ignore logging errors
               });
           }
+          // The clients retry forever (see retryStrategy), so stop them before dropping them.
+          void pubClient.disconnect();
+          void subClient.disconnect();
           // Clear clients to prevent using uninitialized clients
           pubClient = null;
           subClient = null;

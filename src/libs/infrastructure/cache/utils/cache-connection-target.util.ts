@@ -11,6 +11,9 @@
  * old connection to fail.
  */
 
+import { HealthcareError } from '@core/errors/healthcare-error.class';
+import { ErrorCode } from '@core/errors/error-codes.enum';
+
 export interface SentinelAddress {
   readonly host: string;
   readonly port: number;
@@ -40,7 +43,13 @@ export function parseSentinelAddresses(value: string): SentinelAddress[] {
       const host = separator >= 0 ? entry.slice(0, separator) : entry;
       const port = separator >= 0 ? Number(entry.slice(separator + 1)) : DEFAULT_SENTINEL_PORT;
       if (!host || !Number.isInteger(port) || port <= 0 || port > 65535) {
-        throw new Error(`Invalid CACHE_SENTINELS entry "${entry}" (expected host:port)`);
+        throw new HealthcareError(
+          ErrorCode.CACHE_CONFIGURATION_ERROR,
+          `Invalid CACHE_SENTINELS entry "${entry}" (expected host:port)`,
+          undefined,
+          { entry },
+          'CacheConnectionTarget'
+        );
       }
       return { host, port };
     });
