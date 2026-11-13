@@ -335,6 +335,10 @@ Safety rules:
   its writes are still invalidated.
 - PHI entries (`hipaaCompliant`) live at most 60 s, whatever cache strategy the
   read asked for.
+- Entries are stored in a type-preserving envelope (`QueryCacheService`
+  encode/decode): an L2 (Dragonfly, JSON) hit returns real `Date` / `BigInt` /
+  byte values, exactly as the query did, and a fresh object per hit. Entries
+  without the envelope count as misses.
 - `skipCacheInvalidation` skips all invalidation for that write, including its
   tables; use it only for tables that are never read through the cache.
 - Each tag is invalidated once per pass, through
