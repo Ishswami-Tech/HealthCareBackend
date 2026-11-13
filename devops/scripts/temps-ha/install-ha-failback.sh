@@ -3,6 +3,10 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 install -m 0755 ha-failback.sh /usr/local/bin/hcb-ha-failback
+# Pinned Temps CLI, installed once, so failback checks do not depend on the npm registry.
+sudo -u deploy mkdir -p /home/deploy/.local/share/hcb-temps-cli
+sudo -u deploy npm install --silent --no-audit --no-fund \
+  --prefix /home/deploy/.local/share/hcb-temps-cli @temps-sdk/cli@0.1.38
 install -m 0644 hcb-ha-failback.service hcb-ha-failback.timer /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now hcb-ha-failback.timer

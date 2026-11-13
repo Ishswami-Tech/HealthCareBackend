@@ -33,6 +33,13 @@ PREFERRED_NODE_NAME="${PREFERRED_NODE_NAME:-temps-worker-ubuntu}"     # Temps no
 APPS="${APPS:-4:4:healthcarebackend 5:5:healthcarebackend-worker}"     # project:env:slug
 APP_CHECK_SECS="${APP_CHECK_SECS:-300}"
 TEMPS_CLI_VERSION="${TEMPS_CLI_VERSION:-0.1.38}"
+# The pinned CLI installed by install-ha-failback.sh; npx (needs the npm registry) only as fallback.
+TEMPS_CLI_HOME="${TEMPS_CLI_HOME:-/home/deploy/.local/share/hcb-temps-cli}"
+# A deployment still not finished after this long is stuck (e.g. paused), not in flight.
+IN_FLIGHT_MAX_SECS="${IN_FLIGHT_MAX_SECS:-7200}"
+# After a failback redeploy that still left no copy on the preferred node (drained or offline
+# in Temps), wait this long before trying again instead of redeploying every cooldown.
+APP_BACKOFF_SECS="${APP_BACKOFF_SECS:-21600}"
 
 MONITOR_CONTAINER="postgres-postgres-main-monitor"
 MONITOR_PORT=6260
@@ -166,7 +173,12 @@ failback_cache() {
 # Uses only the Temps CLI (the supported API), pinned to the version this was tested
 # with, never Temps' internal database, so Temps upgrades cannot break it.
 temps_cli() {
-  (cd "$HOME" && npx -y "@temps-sdk/cli@$TEMPS_CLI_VERSION" --target-context temps-local "$@")
+  local bin="$TEMPS_CLI_HOME/node_modules/.bin/temps"
+  if [[ -x "$bin" ]]; then
+    (cd "$HOME" && "$bin" --target-context temps-local "$@")
+  else
+    (cd "$HOME" && npx -y "@temps-sdk/cli@$TEMPS_CLI_VERSION" --target-context temps-local "$@")
+  fi
 }
 
 # Prints "slug|image of the current deployment|running copies on PREFERRED_NODE_NAME|deploys in flight".
@@ -176,14 +188,25 @@ app_rows() {
     IFS=: read -r pid eid slug <<<"$spec"
     deps=$(temps_cli deployments list -p "$slug" --environment-id "$eid" -n 10 --json) || return 1
     ctrs=$(temps_cli containers list -p "$pid" -e "$eid" --json) || return 1
-    DEPS="$deps" CTRS="$ctrs" python3 - "$slug" "$PREFERRED_NODE_NAME" <<'PY' || return 1
-import json, os, sys
-slug, node = sys.argv[1], sys.argv[2]
+    DEPS="$deps" CTRS="$ctrs" python3 - "$slug" "$PREFERRED_NODE_NAME" "$IN_FLIGHT_MAX_SECS" <<'PY' || return 1
+import json, os, sys, time
+slug, node, max_age = sys.argv[1], sys.argv[2], int(sys.argv[3])
 deps = json.loads(os.environ["DEPS"]); deps = deps.get("deployments", deps) if isinstance(deps, dict) else deps
 ctrs = json.loads(os.environ["CTRS"])
 running = [c for c in ctrs if c.get("status") == "running"]
 images = {c.get("image_name") for c in running if c.get("image_name")}
-busy = sum(1 for d in deps if d.get("status") not in ("completed", "failed", "stopped", "cancelled"))
+done = ("completed", "failed", "stopped", "cancelled")
+now_ms = time.time() * 1000
+busy = 0
+for d in deps:
+    if d.get("status") in done:
+        continue
+    created = d.get("created_at") or 0
+    if now_ms - created <= max_age * 1000:
+        busy += 1          # recent and unfinished: in flight
+    else:                  # old and unfinished (paused, or a status this script does not know)
+        print(f"ha-failback: apps: {slug} deployment {d.get('id')} has been '{d.get('status')}' "
+              f"for over {max_age}s; treating it as stuck, not in flight", file=sys.stderr)
 if len(images) != 1:
     busy += 1          # zero or mixed images: something is mid-change, leave it alone
 on_node = sum(1 for c in running if c.get("node_name") == node)
@@ -196,6 +219,9 @@ failback_apps() {
   local rows slug image on_node
   # Only once Postgres and Dragonfly are both back home: whole-site failback.
   [[ "$(cat "$STATE_DIR/pg.at-home" 2>/dev/null)" == 1 && "$(cat "$STATE_DIR/cache.at-home" 2>/dev/null)" == 1 ]] || return 0
+  if [[ -f "$STATE_DIR/apps.backoff-until" ]] && (( now < $(cat "$STATE_DIR/apps.backoff-until") )); then
+    return 0
+  fi
   # The CLI call costs a few seconds; when everything is in place, look only every APP_CHECK_SECS.
   if [[ ! -f "$STATE_DIR/apps.healthy-since" && -f "$STATE_DIR/apps.last-check" ]] \
      && (( now - $(cat "$STATE_DIR/apps.last-check") < APP_CHECK_SECS )); then
@@ -224,6 +250,19 @@ failback_apps() {
     temps_cli deploy:image --image "$image" -p "$slug" -e production -y --timeout 900 \
       || log "apps: redeploy of $slug failed; will retry after the cooldown"
   done <<<"$rows"
+  [[ "$DRY_RUN" == 1 ]] && return 0
+
+  # Temps decides placement. If it still put no copy on the preferred node (drained or offline
+  # there, which this CLI key cannot see), redeploying again every cooldown would only churn
+  # production: back off.
+  local after
+  after=$(app_rows) || return 0
+  if awk -F'|' '$3==0 {found=1} END {exit !found}' <<<"$after"; then
+    echo $((now + APP_BACKOFF_SECS)) >"$STATE_DIR/apps.backoff-until"
+    log "apps: Temps still placed no copy on $PREFERRED_NODE_NAME (drained or offline there?); not redeploying again for ${APP_BACKOFF_SECS}s"
+  else
+    rm -f "$STATE_DIR/apps.backoff-until"
+  fi
 }
 
 failback_postgres
