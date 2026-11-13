@@ -185,8 +185,14 @@ export class UsersController {
     description: 'Get user counts by role and status.',
   })
   @ApiResponse({ status: 200, description: 'Return user statistics.' })
-  async getStats(@OptionalClinicId() clinicId?: string) {
-    return this.usersService.getStats(clinicId);
+  async getStats(
+    @Request() req: ClinicAuthenticatedRequest,
+    @OptionalClinicId() clinicId?: string
+  ) {
+    // A Super Admin sees the whole system: the clinic header (or the clinic in their token)
+    // only selects a working context and must not narrow these totals.
+    const scopedClinicId = req.user?.role === Role.SUPER_ADMIN ? undefined : clinicId;
+    return this.usersService.getStats(scopedClinicId);
   }
 
   @Get('profile')
