@@ -49,9 +49,10 @@ export class SNSBackupService implements OnModuleInit {
       const awsSecretAccessKey = this.configService.getEnv('AWS_SECRET_ACCESS_KEY');
 
       if (!awsRegion || !awsAccessKeyId || !awsSecretAccessKey) {
+        // AWS is optional and intentionally not configured in production: not a warning.
         void this.loggingService.log(
           LogType.SYSTEM,
-          LogLevel.WARN,
+          LogLevel.DEBUG,
           'AWS credentials not provided, SNS backup service will be disabled',
           'SNSBackupService'
         );

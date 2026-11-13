@@ -68,9 +68,10 @@ export class SESEmailService implements OnModuleInit {
         'Healthcare App';
 
       if (!awsRegion || !awsAccessKeyId || !awsSecretAccessKey) {
+        // AWS is optional and intentionally not configured in production: not a warning.
         void this.loggingService.log(
           LogType.SYSTEM,
-          LogLevel.WARN,
+          LogLevel.DEBUG,
           'AWS credentials not provided, SES email service will be disabled',
           'SESEmailService'
         );
