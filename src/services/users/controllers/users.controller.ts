@@ -13,7 +13,9 @@ import {
   BadRequestException,
   Res,
   Query,
+  HttpStatus,
 } from '@nestjs/common';
+import { HealthcareError, ErrorCode } from '@core/errors';
 import {
   ApiTags,
   ApiOperation,
@@ -193,7 +195,15 @@ export class UsersController {
     // only selects a working context and must not narrow these totals.
     if (req.user?.role === Role.SUPER_ADMIN) return this.usersService.getStats(undefined);
     // Everyone else gets their clinic's numbers - never the whole platform's.
-    if (!clinicId) throw new BadRequestException('Clinic context is required');
+    if (!clinicId) {
+      throw new HealthcareError(
+        ErrorCode.VALIDATION_REQUIRED_FIELD,
+        'Clinic context is required',
+        HttpStatus.BAD_REQUEST,
+        { field: 'clinicId' },
+        'UsersController.getStats'
+      );
+    }
     return this.usersService.getStats(clinicId);
   }
 

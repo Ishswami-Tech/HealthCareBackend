@@ -91,6 +91,8 @@ export type UserWhereInput = {
   isVerified?: boolean;
   role?: string;
   primaryClinicId?: string;
+  /** `null` matches users that are not soft-deleted. */
+  deletedAt?: Date | null;
 };
 
 /**

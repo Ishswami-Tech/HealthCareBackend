@@ -21,13 +21,14 @@ jest.mock('@infrastructure/database', () => ({ DatabaseService: class {} }));
 jest.mock('@core/errors', () => ({
   HealthcareErrorsService: class {},
   HealthcareError: class HealthcareError extends Error {},
+  ErrorCode: { VALIDATION_REQUIRED_FIELD: 'VALIDATION_REQUIRED_FIELD' },
 }));
 jest.mock('@services/users/services/location-management.service', () => ({
   LocationManagementService: class {},
 }));
 
-import { BadRequestException } from '@nestjs/common';
 import { UsersController } from '@services/users/controllers/users.controller';
+import { HealthcareError } from '@core/errors';
 import { Role } from '@core/types/enums.types';
 import type { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 
@@ -67,7 +68,7 @@ describe('UsersController GET user/stats scope', () => {
   it('refuses a non-Super Admin without a clinic instead of returning platform totals', async () => {
     const { controller, getStats } = build();
     await expect(controller.getStats(requestAs(Role.CLINIC_ADMIN), undefined)).rejects.toThrow(
-      BadRequestException
+      HealthcareError
     );
     expect(getStats).not.toHaveBeenCalled();
   });

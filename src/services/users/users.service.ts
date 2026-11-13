@@ -2319,46 +2319,44 @@ export class UsersService {
   async getStats(
     clinicId?: string
   ): Promise<{ total: number; active: number; byRole: Record<string, number> }> {
-    const cacheKey = `users:stats:${clinicId || 'all'}`;
+    // v2: soft-deleted users are no longer counted.
+    const cacheKey = `users:stats:v2:${clinicId || 'all'}`;
 
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        const where: UserWhereInput = clinicId ? { primaryClinicId: clinicId } : {};
+        const where: UserWhereInput = {
+          ...(clinicId ? { primaryClinicId: clinicId } : {}),
+          deletedAt: null,
+        };
 
-        // Count total
-        const total = await this.countUsersSafe(where as PrismaDelegateArgs);
-
-        // Count by role
-        const byRoleRaw = await this.databaseService.executeHealthcareRead<
-          Array<{ role: Role; _count: { id: number } }>
-        >(async client => {
-          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-          return (await typedClient.user.groupBy({
-            by: ['role'],
-            where: where as PrismaDelegateArgs['where'],
-            _count: {
-              id: true,
-            },
-          } as PrismaDelegateArgs)) as unknown as Array<{ role: Role; _count: { id: number } }>;
-        });
+        // Independent counts: one parallel round trip instead of three serial ones.
+        const [total, byRoleRaw, active] = await Promise.all([
+          this.countUsersSafe(where as PrismaDelegateArgs),
+          this.databaseService.executeHealthcareRead<Array<{ role: Role; _count: { id: number } }>>(
+            async client => {
+              const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+              return (await typedClient.user.groupBy({
+                by: ['role'],
+                where: where as PrismaDelegateArgs['where'],
+                _count: {
+                  id: true,
+                },
+              } as PrismaDelegateArgs)) as unknown as Array<{ role: Role; _count: { id: number } }>;
+            }
+          ),
+          this.databaseService.executeHealthcareRead<number>(async baseClient => {
+            const typedClient = baseClient as unknown as PrismaTransactionClientWithDelegates;
+            return await typedClient.user.count({
+              where: { ...where, isVerified: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          }),
+        ]);
 
         const byRole: Record<string, number> = {};
         byRoleRaw.forEach(item => {
           byRole[item.role] = item._count.id;
         });
-
-        const active = await this.databaseService.executeHealthcareRead<number>(
-          async baseClient => {
-            const typedClient = baseClient as unknown as PrismaTransactionClientWithDelegates;
-            return await typedClient.user.count({
-              where: {
-                ...(clinicId ? { primaryClinicId: clinicId } : {}),
-                isVerified: true,
-              } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          }
-        );
 
         return { total, active, byRole };
       },
