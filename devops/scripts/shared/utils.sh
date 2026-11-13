@@ -307,6 +307,47 @@ validate_and_fix_env_file() {
     fi
 }
 
+# Temps HA Postgres (pg_auto_failover), used by backup.sh and restore.sh: when
+# BACKUP_PG_MONITOR_URI and BACKUP_DATABASE_URL are set (in the env file), they talk over the
+# network to whichever cluster member is the primary right now - it moves on failover, and may run
+# on another node - using the client tools from PG_CLIENT_IMAGE. Without them, the calling script's
+# single local POSTGRES_CONTAINER is used as before.
+PG_CLIENT_IMAGE="${PG_CLIENT_IMAGE:-postgres:18-bookworm}"
+PG_TARGET=""  # host:port of the current primary (Temps HA mode)
+
+temps_ha_postgres_enabled() {
+    [[ -n "${BACKUP_PG_MONITOR_URI:-}" && -n "${BACKUP_DATABASE_URL:-}" ]]
+}
+
+# The member the monitor has decided is primary (its goal state): a member that died keeps
+# reporting 'primary' while the monitor has already demoted it.
+resolve_postgres_primary() {
+    # Only the app's own formation (pg_autoctl's 'default', group 0); a monitor can host several.
+    local query="SELECT nodehost, nodeport FROM pgautofailover.node WHERE formationid = 'default' AND groupid = 0 AND goalstate IN ('primary', 'wait_primary', 'single', 'apply_settings') ORDER BY nodeid LIMIT 1"
+    local row
+    row=$(PGCONN="$BACKUP_PG_MONITOR_URI" PGQUERY="$query" \
+        docker run --rm --network host -e PGCONN -e PGQUERY "$PG_CLIENT_IMAGE" \
+        sh -c 'exec psql "$PGCONN" -XAt -F: -c "$PGQUERY"' 2>/dev/null) || return 1
+    [[ "$row" =~ ^[A-Za-z0-9.-]+:[0-9]+$ ]] || return 1
+    PG_TARGET="$row"
+}
+
+# Runs a Postgres client tool (pg_dump, psql) against the database; extra arguments follow.
+# Call resolve_postgres_primary first in HA mode.
+# The connection string is passed through the environment, never on the command line.
+pg_tool() {
+    local tool="$1"
+    shift
+    if temps_ha_postgres_enabled; then
+        local conn
+        conn=$(printf '%s' "$BACKUP_DATABASE_URL" | sed -E "s#@[^/@]+/#@${PG_TARGET}/#; s#\?.*##")
+        PGCONN="$conn" docker run --rm -i --network host -e PGCONN "$PG_CLIENT_IMAGE" \
+            sh -c 'exec "$0" "$PGCONN" "$@"' "$tool" "$@"
+    else
+        docker exec "$POSTGRES_CONTAINER" "$tool" -U postgres -d userdb "$@"
+    fi
+}
+
 # Load environment variables
 load_env() {
     local validate="${1:-false}"

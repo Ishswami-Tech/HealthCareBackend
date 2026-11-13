@@ -209,12 +209,45 @@ find_backup() {
     return 1
 }
 
+# Temps HA mode (BACKUP_PG_MONITOR_URI + BACKUP_DATABASE_URL set): restores into the CURRENT
+# primary - the same database backup.sh dumps - and the standby follows through replication. The
+# API and worker run under Temps, not as local containers, so this script cannot stop them: stop
+# both Temps projects first, then confirm with CONFIRM_PRODUCTION_RESTORE=yes.
+#
+# Runs as one transaction: the public schema is replaced and the dump loaded together, and any
+# error rolls everything back, leaving the database exactly as it was.
+restore_postgres_ha() {
+    local backup_file="$1"
+
+    if [[ "${CONFIRM_PRODUCTION_RESTORE:-}" != "yes" ]]; then
+        log_error "Refusing to restore the live Temps HA database without CONFIRM_PRODUCTION_RESTORE=yes"
+        log_error "Stop the API and worker in Temps first, then re-run with CONFIRM_PRODUCTION_RESTORE=yes"
+        return 1
+    fi
+    if ! resolve_postgres_primary; then
+        log_error "Could not resolve the current Postgres primary from the HA monitor"
+        return 1
+    fi
+
+    # A fresh safety backup of what is about to be replaced (local + S3).
+    create_pre_restore_backup || return 1
+
+    log_info "Restoring PostgreSQL from ${backup_file} into the current primary ${PG_TARGET}..."
+    if { printf "SET lock_timeout = '30s';\nDROP SCHEMA public CASCADE;\nCREATE SCHEMA public;\n"; gunzip -c "$backup_file"; } \
+        | pg_tool psql -q -X -v ON_ERROR_STOP=1 --single-transaction >/dev/null; then
+        log_success "PostgreSQL restore completed on ${PG_TARGET}"
+        return 0
+    fi
+    log_error "PostgreSQL restore failed on ${PG_TARGET}; the transaction was rolled back, the database is unchanged"
+    return 1
+}
+
 # Restore PostgreSQL
 restore_postgres() {
     local container="${POSTGRES_CONTAINER}"
     
-    # Security: Validate container name
-    if ! validate_container_name "$container"; then
+    # Security: Validate container name (Temps HA mode restores over the network instead)
+    if ! temps_ha_postgres_enabled && ! validate_container_name "$container"; then
         log_error "Invalid container name: ${container}"
         return 1
     fi
@@ -295,6 +328,13 @@ restore_postgres() {
         return 1
     fi
     
+    if temps_ha_postgres_enabled; then
+        local ha_status=0
+        restore_postgres_ha "$backup_file" || ha_status=$?
+        [[ "$RESTORE_SOURCE" == "s3" ]] && rm -f "$backup_file"
+        return "$ha_status"
+    fi
+
     log_info "Restoring PostgreSQL from ${backup_file}..."
     
     # Stop app containers temporarily (safety measure during database restore)
@@ -418,6 +458,12 @@ restore_dragonfly() {
 # ============================================================================
 
 disaster_recovery() {
+    if temps_ha_postgres_enabled; then
+        # Disaster mode rebuilds the pre-Temps docker-compose stack and restores into its local
+        # container. In Temps HA mode restore by backup id instead (it falls back to S3).
+        log_error "Disaster mode is not for Temps HA: run '$0 <backup-id>' (falls back to S3) instead"
+        exit 1
+    fi
     local backup_id="${1:-}"
     
     if [[ -z "$backup_id" ]]; then
@@ -600,12 +646,20 @@ main_restore() {
         exit 1
     fi
     
-    # Restore Dragonfly
-    restore_dragonfly || log_warning "Dragonfly restore failed (non-critical)"
-    
-    # Start app containers (restart after infrastructure restore completes)
-    # NOTE: This is NOT a health check - it's restarting the app after infrastructure restore
-    docker start "${CONTAINER_PREFIX}api" "${CONTAINER_PREFIX}worker" 2>/dev/null || true
+    if temps_ha_postgres_enabled; then
+        # The cache is a disposable copy rebuilt from the database, and the HA Dragonfly master is
+        # not a local container; the API and worker are Temps projects, not these containers
+        # (starting them here could revive the pre-Temps stack against the old database).
+        log_info "Temps HA mode: skipping the Dragonfly restore (the cache refills from the database)"
+        log_info "Next: start the API and worker in Temps, then check /health"
+    else
+        # Restore Dragonfly
+        restore_dragonfly || log_warning "Dragonfly restore failed (non-critical)"
+        
+        # Start app containers (restart after infrastructure restore completes)
+        # NOTE: This is NOT a health check - it's restarting the app after infrastructure restore
+        docker start "${CONTAINER_PREFIX}api" "${CONTAINER_PREFIX}worker" 2>/dev/null || true
+    fi
     
     log_success "Restore process completed"
 }
