@@ -1,0 +1,13 @@
+[Unit]
+Description=Restart hung HealthCareBackend containers and keep the Temps agent running
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/hcb-node-watchdog
+Restart=always
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target

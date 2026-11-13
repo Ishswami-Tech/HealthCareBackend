@@ -18,7 +18,8 @@
 # Apps: once both data primaries are back, redeploys the current image of each app
 #       that has no replica on the preferred node, so Temps spreads the replicas again.
 #
-# Env overrides: PREFERRED_PG_NODE, PREFERRED_CACHE, PREFERRED_TEMPS_NODE, APP_PROJECTS,
+# Env overrides: PREFERRED_PG_NODE, PREFERRED_CACHE, PREFERRED_NODE_NAME, APPS, APP_CHECK_SECS,
+# TEMPS_CLI_VERSION,
 # STABLE_SECS, COOLDOWN_SECS, MAX_LAG_BYTES, DRY_RUN=1 (log what would happen, change nothing).
 set -euo pipefail
 
@@ -28,8 +29,10 @@ STABLE_SECS="${STABLE_SECS:-300}"
 COOLDOWN_SECS="${COOLDOWN_SECS:-1800}"
 MAX_LAG_BYTES="${MAX_LAG_BYTES:-16777216}"
 DRY_RUN="${DRY_RUN:-0}"
-PREFERRED_TEMPS_NODE="${PREFERRED_TEMPS_NODE:-6}"                     # temps-worker
-APP_PROJECTS="${APP_PROJECTS:-healthcarebackend healthcarebackend-worker}"
+PREFERRED_NODE_NAME="${PREFERRED_NODE_NAME:-temps-worker-ubuntu}"     # Temps node name
+APPS="${APPS:-4:4:healthcarebackend 5:5:healthcarebackend-worker}"     # project:env:slug
+APP_CHECK_SECS="${APP_CHECK_SECS:-300}"
+TEMPS_CLI_VERSION="${TEMPS_CLI_VERSION:-0.1.38}"
 
 MONITOR_CONTAINER="postgres-postgres-main-monitor"
 MONITOR_PORT=6260
@@ -157,41 +160,55 @@ failback_cache() {
 # ---------------------------------------------------------------- App replicas
 # targetNodes [6,9] with 2 replicas means one API and one worker on each node, but
 # Temps never rebalances: replicas rescheduled onto contabo-ds while temps-worker was
-# down stay there. Once the data layer is back on the preferred node and that node is
-# heartbeating, redeploy the current image so Temps spreads the replicas again.
-temps_sql() {
-  docker exec -i temps-timescaledb psql -X -q -At -F'|' -v ON_ERROR_STOP=1 -U temps -d temps "$@"
+# down stay there. Once the data layer is back on the preferred node (which also
+# proves that node is up), redeploy the current image so Temps spreads them again.
+#
+# Uses only the Temps CLI (the supported API), pinned to the version this was tested
+# with, never Temps' internal database, so Temps upgrades cannot break it.
+temps_cli() {
+  (cd "$HOME" && npx -y "@temps-sdk/cli@$TEMPS_CLI_VERSION" --target-context temps-local "$@")
+}
+
+# Prints "slug|image of the current deployment|running copies on PREFERRED_NODE_NAME|deploys in flight".
+app_rows() {
+  local spec pid eid slug deps ctrs
+  for spec in $APPS; do
+    IFS=: read -r pid eid slug <<<"$spec"
+    deps=$(temps_cli deployments list -p "$slug" --environment-id "$eid" -n 10 --json) || return 1
+    ctrs=$(temps_cli containers list -p "$pid" -e "$eid" --json) || return 1
+    DEPS="$deps" CTRS="$ctrs" python3 - "$slug" "$PREFERRED_NODE_NAME" <<'PY' || return 1
+import json, os, sys
+slug, node = sys.argv[1], sys.argv[2]
+deps = json.loads(os.environ["DEPS"]); deps = deps.get("deployments", deps) if isinstance(deps, dict) else deps
+ctrs = json.loads(os.environ["CTRS"])
+running = [c for c in ctrs if c.get("status") == "running"]
+images = {c.get("image_name") for c in running if c.get("image_name")}
+busy = sum(1 for d in deps if d.get("status") not in ("completed", "failed", "stopped", "cancelled"))
+if len(images) != 1:
+    busy += 1          # zero or mixed images: something is mid-change, leave it alone
+on_node = sum(1 for c in running if c.get("node_name") == node)
+print(f"{slug}|{next(iter(images), '')}|{on_node}|{busy}")
+PY
+  done
 }
 
 failback_apps() {
-  local node_ok rows slug image on_node busy
+  local rows slug image on_node
   # Only once Postgres and Dragonfly are both back home: whole-site failback.
   [[ "$(cat "$STATE_DIR/pg.at-home" 2>/dev/null)" == 1 && "$(cat "$STATE_DIR/cache.at-home" 2>/dev/null)" == 1 ]] || return 0
+  # The CLI call costs a few seconds; when everything is in place, look only every APP_CHECK_SECS.
+  if [[ ! -f "$STATE_DIR/apps.healthy-since" && -f "$STATE_DIR/apps.last-check" ]] \
+     && (( now - $(cat "$STATE_DIR/apps.last-check") < APP_CHECK_SECS )); then
+    return 0
+  fi
+  echo "$now" >"$STATE_DIR/apps.last-check"
 
-  node_ok=$(temps_sql -c "SELECT count(*) FROM nodes WHERE id = $PREFERRED_TEMPS_NODE AND status = 'active'
-      AND drain_requested_at IS NULL AND last_heartbeat > now() - interval '90 seconds'") \
-    || { log "apps: Temps DB unreachable; skipping"; return 0; }
-  # slug|current image|running containers on the preferred node|deployments in flight
-  rows=$(temps_sql <<SQL
-SELECT p.slug, d.image_name,
-       (SELECT count(*) FROM deployment_containers c WHERE c.deployment_id = d.id
-          AND c.node_id = $PREFERRED_TEMPS_NODE AND c.status = 'running' AND c.deleted_at IS NULL),
-       (SELECT count(*) FROM deployments x WHERE x.project_id = p.id
-          AND x.state NOT IN ('completed', 'failed', 'stopped', 'cancelled'))
-FROM projects p
-JOIN environments e ON e.project_id = p.id AND e.slug = 'production' AND e.deleted_at IS NULL
-JOIN deployments d ON d.id = e.current_deployment_id
-WHERE p.slug IN ($(printf "'%s'," $APP_PROJECTS | sed 's/,$//'))
-  AND (e.deployment_config -> 'targetNodes') @> '[$PREFERRED_TEMPS_NODE]'
-ORDER BY p.id;
-SQL
-  ) || { log "apps: Temps DB unreachable; skipping"; return 0; }
-
-  if [[ "$node_ok" != 1 ]] || grep -q '|[1-9][0-9]*$' <<<"$rows"; then
-    unstable apps; return 0                    # node not heartbeating, or a deploy is running
+  rows=$(app_rows) || { log "apps: Temps CLI failed; skipping"; return 0; }
+  if grep -q '|[1-9][0-9]*$' <<<"$rows"; then
+    unstable apps; return 0                    # a deploy is running
   fi
   if ! awk -F'|' '$3==0 {found=1} END {exit !found}' <<<"$rows"; then
-    unstable apps; return 0                    # every project already has a replica there
+    unstable apps; return 0                    # every app already has a copy there
   fi
 
   local up; up=$(stable apps)
@@ -199,13 +216,12 @@ SQL
   if cooling_down apps; then return 0; fi
 
   [[ "$DRY_RUN" == 1 ]] || mark_failback apps
-  # One project at a time: parallel deploys of the same image raced on the image import.
+  # One app at a time: parallel deploys of the same image raced on the image import.
   while IFS='|' read -r slug image on_node _; do
-    [[ "$on_node" == 0 ]] || continue
-    log "apps: $slug has no replica on node $PREFERRED_TEMPS_NODE; redeploying $image to spread it"
+    [[ "$on_node" == 0 && -n "$image" ]] || continue
+    log "apps: $slug has no copy on $PREFERRED_NODE_NAME; redeploying $image to spread it"
     if [[ "$DRY_RUN" == 1 ]]; then log "apps: DRY_RUN, not deploying"; continue; fi
-    (cd "$HOME" && npx -y @temps-sdk/cli --target-context temps-local deploy:image \
-       --image "$image" -p "$slug" -e production -y --timeout 900) \
+    temps_cli deploy:image --image "$image" -p "$slug" -e production -y --timeout 900 \
       || log "apps: redeploy of $slug failed; will retry after the cooldown"
   done <<<"$rows"
 }
