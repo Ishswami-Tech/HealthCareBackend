@@ -1,0 +1,10 @@
+[Unit]
+Description=Re-apply HA mesh allow rules after the Temps agent rebuilds its lockdown
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

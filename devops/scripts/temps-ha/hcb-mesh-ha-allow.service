@@ -1,0 +1,8 @@
+[Unit]
+Description=Allow HA Postgres/Dragonfly traffic through the Temps mesh lockdown
+After=docker.service temps-agent.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/hcb-mesh-ha-allow
+ExecStart=/usr/local/sbin/hcb-mesh-ha-allow

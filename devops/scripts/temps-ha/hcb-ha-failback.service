@@ -1,0 +1,11 @@
+[Unit]
+Description=Fail HA Postgres, Dragonfly and app replicas back to the preferred node
+After=docker.service
+
+[Service]
+Type=oneshot
+User=deploy
+Environment=STATE_DIR=/home/deploy/.local/state/hcb-ha-failback
+ExecStart=/usr/local/bin/hcb-ha-failback
+# A redeploy can take several minutes; the timer will not start another run meanwhile.
+TimeoutStartSec=40min
