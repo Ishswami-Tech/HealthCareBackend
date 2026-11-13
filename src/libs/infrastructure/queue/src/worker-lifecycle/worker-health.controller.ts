@@ -1,9 +1,14 @@
 import { Controller, Get, Res } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 
+import { ConfigService } from '@config/config.service';
 import { Public } from '@core/decorators/public.decorator';
-import { WORKER_LIFECYCLE } from '../queue.constants';
-import { evaluateHeartbeat, heartbeatFilePath, readHeartbeat } from './worker-heartbeat';
+import { WORKER_LIFECYCLE } from '@infrastructure/queue/src/queue.constants';
+import {
+  evaluateHeartbeat,
+  heartbeatFilePath,
+  readHeartbeat,
+} from '@infrastructure/queue/src/worker-lifecycle/worker-heartbeat';
 
 /**
  * GET /health on the worker's HTTP server (the one Bull Board is mounted on). It reports the same
@@ -13,10 +18,13 @@ import { evaluateHeartbeat, heartbeatFilePath, readHeartbeat } from './worker-he
  */
 @Controller()
 export class WorkerHealthController {
+  constructor(private readonly configService: ConfigService) {}
+
   @Get('health')
   @Public()
   getHealth(@Res() reply: FastifyReply): void {
     const now = Date.now();
+    const gitSha = this.configService.getEnv('GIT_SHA');
     const heartbeat = readHeartbeat(heartbeatFilePath());
     const verdict = evaluateHeartbeat(heartbeat, now, WORKER_LIFECYCLE.heartbeatMaxAgeMs);
     void reply.code(verdict.healthy ? 200 : 503).send({
@@ -32,7 +40,7 @@ export class WorkerHealthController {
         totalWorkers: heartbeat.totalWorkers,
       }),
       uptimeSeconds: Math.round(process.uptime()),
-      ...(process.env['GIT_SHA'] && { gitSha: process.env['GIT_SHA'] }),
+      ...(gitSha && { gitSha }),
     });
   }
 }

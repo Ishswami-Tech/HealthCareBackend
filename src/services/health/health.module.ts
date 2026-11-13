@@ -2,11 +2,11 @@ import { Module, forwardRef } from '@nestjs/common';
 import { HttpModule } from '@infrastructure/http';
 // TerminusModule removed - using only LoggingService (per .ai-rules/ coding standards)
 import { ConfigModule } from '@config/config.module';
-import { HealthController } from './health.controller';
-import { HealthService } from './health.service';
-import { TopologyHeartbeatService } from './topology-heartbeat.service';
-import { PostgresClusterTopologyService } from './postgres-cluster-topology.service';
-import { DragonflyClusterTopologyService } from './dragonfly-cluster-topology.service';
+import { HealthController } from '@services/health/health.controller';
+import { HealthService } from '@services/health/health.service';
+import { TopologyHeartbeatService } from '@services/health/topology-heartbeat.service';
+import { PostgresClusterTopologyService } from '@services/health/postgres-cluster-topology.service';
+import { DragonflyClusterTopologyService } from '@services/health/dragonfly-cluster-topology.service';
 // Use direct import to avoid circular dependency with barrel exports
 import { DatabaseModule } from '@infrastructure/database/database.module';
 import { LoggingModule } from '@infrastructure/logging';
@@ -16,20 +16,20 @@ import { CacheModule } from '@infrastructure/cache/cache.module';
 import { QueueModule } from '@infrastructure/queue';
 import { VideoModule } from '@services/video/video.module';
 // Health indicators
-import { DatabaseHealthIndicator } from './health-indicators/database-health.indicator';
-import { CacheHealthIndicator } from './health-indicators/cache-health.indicator';
-import { QueueHealthIndicator } from './health-indicators/queue-health.indicator';
-import { LoggingHealthIndicator } from './health-indicators/logging-health.indicator';
-import { VideoHealthIndicator } from './health-indicators/video-health.indicator';
+import { DatabaseHealthIndicator } from '@services/health/health-indicators/database-health.indicator';
+import { CacheHealthIndicator } from '@services/health/health-indicators/cache-health.indicator';
+import { QueueHealthIndicator } from '@services/health/health-indicators/queue-health.indicator';
+import { LoggingHealthIndicator } from '@services/health/health-indicators/logging-health.indicator';
+import { VideoHealthIndicator } from '@services/health/health-indicators/video-health.indicator';
 // Realtime health services
-import { RealtimeHealthGateway } from './realtime/realtime-health.gateway';
-import { SystemHealthChecker } from './realtime/checkers/system-health.checker';
-import { SocketHealthChecker } from './realtime/checkers/socket-health.checker';
-import { HealthAggregatorService } from './realtime/services/health-aggregator.service';
-import { HealthCacheService } from './realtime/services/health-cache.service';
-import { ChangeDetectorService } from './realtime/services/change-detector.service';
-import { HealthSchedulerService } from './realtime/services/health-scheduler.service';
-import { HealthBroadcasterService } from './realtime/services/health-broadcaster.service';
+import { RealtimeHealthGateway } from '@services/health/realtime/realtime-health.gateway';
+import { SystemHealthChecker } from '@services/health/realtime/checkers/system-health.checker';
+import { SocketHealthChecker } from '@services/health/realtime/checkers/socket-health.checker';
+import { HealthAggregatorService } from '@services/health/realtime/services/health-aggregator.service';
+import { HealthCacheService } from '@services/health/realtime/services/health-cache.service';
+import { ChangeDetectorService } from '@services/health/realtime/services/change-detector.service';
+import { HealthSchedulerService } from '@services/health/realtime/services/health-scheduler.service';
+import { HealthBroadcasterService } from '@services/health/realtime/services/health-broadcaster.service';
 
 @Module({
   imports: [

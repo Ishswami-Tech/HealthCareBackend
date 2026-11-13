@@ -22,15 +22,13 @@ import { performance } from 'node:perf_hooks';
 import { cpus, totalmem, freemem } from 'node:os';
 import { LoggingService } from '@infrastructure/logging';
 import { CommunicationHealthMonitorService } from '@communication/communication-health-monitor.service';
-import { TopologyHeartbeatService, type DeploymentTopology } from './topology-heartbeat.service';
 import {
-  PostgresClusterTopologyService,
-  type DatabaseClusterTopology,
-} from './postgres-cluster-topology.service';
-import {
-  DragonflyClusterTopologyService,
-  type CacheClusterTopology,
-} from './dragonfly-cluster-topology.service';
+  TopologyHeartbeatService,
+  type DeploymentTopology,
+} from '@services/health/topology-heartbeat.service';
+import { PostgresClusterTopologyService } from '@services/health/postgres-cluster-topology.service';
+import { DragonflyClusterTopologyService } from '@services/health/dragonfly-cluster-topology.service';
+import type { CacheClusterTopology, DatabaseClusterTopology } from '@core/types';
 /**
  * Independent Health Service
  *
@@ -511,6 +509,20 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       return { masterName: '', nodes: [], source: 'unavailable' };
     }
     return this.dragonflyClusterTopology.getTopology();
+  }
+
+  /** The three topology views, read in parallel: each may wait on its own network timeout. */
+  private async getClusterViews(): Promise<{
+    cluster: DeploymentTopology;
+    databaseCluster: DatabaseClusterTopology;
+    cacheCluster: CacheClusterTopology;
+  }> {
+    const [cluster, databaseCluster, cacheCluster] = await Promise.all([
+      this.getDeploymentTopology(),
+      this.getDatabaseClusterTopology(),
+      this.getCacheClusterTopology(),
+    ]);
+    return { cluster, databaseCluster, cacheCluster };
   }
 
   /**
@@ -2694,9 +2706,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           versions: Object.fromEntries(
             Object.entries(process.versions).filter(([, value]) => value !== undefined)
           ) as Record<string, string>,
-          cluster: await this.getDeploymentTopology(),
-          databaseCluster: await this.getDatabaseClusterTopology(),
-          cacheCluster: await this.getCacheClusterTopology(),
+          ...(await this.getClusterViews()),
         },
         memory: {
           heapUsed: memoryUsage.heapUsed,
@@ -2922,9 +2932,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           ppid: process.ppid,
           platform: process.platform,
           versions: {},
-          cluster: await this.getDeploymentTopology(),
-          databaseCluster: await this.getDatabaseClusterTopology(),
-          cacheCluster: await this.getCacheClusterTopology(),
+          ...(await this.getClusterViews()),
         },
         memory: {
           heapUsed: 0,

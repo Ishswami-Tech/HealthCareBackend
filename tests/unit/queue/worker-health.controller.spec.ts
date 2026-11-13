@@ -1,14 +1,16 @@
-import { afterEach, describe, expect, it } from '@jest/globals';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { WorkerHealthController } from '../../../src/libs/infrastructure/queue/src/worker-lifecycle/worker-health.controller';
+import { WorkerHealthController } from '@infrastructure/queue/src/worker-lifecycle/worker-health.controller';
 import {
   HEARTBEAT_FILE_ENV,
   writeHeartbeat,
   type WorkerHeartbeat,
-} from '../../../src/libs/infrastructure/queue/src/worker-lifecycle/worker-heartbeat';
+} from '@infrastructure/queue/src/worker-lifecycle/worker-heartbeat';
+
+jest.mock('@config/config.service', () => ({ ConfigService: class ConfigService {} }));
 
 /**
  * The worker had no HTTP health endpoint: only the container healthcheck read its heartbeat file.
@@ -32,7 +34,10 @@ function heartbeat(overrides: Partial<WorkerHeartbeat> = {}): WorkerHeartbeat {
   };
 }
 
-function callHealth(): { status: number; body: Record<string, unknown> } {
+function callHealth(env: Record<string, string> = {}): {
+  status: number;
+  body: Record<string, unknown>;
+} {
   const result = { status: 0, body: {} as Record<string, unknown> };
   const reply = {
     code(status: number) {
@@ -44,7 +49,8 @@ function callHealth(): { status: number; body: Record<string, unknown> } {
       return reply;
     },
   };
-  new WorkerHealthController().getHealth(reply as never);
+  const configService = { getEnv: (key: string): string | undefined => env[key] };
+  new WorkerHealthController(configService as never).getHealth(reply as never);
   return result;
 }
 
@@ -89,5 +95,13 @@ describe('Worker GET /health', () => {
 
     expect(status).toBe(503);
     expect(body).toMatchObject({ status: 'unhealthy', reasons: ['no heartbeat written yet'] });
+  });
+
+  it('reports the build from ConfigService (GIT_SHA), not by reading process.env', () => {
+    process.env[HEARTBEAT_FILE_ENV] = file;
+    writeHeartbeat(file, heartbeat());
+
+    expect(callHealth({ GIT_SHA: 'abc1234' }).body).toMatchObject({ gitSha: 'abc1234' });
+    expect(callHealth().body).not.toHaveProperty('gitSha');
   });
 });

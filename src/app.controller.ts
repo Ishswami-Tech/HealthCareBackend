@@ -895,6 +895,13 @@ export class AppController {
     // Add this helper function at the beginning of generateDashboardHtml
     const formatDateTime = (dateValue: string | Date | number | null | undefined) =>
       formatDateTimeInIST(dateValue);
+    // The primary site is the node running the Postgres primary: replicas there are drawn blue
+    // like the database and cache primaries, replicas on the standby node green.
+    const primaryNode = healthData.databaseCluster?.nodes.find(node =>
+      ['primary', 'wait_primary', 'single'].includes(node.state)
+    )?.serverName;
+    const isReplicaLive = (lastHeartbeat: string): boolean =>
+      Date.now() - new Date(lastHeartbeat).getTime() <= 45_000;
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -1385,7 +1392,7 @@ export class AppController {
         <section class="cluster-section" style="margin-top: 2rem; background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); padding: 1.5rem;">
             <h2 class="section-title">Cluster & Node Information</h2>
             <div style="font-size: 0.8rem; color: #64748b; margin-top: -0.5rem; margin-bottom: 1rem;">
-                Live deployment topology — read fresh from the shared replica registry on every request (not a cached snapshot).
+                Live deployment topology — read fresh from the shared replica registry on every request (not a cached snapshot). Blue: primary site (runs the database primary); green: standby.
                 ${healthData.clusterInfo.registrySource === 'unavailable' ? ' <span style="color: #dc2626; font-weight: 600;">Registry unavailable — showing this instance only.</span>' : ''}
             </div>
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
@@ -1432,18 +1439,22 @@ export class AppController {
                     <tbody>
                         ${healthData.clusterInfo.replicas
                           .map(replica => {
+                            const dot = !isReplicaLive(replica.lastHeartbeat)
+                              ? '#cbd5e1'
+                              : replica.nodeName === primaryNode
+                                ? '#3b82f6'
+                                : '#22c55e';
                             const ageSeconds = Math.max(
                               0,
                               Math.round(
                                 (Date.now() - new Date(replica.lastHeartbeat).getTime()) / 1000
                               )
                             );
-                            const isLive = ageSeconds <= 45;
                             return `
                         <tr style="border-bottom: 1px solid #f1f5f9;">
                             <td style="padding: 0.5rem;">
                                 <span style="display: inline-flex; align-items: center; gap: 0.4rem;">
-                                    <span style="width: 8px; height: 8px; border-radius: 50%; background: ${isLive ? '#22c55e' : '#cbd5e1'}; display: inline-block;"></span>
+                                    <span style="width: 8px; height: 8px; border-radius: 50%; background: ${dot}; display: inline-block;"></span>
                                     ${replica.role}
                                 </span>
                             </td>
@@ -1478,7 +1489,6 @@ export class AppController {
                             <th style="padding: 0.5rem;">Role</th>
                             <th style="padding: 0.5rem;">Server</th>
                             <th style="padding: 0.5rem;">Node</th>
-                            <th style="padding: 0.5rem;">Host:Port</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1487,12 +1497,15 @@ export class AppController {
                             const isPrimary = ['primary', 'wait_primary', 'single'].includes(
                               node.state
                             );
+                            // healthy null: the monitor has not checked this member yet (grey).
                             const dot =
                               node.healthy === false
                                 ? '#dc2626'
-                                : isPrimary
-                                  ? '#3b82f6'
-                                  : '#22c55e';
+                                : node.healthy === null
+                                  ? '#94a3b8'
+                                  : isPrimary
+                                    ? '#3b82f6'
+                                    : '#22c55e';
                             const reported =
                               node.reportedState && node.reportedState !== node.state
                                 ? ` <span style="color: #94a3b8; font-size: 0.75rem;">(reports ${node.reportedState})</span>`
@@ -1500,7 +1513,9 @@ export class AppController {
                             const down =
                               node.healthy === false
                                 ? ' <span style="color: #dc2626; font-size: 0.75rem; font-weight: 600;">DOWN</span>'
-                                : '';
+                                : node.healthy === null
+                                  ? ' <span style="color: #94a3b8; font-size: 0.75rem;">(not checked yet)</span>'
+                                  : '';
                             return `
                         <tr style="border-bottom: 1px solid #f1f5f9;">
                             <td style="padding: 0.5rem;">
@@ -1511,7 +1526,6 @@ export class AppController {
                             </td>
                             <td style="padding: 0.5rem; font-weight: 600;">${node.serverName}</td>
                             <td style="padding: 0.5rem;">${node.nodeName}</td>
-                            <td style="padding: 0.5rem; font-family: monospace; font-size: 0.8rem;">${node.host}:${node.port}</td>
                         </tr>
                         `;
                           })
@@ -1541,7 +1555,6 @@ export class AppController {
                         <tr style="text-align: left; border-bottom: 2px solid #e2e8f0;">
                             <th style="padding: 0.5rem;">Role</th>
                             <th style="padding: 0.5rem;">Server</th>
-                            <th style="padding: 0.5rem;">Host:Port</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1561,7 +1574,6 @@ export class AppController {
                                 </span>
                             </td>
                             <td style="padding: 0.5rem; font-weight: 600;">${node.serverName}</td>
-                            <td style="padding: 0.5rem; font-family: monospace; font-size: 0.8rem;">${node.host}:${node.port}</td>
                         </tr>
                         `;
                           })

@@ -127,6 +127,45 @@ export interface HealthCheckResponse {
 }
 
 // Detailed health check response with all services
+/**
+ * One Postgres HA cluster member as the public health dashboard shows it. Hosts and ports are
+ * deliberately left out: the health endpoints are public, and the internal mesh addresses would
+ * only help an attacker map the cluster. `serverName` identifies the machine.
+ */
+export interface DatabaseClusterNode {
+  nodeId: number;
+  nodeName: string;
+  serverName: string;
+  /** The role the HA monitor has decided for this member (its goal state). */
+  state: string;
+  /** What the member itself last reported; differs from `state` mid-transition or when it is down. */
+  reportedState: string;
+  /**
+   * The monitor's health check result: true (good), false (bad: down or unreachable), or null
+   * when the monitor has not checked yet (pg_auto_failover health -1, e.g. right after it restarts).
+   */
+  healthy: boolean | null;
+}
+
+export interface DatabaseClusterTopology {
+  nodes: DatabaseClusterNode[];
+  source: 'live' | 'unavailable';
+}
+
+/** One Dragonfly member as the public health dashboard shows it (no host/port, see above). */
+export interface CacheClusterNode {
+  role: 'primary' | 'replica';
+  serverName: string;
+  /** False when Sentinel sees the member down or its replication link broken. */
+  healthy: boolean;
+}
+
+export interface CacheClusterTopology {
+  masterName: string;
+  nodes: CacheClusterNode[];
+  source: 'live' | 'unavailable';
+}
+
 export interface DetailedHealthCheckResponse extends HealthCheckResponse {
   services: {
     api: ServiceHealth;
@@ -172,30 +211,8 @@ export interface DetailedHealthCheckResponse extends HealthCheckResponse {
       byNode: Record<string, number>;
       registrySource: 'live' | 'unavailable';
     };
-    databaseCluster?: {
-      nodes: Array<{
-        nodeId: number;
-        nodeName: string;
-        serverName: string;
-        host: string;
-        port: number;
-        state: string;
-        reportedState?: string;
-        healthy?: boolean;
-      }>;
-      source: 'live' | 'unavailable';
-    };
-    cacheCluster?: {
-      masterName: string;
-      nodes: Array<{
-        role: 'primary' | 'replica';
-        serverName: string;
-        host: string;
-        port: number;
-        healthy: boolean;
-      }>;
-      source: 'live' | 'unavailable';
-    };
+    databaseCluster?: DatabaseClusterTopology;
+    cacheCluster?: CacheClusterTopology;
   };
   memory: {
     heapUsed: number;

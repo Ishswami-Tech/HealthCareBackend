@@ -1,26 +1,22 @@
 import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
+import { ConfigService } from '@config/config.service';
 import { LoggingService } from '@infrastructure/logging';
-import { LogType, LogLevel } from '@core/types';
-import { queryMonitor } from '@infrastructure/database/prisma/monitor-client.util';
-import { resolveServerName } from './cluster-server-names';
+import {
+  LogType,
+  LogLevel,
+  type DatabaseClusterNode,
+  type DatabaseClusterTopology,
+} from '@core/types';
+import {
+  MONITOR_NODE_FILTER,
+  queryMonitor,
+} from '@infrastructure/database/prisma/monitor-client.util';
+import { resolveServerName } from '@services/health/cluster-server-names';
 
-export interface DatabaseClusterNode {
-  nodeId: number;
-  nodeName: string;
-  serverName: string;
-  host: string;
-  port: number;
-  /** The role the HA monitor has decided for this member (its goal state). */
-  state: string;
-  /** What the member itself last reported; differs from `state` mid-transition or when it is down. */
-  reportedState: string;
-  /** False when the monitor's health checks fail for this member (down or unreachable). */
-  healthy: boolean;
-}
-
-export interface DatabaseClusterTopology {
-  nodes: DatabaseClusterNode[];
-  source: 'live' | 'unavailable';
+/** pg_auto_failover's node health: -1 not checked yet, 0 bad, 1 good. */
+function toHealthy(health: number): boolean | null {
+  const value = Number(health);
+  return value === 1 ? true : value === 0 ? false : null;
 }
 
 /**
@@ -34,7 +30,6 @@ interface ClusterTopologyRow {
   nodeid: string;
   nodename: string;
   nodehost: string;
-  nodeport: number;
   reportedstate: string;
   goalstate: string;
   health: number;
@@ -46,6 +41,9 @@ export class PostgresClusterTopologyService {
   private cached: { nodes: DatabaseClusterNode[]; timestamp: number } | null = null;
 
   constructor(
+    @Optional()
+    @Inject(forwardRef(() => ConfigService))
+    private readonly configService?: ConfigService,
     @Optional()
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService?: LoggingService
@@ -59,7 +57,7 @@ export class PostgresClusterTopologyService {
       return { nodes: this.cached.nodes, source: 'live' };
     }
 
-    const monitorUri = process.env['MONITOR_URI'];
+    const monitorUri = this.configService?.getEnv('MONITOR_URI');
     if (!monitorUri) {
       return { nodes: this.cached?.nodes ?? [], source: 'unavailable' };
     }
@@ -69,20 +67,18 @@ export class PostgresClusterTopologyService {
       // default (to avoid silent precision loss), not numbers.
       const rows = await queryMonitor<ClusterTopologyRow>(
         monitorUri,
-        'SELECT nodeid, nodename, nodehost, nodeport, reportedstate, goalstate, health FROM pgautofailover.node ORDER BY nodeid'
+        `SELECT nodeid, nodename, nodehost, reportedstate, goalstate, health FROM pgautofailover.node WHERE ${MONITOR_NODE_FILTER} ORDER BY nodeid`
       );
 
       const nodes: DatabaseClusterNode[] = rows.map(row => ({
         nodeId: Number(row.nodeid),
         nodeName: row.nodename,
         serverName: resolveServerName(row.nodehost),
-        host: row.nodehost,
-        port: row.nodeport,
         // The goal state, not the reported one: a member that has died keeps reporting its
         // last state ('primary') while the monitor has already demoted it.
         state: row.goalstate,
         reportedState: row.reportedstate,
-        healthy: Number(row.health) === 1,
+        healthy: toHealthy(row.health),
       }));
 
       this.cached = { nodes, timestamp: Date.now() };
