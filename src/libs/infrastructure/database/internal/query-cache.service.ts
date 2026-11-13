@@ -88,8 +88,10 @@ export class QueryCacheService {
    */
   async setCached<T>(cacheKey: string, data: T, options: QueryCacheOptions = {}): Promise<void> {
     try {
+      // PHI is capped at defaultPHITTL: executeRead passes its 300 s / 3600 s strategy TTL, which
+      // used to override the PHI limit (hidden while every write emptied the query cache).
       const ttl = options.containsPHI
-        ? (options.ttl ?? this.defaultPHITTL)
+        ? Math.min(options.ttl ?? this.defaultPHITTL, this.defaultPHITTL)
         : (options.ttl ?? this.defaultTTL);
 
       // Use cache() method which accepts CacheOperationOptions.

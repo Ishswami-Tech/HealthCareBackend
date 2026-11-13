@@ -17,6 +17,12 @@ import type { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { resolveLocalHealthCheckUrl } from '@infrastructure/database/prisma/local-replica-resolver';
 import {
+  configureQueryTrackingSchema,
+  queryTrackingExtension,
+  runInTransactionScope,
+  type QueryTrackingDmmf,
+} from '@infrastructure/database/internal/query-dependency-tracker';
+import {
   PrimaryFollowingClient,
   startPrimaryTracking,
 } from '@infrastructure/database/prisma/primary-tracker';
@@ -497,9 +503,13 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         log('info', `[PrismaService] Trying: ${label}`);
         const prismaModule = requireModule(clientPath) as {
           PrismaClient?: PrismaClientConstructor;
+          Prisma?: { dmmf?: QueryTrackingDmmf };
         };
         if (prismaModule?.PrismaClient) {
           log('info', `[PrismaService] SUCCESS: Loaded PrismaClient from ${label}`);
+          // The query cache tags reads/writes by table; the relation map must come from the
+          // same generated module as the client so the two can never disagree.
+          configureQueryTrackingSchema(prismaModule.Prisma?.dmmf);
           return prismaModule.PrismaClient;
         }
         log('warn', `[PrismaService] FAILED: ${label} - module loaded but no PrismaClient export`);
@@ -848,6 +858,18 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
    * Module-level helper to extend PrismaClient
    * Isolates type assertions so ESLint treats them as boundaries
    */
+  /**
+   * Installs the query-dependency tracking extension (see query-dependency-tracker.ts) on the
+   * shared client, in every environment: the query cache depends on it to tag reads and writes
+   * by table instead of invalidating everything on every write.
+   */
+  private static withQueryTracking(client: PrismaClient): PrismaClient {
+    return PrismaService.extendPrismaClient(
+      client,
+      queryTrackingExtension as unknown as PrismaExtendArgs
+    );
+  }
+
   private static extendPrismaClient(
     client: PrismaClient,
     extendArgs: PrismaExtendArgs
@@ -1189,6 +1211,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     }
     const PrismaClientConstructor = PrismaService.loadPrismaClientSync();
     let client = new PrismaClientConstructor(constructorArgs) as unknown as PrismaClient;
+    client = PrismaService.withQueryTracking(client);
     const isProductionEnv = isProduction();
     if (isProductionEnv) {
       const productionExtendArgs = (this as unknown as { _productionExtendArgs?: PrismaExtendArgs })
@@ -1291,8 +1314,12 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     const realClient = this.prismaClient as unknown as {
       $transaction: TransactionDelegate['$transaction'];
     };
+    // Wrapped so the query cache invalidates what a service-opened transaction wrote after it
+    // commits, not write by write before the commit (see runInTransactionScope).
+    const trackedTransaction: TransactionDelegate['$transaction'] = (fn, options) =>
+      runInTransactionScope(() => realClient.$transaction(fn, options));
     Object.defineProperty(this, '$transaction', {
-      value: realClient.$transaction.bind(realClient),
+      value: trackedTransaction,
       writable: false,
       enumerable: true,
       configurable: false,
@@ -1647,6 +1674,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
           // Create PrismaClient instance
           let client = new PrismaClientConstructor(constructorArgs) as unknown as PrismaClient;
+          client = PrismaService.withQueryTracking(client);
 
           // Apply production optimizations if needed
           const isProductionEnv = isProduction();

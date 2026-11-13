@@ -36,6 +36,20 @@ import { HealthcareError } from '@core/errors';
 import { isClientRefusal } from '@infrastructure/database/internal/client-refusal.util';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { getEnv } from '@config/environment/utils';
+import {
+  ALL_QUERY_CACHE_TAG,
+  UNTRACKED_READ_TAG,
+  isTableTag,
+  markEnclosingReadsUntracked,
+  newQueryTrackingScope,
+  readDependencyTags,
+  runWithQueryTracking,
+  setUntrackedWriteListener,
+  tableCacheTagForEntity,
+  writeInvalidationTags,
+  type QueryTrackingScope,
+  type TableSet,
+} from '@infrastructure/database/internal/query-dependency-tracker';
 
 // Internal services
 import { HealthcareQueryOptimizerService } from './internal/query-optimizer.service';
@@ -139,6 +153,24 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   private readonly serviceName = 'DatabaseService';
   protected readonly config: HealthcareDatabaseConfig;
   private readonly serviceStartTime = Date.now(); // Track service start time for startup grace period
+
+  /**
+   * When each table tag (and the global tags) was last invalidated in this process. A read that
+   * started before an invalidation of one of its tables must not store its (possibly pre-write)
+   * result: with per-table invalidation a stale entry would otherwise live until its TTL, where
+   * the old global wipe used to clear it within seconds.
+   */
+  private readonly tagInvalidatedAt = new Map<string, number>();
+  /** Writes made outside executeWrite/executeTransaction, waiting for the next flush. */
+  private readonly pendingUntrackedWriteTags = new Set<string>();
+  private untrackedWriteFlushScheduled = false;
+  /**
+   * Every write's invalidation is repeated after this delay ("double delete"): a read that was in
+   * flight in another process (or, for writes outside executeWrite/executeTransaction, inside a
+   * transaction that had not committed yet) may store pre-write rows just after the first pass.
+   */
+  private static readonly REINVALIDATE_AFTER_WRITE_MS = 2000;
+  private stopRemoteInvalidationListener: (() => void) | null = null;
 
   // Method class instances (code splitting)
   private readonly userMethods: UserMethods;
@@ -341,6 +373,28 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   }
 
   onModuleInit(): void {
+    setUntrackedWriteListener(writes => {
+      try {
+        this.invalidateAfterUntrackedWrite(writes);
+      } catch (error) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.WARN,
+          'Cache invalidation after a direct write failed; entries may be stale until their TTL',
+          this.serviceName,
+          {
+            tables: [...writes.tables],
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
+      }
+    });
+    // Every tag invalidation - by any service in this process, or broadcast by another process -
+    // feeds the stale-read guard.
+    this.stopRemoteInvalidationListener =
+      this.cacheService?.onTagInvalidated?.(tag =>
+        this.recordInvalidation(tag === null ? [ALL_QUERY_CACHE_TAG] : [tag])
+      ) ?? null;
     void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
@@ -354,6 +408,9 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   }
 
   onModuleDestroy(): void {
+    setUntrackedWriteListener(null);
+    this.stopRemoteInvalidationListener?.();
+    this.stopRemoteInvalidationListener = null;
     void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
@@ -434,6 +491,8 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
       try {
         const cached = await this.queryCache.getCached<T>(cacheKey);
         if (cached !== null) {
+          // Nested in another tracked read? It cannot see this entry's tables (no query ran).
+          markEnclosingReadsUntracked();
           const cacheTime = Date.now() - startTime;
           // Record cache hit synchronously so the metric reflects every read.
           // Using setImmediate here previously caused hit counts to be dropped
@@ -490,6 +549,10 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
       metadata: {},
     };
 
+    // Records the tables this read touches (Prisma query extension), so the cached result is
+    // tagged by table and only invalidated by writes to those tables.
+    const trackingScope = newQueryTrackingScope('read');
+
     // Wrapper operation with read replica routing
     const executeOperation = async (prisma: PrismaService): Promise<T> => {
       // Route to read replica if enabled
@@ -497,7 +560,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
         ? this.readReplicaRouter.selectReplica() || prisma
         : prisma;
 
-      return operation(targetPrisma);
+      return runWithQueryTracking(trackingScope, () => operation(targetPrisma));
     };
 
     // Execute with retry logic and circuit breaker
@@ -626,17 +689,22 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
               : cacheStrategy === 'never'
                 ? 0
                 : 300;
-        if (ttl > 0) {
+        // Skip storing a result one of whose tables was invalidated while it was being read:
+        // it may predate that write.
+        if (ttl > 0 && !this.invalidatedSince(trackingScope.read, startTime)) {
+          const dependencyTags = readDependencyTags(trackingScope.read);
           // Cache asynchronously to avoid blocking response
           setImmediate(() => {
+            // Checked again here: an invalidation may have started since the check above.
+            if (this.invalidatedSince(trackingScope.read, startTime)) return;
             void this.queryCache.setCached(cacheKey, result, {
               ttl,
               containsPHI: queryOptions.hipaaCompliant === true,
               priority:
                 (queryOptions.priority === 'critical' ? 'high' : queryOptions.priority) || 'normal',
               tags: [
-                'database',
-                'read',
+                ALL_QUERY_CACHE_TAG,
+                ...dependencyTags,
                 ...(queryOptions.clinicId ? [`clinic:${queryOptions.clinicId}`] : []),
                 ...(appointmentIdFromWhere ? [`appointment:${appointmentIdFromWhere}`] : []),
               ],
@@ -721,6 +789,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   ): Promise<T> {
     const startTime = Date.now();
     const operationName = 'WRITE_OPERATION';
+    const trackingScope = newQueryTrackingScope('write');
     const queryOptions: QueryOptions = {
       ...options,
       auditRequired: true,
@@ -802,12 +871,15 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
       // Execute middleware chain before
       const processedContext = await this.middlewareChain.before(middlewareContext);
 
-      // Execute with strategy
-      const result = await this.strategyManager.execute(operation, {
-        ...context,
-        operation: processedContext.operation,
-        options: processedContext.options,
-      });
+      // Execute with strategy; the tracking scope records the tables the write changes
+      const result = await this.strategyManager.execute(
+        (prisma: PrismaService) => runWithQueryTracking(trackingScope, () => operation(prisma)),
+        {
+          ...context,
+          operation: processedContext.operation,
+          options: processedContext.options,
+        }
+      );
 
       // Create audit trail
       if (this.config.enableAuditLogging) {
@@ -824,7 +896,8 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
           void this.autoInvalidateCacheAfterWrite(
             auditInfo.resourceType,
             auditInfo.resourceId,
-            auditInfo.clinicId
+            auditInfo.clinicId,
+            trackingScope.written
           );
         });
       }
@@ -906,6 +979,9 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
       return result;
     } catch (error) {
+      // Writes that committed before the failure (no transaction, or a query timeout that still
+      // commits) must not stay cached.
+      this.invalidateAfterFailedWrite(trackingScope.written, auditInfo.skipCacheInvalidation);
       // A 4xx refusal from business code is not a database failure: rethrow it unchanged.
       if (isClientRefusal(error)) throw error;
       const executionTime = Date.now() - startTime;
@@ -994,22 +1070,40 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
       metadata: {},
     };
 
+    const trackingScope: QueryTrackingScope = newQueryTrackingScope('write');
+
     try {
       // Execute middleware chain before
       const processedContext = await this.middlewareChain.before(middlewareContext);
 
-      // Execute with strategy (TransactionQueryStrategy handles transaction)
-      const result = await this.strategyManager.execute(operation, {
-        ...context,
-        operation: processedContext.operation,
-        options: processedContext.options,
-      });
+      // Execute with strategy (TransactionQueryStrategy handles transaction); the tracking scope
+      // records the tables the transaction changes
+      const result = await this.strategyManager.execute(
+        (prisma: PrismaService) => runWithQueryTracking(trackingScope, () => operation(prisma)),
+        {
+          ...context,
+          operation: processedContext.operation,
+          options: processedContext.options,
+        }
+      );
+
+      // Committed: invalidate what it changed. This path used to invalidate nothing and relied on
+      // some other write's global wipe.
+      const written = trackingScope.written;
+      if (written.tables.size > 0 || written.untracked) {
+        const tags = writeInvalidationTags(written, { assumeAnyWhenNothingSeen: false });
+        setImmediate(() => {
+          this.invalidateNowAndAfterDelay(tags);
+        });
+      }
 
       // Execute middleware chain after
       const finalResult = await this.middlewareChain.after(processedContext, result);
 
       return finalResult;
     } catch (error) {
+      // Rolled back, or committed and then failed (e.g. in middleware): invalidate to be safe.
+      this.invalidateAfterFailedWrite(trackingScope.written, false);
       // A 4xx refusal from business code is not a database failure: rethrow it unchanged.
       if (isClientRefusal(error)) throw error;
       const executionTime = Date.now() - startTime;
@@ -2846,28 +2940,32 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     entityId?: string,
     clinicId?: string
   ): Promise<void> {
-    // Generate additional tags if entity info provided
+    // Generate additional tags if entity info provided. The entity's table tag too: query-cache
+    // entries are tagged by table (`tbl:health_record`), whatever casing the caller used.
+    const entityTableTag = entityType ? tableCacheTagForEntity(entityType) : null;
     const allTags = entityType
-      ? [...tags, ...this.generateCacheTags(entityType, entityId, clinicId)]
+      ? [
+          ...tags,
+          ...this.generateCacheTags(entityType, entityId, clinicId),
+          ...(entityTableTag ? [entityTableTag] : []),
+        ]
       : tags;
 
     // Remove duplicates
     const uniqueTags = Array.from(new Set(allTags));
+
+    // Before the deletes, so a read already in flight cannot store a pre-write result.
+    this.recordInvalidation(uniqueTags);
 
     if (!this.cacheService) {
       return;
     }
 
     try {
-      // Invalidate across all cache layers in parallel
-      const invalidationPromises = [
-        // Invalidate by tags (Redis/in-memory cache)
-        ...uniqueTags.map(tag => this.cacheService!.invalidateCacheByTag(tag)),
-        // Invalidate query cache if available
-        ...(this.queryCache ? [this.queryCache.invalidateCache(undefined, uniqueTags)] : []),
-      ];
-
-      await Promise.all(invalidationPromises);
+      // One pass through CacheService covers every layer: L2 entries by tag, L1 (cleared), and
+      // the cross-process broadcast. QueryCacheService.invalidateCache(tags) runs the same
+      // invalidateCacheByTag per tag, so calling both deleted every tag twice.
+      await Promise.all(uniqueTags.map(tag => this.cacheService!.invalidateCacheByTag(tag)));
 
       // Log invalidation for debugging (only in debug mode for performance)
       // Use helper function (which uses dotenv) for environment variable access
@@ -2910,10 +3008,73 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   private async autoInvalidateCacheAfterWrite(
     resourceType: string,
     resourceId?: string,
-    clinicId?: string
+    clinicId?: string,
+    written?: TableSet
   ): Promise<void> {
     const entityType = resourceType.toLowerCase();
-    await this.invalidateCache([], entityType, resourceId, clinicId);
+    // The tables the write actually changed (tracked by the Prisma extension). A write scope in
+    // which no write was observed is not trusted: it empties the whole query cache, as before.
+    const tableTags = written
+      ? writeInvalidationTags(written, { assumeAnyWhenNothingSeen: true })
+      : [];
+    await this.invalidateCache(tableTags, entityType, resourceId, clinicId);
+    setTimeout(() => {
+      void this.invalidateCache(tableTags, entityType, resourceId, clinicId);
+    }, DatabaseService.REINVALIDATE_AFTER_WRITE_MS).unref();
+  }
+
+  /** After a failed write: invalidate whatever it had already written (it may have committed). */
+  private invalidateAfterFailedWrite(written: TableSet, skip: boolean | undefined): void {
+    if (skip || (written.tables.size === 0 && !written.untracked)) return;
+    const tags = writeInvalidationTags(written, { assumeAnyWhenNothingSeen: false });
+    setImmediate(() => {
+      this.invalidateNowAndAfterDelay(tags);
+    });
+  }
+
+  /** Invalidates `tags` now and once more after REINVALIDATE_AFTER_WRITE_MS. */
+  private invalidateNowAndAfterDelay(tags: string[]): void {
+    void this.invalidateCache(tags);
+    setTimeout(() => {
+      void this.invalidateCache(tags);
+    }, DatabaseService.REINVALIDATE_AFTER_WRITE_MS).unref();
+  }
+
+  /**
+   * Invalidation for a write made outside executeWrite/executeTransaction (reported by the Prisma
+   * extension after it succeeded). Coalesced per tick, then repeated after a short delay like every
+   * write (here also in case it was inside a transaction that had not committed yet).
+   */
+  private invalidateAfterUntrackedWrite(writes: TableSet): void {
+    for (const tag of writeInvalidationTags(writes, { assumeAnyWhenNothingSeen: false })) {
+      this.pendingUntrackedWriteTags.add(tag);
+    }
+    if (this.untrackedWriteFlushScheduled) return;
+    this.untrackedWriteFlushScheduled = true;
+    setImmediate(() => {
+      this.untrackedWriteFlushScheduled = false;
+      const tags = [...this.pendingUntrackedWriteTags];
+      this.pendingUntrackedWriteTags.clear();
+      this.invalidateNowAndAfterDelay(tags);
+    });
+  }
+
+  /** Remembers when table tags and the global tags were invalidated (see tagInvalidatedAt). */
+  private recordInvalidation(tags: readonly string[]): void {
+    const now = Date.now();
+    for (const tag of tags) {
+      if (tag === UNTRACKED_READ_TAG || tag === ALL_QUERY_CACHE_TAG || isTableTag(tag)) {
+        this.tagInvalidatedAt.set(tag, now);
+      }
+    }
+  }
+
+  /** True when a table the read depends on (or everything) was invalidated at or after `since`. */
+  private invalidatedSince(read: TableSet, since: number): boolean {
+    const changedAfterStart = (tag: string): boolean =>
+      (this.tagInvalidatedAt.get(tag) ?? 0) >= since;
+    if (changedAfterStart(ALL_QUERY_CACHE_TAG)) return true;
+    return readDependencyTags(read).some(changedAfterStart);
   }
 
   /**

@@ -103,6 +103,11 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   /** Identifies this process's broadcasts (it ignores its own). */
   private readonly cacheProcessId = randomUUID();
   private readonly seenInvalidationIds = new BoundedIdSet(CacheService.INVALIDATION_SEEN_IDS_MAX);
+  /**
+   * Notified of every tag invalidation, local or broadcast (see onTagInvalidated). Created on the
+   * first subscription, so a CacheService nobody listens to does no extra work per invalidation.
+   */
+  private tagInvalidationListeners?: Set<(tag: string | null) => void>;
   private pendingInvalidationPingId: string | null = null;
   private config!: HealthcareCacheConfig;
   private advancedProvider!: IAdvancedCacheProvider;
@@ -267,11 +272,33 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     }
     const message = parseInvalidationMessage(raw);
     if (message && !this.seenInvalidationIds.add(message.id)) return;
+    if (message?.scope === 'tag' && typeof message.value === 'string') {
+      this.notifyTagInvalidated(message.value);
+    } else if (message?.scope === 'clear' || message?.scope === 'pattern') {
+      this.notifyTagInvalidated(null);
+    }
     if (action.kind === 'delete') {
       for (const key of action.keys) this.l1CacheService?.delete(key);
       return;
     }
     this.l1CacheService?.clear();
+  }
+
+  private notifyTagInvalidated(tag: string | null): void {
+    if (!this.tagInvalidationListeners) return;
+    for (const listener of this.tagInvalidationListeners) {
+      try {
+        listener(tag);
+      } catch (error) {
+        void this.loggingService.log(
+          LogType.CACHE,
+          LogLevel.WARN,
+          'Tag invalidation listener failed',
+          'CacheService',
+          { tag, error: error instanceof Error ? error.message : String(error) }
+        );
+      }
+    }
   }
 
   private async broadcastCacheInvalidation(
@@ -775,6 +802,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
    */
   async invalidateCacheByPattern(pattern: string): Promise<number> {
     let count = 0;
+    this.notifyTagInvalidated(null);
     try {
       // Invalidate L2 (distributed cache)
       count = await this.cacheRepository.invalidateByPattern(pattern);
@@ -818,6 +846,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
    */
   async invalidateCacheByTag(tag: string): Promise<number> {
     let count = 0;
+    this.notifyTagInvalidated(tag);
     try {
       // Invalidate L2 (distributed cache)
       count = await this.cacheRepository.invalidateByTags([tag]);
@@ -839,6 +868,23 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     await this.broadcastCacheInvalidation('tag', tag);
 
     return count;
+  }
+
+  /**
+   * Registers a listener for every invalidation, made in this process (by any caller) or
+   * broadcast by another process: `tag` for a tag invalidation, `null` when a pattern or the
+   * whole cache was invalidated. Local invalidations are reported before their deletes run.
+   * Returns an unsubscribe function. Used by the database query cache so an in-flight read does
+   * not store a result that a write has just invalidated.
+   * @param listener - Called with the invalidated tag, or null for "everything"
+   * @returns Function that removes the listener
+   */
+  onTagInvalidated(listener: (tag: string | null) => void): () => void {
+    this.tagInvalidationListeners ??= new Set();
+    this.tagInvalidationListeners.add(listener);
+    return () => {
+      this.tagInvalidationListeners?.delete(listener);
+    };
   }
 
   async invalidatePatientCache(patientId: string, clinicId?: string): Promise<number> {
@@ -1314,6 +1360,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     options: { readonly includeProtected?: boolean } = {}
   ): Promise<number> {
     const effectivePattern = pattern || '*';
+    this.notifyTagInvalidated(null);
     const cleared = options.includeProtected
       ? await this.clearProtectedByPattern(effectivePattern)
       : await this.getProvider().clearByPattern(effectivePattern);

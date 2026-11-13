@@ -288,6 +288,62 @@ const user = await client.user.findUnique({
 
 ---
 
+## Query Cache Tagging
+
+`executeRead` results go through the normal cache layers (L1 in-memory -> L2
+Dragonfly, L3 = the query itself) via `QueryCacheService` ->
+`CacheService.cache()`. What decides how long an entry survives is its **tags**:
+
+| Entry / event                                                                  | Tags                                                                                                                                                                                                                       |
+| ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Read whose queries were all seen                                               | `read` + one `tbl:<table>` per table touched, incl. relations reached through `include` / `select` / `where` / `orderBy` / `_count` (e.g. `tbl:appointment`, `tbl:patient`) + `clinic:<id>` / `appointment:<id>` as before |
+| Read that ran raw SQL, hit a nested cached read, or in which no query was seen | `read` + `database` (the old global tag)                                                                                                                                                                                   |
+| `executeWrite` commit (and failure after a partial commit)                     | the tables it changed + `generateCacheTags(resourceType)` (which includes `database`)                                                                                                                                      |
+| `executeTransaction` commit or failure                                         | the tables it changed + `database` (it used to invalidate nothing)                                                                                                                                                         |
+| Service-opened `prisma.$transaction(...)`                                      | the tables it changed + `database`, once, after it commits                                                                                                                                                                 |
+| Single write outside all of these (`db.prisma.<model>.create(...)`)            | the tables it changed + `database`                                                                                                                                                                                         |
+| `delete` / `deleteMany` (also nested in `data`), raw SQL that writes           | `read` (empties the whole query cache): database cascades and raw SQL cannot be attributed to tables                                                                                                                       |
+| `invalidateEntityCache(entity)`                                                | `generateCacheTags(entity)` + the entity's `tbl:` tag (any casing)                                                                                                                                                         |
+
+Every write's invalidation runs again 2 s later ("double delete"), for reads
+that were in flight in another process.
+
+Table tags are `tbl:` + the snake_case model name (`HealthRecord` ->
+`tbl:health_record`). The prefix keeps them apart from service-level entity tags
+and out of the per-clinic collection-tag expansion. Raw SQL is classified by its
+text (`$queryRaw` also runs `UPDATE ... RETURNING`): quoted text and
+`FOR UPDATE` / `FOR SHARE` are ignored, and a statement that is only
+`SELECT pg_advisory_xact_lock(...)` is not a write.
+
+How the tables are known: `PrismaService` installs a Prisma query extension
+(`internal/query-dependency-tracker.ts`) on the shared client and wraps
+`$transaction`. Every Prisma operation reports its model and arguments;
+`executeRead` / `executeWrite` / `executeTransaction` run the operation inside
+an `AsyncLocalStorage` scope that collects them (nested scopes report to their
+parents too). Relations are resolved with the generated client's DMMF; Json
+fields are data and are not walked. The scope awaits the operation inside itself
+because Prisma promises are lazy.
+
+Safety rules:
+
+- Anything that cannot be attributed to tables falls back to the global tags,
+  never to no tags.
+- A read does not store its result if one of its tables was invalidated while it
+  was running - by this process or (via the `cache:invalidation` broadcast) by
+  another one.
+- Work that outlives its scope (fire-and-forget) is treated as outside it, so
+  its writes are still invalidated.
+- PHI entries (`hipaaCompliant`) live at most 60 s, whatever cache strategy the
+  read asked for.
+- `skipCacheInvalidation` skips all invalidation for that write, including its
+  tables; use it only for tables that are never read through the cache.
+- Each tag is invalidated once per pass, through
+  `CacheService.invalidateCacheByTag` (L2 by tag, L1 cleared, cross-process
+  broadcast). L1 does not track tags, so every write still clears the whole
+  in-memory layer on every process; per-table tags help the L2 layer.
+
+---
+
 ## Health Monitoring
 
 ### Health Check
