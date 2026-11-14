@@ -160,6 +160,28 @@ The old `postgres-postgres-pzxq` containers are stopped (restart=no), not remove
 Backups: `/var/backups/pzxq/` (temps-worker), `~/backups/pzxq/` (contabo-ds and the
 control plane), merge workspace `~/pzxq-merge/` on contabo-ds.
 
+## dragonfly-acl (all nodes) — social-media on the HA Dragonfly
+
+social-media uses the HA Dragonfly as login `social_media`, locked to database 5
+(ACL `$5`: it cannot select HealthcareBackend's databases 0/1; FLUSHALL, CONFIG,
+ACL, SHUTDOWN, replication and persistence commands removed). Dragonfly keeps ACL
+users in memory only, so `hcb-dragonfly-acl` re-creates the login on each node's
+copy whenever it is missing. `hcb-redis-forwarder` answers `dragonfly:6379` on
+`temps-app-network` and every `temps<N>` network and forwards to whichever copy
+reports `role:master`, so social-media follows cache failovers.
+
+The password lives only in `social_media.pass` (0600; `/etc/hcb-dragonfly-acl/` on
+temps-worker and Oracle, `~/hcb-dragonfly-acl/` on contabo-ds). The app's REDIS_URL
+(`redis://social_media:<pw>@dragonfly:6379/5`) is in `~/social-media-redis-url.txt`
+on the control plane. The old standalone `dragonfly` container on temps-worker is
+stopped (restart=no) with a snapshot of its keys on its volume; its stale queue
+jobs were deliberately not loaded into the live queues.
+
+```bash
+sudo ACL_DIR=/etc/hcb-dragonfly-acl bash dragonfly-acl/install.sh            # reconciler
+sudo ACL_DIR=/etc/hcb-dragonfly-acl bash dragonfly-acl/install-forwarder.sh  # forwarder
+```
+
 ## Upgrade safety
 
 Nothing here edits a file Temps owns or reads Temps' internal database, so

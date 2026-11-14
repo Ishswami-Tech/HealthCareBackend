@@ -1,0 +1,30 @@
+# Answers "dragonfly:6379" for social-media and forwards to whichever HA Dragonfly
+# copy is master right now (temps-worker, then Oracle, then contabo-ds). The check
+# logs in as social_media (database 5 only) and requires "role:master".
+# Rendered on the node from social_media.pass; the rendered file is never committed.
+global
+  log stdout format raw local0
+  maxconn 2000
+defaults
+  mode tcp
+  log global
+  timeout connect 3s
+  timeout client 2h
+  timeout server 2h
+frontend redis
+  bind :6379
+  default_backend redis_master
+backend redis_master
+  balance first
+  option tcp-check
+  tcp-check connect
+  tcp-check send AUTH\ social_media\ __PW__\r\n
+  tcp-check expect string +OK
+  tcp-check send INFO\ replication\r\n
+  tcp-check expect string role:master
+  tcp-check send QUIT\r\n
+  tcp-check expect string +OK
+  default-server inter 2s fall 2 rise 1 on-marked-down shutdown-sessions
+  server temps-worker 10.201.0.5:6512 check
+  server oracle       10.201.0.8:6512 check
+  server contabo-ds   10.201.0.7:6512 check
