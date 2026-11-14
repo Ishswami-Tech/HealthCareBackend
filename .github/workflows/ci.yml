@@ -529,6 +529,21 @@ jobs:
           echo "Triggering Temps deploy (project=${TEMPS_PROJECT}, environment=${TEMPS_ENVIRONMENT})..."
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
             set -euo pipefail
+            # Temps decides which nodes may run an image from the platforms
+            # present in the control plane's LOCAL image store, and its own
+            # pull only fetches the host's platform (amd64). Without the arm64
+            # variant held locally the arm64 node (oracle-main) is excluded and,
+            # with one replica per node, the deploy fails to schedule. Pull it
+            # first so Temps sees both platforms (2026-11-14).
+            for attempt in 1 2 3; do
+              docker pull -q --platform linux/arm64 '${IMAGE_FULL}' >/dev/null && break
+              if [ \$attempt = 3 ]; then
+                echo '::error::Could not pull the linux/arm64 variant of ${IMAGE_FULL} (arm64 docker-build failed, or the registry kept failing). oracle-main runs arm64, so Temps would refuse to schedule this deploy.'
+                exit 1
+              fi
+              echo \"arm64 pull attempt \$attempt failed; retrying in 10s\"
+              sleep 10
+            done
             npx -y @temps-sdk/cli --target-context temps-local deploy:image \
               --image '${IMAGE_FULL}' \
               -p '${TEMPS_PROJECT}' \
