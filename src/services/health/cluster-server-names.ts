@@ -8,10 +8,10 @@
  */
 const SERVER_NAME_BY_HOST: Readonly<Record<string, string>> = {
   '10.201.0.1': 'contabo-healthcare',
-  '10.201.0.2': 'oracle-main',
   '10.201.0.5': 'temps-worker-ubuntu',
   '10.201.0.6': 'temps-control-plane',
   '10.201.0.7': 'contabo-ds',
+  '10.201.0.8': 'main-server',
 };
 
 export function resolveServerName(host: string): string {

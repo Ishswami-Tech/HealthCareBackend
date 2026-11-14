@@ -156,7 +156,11 @@ export class TopologyHeartbeatService implements OnModuleInit, OnModuleDestroy {
     const fetched = await Promise.all(
       members.map(async member => ({
         member,
-        value: await this.cacheService!.get<TopologyReplica>(member).catch(() => null),
+        // skipL1: other replicas rewrite these every 15 s; an L1 copy would show a heartbeat up
+        // to the whole 45 s TTL old (live replicas drawn as stale, or pruned below).
+        value: await this.cacheService!.get<TopologyReplica>(member, { skipL1: true }).catch(
+          () => null
+        ),
       }))
     );
 

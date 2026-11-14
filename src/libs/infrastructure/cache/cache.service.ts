@@ -677,11 +677,17 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
   // ===== BASIC OPERATIONS =====
 
-  async get<T>(key: string): Promise<T | null> {
+  /**
+   * @param options.skipL1 Read straight from the distributed cache and don't keep a local copy.
+   *   For values other replicas overwrite on a timer (e.g. topology heartbeats), where the L1
+   *   copy would show this replica a snapshot up to the entry's whole TTL old.
+   */
+  async get<T>(key: string, options: { skipL1?: boolean } = {}): Promise<T | null> {
     this.ensureConfigInitialized();
+    const useL1 = this.enableL1 && Boolean(this.l1CacheService) && !options.skipL1;
 
     // L1: Check in-memory cache first (if enabled)
-    if (this.enableL1 && this.l1CacheService) {
+    if (useL1 && this.l1CacheService) {
       const l1Value = this.l1CacheService.get<T>(key);
       if (l1Value !== null) {
         return l1Value;
@@ -699,7 +705,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     // for non-PHI values (passes through non-strings, JSON.parses plain
     // strings, only decrypts the "enc:v1:" prefix), so applying it
     // unconditionally here is safe for every caller of get().
-    const populateL1 = this.enableL1 && Boolean(this.l1CacheService);
+    const populateL1 = useL1;
     // Fetch the entry's remaining TTL concurrently with its value, to cap the L1 copy below.
     const [rawL2Value, remainingTtl] = await Promise.all([
       this.cacheRepository.get<T>(key),
