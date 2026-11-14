@@ -1,0 +1,10 @@
+[Unit]
+Description=Direct WireGuard shortcut to a nearby Temps node (falls back to the Temps mesh)
+After=network-online.target docker.service temps-agent.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/default/hcb-direct-link
+EnvironmentFile=-/etc/default/hcb-mesh-ha-allow
+ExecStart=/usr/local/sbin/hcb-direct-link up

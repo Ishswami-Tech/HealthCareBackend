@@ -101,6 +101,39 @@ To change the default site, set `PREFERRED_PG_NODE`, `PREFERRED_CACHE` and
 `PREFERRED_NODE_NAME` in a drop-in for `hcb-ha-failback.service` (and give the
 new preferred Dragonfly node the lowest replica-priority).
 
+## direct-link (temps-worker <-> oracle-main)
+
+The Temps mesh is hub-and-spoke: workers only peer with the control plane, so
+temps-worker (Pune) and oracle-main (Mumbai) reached each other through Europe
+at ~280 ms although they are ~9 ms apart. `hcb-direct-link` adds a second
+WireGuard interface (`hcb-wg1`, UDP 51830) between just these two and routes
+the peer's mesh IP as a /32 over it. Everything else stays on `temps-wg0`.
+
+- oracle-main listens on UDP 51830 (Oracle Cloud security list rule +
+  host iptables rule added by the script); temps-worker is behind NAT and
+  connects out with a 25 s keepalive.
+- Every 10 s each side pings the peer through the tunnel (ICMP between the two
+  mesh IPs is pinned to the tunnel by `ip rule` pref 10201 / table 201). No
+  reply: the /32 route is removed and traffic falls back to the hub; replies
+  again: the route comes back. Tested 2026-11-14: fallback ~7 s, recovery ~1 s.
+- `table inet hcb_direct` mirrors the Temps mesh lockdown for `hcb-wg1`, and a
+  tagged `hcb-direct-vxlan` rule in `inet temps_network` accepts the overlay
+  (VXLAN) from the peer; it is re-inserted after the agent rebuilds that table.
+
+```bash
+sudo bash install-direct-link.sh pubkey        # on both nodes, exchange keys
+# oracle-main (public IP):
+sudo DL_LOCAL_IP=10.201.0.8 DL_PEER_IP=10.201.0.5 DL_PEER_PUBKEY=<temps-worker key> \
+  DL_LISTEN_PORT=51830 bash install-direct-link.sh
+# temps-worker (behind NAT):
+sudo DL_LOCAL_IP=10.201.0.5 DL_PEER_IP=10.201.0.8 DL_PEER_PUBKEY=<oracle-main key> \
+  DL_PEER_ENDPOINT=137.23.47.48:51830 bash install-direct-link.sh
+hcb-direct-link status                          # route should say dev hcb-wg1
+sudo hcb-direct-link down                       # remove; all traffic back on temps-wg0
+```
+
+Installed on temps-worker and oracle-main (2026-11-14).
+
 ## Upgrade safety
 
 Nothing here edits a file Temps owns or reads Temps' internal database, so
@@ -110,6 +143,7 @@ upgrading Temps (server, agent or CLI) does not overwrite or break it:
 | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
 | `hcb-mesh-ha-allow` timer + `/usr/local/sbin/hcb-mesh-ha-allow`             | nftables; inserts tagged rules into `inet temps_mesh`, never edits Temps' rules |
 | `hcb-node-watchdog` + `/usr/local/sbin/hcb-node-watchdog`                   | Docker CLI, systemctl                                                           |
+| `hcb-direct-link` timer + `/usr/local/sbin/hcb-direct-link`                 | own WireGuard iface + `inet hcb_direct`; one tagged rule in `inet temps_network` |
 | `hcb-ha-failback` timer + `/usr/local/bin/hcb-ha-failback`                  | pg_auto_failover monitor SQL API, Sentinel commands, Temps CLI (pinned)         |
 | `/etc/sysctl.d/90-temps-mesh-bind.conf` (temps-worker)                      | kernel                                                                          |
 | `dragonfly-sentinel` container, `redis-dragonfly-cache` on the worker nodes | not managed by Temps (no Temps labels)                                          |
@@ -120,10 +154,13 @@ After a Temps upgrade, check:
    lockdown layout, the script refuses to patch and logs
    `lockdown layout changed, not patching` (and the unit shows failed), instead
    of guessing. Postgres/Dragonfly rejoin after a reboot depends on it.
-2. `DRY_RUN=1 STATE_DIR=/tmp/fb /usr/local/bin/hcb-ha-failback` on the control
+2. `journalctl -u hcb-direct-link -n 5` on temps-worker and oracle-main, and
+   `hcb-direct-link status` shows the peer via `hcb-wg1`. If Temps changes its
+   VXLAN drop rule the script logs `layout changed; not patching`.
+3. `DRY_RUN=1 STATE_DIR=/tmp/fb /usr/local/bin/hcb-ha-failback` on the control
    plane runs without "Temps CLI failed". If the CLI's JSON changed, bump
    `TEMPS_CLI_VERSION` only after re-testing this dry run.
-3. Temps docs to re-read: [multi-node](https://temps.sh/docs/multi-node),
+4. Temps docs to re-read: [multi-node](https://temps.sh/docs/multi-node),
    [networking](https://temps.sh/docs/networking),
    [HA databases](https://temps.sh/docs/ha-databases). A built-in failback,
    preferred node or runtime health check would make parts of this folder

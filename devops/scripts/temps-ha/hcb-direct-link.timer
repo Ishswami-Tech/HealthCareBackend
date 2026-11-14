@@ -1,0 +1,10 @@
+[Unit]
+Description=Keep the direct WireGuard shortcut healthy and its firewall rules in place
+
+[Timer]
+OnBootSec=15s
+OnUnitActiveSec=10s
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
