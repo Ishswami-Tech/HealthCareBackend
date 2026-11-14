@@ -134,6 +134,32 @@ sudo hcb-direct-link down                       # remove; all traffic back on te
 
 Installed on temps-worker and oracle-main (2026-11-14).
 
+## pg-forwarder (all nodes) — one Postgres for every app
+
+governance-ops, vishwayog and social-media used their own Postgres
+(`postgres-postgres-pzxq`), which ran as two unconnected copies (temps-worker and
+contabo-ds) that had diverged. On 2026-11-14 their data was merged (union; the
+newer `updatedAt` won on the 13 rows edited on both sides) and loaded into
+`postgres-main` as separate databases owned by their existing logins
+(`governanceops`, `social_ai`, `vishwayogayurveda_app_production`; password hashes
+copied, so no app secret changed). `userdb` was not touched.
+
+The apps still connect to `postgres-postgres-pzxq:5432`. That name is now answered
+by `hcb-pg-forwarder` (HAProxy, network alias on `temps-app-network` and every
+`temps<N>` network) which forwards to whichever member is primary, preferring
+temps-worker, then Oracle, then contabo-ds. Each node's `hcb-pg-role` agent
+(published on `<mesh-ip>:6268`) answers `up` only when its member is not in
+recovery, so writes never go to a standby and the apps follow failovers.
+
+```bash
+# per node; contabo-ds has no passwordless sudo: add DIR=$HOME/hcb-pg-forwarder
+sudo MESH_IP=10.201.0.5 MEMBER=postgres-postgres-main-1 PGPORT=6261 bash pg-forwarder/install.sh
+```
+
+The old `postgres-postgres-pzxq` containers are stopped (restart=no), not removed.
+Backups: `/var/backups/pzxq/` (temps-worker), `~/backups/pzxq/` (contabo-ds and the
+control plane), merge workspace `~/pzxq-merge/` on contabo-ds.
+
 ## Upgrade safety
 
 Nothing here edits a file Temps owns or reads Temps' internal database, so

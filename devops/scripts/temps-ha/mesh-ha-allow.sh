@@ -81,3 +81,23 @@ ensure_rule "$REPLY_TAG" iifname \
 ensure_rule "$EGRESS_TAG" oifname \
   "oifname \"$MESH_IF\" ip saddr $src_set ip daddr $MESH_NET tcp dport $PORTS counter accept" \
   ${SOURCES//,/ }
+
+# Hairpin: a container reaching a Postgres/Dragonfly member published on THIS host's
+# own mesh address goes through the host's INPUT chain (docker-proxy). Hosts whose
+# iptables INPUT ends in REJECT/DROP (Oracle Cloud images) refuse it, so the app
+# copies on such a node cannot use its database or cache once that node becomes
+# primary. Allow exactly that: container subnets -> this host's mesh IP, HA ports.
+HAIRPIN_TAG="hcb-ha-hairpin"
+MESH_IP=$(ip -4 -o addr show dev "$MESH_IF" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
+if [[ -n "$MESH_IP" ]] && command -v iptables >/dev/null; then
+  input=$(iptables -S INPUT 2>/dev/null || true)
+  if grep -qE -- '-P INPUT DROP|-j (REJECT|DROP)( |$)' <<<"$input"; then
+    for src in ${SOURCES//,/ }; do
+      if ! grep -qF -- "-s $src -d $MESH_IP/32 -p tcp -m tcp --dport ${PORTS/-/:} -m comment --comment $HAIRPIN_TAG" <<<"$input"; then
+        iptables -I INPUT 1 -s "$src" -d "$MESH_IP/32" -p tcp --dport "${PORTS/-/:}" \
+          -m comment --comment "$HAIRPIN_TAG" -j ACCEPT
+        echo "mesh-ha-allow: iptables hairpin accept $src -> $MESH_IP:$PORTS"
+      fi
+    done
+  fi
+fi
