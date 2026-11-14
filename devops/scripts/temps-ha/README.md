@@ -39,6 +39,16 @@ sudo HA_EXTRA_SOURCES=10.0.1.0/24 bash install-mesh-ha-allow.sh # extra containe
 
 Installed on temps-worker, contabo-ds and the control plane (2026-11-13).
 
+### Cluster DNS rule (added 2026-11-14)
+
+On a host whose INPUT chain ends in REJECT/DROP (Oracle Cloud images), app containers
+could not reach Temps' own `*.temps.local` resolver on the node (172.20.<n>.1:53), so
+every cluster name failed there. mesh-ha-allow also allows exactly that: container
+subnets -> this node's Temps resolver, port 53 (comment `hcb-cluster-dns`).
+It also remembers the egress sources it applied (`/run/hcb-mesh-ha-allow.egress-sources`):
+nft merges adjacent subnets in the set, which made every run delete and re-insert the
+egress rule.
+
 ## node-watchdog (every worker node)
 
 `hcb-node-watchdog.service` turns "hung" into "restarting", which the proxy
@@ -144,7 +154,9 @@ newer `updatedAt` won on the 13 rows edited on both sides) and loaded into
 (`governanceops`, `social_ai`, `vishwayogayurveda_app_production`; password hashes
 copied, so no app secret changed). `userdb` was not touched.
 
-The apps still connect to `postgres-postgres-pzxq:5432`. That name is now answered
+The apps still connect to `postgres-postgres-pzxq:5432`; new apps should use the second
+name, `postgres-primary:5432` (same forwarder, added 2026-11-14), so no app config
+needs an IP for the database. That name is now answered
 by `hcb-pg-forwarder` (HAProxy, network alias on `temps-app-network` and every
 `temps<N>` network) which forwards to whichever member is primary, preferring
 temps-worker, then Oracle, then contabo-ds. Each node's `hcb-pg-role` agent

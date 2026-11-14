@@ -20,12 +20,14 @@ echo "hcb-pg-role started"
 if [ "${FORWARDER:-1}" = 1 ]; then
   docker rm -f hcb-pg-forwarder >/dev/null 2>&1 || true
   docker run -d --name hcb-pg-forwarder --restart unless-stopped \
-    --network temps-app-network --network-alias postgres-postgres-pzxq \
+    --network temps-app-network --network-alias postgres-postgres-pzxq --network-alias postgres-primary \
     -v $DIR/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro haproxy:lts-alpine >/dev/null
   # Temps also puts some app containers on its per-node network (temps0, temps1, ...)
-  # instead of temps-app-network; answer on those too, under the same name.
+  # instead of temps-app-network; answer on those too, under the same names.
+  # postgres-primary is the name new apps should use; postgres-postgres-pzxq stays for
+  # the apps that were moved here from the old pzxq cluster.
   for net in $(docker network ls --format '{{.Name}}' | grep -E '^temps[0-9]+$'); do
-    docker network connect --alias postgres-postgres-pzxq "$net" hcb-pg-forwarder
+    docker network connect --alias postgres-postgres-pzxq --alias postgres-primary "$net" hcb-pg-forwarder
   done
-  echo "hcb-pg-forwarder started (alias postgres-postgres-pzxq on: $(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' hcb-pg-forwarder))"
+  echo "hcb-pg-forwarder started (postgres-primary, postgres-postgres-pzxq on: $(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' hcb-pg-forwarder))"
 fi

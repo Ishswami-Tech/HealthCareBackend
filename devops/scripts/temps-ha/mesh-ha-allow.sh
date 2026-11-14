@@ -78,9 +78,19 @@ src_set="{ ${SOURCES//,/, } }"
 ensure_rule "$REPLY_TAG" iifname \
   "iifname \"$MESH_IF\" ip saddr $MESH_NET tcp sport $PORTS ct state established,related counter accept" \
   "sport $PORTS"
+# nft merges adjacent subnets in the set (172.20.0.0/24 + 172.20.1.0/24 lists as
+# 172.20.0.0/23), so the subnets cannot be matched back literally: remember what
+# was applied instead, or every run deletes and re-inserts the rule.
+EGRESS_STATE="${EGRESS_STATE:-/run/hcb-mesh-ha-allow.egress-sources}"
+if [[ -f "$EGRESS_STATE" && "$(cat "$EGRESS_STATE")" == "$SOURCES" ]]; then
+  egress_needles=()
+else
+  egress_needles=(${SOURCES//,/ } "__force_rewrite__")
+fi
 ensure_rule "$EGRESS_TAG" oifname \
   "oifname \"$MESH_IF\" ip saddr $src_set ip daddr $MESH_NET tcp dport $PORTS counter accept" \
-  ${SOURCES//,/ }
+  "${egress_needles[@]}"
+echo "$SOURCES" >"$EGRESS_STATE"
 
 # Hairpin: a container reaching a Postgres/Dragonfly member published on THIS host's
 # own mesh address goes through the host's INPUT chain (docker-proxy). Hosts whose
@@ -98,6 +108,28 @@ if [[ -n "$MESH_IP" ]] && command -v iptables >/dev/null; then
           -m comment --comment "$HAIRPIN_TAG" -j ACCEPT
         echo "mesh-ha-allow: iptables hairpin accept $src -> $MESH_IP:$PORTS"
       fi
+    done
+  fi
+fi
+
+# Cluster DNS: Temps runs a resolver for *.temps.local on each node's overlay bridge
+# (172.20.<n>.1:53) and points every app container at it. On a host whose INPUT
+# chain ends in REJECT/DROP (Oracle Cloud images) the container's query to its own
+# host is refused, so every *.temps.local name (postgres-main-N..., primary...)
+# fails there and lookups fall through to public DNS. Allow exactly that: container
+# subnets -> this host's Temps resolver, port 53. Found 2026-11-14 on main-server.
+DNS_TAG="hcb-cluster-dns"
+if command -v iptables >/dev/null && command -v ss >/dev/null; then
+  input=$(iptables -S INPUT 2>/dev/null || true)
+  if grep -qE -- '-P INPUT DROP|-j (REJECT|DROP)( |$)' <<<"$input"; then
+    for resolver in $(ss -lun 2>/dev/null | grep -oE '172\.20\.[0-9]+\.1:53' | cut -d: -f1 | sort -u); do
+      for proto in udp tcp; do
+        if ! grep -qF -- "-s 172.20.0.0/16 -d $resolver/32 -p $proto -m $proto --dport 53 -m comment --comment $DNS_TAG" <<<"$input"; then
+          iptables -I INPUT 1 -s 172.20.0.0/16 -d "$resolver/32" -p "$proto" --dport 53 \
+            -m comment --comment "$DNS_TAG" -j ACCEPT
+          echo "mesh-ha-allow: iptables accept container DNS -> $resolver:53/$proto"
+        fi
+      done
     done
   fi
 fi
