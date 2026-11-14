@@ -9,6 +9,12 @@
  * `CACHE_SENTINEL_MASTER_NAME`, reconnects to the new master after a failover, and
  * `failoverDetector` makes it react to Sentinel's `+switch-master` instead of waiting for the
  * old connection to fail.
+ *
+ * `reconnectOnError` covers the case the detector misses: a client whose Sentinel subscription
+ * dropped during the same network blip that caused the failover keeps its connection to the
+ * old master, which is now a replica, and every write fails with READONLY until something
+ * closes that connection. On READONLY it reconnects (asking Sentinel for the master again) and
+ * resends the command. Seen 2026-11-14 08:49-08:56: 4,271 READONLY errors on temps-worker.
  */
 
 import { HealthcareError } from '@core/errors/healthcare-error.class';
@@ -27,9 +33,18 @@ export type CacheConnectionTarget =
       name: string;
       sentinelPassword?: string;
       failoverDetector: true;
+      reconnectOnError: (error: Error) => 2 | false;
     };
 
 export const DEFAULT_SENTINEL_PORT = 26379;
+
+/**
+ * ioredis `reconnectOnError`: 2 = reconnect and resend the failed command. Only READONLY (a
+ * write that reached a demoted master) triggers it; every other error is left to the caller.
+ */
+export function reconnectOnReadOnly(error: Error): 2 | false {
+  return typeof error?.message === 'string' && error.message.includes('READONLY') ? 2 : false;
+}
 export const DEFAULT_SENTINEL_MASTER_NAME = 'dragonfly';
 
 /** Parses `host:port[,host:port...]`; a missing port means Sentinel's default 26379. */
@@ -70,6 +85,7 @@ export function getCacheConnectionTarget(
     name: getEnv('CACHE_SENTINEL_MASTER_NAME')?.trim() || DEFAULT_SENTINEL_MASTER_NAME,
     ...(sentinelPassword ? { sentinelPassword } : {}),
     failoverDetector: true,
+    reconnectOnError: reconnectOnReadOnly,
   };
 }
 

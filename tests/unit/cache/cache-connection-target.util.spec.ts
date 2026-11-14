@@ -12,6 +12,7 @@ import {
   describeCacheTarget,
   getCacheConnectionTarget,
   parseSentinelAddresses,
+  reconnectOnReadOnly,
 } from '@infrastructure/cache/utils/cache-connection-target.util';
 
 const DIRECT = { host: '10.201.0.1', port: 6512 };
@@ -44,6 +45,7 @@ describe('getCacheConnectionTarget', () => {
       name: 'dragonfly-cache',
       sentinelPassword: 's3cret',
       failoverDetector: true,
+      reconnectOnError: reconnectOnReadOnly,
     });
     expect('host' in target).toBe(false);
   });
@@ -55,6 +57,7 @@ describe('getCacheConnectionTarget', () => {
       sentinels: [{ host: '10.201.0.1', port: 26379 }],
       name: DEFAULT_SENTINEL_MASTER_NAME,
       failoverDetector: true,
+      reconnectOnError: reconnectOnReadOnly,
     });
   });
 
@@ -79,8 +82,21 @@ describe('getCacheConnectionTarget', () => {
       expect(client.options.sentinels).toEqual([{ host: '10.201.0.1', port: 26379 }]);
       expect(client.options.name).toBe('dragonfly');
       expect(client.options.failoverDetector).toBe(true);
+      expect(client.options.reconnectOnError).toBe(reconnectOnReadOnly);
     } finally {
       client.disconnect();
     }
+  });
+
+  it('reconnects only on READONLY, the write that reached a demoted master', () => {
+    expect(
+      reconnectOnReadOnly(new Error("READONLY You can't write against a read only replica."))
+    ).toBe(2);
+    expect(reconnectOnReadOnly(new Error('Command timed out'))).toBe(false);
+    expect(reconnectOnReadOnly(new Error('NOAUTH Authentication required.'))).toBe(false);
+  });
+
+  it('leaves a direct target without reconnect-on-error, as before', () => {
+    expect('reconnectOnError' in getCacheConnectionTarget(envOf({}), DIRECT)).toBe(false);
   });
 });
