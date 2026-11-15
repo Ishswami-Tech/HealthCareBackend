@@ -29,11 +29,8 @@ export interface MonitorNodeRow extends QueryResultRow {
   nodeport: number;
 }
 
-export async function queryMonitor<T extends QueryResultRow = MonitorNodeRow>(
-  monitorUri: string,
-  sql: string
-): Promise<T[]> {
-  const client = new Client({
+function newMonitorClient(monitorUri: string): Client {
+  return new Client({
     connectionString: monitorUri,
     connectionTimeoutMillis: MONITOR_QUERY_TIMEOUT_MS,
     query_timeout: MONITOR_QUERY_TIMEOUT_MS,
@@ -42,6 +39,13 @@ export async function queryMonitor<T extends QueryResultRow = MonitorNodeRow>(
     // verification is what pg_autoctl's own tooling expects here too.
     ssl: { rejectUnauthorized: false },
   });
+}
+
+export async function queryMonitor<T extends QueryResultRow = MonitorNodeRow>(
+  monitorUri: string,
+  sql: string
+): Promise<T[]> {
+  const client = newMonitorClient(monitorUri);
 
   try {
     await client.connect();
@@ -50,6 +54,57 @@ export async function queryMonitor<T extends QueryResultRow = MonitorNodeRow>(
   } finally {
     await client.end().catch(() => undefined);
   }
+}
+
+/**
+ * One open monitor connection per URI, for callers that ask every few seconds (the primary
+ * tracker). Opening a fresh TLS + SCRAM connection costs several round trips: ~0.8 s of a 2 s
+ * budget from India to a monitor in Europe, every 3 s from every container, so any lost packet
+ * timed the check out. A reused connection answers in one round trip.
+ *
+ * Any failure (connect, query, timeout, or the socket dying while idle) drops the connection, and
+ * the next call opens a new one; the failure itself still reaches the caller.
+ */
+const monitorSessions = new Map<string, Client>();
+
+function dropMonitorSession(monitorUri: string, client: Client): void {
+  if (monitorSessions.get(monitorUri) === client) monitorSessions.delete(monitorUri);
+  client.end().catch(() => undefined);
+}
+
+export async function queryMonitorReusingConnection<T extends QueryResultRow = MonitorNodeRow>(
+  monitorUri: string,
+  sql: string
+): Promise<T[]> {
+  let client = monitorSessions.get(monitorUri);
+  if (!client) {
+    const fresh = newMonitorClient(monitorUri);
+    // An idle connection that dies emits 'error'; unhandled, it would crash the process.
+    fresh.on('error', () => dropMonitorSession(monitorUri, fresh));
+    fresh.on('end', () => {
+      if (monitorSessions.get(monitorUri) === fresh) monitorSessions.delete(monitorUri);
+    });
+    try {
+      await fresh.connect();
+    } catch (error) {
+      dropMonitorSession(monitorUri, fresh);
+      throw error;
+    }
+    monitorSessions.set(monitorUri, fresh);
+    client = fresh;
+  }
+  try {
+    const result = await client.query<T>(sql);
+    return result.rows;
+  } catch (error) {
+    dropMonitorSession(monitorUri, client);
+    throw error;
+  }
+}
+
+/** Closes every reused monitor connection (tracking stopped, or tests). */
+export function closeMonitorSessions(): void {
+  for (const [uri, client] of monitorSessions) dropMonitorSession(uri, client);
 }
 
 /**

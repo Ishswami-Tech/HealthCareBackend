@@ -23,7 +23,8 @@ import { Client, type ClientConfig } from 'pg';
 
 import {
   MONITOR_NODE_FILTER,
-  queryMonitor,
+  closeMonitorSessions,
+  queryMonitorReusingConnection,
   withResolvedHost,
 } from '@infrastructure/database/prisma/monitor-client.util';
 
@@ -42,6 +43,13 @@ export const CURRENT_PRIMARY_QUERY = `SELECT nodehost, nodeport FROM pgautofailo
 
 export const PRIMARY_POLL_INTERVAL_MS = 3000;
 
+/**
+ * Consecutive failed polls before the monitor counts as unreachable (~9 s). A single slow answer
+ * from a monitor on another continent is not an outage, and the last known primary stays in use
+ * either way.
+ */
+export const MONITOR_FAILURES_BEFORE_WARNING = 3;
+
 export interface PrimaryEndpoint {
   readonly host: string;
   readonly port: number;
@@ -50,7 +58,10 @@ export interface PrimaryEndpoint {
 export interface PrimaryTrackingHandlers {
   /** The primary moved; `closedConnections` connections to other nodes were closed. */
   onChange: (primary: PrimaryEndpoint, closedConnections: number) => void;
-  /** The monitor could not be read. Called once per outage, not on every poll. */
+  /**
+   * The monitor could not be read for MONITOR_FAILURES_BEFORE_WARNING polls in a row. Called
+   * once per outage, not on every poll.
+   */
   onError: (error: Error) => void;
   /** The monitor answered again after onError. */
   onRecovered: () => void;
@@ -59,6 +70,8 @@ export interface PrimaryTrackingHandlers {
 let currentPrimary: PrimaryEndpoint | null = null;
 let pollTimer: NodeJS.Timeout | null = null;
 let monitorFailing = false;
+let consecutiveFailures = 0;
+let pollInFlight = false;
 /** Every PrimaryFollowingClient that has not ended, so a primary move can close the stale ones. */
 const liveClients = new Set<PrimaryFollowingClient>();
 
@@ -73,7 +86,7 @@ export function setCurrentPrimary(primary: PrimaryEndpoint): void {
 
 /** Asks the monitor once; returns the new primary when it changed, otherwise null. */
 export async function refreshCurrentPrimary(monitorUri: string): Promise<PrimaryEndpoint | null> {
-  const rows = await queryMonitor(monitorUri, CURRENT_PRIMARY_QUERY);
+  const rows = await queryMonitorReusingConnection(monitorUri, CURRENT_PRIMARY_QUERY);
   const row = rows[0];
   if (!row) {
     return null;
@@ -108,8 +121,14 @@ export function startPrimaryTracking(monitorUri: string, handlers: PrimaryTracki
     return;
   }
   pollTimer = setInterval(() => {
+    // A poll can take up to connect + query timeout (4 s) > the interval: never overlap them.
+    if (pollInFlight) {
+      return;
+    }
+    pollInFlight = true;
     refreshCurrentPrimary(monitorUri)
       .then(changed => {
+        consecutiveFailures = 0;
         if (monitorFailing) {
           monitorFailing = false;
           handlers.onRecovered();
@@ -119,10 +138,14 @@ export function startPrimaryTracking(monitorUri: string, handlers: PrimaryTracki
         }
       })
       .catch((error: Error) => {
-        if (!monitorFailing) {
+        consecutiveFailures++;
+        if (!monitorFailing && consecutiveFailures >= MONITOR_FAILURES_BEFORE_WARNING) {
           monitorFailing = true;
           handlers.onError(error instanceof Error ? error : new Error(String(error)));
         }
+      })
+      .finally(() => {
+        pollInFlight = false;
       });
   }, PRIMARY_POLL_INTERVAL_MS);
   pollTimer.unref();
@@ -134,6 +157,9 @@ export function stopPrimaryTracking(): void {
     pollTimer = null;
   }
   monitorFailing = false;
+  consecutiveFailures = 0;
+  pollInFlight = false;
+  closeMonitorSessions();
 }
 
 /** A pg Client whose connection goes to the current primary (pg.Pool builds one per connection). */

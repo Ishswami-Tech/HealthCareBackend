@@ -8,12 +8,15 @@
 
 jest.mock('@infrastructure/database/prisma/monitor-client.util', () => {
   const actual = jest.requireActual('@infrastructure/database/prisma/monitor-client.util');
-  return { ...actual, queryMonitor: jest.fn() };
+  // Boot resolution uses a one-off connection, polling reuses one: both answer from this mock.
+  const query = jest.fn();
+  return { ...actual, queryMonitor: query, queryMonitorReusingConnection: query };
 });
 
 import { queryMonitor } from '@infrastructure/database/prisma/monitor-client.util';
 import {
   CURRENT_PRIMARY_QUERY,
+  MONITOR_FAILURES_BEFORE_WARNING,
   PRIMARY_POLL_INTERVAL_MS,
   PrimaryFollowingClient,
   closeConnectionsNotTo,
@@ -118,8 +121,56 @@ describe('primary tracking', () => {
 
       // A second outage is reported again.
       queryMonitorMock.mockRejectedValue(new Error('monitor unreachable'));
-      await jest.advanceTimersByTimeAsync(PRIMARY_POLL_INTERVAL_MS);
+      await jest.advanceTimersByTimeAsync(
+        PRIMARY_POLL_INTERVAL_MS * MONITOR_FAILURES_BEFORE_WARNING
+      );
       expect(handlers.onError).toHaveBeenCalledTimes(2);
+    } finally {
+      stopPrimaryTracking();
+      jest.useRealTimers();
+    }
+  });
+});
+
+describe('monitor outage reporting', () => {
+  it('does not report a single slow or failed poll: only a run of failures is an outage', async () => {
+    jest.useFakeTimers();
+    try {
+      const handlers = { onChange: jest.fn(), onError: jest.fn(), onRecovered: jest.fn() };
+      monitorReports('10.201.0.1', 6263);
+      startPrimaryTracking(MONITOR, handlers);
+
+      queryMonitorMock.mockRejectedValueOnce(new Error('timeout expired'));
+      queryMonitorMock.mockRejectedValueOnce(new Error('timeout expired'));
+      await jest.advanceTimersByTimeAsync(PRIMARY_POLL_INTERVAL_MS * 4);
+
+      expect(handlers.onError).not.toHaveBeenCalled();
+      expect(handlers.onRecovered).not.toHaveBeenCalled();
+    } finally {
+      stopPrimaryTracking();
+      jest.useRealTimers();
+    }
+  });
+
+  it('never starts a poll while the previous one is still waiting on the monitor', async () => {
+    jest.useFakeTimers();
+    try {
+      let answer: (rows: never[]) => void = () => undefined;
+      queryMonitorMock.mockImplementation(
+        () => new Promise(resolve => (answer = resolve as typeof answer))
+      );
+      startPrimaryTracking(MONITOR, {
+        onChange: jest.fn(),
+        onError: jest.fn(),
+        onRecovered: jest.fn(),
+      });
+
+      await jest.advanceTimersByTimeAsync(PRIMARY_POLL_INTERVAL_MS * 3);
+      expect(queryMonitorMock).toHaveBeenCalledTimes(1);
+
+      answer([]);
+      await jest.advanceTimersByTimeAsync(PRIMARY_POLL_INTERVAL_MS);
+      expect(queryMonitorMock).toHaveBeenCalledTimes(2);
     } finally {
       stopPrimaryTracking();
       jest.useRealTimers();

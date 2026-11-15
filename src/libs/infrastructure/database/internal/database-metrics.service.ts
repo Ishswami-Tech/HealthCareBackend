@@ -54,9 +54,15 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
   // Cache tracking
   private cacheHits = 0;
   private cacheMisses = 0;
-  private cacheHitTimes: number[] = [];
-  private cacheMissTimes: number[] = [];
-  private readonly maxCacheTimeHistory = 1000; // Keep last 1000 cache operation times
+  // Cacheable reads in the last cacheRateWindowMs, oldest first: the reported hit rate and the
+  // low-hit-rate warning both look only at this window, so they describe current behaviour.
+  private cacheEvents: Array<{ at: number; hit: boolean }> = [];
+  private cacheWindowHits = 0;
+  private readonly cacheRateWindowMs = 10 * 60 * 1000;
+  // Fewer cacheable reads than this in the window says nothing about the cache: with light
+  // traffic most entries (60 s for PHI, 5 min otherwise) expire before they are read again.
+  private readonly minCacheOpsForAlert = 100;
+  private readonly maxCacheEvents = 50000; // bounds memory under very heavy traffic
   private readonly lowCacheHitRateAlertKey = 'warning-low-cache-hit-rate';
 
   // Alert throttling to prevent log spam
@@ -333,41 +339,31 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
    * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  recordCacheHit(cacheTime: number): void {
+  recordCacheHit(_cacheTime: number): void {
     this.cacheHits++;
-    this.cacheHitTimes.push(cacheTime);
-
-    // Maintain history size
-    if (this.cacheHitTimes.length > this.maxCacheTimeHistory) {
-      this.cacheHitTimes.shift();
-    }
-
-    this.refreshCacheHitRate();
+    this.recordCacheEvent(true, Date.now());
   }
 
   /**
-   * Recompute the reported cache hit rate from the bounded recent-operation
-   * windows (cacheHitTimes/cacheMissTimes), not the lifetime cacheHits/
-   * cacheMisses counters. The lifetime counters never reset, so a rate
-   * derived from them drifts slowly toward the true value for hours after
-   * every process restart instead of reflecting current cache behavior.
-   *
-   * Known limitation: the two arrays are capped independently at
-   * maxCacheTimeHistory entries each, so when hit/miss frequencies are very
-   * skewed they can span different wall-clock windows (e.g. a healthy cache
-   * with rare misses fills cacheHitTimes with the last few minutes while
-   * cacheMissTimes still holds misses from hours ago). This is acceptable
-   * for the low-hit-rate alert below (hits and misses occur at comparable
-   * frequency in that regime), but this rate should not be treated as a
-   * strictly time-symmetric recent window for other uses.
+   * Adds one cacheable read to the rolling window and recomputes the reported hit rate from the
+   * window alone. Hits and misses share one time-ordered window, so the rate is time-symmetric
+   * (the lifetime cacheHits/cacheMisses counters never reset and drift for hours after a
+   * restart; two separately count-capped arrays could span different stretches of time).
    */
-  private refreshCacheHitRate(): void {
-    const recentHits = this.cacheHitTimes.length;
-    const recentMisses = this.cacheMissTimes.length;
-    const totalRecentOps = recentHits + recentMisses;
-    if (totalRecentOps > 0) {
-      this.currentMetrics.performance.cacheHitRate = recentHits / totalRecentOps;
+  private recordCacheEvent(hit: boolean, now: number): void {
+    this.cacheEvents.push({ at: now, hit });
+    if (hit) this.cacheWindowHits++;
+    const cutoff = now - this.cacheRateWindowMs;
+    let drop = 0;
+    while (
+      drop < this.cacheEvents.length &&
+      (this.cacheEvents[drop]!.at < cutoff || this.cacheEvents.length - drop > this.maxCacheEvents)
+    ) {
+      if (this.cacheEvents[drop]!.hit) this.cacheWindowHits--;
+      drop++;
     }
+    if (drop > 0) this.cacheEvents.splice(0, drop);
+    this.currentMetrics.performance.cacheHitRate = this.cacheWindowHits / this.cacheEvents.length;
   }
 
   /**
@@ -375,21 +371,13 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
    * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  recordCacheMiss(cacheMissTime: number): void {
+  recordCacheMiss(_cacheMissTime: number): void {
     this.cacheMisses++;
-    this.cacheMissTimes.push(cacheMissTime);
+    this.recordCacheEvent(false, Date.now());
 
-    // Maintain history size
-    if (this.cacheMissTimes.length > this.maxCacheTimeHistory) {
-      this.cacheMissTimes.shift();
-    }
-
-    this.refreshCacheHitRate();
-    const totalRecentOps = this.cacheHitTimes.length + this.cacheMissTimes.length;
-
-    // Log warning if cache hit rate is low
+    // Warn only with enough traffic in the window for the rate to mean something.
     if (
-      totalRecentOps > 100 &&
+      this.cacheEvents.length >= this.minCacheOpsForAlert &&
       this.currentMetrics.performance.cacheHitRate < this.minCacheHitRate
     ) {
       const cacheHitRatePercent = Math.floor(this.currentMetrics.performance.cacheHitRate * 100);
@@ -416,8 +404,8 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
           this.serviceName,
           {
             cacheHitRate: this.currentMetrics.performance.cacheHitRate,
-            recentCacheHits: this.cacheHitTimes.length,
-            recentCacheMisses: this.cacheMissTimes.length,
+            windowCacheHits: this.cacheWindowHits,
+            windowCacheMisses: this.cacheEvents.length - this.cacheWindowHits,
             lifetimeCacheHits: this.cacheHits,
             lifetimeCacheMisses: this.cacheMisses,
             recommendations: [
