@@ -70,7 +70,8 @@ if [ "$(realpath "$SENTINEL_PASSWORD_FILE")" != "$(realpath -m "$DIR/sentinel.pa
 fi
 chmod 600 "$DIR/sentinel.password"
 
-run=("$DOCKER" run -d --name "$C" --restart unless-stopped --network "$network"
+# shellcheck disable=SC2206 # DOCKER may be "sudo -n docker"
+run=($DOCKER run -d --name "$C" --restart unless-stopped --network "$network"
      -v "$volume:/data" -v "$DIR:/hcb:ro" -e "HCB_SELF=$ip:$port"
      --entrypoint /usr/bin/tini)
 for p in "${ports[@]}"; do run+=(-p "${p%/tcp}"); done
