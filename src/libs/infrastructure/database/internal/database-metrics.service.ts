@@ -373,10 +373,14 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
    */
   recordCacheMiss(_cacheMissTime: number): void {
     this.cacheMisses++;
-    this.recordCacheEvent(false, Date.now());
+    const now = Date.now();
+    this.recordCacheEvent(false, now);
 
-    // Warn only with enough traffic in the window for the rate to mean something.
+    // Warn only with enough traffic in the window for the rate to mean something, and only once
+    // the process has run a full window: right after boot the window holds the startup burst of
+    // reads against an empty cache, which all miss by definition.
     if (
+      now - this.serviceStartTime >= this.cacheRateWindowMs &&
       this.cacheEvents.length >= this.minCacheOpsForAlert &&
       this.currentMetrics.performance.cacheHitRate < this.minCacheHitRate
     ) {

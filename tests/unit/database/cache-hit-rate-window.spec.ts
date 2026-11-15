@@ -3,7 +3,8 @@
  * "Low cache hit rate detected" used to fire with almost no traffic: the rate came from the last
  * 1000 hits and the last 1000 misses (count-capped, no time window), and a dashboard reading
  * appointments every ~12 minutes misses every time because PHI entries live 60 s. The rate and the
- * warning now use one 10-minute window and need at least 100 cacheable reads in it.
+ * warning now use one 10-minute window and need at least 100 cacheable reads in it, and the
+ * warning waits until the process has run one full window (boot reads an empty cache).
  */
 
 import { DatabaseMetricsService } from '@infrastructure/database/internal/database-metrics.service';
@@ -51,11 +52,23 @@ describe('cache hit rate window', () => {
 
   it('warns once there are enough reads in the window and the rate is low', () => {
     const { service, log } = makeService();
+    jest.advanceTimersByTime(10 * 60_000); // past the first window after boot
     for (let i = 0; i < 99; i++) service.recordCacheMiss(5);
     expect(lowRateWarnings(log)).toBe(0);
 
     service.recordCacheMiss(5);
     expect(lowRateWarnings(log)).toBe(1);
+  });
+
+  it('does not warn about the cold-cache burst right after boot', () => {
+    const { service, log } = makeService();
+    // Boot reads hundreds of rows against an empty cache within seconds: all misses.
+    for (let i = 0; i < 300; i++) service.recordCacheMiss(5);
+    jest.advanceTimersByTime(5 * 60_000);
+    service.recordCacheMiss(5);
+
+    expect(rateOf(service)).toBe(0);
+    expect(lowRateWarnings(log)).toBe(0);
   });
 
   it('measures only the last 10 minutes, hits and misses alike', () => {
