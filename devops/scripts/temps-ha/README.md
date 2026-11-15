@@ -194,6 +194,27 @@ sudo ACL_DIR=/etc/hcb-dragonfly-acl bash dragonfly-acl/install.sh            # r
 sudo ACL_DIR=/etc/hcb-dragonfly-acl bash dragonfly-acl/install-forwarder.sh  # forwarder
 ```
 
+## dragonfly-start (temps-worker, Oracle, contabo-ds) — start as Sentinel's replica
+
+Dragonfly cannot persist a Sentinel `REPLICAOF` (no `CONFIG REWRITE`), so a fixed
+`--replicaof` flag is wrong after the first failover. Each HA copy's
+`redis-dragonfly-cache` starts through `start.sh`, which asks the Sentinels which node is
+master and starts as its replica. It never starts as master by itself: a copy that
+did would load its old on-disk snapshot and the replicas would resync that stale
+data. If the Sentinels still name this copy as master (a quick restart), it waits
+until they promote another copy, then replicates from it; `hcb-ha-failback` moves the
+primary back to temps-worker once it is a healthy replica again.
+
+`install.sh` copies image, flags, ports, volume and logging from the running
+container, drops `--replicaof`, and refuses on the current master (run
+`SENTINEL FAILOVER dragonfly` first). Sentinel password: `~/hcb-dragonfly/sentinel.password`
+(0600) on each node. The control plane's copy is Temps-managed and is left alone.
+
+```bash
+SENTINEL_PASSWORD_FILE=~/hcb-dragonfly/sentinel.password bash dragonfly-start/install.sh
+DOCKER="sudo -n docker" SENTINEL_PASSWORD_FILE=~/hcb-dragonfly/sentinel.password bash dragonfly-start/install.sh  # temps-worker
+```
+
 ## Upgrade safety
 
 Nothing here edits a file Temps owns or reads Temps' internal database, so
