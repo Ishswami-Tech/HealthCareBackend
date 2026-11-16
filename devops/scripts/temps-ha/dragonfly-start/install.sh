@@ -47,6 +47,11 @@ for a in "${cmd[@]}"; do
         --replicaof=*) ;;  # replaced by start.sh
         --replica_announce_ip=*) ip="${a#*=}"; args+=("$a") ;;
         --announce_port=*) port="${a#*=}"; args+=("$a") ;;
+        --default_lua_flags=*)
+            # Never carry `disable-atomicity` over: BullMQ needs atomic Lua scripts. With it,
+            # df-v2.0.2 handed one job to two workers ("Lock mismatch"). Other flags are kept.
+            lua=$(printf '%s\n' "${a#*=}" | tr ',' '\n' | grep -vx 'disable-atomicity' | paste -sd, - || true)
+            [ -n "$lua" ] && args+=("--default_lua_flags=$lua") ;;
         *) args+=("$a") ;;
     esac
 done
