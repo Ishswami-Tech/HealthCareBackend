@@ -56,6 +56,8 @@ export interface ScheduledTaskData {
   group: ScheduledTaskOptions['group'];
   pattern: string;
   tz: string;
+  /** What the scheduler was registered with; boot re-registers only when this changes. */
+  signature: string;
 }
 
 export type ScheduledTaskEnvelope = CanonicalJobEnvelope<ScheduledTaskData>;
@@ -73,6 +75,23 @@ interface DiscoveredTask {
   readonly invoke: () => Promise<void>;
 }
 
+/**
+ * Everything a task's scheduler is registered with. Re-registering an unchanged scheduler is not
+ * free: upsertJobScheduler replaces the tick job, and if a replica is running that tick right
+ * then, its job is swapped out under it ("Lock mismatch", the tick runs twice). That happened
+ * once when the second worker booted on the 07:11 tick of 2026-11-16.
+ */
+export function scheduledTaskSignature(options: ScheduledTaskOptions): string {
+  return JSON.stringify([
+    options.pattern,
+    options.tz,
+    options.attempts,
+    JOB_RETENTION.removeOnComplete,
+    JOB_RETENTION.removeOnFail,
+    options.attempts > 1 ? RETRY_BACKOFF : null,
+  ]);
+}
+
 /** The queue job data of one task's ticks. */
 export function scheduledTaskEnvelope(options: ScheduledTaskOptions): ScheduledTaskEnvelope {
   return {
@@ -85,6 +104,7 @@ export function scheduledTaskEnvelope(options: ScheduledTaskOptions): ScheduledT
       group: options.group,
       pattern: options.pattern,
       tz: options.tz,
+      signature: scheduledTaskSignature(options),
     },
     jobFamily: SCHEDULED_TASK_JOB_FAMILY,
     queueType: scheduledTaskQueueType(options.group),
@@ -174,12 +194,34 @@ export class ScheduledTasksService implements OnApplicationBootstrap {
     }
   }
 
-  /** Registers (or updates) one scheduler per task and removes this app's stale ones. */
+  /**
+   * Registers one scheduler per task, updating only those whose definition changed (see
+   * scheduledTaskSignature: a restart or a second replica must not touch running ticks), and
+   * removes this app's schedulers that are no longer defined.
+   */
   async registerSchedulers(): Promise<void> {
+    const existing = new Map(
+      (await this.queue.getJobSchedulers(0, -1)).map(scheduler => [scheduler.key, scheduler])
+    );
     const wanted = new Set<string>();
+    const updated: string[] = [];
     for (const { options } of this.tasks.values()) {
       const schedulerId = scheduledTaskSchedulerId(options.id);
       wanted.add(schedulerId);
+      const current = existing.get(schedulerId);
+      const currentSignature = (
+        current?.template?.data as Partial<ScheduledTaskEnvelope> | undefined
+      )?.data?.signature;
+      if (
+        current &&
+        current.name === options.id &&
+        current.pattern === options.pattern &&
+        current.tz === options.tz &&
+        currentSignature === scheduledTaskSignature(options)
+      ) {
+        continue;
+      }
+      updated.push(options.id);
       await this.queue.upsertJobScheduler(
         schedulerId,
         { pattern: options.pattern, tz: options.tz },
@@ -197,8 +239,7 @@ export class ScheduledTasksService implements OnApplicationBootstrap {
     }
 
     const removed: string[] = [];
-    for (const scheduler of await this.queue.getJobSchedulers(0, -1)) {
-      const schedulerId = scheduler.key;
+    for (const schedulerId of existing.keys()) {
       if (schedulerId.startsWith(SCHEDULED_TASK_SCHEDULER_PREFIX) && !wanted.has(schedulerId)) {
         await this.queue.removeJobScheduler(schedulerId);
         removed.push(schedulerId);
@@ -208,9 +249,9 @@ export class ScheduledTasksService implements OnApplicationBootstrap {
     void this.logging.log(
       LogType.QUEUE,
       LogLevel.INFO,
-      `Scheduled tasks registered: ${wanted.size}${removed.length ? `, removed ${removed.length}` : ''}`,
+      `Scheduled tasks: ${wanted.size} defined, ${updated.length} registered or updated${removed.length ? `, ${removed.length} removed` : ''}`,
       SOURCE,
-      { tasks: [...this.tasks.keys()], removed }
+      { tasks: [...this.tasks.keys()], updated, removed }
     );
   }
 

@@ -64,7 +64,17 @@ type FakeQueue = {
   getActive: jest.Mock;
 };
 
-function setup(options: { existingSchedulers?: string[]; active?: Partial<Job>[] } = {}): {
+type ExistingScheduler = {
+  key: string;
+  name?: string;
+  pattern?: string;
+  tz?: string;
+  template?: { data?: unknown };
+};
+
+function setup(
+  options: { existingSchedulers?: Array<string | ExistingScheduler>; active?: Partial<Job>[] } = {}
+): {
   service: ScheduledTasksService;
   jobs: SweepJobs;
   queue: FakeQueue;
@@ -80,7 +90,11 @@ function setup(options: { existingSchedulers?: string[]; active?: Partial<Job>[]
   } as unknown as DiscoveryService;
   const queue: FakeQueue = {
     upsertJobScheduler: jest.fn(async () => undefined),
-    getJobSchedulers: jest.fn(async () => (options.existingSchedulers ?? []).map(key => ({ key }))),
+    getJobSchedulers: jest.fn(async () =>
+      (options.existingSchedulers ?? []).map(entry =>
+        typeof entry === 'string' ? { key: entry } : entry
+      )
+    ),
     removeJobScheduler: jest.fn(async () => true),
     getActive: jest.fn(async () => options.active ?? []),
   };
@@ -144,6 +158,60 @@ describe('ScheduledTasksService', () => {
       call => call[0] === 'scheduled:test.sweep'
     );
     expect(sweepCall?.[2].opts).not.toHaveProperty('backoff');
+  });
+
+  it('leaves an unchanged scheduler alone, so a restart never swaps a running tick', async () => {
+    const daily = {
+      id: 'test.daily',
+      group: 'appointments' as const,
+      pattern: '0 7 * * *',
+      tz: 'Asia/Kolkata',
+      attempts: 3,
+    };
+    const { service, queue } = setup({
+      existingSchedulers: [
+        {
+          key: 'scheduled:test.daily',
+          name: 'test.daily',
+          pattern: '0 7 * * *',
+          tz: 'Asia/Kolkata',
+          template: { data: scheduledTaskEnvelope(daily) },
+        },
+      ],
+    });
+    await service.onApplicationBootstrap();
+
+    expect(queue.upsertJobScheduler).toHaveBeenCalledTimes(1);
+    expect(queue.upsertJobScheduler.mock.calls[0]?.[0]).toBe('scheduled:test.sweep');
+  });
+
+  it('re-registers a scheduler whose definition changed', async () => {
+    const { service, queue } = setup({
+      existingSchedulers: [
+        {
+          key: 'scheduled:test.daily',
+          name: 'test.daily',
+          pattern: '0 6 * * *',
+          tz: 'Asia/Kolkata',
+          template: {
+            data: scheduledTaskEnvelope({
+              id: 'test.daily',
+              group: 'appointments',
+              pattern: '0 6 * * *',
+              tz: 'Asia/Kolkata',
+              attempts: 3,
+            }),
+          },
+        },
+      ],
+    });
+    await service.onApplicationBootstrap();
+
+    expect(queue.upsertJobScheduler).toHaveBeenCalledWith(
+      'scheduled:test.daily',
+      { pattern: '0 7 * * *', tz: 'Asia/Kolkata' },
+      expect.any(Object)
+    );
   });
 
   it("removes this app's stale schedulers and leaves others alone", async () => {
