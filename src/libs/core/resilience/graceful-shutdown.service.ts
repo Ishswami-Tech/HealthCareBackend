@@ -5,6 +5,7 @@ import { DatabaseService } from '@infrastructure/database/database.service';
 import type { RedisClient } from '@core/types/common.types';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { createFrameworkAdapter } from '@infrastructure/framework/adapters/fastify.adapter';
+import { describeProcessWarning } from '@core/resilience/process-warning.util';
 
 /**
  * Graceful Shutdown Service
@@ -200,6 +201,18 @@ export class ProcessErrorHandlersService {
         }
         process.exit(1);
       })();
+    });
+
+    // Node prints warnings without a stack or request; log both so their source can be found.
+    process.on('warning', (warning: Error) => {
+      try {
+        const { message, metadata } = describeProcessWarning(warning);
+        void this.loggingService
+          ?.log(LogType.SYSTEM, LogLevel.WARN, message, 'Process', metadata)
+          .catch(() => undefined);
+      } catch {
+        // Never let warning logging itself fail the process.
+      }
     });
 
     // Enhanced error handling for unhandled rejections
