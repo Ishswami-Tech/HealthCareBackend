@@ -14,7 +14,8 @@
  * and expires just before the next tick). None of it touches the API request path.
  */
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { CronExpression } from '@nestjs/schedule';
+import { ClusterCron } from '@core/decorators/cluster-cron.decorator';
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -69,19 +70,19 @@ export class InPersonQueueMaintenanceService {
 
   // ------------------------------------------------------------------ crons
 
-  @Cron(CronExpression.EVERY_5_MINUTES)
+  @ClusterCron(CronExpression.EVERY_5_MINUTES)
   async reconcileLiveQueuesCron(): Promise<void> {
     if (!(await this.acquire(QUEUE_MAINTENANCE_LOCKS.reconcile))) return;
     await this.reconcileLiveQueues();
   }
 
-  @Cron('15 3 * * *')
+  @ClusterCron('15 3 * * *')
   async cleanupTokenCountersCron(): Promise<void> {
     if (!(await this.acquire(QUEUE_MAINTENANCE_LOCKS.counters))) return;
     await this.cleanupTokenCounters();
   }
 
-  @Cron(CronExpression.EVERY_MINUTE)
+  @ClusterCron(CronExpression.EVERY_MINUTE)
   async notifyQueuePositionsCron(): Promise<void> {
     if (!(await this.acquire(QUEUE_MAINTENANCE_LOCKS.notify))) return;
     await this.notifyQueuePositions();

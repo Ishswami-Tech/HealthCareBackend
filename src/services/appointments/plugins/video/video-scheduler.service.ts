@@ -1,5 +1,6 @@
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { ClusterCron } from '@core/decorators/cluster-cron.decorator';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { ConfigService } from '@config/config.service';
@@ -113,7 +114,7 @@ export class VideoAppointmentSchedulerService {
   // ─────────────────────────────────────────────────────────────
 
   /** Check for doctor no-shows: sessions that never started */
-  @Cron(CronExpression.EVERY_MINUTE)
+  @ClusterCron(CronExpression.EVERY_MINUTE)
   async handleDoctorNoShows(): Promise<void> {
     try {
       if (!this.configService.isVideoNoShowEnabled()) {
@@ -171,7 +172,7 @@ export class VideoAppointmentSchedulerService {
   }
 
   /** Check for patient no-shows: active sessions where patient never joined */
-  @Cron(CronExpression.EVERY_MINUTE)
+  @ClusterCron(CronExpression.EVERY_MINUTE)
   async handlePatientNoShows(): Promise<void> {
     try {
       if (!this.configService.isVideoNoShowEnabled()) {
@@ -265,7 +266,7 @@ export class VideoAppointmentSchedulerService {
    */
   private static readonly EXPIRY_BATCH_SIZE = 200;
 
-  @Cron(CronExpression.EVERY_MINUTE)
+  @ClusterCron(CronExpression.EVERY_MINUTE)
   async handleExpiredConfirmedVideoAppointments(): Promise<void> {
     try {
       const now = new Date();
@@ -530,7 +531,7 @@ export class VideoAppointmentSchedulerService {
   /**
    * Expire pending video appointment proposals that have passed their deadline.
    */
-  @Cron(CronExpression.EVERY_10_MINUTES)
+  @ClusterCron(CronExpression.EVERY_10_MINUTES)
   async handleExpiredProposals(): Promise<void> {
     // Placeholder for future implementation
   }
@@ -634,7 +635,7 @@ export class VideoAppointmentSchedulerService {
    * AppointmentsService.updateStatus so all status-transition side-effects
    * (events, notifications, audit) fire normally.
    */
-  @Cron(CronExpression.EVERY_MINUTE)
+  @ClusterCron(CronExpression.EVERY_MINUTE)
   async handleExpiredPaymentWindows(): Promise<void> {
     try {
       const now = new Date();

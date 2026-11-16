@@ -12,7 +12,8 @@
  */
 
 import { Injectable } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { CronExpression } from '@nestjs/schedule';
+import { ClusterCron } from '@core/decorators/cluster-cron.decorator';
 import { BillingService } from '@services/billing/billing.service';
 
 @Injectable()
@@ -20,31 +21,31 @@ export class BillingSchedulerService {
   constructor(private readonly billing: BillingService) {}
 
   /** Marks expired active subscriptions as PAST_DUE. */
-  @Cron(CronExpression.EVERY_HOUR)
+  @ClusterCron(CronExpression.EVERY_HOUR)
   async handleExpiredSubscriptionsCron(): Promise<void> {
     await this.billing.checkExpiredSubscriptions();
   }
 
   /** Repairs payments stuck between the claim and their side effects. */
-  @Cron(CronExpression.EVERY_10_MINUTES)
+  @ClusterCron(CronExpression.EVERY_10_MINUTES)
   async handleStalledPaymentFinalisationsCron(): Promise<void> {
     await this.billing.repairStalledPaymentFinalisations();
   }
 
   /** Confirms bookings whose payment succeeded at the gateway but never reached us. */
-  @Cron(CronExpression.EVERY_5_MINUTES)
+  @ClusterCron(CronExpression.EVERY_5_MINUTES)
   async handleStalePendingPaymentsCron(): Promise<void> {
     await this.billing.reconcileStalePendingPayments();
   }
 
   /** Payment-window sweep: expires (or finalises) checkout attempts past their window. */
-  @Cron(CronExpression.EVERY_MINUTE)
+  @ClusterCron(CronExpression.EVERY_MINUTE)
   async handleUnpaidCheckoutsCron(): Promise<void> {
     await this.billing.expireUnpaidCheckouts();
   }
 
   /** Reconciles legacy paid appointments still stuck in SCHEDULED. */
-  @Cron(CronExpression.EVERY_HOUR)
+  @ClusterCron(CronExpression.EVERY_HOUR)
   async handleLegacyPaidAppointmentsCron(): Promise<void> {
     await this.billing.reconcileLegacyPaidAppointments();
   }

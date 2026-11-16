@@ -67,6 +67,7 @@ import { AppointmentsModule } from '@services/appointments/appointments.module';
 import { BillingModule } from '@services/billing/billing.module';
 import { VideoModule } from '@services/video/video.module';
 import { TopologyHeartbeatService } from '@services/health/topology-heartbeat.service';
+import { ClusterCronLockInitializer } from '@infrastructure/cache/cluster-cron-lock.initializer';
 
 @Module({
   imports: [
@@ -105,7 +106,8 @@ import { TopologyHeartbeatService } from '@services/health/topology-heartbeat.se
   ],
   // Reports this worker replica into the live deployment-topology registry
   // (dashboard's "Cluster & Node Information" panel) — same mechanism the API uses.
-  providers: [TopologyHeartbeatService],
+  // ClusterCronLockInitializer: every @ClusterCron tick runs on one worker replica.
+  providers: [TopologyHeartbeatService, ClusterCronLockInitializer],
   // GET /health: the same heartbeat verdict as the container healthcheck, over HTTP.
   controllers: [WorkerHealthController],
   exports: [],

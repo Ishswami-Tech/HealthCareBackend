@@ -1,5 +1,5 @@
 import { Injectable, OnModuleInit, Optional, Inject, forwardRef } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
+import { ClusterCron } from '@core/decorators/cluster-cron.decorator';
 // IMPORTANT: avoid importing from the @config barrel in infra boot code (SWC TDZ/cycles).
 import { ConfigService } from '@config/config.service';
 import type { CacheService } from '@infrastructure/cache/cache.service';
@@ -65,7 +65,7 @@ export class CacheWarmingService implements OnModuleInit {
    * Warm popular caches every 3 hours (increased frequency for better hit rates)
    * Runs at: 00:03,06,09,12,15,18,21 hours
    */
-  @Cron('0 */3 * * *', {
+  @ClusterCron('0 */3 * * *', {
     name: 'warm-popular-caches',
     timeZone: 'UTC',
   })
@@ -186,7 +186,7 @@ export class CacheWarmingService implements OnModuleInit {
    * Warm doctor schedules for next 7 days
    * Runs daily at 2 AM UTC
    */
-  @Cron('0 2 * * *', {
+  @ClusterCron('0 2 * * *', {
     name: 'warm-doctor-schedules',
     timeZone: 'UTC',
   })

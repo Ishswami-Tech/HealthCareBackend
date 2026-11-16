@@ -14,6 +14,7 @@
 
 import { Injectable } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { ClusterCron } from '@core/decorators/cluster-cron.decorator';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogLevel, LogType } from '@core/types';
@@ -34,17 +35,17 @@ export class AppointmentsSchedulerService {
     private readonly loggingService: LoggingService
   ) {}
 
-  @Cron(CronExpression.EVERY_DAY_AT_3AM)
+  @ClusterCron(CronExpression.EVERY_DAY_AT_3AM)
   async handleNoShowCancellationCron(): Promise<void> {
     await this.appointments.processNoShowCancellations();
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_7AM, { timeZone: IST_TIMEZONE })
+  @ClusterCron(CronExpression.EVERY_DAY_AT_7AM, { timeZone: IST_TIMEZONE })
   async handleDoctorDailyAppointmentSummaryCron(): Promise<void> {
     await this.appointments.triggerDoctorDailySummary({ triggeredBy: 'cron' });
   }
 
-  @Cron(CronExpression.EVERY_HOUR)
+  @ClusterCron(CronExpression.EVERY_HOUR)
   async handleExpiredVideoSlotConfirmationCron(): Promise<void> {
     await this.appointments.processExpiredVideoSlotConfirmations();
   }
