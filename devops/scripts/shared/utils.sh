@@ -637,9 +637,18 @@ sanitize_filename() {
 
 # S3 helper functions (using rclone as primary, s3cmd as fallback for Contabo S3)
 # Contabo recommends rclone: https://help.contabo.com/en/support/solutions/articles/103000305592-what-is-the-rclone-tool-
+# Seconds one S3 upload may take before it is abandoned. Contabo S3 can accept connections and then
+# barely move data; without a limit an upload hung until the CI job's 20-minute cap killed the
+# whole pre-deploy backup (2026-11-16).
+S3_UPLOAD_TIMEOUT_SECONDS="${S3_UPLOAD_TIMEOUT_SECONDS:-150}"
+# Set by the uploaders when the last attempt hit S3_UPLOAD_TIMEOUT_SECONDS (S3 is slow or
+# unreachable: falling back to another tool or retrying would only wait again).
+S3_LAST_UPLOAD_TIMED_OUT=0
+
 s3_upload() {
     local local_file="$1"
     local s3_path="$2"
+    S3_LAST_UPLOAD_TIMED_OUT=0
     
     # Security: Validate S3 path before use
     if ! validate_s3_path "$s3_path"; then
@@ -661,6 +670,9 @@ s3_upload() {
     # Try rclone first (Contabo's recommended tool)
     if command_exists rclone; then
         _s3_upload_rclone "$local_file" "$s3_path" && return 0
+        if [[ "$S3_LAST_UPLOAD_TIMED_OUT" == "1" ]]; then
+            return 1  # S3 itself is slow/unreachable: s3cmd would only wait again
+        fi
         log_warning "rclone upload failed, trying s3cmd fallback..."
     fi
     
@@ -708,13 +720,21 @@ EOF
     
     log_info "Uploading ${local_file} to ${remote_name}:${S3_BUCKET}/${s3_path} using rclone..."
     
-    # Use rclone to upload (Contabo S3 compatible)
-    if rclone copy "$local_file" "${remote_name}:${S3_BUCKET}/${s3_path}" \
+    # Use rclone to upload (Contabo S3 compatible), bounded by S3_UPLOAD_TIMEOUT_SECONDS
+    local rc=0
+    timeout "$S3_UPLOAD_TIMEOUT_SECONDS" rclone copy "$local_file" "${remote_name}:${S3_BUCKET}/${s3_path}" \
         --s3-no-head \
         --s3-no-head-object \
-        --quiet; then
+        --contimeout 30s \
+        --timeout 60s \
+        --quiet || rc=$?
+    if [[ "$rc" -eq 0 ]]; then
         log_success "Uploaded to S3 using rclone: ${s3_path}"
         return 0
+    elif [[ "$rc" -eq 124 ]]; then
+        S3_LAST_UPLOAD_TIMED_OUT=1
+        log_error "S3 upload timed out after ${S3_UPLOAD_TIMEOUT_SECONDS}s (rclone): ${s3_path}"
+        return 1
     else
         log_error "Failed to upload to S3 using rclone: ${s3_path}"
         return 1
@@ -756,13 +776,19 @@ EOF
     
     log_info "Uploading ${local_file} to s3://${S3_BUCKET}/${s3_path} using s3cmd..."
     
-    # Use s3cmd to upload (Contabo S3 compatible)
-    if s3cmd put "$local_file" "s3://${S3_BUCKET}/${s3_path}" \
+    # Use s3cmd to upload (Contabo S3 compatible), bounded by S3_UPLOAD_TIMEOUT_SECONDS
+    local rc=0
+    timeout "$S3_UPLOAD_TIMEOUT_SECONDS" s3cmd put "$local_file" "s3://${S3_BUCKET}/${s3_path}" \
         --no-mime-magic \
         --guess-mime-type \
-        --quiet; then
+        --quiet || rc=$?
+    if [[ "$rc" -eq 0 ]]; then
         log_success "Uploaded to S3 using s3cmd: ${s3_path}"
         return 0
+    elif [[ "$rc" -eq 124 ]]; then
+        S3_LAST_UPLOAD_TIMED_OUT=1
+        log_error "S3 upload timed out after ${S3_UPLOAD_TIMEOUT_SECONDS}s (s3cmd): ${s3_path}"
+        return 1
     else
         log_error "Failed to upload to S3 using s3cmd: ${s3_path}"
         return 1
@@ -1010,6 +1036,10 @@ s3_upload_with_retry() {
         if s3_upload "$file" "$s3_path"; then
             return 0
         fi
+        if [[ "$S3_LAST_UPLOAD_TIMED_OUT" == "1" ]]; then
+            log_warning "S3 is not responding (upload timed out); not retrying now: ${s3_path}"
+            break
+        fi
         
         if [[ $i -lt $max_retries ]]; then
             log_warning "S3 upload failed (attempt $i/$max_retries), retrying in ${retry_delay}s..."
@@ -1031,7 +1061,7 @@ s3_upload_with_retry() {
     
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|$file|$s3_path" >> "$failed_uploads_log" 2>/dev/null || true
     
-    log_error "S3 upload failed after $max_retries attempts"
+    log_error "S3 upload failed (queued for 'backup.sh retry'): ${s3_path}"
     send_alert "WARNING" "S3 upload failed for: $s3_path"
     return 1
 }

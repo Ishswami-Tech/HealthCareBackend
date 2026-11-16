@@ -53,16 +53,23 @@ BACKUP_RESULTS[env_s3]="failed"
 # Result metrics and statuses for modern backup sequence
 # BACKUP_RESULTS is declared as an associative array at the top
 
-# Create combined metadata (only for fully successful backups: Postgres local + S3)
+# Create combined metadata. A backup counts as successful when the local Postgres dump succeeded:
+# that dump is what a deploy needs to be able to roll back to. The S3 copy is off-site redundancy;
+# when S3 is slow or down the copy is queued for `backup.sh retry` and the backup still counts
+# (it used to fail AND delete the good local dump, which blocked every deploy while Contabo S3 was
+# stalled on 2026-11-16).
 create_metadata() {
     local postgres_meta="${BACKUP_DIR}/metadata/postgres-${TIMESTAMP}.json"
     local dragonfly_meta="${BACKUP_DIR}/metadata/dragonfly-${TIMESTAMP}.json"
     local postgres_s3_status="${BACKUP_RESULTS[postgres_s3]:-failed}"
 
-    # Only successful backups: require Postgres S3 upload to have succeeded
-    if [[ "$postgres_s3_status" != "success" ]]; then
-        log_error "Backup not fully successful (Postgres S3 upload failed) - not creating metadata"
+    if [[ "${BACKUP_RESULTS[postgres_local]:-failed}" != "success" ]]; then
+        log_error "Backup not successful (local PostgreSQL dump failed) - not creating metadata"
         return 1
+    fi
+    if [[ "$postgres_s3_status" != "success" ]]; then
+        log_warning "PostgreSQL dump kept locally only: the S3 copy failed and is queued for 'backup.sh retry'"
+        send_alert "WARNING" "Backup ${BACKUP_ID}: PostgreSQL S3 copy failed; local dump kept, queued for retry"
     fi
 
     if [[ ! -f "$postgres_meta" ]]; then
@@ -101,9 +108,8 @@ EOF
     chmod 600 "$METADATA_FILE"
 
     local s3_meta_path="backups/metadata/${BACKUP_ID}.json"
-    if ! s3_upload "$METADATA_FILE" "$s3_meta_path"; then
-        log_error "Failed to upload metadata to S3 - backup not registered as success"
-        return 1
+    if ! s3_upload_with_retry "$METADATA_FILE" "$s3_meta_path" 1 0; then
+        log_warning "Metadata kept locally only: the S3 copy failed and is queued for 'backup.sh retry'"
     fi
     log_success "Backup metadata created: ${METADATA_FILE}"
     return 0
@@ -354,7 +360,7 @@ main_backup() {
         log_warning "Environment/config backup failed (non-critical)"
     fi
     
-    # Create metadata only for successful backups (Postgres local + S3, metadata uploaded)
+    # Create metadata for successful backups (the local Postgres dump succeeded; S3 is best-effort)
     if ! create_metadata; then
         log_error "Backup not fully successful - not registering (only successful backups are kept)"
         # Remove partial/failed backup artifacts so we don't retain failed backups
