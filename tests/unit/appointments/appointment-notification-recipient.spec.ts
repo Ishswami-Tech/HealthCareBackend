@@ -3,22 +3,34 @@
  * Appointment notifications took their recipient from the event's userId first, which is whoever
  * acted. On 2026-11-16 a cron expired a booking with userId 'system': "Patient notification
  * recipient could not be resolved" and the patient was never told. A doctor confirming or
- * completing a visit made the doctor the "patient". The appointment row now decides.
+ * completing a visit made the doctor the "patient". The appointment row now decides, as the
+ * patient's USER id: the socket channel addresses `user:<id>` rooms directly.
  */
 
 import {
   AppointmentNotificationService,
-  appointmentPatientId,
+  appointmentPatientUserId,
 } from '@services/appointments/plugins/notifications/appointment-notification.service';
 import type { NotificationData } from '@core/types';
 
 type Deps = ConstructorParameters<typeof AppointmentNotificationService>;
 
-function serviceWithAppointment(row: unknown, fail = false): AppointmentNotificationService {
+type Row = { id: string; patientId: string; patient?: { userId?: string; user?: { id: string } } };
+
+const row = (patient?: Row['patient']): Row => ({
+  id: 'appt-1',
+  patientId: 'patient-42',
+  ...(patient && { patient }),
+});
+
+function serviceWithAppointment(
+  appointment: Row | null,
+  fail = false
+): AppointmentNotificationService {
   const databaseService = {
     findAppointmentByIdSafe: jest.fn(async () => {
       if (fail) throw new Error('db down');
-      return row;
+      return appointment;
     }),
   };
   const loggingService = { log: jest.fn(async () => undefined) };
@@ -55,19 +67,27 @@ const event = (patientId: string): NotificationData =>
   }) as unknown as NotificationData;
 
 describe('appointment notification recipient', () => {
-  it('notifies the appointment patient when a cron acted as "system"', async () => {
-    const service = serviceWithAppointment({ id: 'appt-1', patientId: 'patient-42' });
+  it("notifies the patient's user when a cron acted as 'system'", async () => {
+    const service = serviceWithAppointment(row({ userId: 'patient-user-42' }));
 
     await expect(withFacts(service, event('system'))).resolves.toEqual(
-      expect.objectContaining({ patientId: 'patient-42' })
+      expect.objectContaining({ patientId: 'patient-user-42' })
     );
   });
 
-  it('notifies the patient, not the doctor who confirmed the visit', async () => {
-    const service = serviceWithAppointment({ id: 'appt-1', patientId: 'patient-42' });
+  it("notifies the patient's user, not the doctor who confirmed the visit", async () => {
+    const service = serviceWithAppointment(row({ user: { id: 'patient-user-42' } }));
 
     await expect(withFacts(service, event('doctor-user-7'))).resolves.toEqual(
-      expect.objectContaining({ patientId: 'patient-42' })
+      expect.objectContaining({ patientId: 'patient-user-42' })
+    );
+  });
+
+  it('never swaps in the Patient.id, which no socket room is named after', async () => {
+    const service = serviceWithAppointment(row());
+
+    await expect(withFacts(service, event('patient-user-1'))).resolves.toEqual(
+      expect.objectContaining({ patientId: 'patient-user-1' })
     );
   });
 
@@ -83,10 +103,12 @@ describe('appointment notification recipient', () => {
     );
   });
 
-  it('reads only a real patientId from the row', () => {
-    expect(appointmentPatientId({ patientId: 'p-1' })).toBe('p-1');
-    expect(appointmentPatientId({ patientId: '  ' })).toBeUndefined();
-    expect(appointmentPatientId({ patientId: 7 })).toBeUndefined();
-    expect(appointmentPatientId(null)).toBeUndefined();
+  it("reads the patient's user id from the row, or nothing", () => {
+    type Arg = Parameters<typeof appointmentPatientUserId>[0];
+    expect(appointmentPatientUserId({ patient: { userId: 'u-1' } } as Arg)).toBe('u-1');
+    expect(appointmentPatientUserId({ patient: { user: { id: 'u-2' } } } as Arg)).toBe('u-2');
+    expect(appointmentPatientUserId({ patient: { userId: '  ' } } as Arg)).toBeUndefined();
+    expect(appointmentPatientUserId({ patient: null } as Arg)).toBeUndefined();
+    expect(appointmentPatientUserId(null)).toBeUndefined();
   });
 });

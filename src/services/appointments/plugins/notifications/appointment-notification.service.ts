@@ -38,6 +38,7 @@ import type {
   NotificationResult,
   NotificationTemplate,
 } from '@core/types/appointment.types';
+import type { AppointmentWithRelations } from '@core/types/database.types';
 // Re-export types for backward compatibility
 export type { NotificationData, NotificationResult, NotificationTemplate };
 
@@ -111,10 +112,17 @@ function resolveServiceLabel(templateData: unknown): string {
   return appointmentType || 'Appointment';
 }
 
-/** The appointment row's own patientId, when the row was found and has one. */
-export function appointmentPatientId(appointment: unknown): string | undefined {
-  const patientId = (appointment as { patientId?: unknown } | null | undefined)?.patientId;
-  return typeof patientId === 'string' && patientId.trim() ? patientId : undefined;
+/**
+ * The user account of the appointment's patient. Every channel addresses the patient by user id
+ * (socket room `user:<id>`, email, WhatsApp, push), so this is the id the notice must carry; the
+ * row's own patientId is a Patient.id that the socket room would not match.
+ */
+export function appointmentPatientUserId(
+  appointment: Pick<AppointmentWithRelations, 'patient'> | null | undefined
+): string | undefined {
+  const patient = appointment?.patient;
+  const userId = patient?.userId || patient?.user?.id;
+  return userId && userId.trim() ? userId : undefined;
 }
 
 @Injectable()
@@ -794,10 +802,10 @@ export class AppointmentNotificationService {
       const appointment = await this.databaseService.findAppointmentByIdSafe(data.appointmentId);
       return {
         ...data,
-        // The recipient is the appointment's patient. Producers pass the event's userId first,
-        // which is whoever acted: 'system' for a cron expiry (no one notified) or the doctor who
-        // confirmed or completed the visit (the patient's notice sent to the doctor).
-        patientId: appointmentPatientId(appointment) ?? data.patientId,
+        // The recipient is the appointment's patient (as a user id). Producers used to pass the
+        // event's userId, which is whoever acted: 'system' for a cron expiry (no one notified)
+        // or the doctor who confirmed or completed the visit (the patient's notice to the doctor).
+        patientId: appointmentPatientUserId(appointment) ?? data.patientId,
         templateData: mergeAppointmentFacts(data.templateData, appointment, {
           // A follow-up notice names the future follow-up date; its appointmentId is the visit
           // it follows, whose date and time must not replace it.

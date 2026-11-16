@@ -2131,17 +2131,20 @@ export class NotificationEventListener implements OnModuleInit {
     // without also duplicating flat ids at the top level. Falling back to the
     // patient/doctor/clinic records already parsed above (instead of giving up
     // and skipping the notification) is what those callers actually need.
+    // Patient fields first: the envelope's userId is whoever ACTED ('system' for a cron, the
+    // doctor who confirmed or completed the visit), so it is only a last resort for producers
+    // that send nothing else (a patient acting on their own booking).
     const patientId =
-      payload.userId ||
-      (payload.metadata?.['patientId'] as string | undefined) ||
-      (payload.metadata?.['userId'] as string | undefined) ||
-      (eventPayload['patientId'] as string | undefined) ||
-      (eventPayload['userId'] as string | undefined) ||
-      (nestedPayload['patientId'] as string | undefined) ||
-      (nestedPayload['userId'] as string | undefined) ||
       (patientRecord?.['userId'] as string | undefined) ||
       (patientUserRecord?.['id'] as string | undefined) ||
-      (patientRecord?.['id'] as string | undefined);
+      (payload.metadata?.['patientId'] as string | undefined) ||
+      (eventPayload['patientId'] as string | undefined) ||
+      (nestedPayload['patientId'] as string | undefined) ||
+      (patientRecord?.['id'] as string | undefined) ||
+      payload.userId ||
+      (payload.metadata?.['userId'] as string | undefined) ||
+      (eventPayload['userId'] as string | undefined) ||
+      (nestedPayload['userId'] as string | undefined);
     const doctorId =
       (payload.metadata?.['doctorId'] as string | undefined) ||
       (eventPayload['doctorId'] as string | undefined) ||
