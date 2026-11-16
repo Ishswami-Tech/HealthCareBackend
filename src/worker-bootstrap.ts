@@ -30,9 +30,6 @@ import { EventsModule } from '@infrastructure/events/events.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ErrorsModule } from '@core/errors';
 import { CommunicationModule } from '@communication/communication.module';
-import { ScheduleModule } from '@nestjs/schedule';
-import { DiscoveryService } from '@nestjs/core';
-import { SCHEDULER_TYPE_METADATA_KEY, findDuplicateSchedulers } from '@utils/scheduler-alias.util';
 import { createFrameworkAdapter } from '@infrastructure/framework/adapters/fastify.adapter';
 import { ApplicationLifecycleManager } from '@infrastructure/framework/wrappers/application-lifecycle.manager';
 import { BullBoardModule } from '@infrastructure/queue/src/bull-board/bull-board.module';
@@ -54,20 +51,14 @@ import {
 import type { Worker } from 'bullmq';
 
 /**
- * Service modules that own @Cron jobs.
- * On the worker these register schedulers; on the API the same modules
- * are loaded as plain providers (no ScheduleModule → @Cron is a no-op).
- *
- * AppointmentsModule: 4 crons (3 AM, 7 AM, 2× hourly)
- * BillingModule: 2 crons (hourly)
- * VideoModule: 5 crons (4× every minute, every 10 min)
- * CacheWarmingService (via CacheModule.forRoot when not worker): 2 crons
+ * Service modules that own @ScheduledTask jobs. On the worker, ScheduledTasksService (QueueModule)
+ * discovers them, registers one BullMQ job scheduler per task on healthcare-queue and runs each
+ * tick as a queue job; on the API the same modules are plain providers.
  */
 import { AppointmentsModule } from '@services/appointments/appointments.module';
 import { BillingModule } from '@services/billing/billing.module';
 import { VideoModule } from '@services/video/video.module';
 import { TopologyHeartbeatService } from '@services/health/topology-heartbeat.service';
-import { ClusterCronLockInitializer } from '@infrastructure/cache/cluster-cron-lock.initializer';
 
 @Module({
   imports: [
@@ -85,7 +76,6 @@ import { ClusterCronLockInitializer } from '@infrastructure/cache/cluster-cron-l
     DatabaseModule,
     LoggingModule,
     ErrorsModule,
-    ScheduleModule.forRoot(), // ONLY on worker — owns all cron execution
     forwardRef(() => {
       const CacheModuleRef = CacheModule as unknown as {
         forRoot: () => DynamicModule;
@@ -106,8 +96,7 @@ import { ClusterCronLockInitializer } from '@infrastructure/cache/cluster-cron-l
   ],
   // Reports this worker replica into the live deployment-topology registry
   // (dashboard's "Cluster & Node Information" panel) — same mechanism the API uses.
-  // ClusterCronLockInitializer: every @ClusterCron tick runs on one worker replica.
-  providers: [TopologyHeartbeatService, ClusterCronLockInitializer],
+  providers: [TopologyHeartbeatService],
   // GET /health: the same heartbeat verdict as the container healthcheck, over HTTP.
   controllers: [WorkerHealthController],
   exports: [],
@@ -202,29 +191,6 @@ async function bootstrap() {
           serviceName: configService.get<string>('SERVICE_NAME', 'clinic'),
         }
       );
-
-      // A scheduled class that is also registered under an alias (`useExisting`) gets every job
-      // registered twice by @nestjs/schedule: each tick runs twice. Say so at boot.
-      try {
-        const duplicates = findDuplicateSchedulers(
-          app.get(DiscoveryService, { strict: false }).getProviders(),
-          fn =>
-            typeof fn === 'function'
-              ? Reflect.getMetadata(SCHEDULER_TYPE_METADATA_KEY, fn as object)
-              : undefined
-        );
-        for (const duplicate of duplicates) {
-          void logService.log(
-            LogType.SYSTEM,
-            LogLevel.WARN,
-            `Scheduled jobs of ${duplicate.className} are registered ${duplicate.registrations} times (alias provider): each tick runs ${duplicate.registrations}x. Move the @Cron methods to a class without an alias.`,
-            'WorkerBootstrap',
-            { className: duplicate.className, methods: duplicate.methods }
-          );
-        }
-      } catch {
-        // Discovery unavailable: the check is diagnostic only.
-      }
 
       void logService.log(
         LogType.SYSTEM,

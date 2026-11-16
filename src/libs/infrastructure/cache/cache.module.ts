@@ -72,7 +72,6 @@ import { RedisModule } from '@infrastructure/cache/redis/redis.module';
 // Dragonfly Module
 import { DragonflyModule } from '@infrastructure/cache/dragonfly/dragonfly.module';
 // Schedule Module for cron jobs (only needed for CacheWarmingService, not in worker)
-import { ScheduleModule } from '@nestjs/schedule';
 // Queue Module for cache warming jobs (QueueService is @Global() from QueueModule)
 // Logging Module - explicitly import to ensure LOGGING_SERVICE token is available
 import { LoggingModule } from '@infrastructure/logging/logging.module';
@@ -86,8 +85,8 @@ import { LoggingModule } from '@infrastructure/logging/logging.module';
  * When using one provider, the other module still needs to be available but won't be used.
  * This is acceptable as both providers can coexist.
  *
- * IMPORTANT: CacheWarmingService uses @Cron decorators and requires ScheduleModule.
- * This should only run in the API service, not in the worker service.
+ * CacheWarmingService is provided on the API only (not the worker). Its two @ScheduledTask jobs
+ * therefore have no runner and are not scheduled: scheduled tasks run only on the worker.
  * Worker service only needs CacheService for queue processing.
  */
 @Global()
@@ -112,11 +111,6 @@ export class CacheModule {
       // DatabaseModule is @Global() but needs forwardRef due to circular dependency with ConfigModule
       forwardRef(() => DatabaseModule),
     ];
-
-    // Only include ScheduleModule and CacheWarmingService in non-worker services
-    if (!isWorker) {
-      baseImports.push(ScheduleModule); // For cron jobs in CacheWarmingService
-    }
 
     const baseProviders: Provider[] = [
       // Core Services

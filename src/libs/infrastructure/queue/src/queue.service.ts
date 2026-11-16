@@ -45,6 +45,12 @@ import {
   QUEUE_METRICS_CONFIG,
   WORKER_LIFECYCLE,
 } from './queue.constants';
+import {
+  SCHEDULED_TASK_GROUPS,
+  scheduledTaskQueueType,
+  type ScheduledTaskGroup,
+} from '@core/decorators/scheduled-task.decorator';
+import { SCHEDULED_TASK_JOB_FAMILY } from '@infrastructure/queue/src/scheduled/scheduled-tasks.constants';
 import { closeWorkersGracefully } from './worker-lifecycle/close-workers.util';
 
 // Internal imports - Types
@@ -331,6 +337,28 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
           description: 'Generic service queue jobs',
           aliases: ['service-queue'],
         },
+      ],
+    },
+    {
+      key: SCHEDULED_TASK_JOB_FAMILY,
+      label: 'Scheduled Tasks',
+      description:
+        'Recurring background jobs the worker runs on a schedule (BullMQ job schedulers): one run per tick.',
+      filters: [
+        {
+          value: JobType.SCHEDULED_TASK,
+          label: 'All Scheduled Tasks',
+          description: 'Every run of every scheduled task',
+        },
+        ...(
+          Object.entries(SCHEDULED_TASK_GROUPS) as Array<
+            [ScheduledTaskGroup, (typeof SCHEDULED_TASK_GROUPS)[ScheduledTaskGroup]]
+          >
+        ).map(([group, meta]) => ({
+          value: scheduledTaskQueueType(group),
+          label: meta.label,
+          description: meta.description,
+        })),
       ],
     },
   ] as const;
@@ -987,6 +1015,13 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
 
   private getQueueJobFamily(jobType: string, data: Record<string, unknown> = {}): string {
     const normalizedJobType = jobType.trim().toLowerCase();
+    // Scheduled runs first: a billing sweep belongs under Scheduled Tasks, not Billing.
+    if (
+      normalizedJobType === String(JobType.SCHEDULED_TASK) ||
+      this.recordString(data, 'jobFamily') === SCHEDULED_TASK_JOB_FAMILY
+    ) {
+      return SCHEDULED_TASK_JOB_FAMILY;
+    }
     const normalizedQueueType = this.pick(
       this.recordString(data, 'queueType'),
       this.recordString(data, 'queueCategory'),

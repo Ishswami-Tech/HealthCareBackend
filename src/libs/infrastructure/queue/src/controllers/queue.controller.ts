@@ -41,6 +41,7 @@ import type {
 import { QueueService } from '../queue.service';
 import { HEALTHCARE_QUEUE, NOTIFICATION_JOB_RETENTION } from '../queue.constants';
 import { JobType } from '@core/types/queue.types';
+import { SCHEDULED_TASK_JOB_FAMILY } from '@infrastructure/queue/src/scheduled/scheduled-tasks.constants';
 import type { DetailedQueueMetrics } from '@core/types/queue.types';
 import { AppointmentQueueService } from '../services/appointment-queue.service';
 import { supportsRawSql } from '../services/location-token.allocator';
@@ -1728,6 +1729,14 @@ export class QueueController {
   private queueFamilyFromJobType(jobType?: string, queueType?: string): string {
     const normalizedJobType = this.normalizeQueueFilterToken(jobType);
     const normalizedQueueType = this.normalizeQueueFilterToken(queueType);
+
+    // Scheduled runs first: a billing sweep belongs under Scheduled Tasks, not Billing.
+    if (
+      normalizedJobType === String(JobType.SCHEDULED_TASK) ||
+      normalizedQueueType.startsWith('scheduled_')
+    ) {
+      return SCHEDULED_TASK_JOB_FAMILY;
+    }
 
     if (
       normalizedJobType.includes('payment') ||

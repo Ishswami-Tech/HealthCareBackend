@@ -40,6 +40,11 @@ import type { InvoicePDFData } from '@core/types/billing.types';
 import type { EmailContext } from '@core/types';
 import type { PaymentProvider } from '@core/types/payment.types';
 import { getVideoConsultationDelegate } from '@core/types/video-database.types';
+import {
+  ScheduledTasksService,
+  type ScheduledTaskEnvelope,
+  type ScheduledTaskRunResult,
+} from '@infrastructure/queue/src/scheduled/scheduled-tasks.service';
 import { formatDateInIST, formatDateKeyInIST, nowIso } from '../../../utils/date-time.util';
 
 // Import InvoicePDFService type (using forwardRef to avoid circular dependency)
@@ -143,6 +148,28 @@ export class QueueProcessor {
    *  since a missed upload-completion notification is far less harmful than a failed job. */
   private getEventService(): IEventService | null {
     return isEventService(this.eventServiceRaw) ? this.eventServiceRaw : null;
+  }
+
+  /** A tick of a @ScheduledTask: run by ScheduledTasksService (registered on the worker). */
+  private async processScheduledTask(
+    job: Job<CanonicalJobEnvelope>
+  ): Promise<ScheduledTaskRunResult> {
+    let runner: ScheduledTasksService | null;
+    try {
+      runner = this.moduleRef?.get(ScheduledTasksService, { strict: false }) ?? null;
+    } catch {
+      runner = null;
+    }
+    if (!runner) {
+      throw new HealthcareError(
+        ErrorCode.QUEUE_OPERATION_FAILED,
+        'Scheduled tasks are not available in this process',
+        undefined,
+        { jobId: safeStringify(job.id), task: job.data?.action },
+        'QueueProcessor.processScheduledTask'
+      );
+    }
+    return runner.run(job as unknown as Job<ScheduledTaskEnvelope>);
   }
 
   private getInvoicePDFService(): InvoicePDFServiceType | null {
@@ -283,6 +310,8 @@ export class QueueProcessor {
 
     try {
       switch (jobType) {
+        case JobType.SCHEDULED_TASK:
+          return this.processScheduledTask(job);
         case JobType.EMAIL:
           return this.processEmail(job as unknown as Job<JobData>);
         case JobType.NOTIFICATION:

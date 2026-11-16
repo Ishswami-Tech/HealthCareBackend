@@ -3,7 +3,6 @@
  * the past-video closure cron, the in-clinic expiry cron, and the 3 AM no-show cron that must leave
  * paid visits to the expiry path. Real service and real core on an in-memory database.
  */
-import { setClusterCronLock } from '@core/decorators/cluster-cron.decorator';
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 
 jest.mock('uuid', () => ({ v4: () => '00000000-0000-4000-8000-000000000000' }));
@@ -223,20 +222,8 @@ describe('AppointmentsService.processPastVideoCallClosures', () => {
     });
   });
 
-  describe('the cron entry point (@ClusterCron)', () => {
-    afterEach(() => setClusterCronLock(null));
-
-    it('does not run when another replica holds the lock', async () => {
-      setClusterCronLock({ tryLock: async () => 'held', onUnavailable: () => undefined });
-      const run = jest.spyOn(harness.service, 'processPastVideoCallClosures');
-
-      await schedulerFor(harness).handlePastVideoCallClosureCron();
-
-      expect(run).not.toHaveBeenCalled();
-    });
-
-    it('runs when it gets the lock', async () => {
-      setClusterCronLock({ tryLock: async () => 'acquired', onUnavailable: () => undefined });
+  describe('the scheduled entry point', () => {
+    it("runs the closure sweep (one run per tick is BullMQ's job scheduler)", async () => {
       const run = jest
         .spyOn(harness.service, 'processPastVideoCallClosures')
         .mockResolvedValue({ totalChecked: 0, closed: 0, failed: 0, details: [] });
@@ -456,17 +443,14 @@ describe('AppointmentsService.processExpiredInPersonAppointments', () => {
     expect(loggedWarning(harness, 'cannot be parsed')).toBe(true);
   });
 
-  it('does not run when another replica holds the @ClusterCron lock', async () => {
-    setClusterCronLock({ tryLock: async () => 'held', onUnavailable: () => undefined });
-    const run = jest.spyOn(harness.service, 'processExpiredInPersonAppointments');
+  it('the scheduled entry point runs the in-person expiry', async () => {
+    const run = jest
+      .spyOn(harness.service, 'processExpiredInPersonAppointments')
+      .mockResolvedValue({ totalChecked: 0, expired: 0, failed: 0 } as never);
 
-    try {
-      await schedulerFor(harness).handleExpiredInPersonAppointmentsCron();
-    } finally {
-      setClusterCronLock(null);
-    }
+    await schedulerFor(harness).handleExpiredInPersonAppointmentsCron();
 
-    expect(run).not.toHaveBeenCalled();
+    expect(run).toHaveBeenCalledTimes(1);
   });
 });
 

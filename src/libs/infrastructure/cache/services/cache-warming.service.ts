@@ -1,5 +1,5 @@
 import { Injectable, OnModuleInit, Optional, Inject, forwardRef } from '@nestjs/common';
-import { ClusterCron } from '@core/decorators/cluster-cron.decorator';
+import { ScheduledTask } from '@core/decorators/scheduled-task.decorator';
 // IMPORTANT: avoid importing from the @config barrel in infra boot code (SWC TDZ/cycles).
 import { ConfigService } from '@config/config.service';
 import type { CacheService } from '@infrastructure/cache/cache.service';
@@ -65,9 +65,12 @@ export class CacheWarmingService implements OnModuleInit {
    * Warm popular caches every 3 hours (increased frequency for better hit rates)
    * Runs at: 00:03,06,09,12,15,18,21 hours
    */
-  @ClusterCron('0 */3 * * *', {
-    name: 'warm-popular-caches',
-    timeZone: 'UTC',
+  @ScheduledTask({
+    id: 'cache.warm-popular',
+    group: 'cache',
+    pattern: '0 */3 * * *',
+    tz: 'UTC',
+    attempts: 3,
   })
   async warmPopularCaches(): Promise<void> {
     if (this.isWarmingInProgress) {
@@ -186,9 +189,12 @@ export class CacheWarmingService implements OnModuleInit {
    * Warm doctor schedules for next 7 days
    * Runs daily at 2 AM UTC
    */
-  @ClusterCron('0 2 * * *', {
-    name: 'warm-doctor-schedules',
-    timeZone: 'UTC',
+  @ScheduledTask({
+    id: 'cache.warm-doctor-schedules',
+    group: 'cache',
+    pattern: '0 2 * * *',
+    tz: 'UTC',
+    attempts: 3,
   })
   async warmDoctorSchedules(): Promise<void> {
     const startTime = Date.now();

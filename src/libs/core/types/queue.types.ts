@@ -205,6 +205,8 @@ export enum JobType {
   CONFIRM = 'confirm',
   COMPLETE = 'complete',
   NOTIFY = 'notify',
+  // A recurring job (see @ScheduledTask); `action` is the task id
+  SCHEDULED_TASK = 'scheduled_task',
   // Represents old generic/fallback actions
   UNKNOWN = 'unknown',
 }
@@ -239,6 +241,11 @@ export interface CanonicalJobEnvelope<T = unknown> {
   action: string;
   data: T;
   metadata?: JobMetadata;
+
+  // Dashboard taxonomy (optional): read by the queue dashboard's family/type filters
+  jobFamily?: string;
+  queueType?: string;
+  queueCategory?: string;
 }
 
 // Generic queue job data with domain (Deprecated - map to CanonicalJobEnvelope)

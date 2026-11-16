@@ -12,8 +12,10 @@
  */
 
 import { Injectable } from '@nestjs/common';
-import { CronExpression } from '@nestjs/schedule';
-import { ClusterCron } from '@core/decorators/cluster-cron.decorator';
+import {
+  SCHEDULED_TASK_DEFAULT_TZ,
+  ScheduledTask,
+} from '@core/decorators/scheduled-task.decorator';
 import { BillingService } from '@services/billing/billing.service';
 
 @Injectable()
@@ -21,31 +23,61 @@ export class BillingSchedulerService {
   constructor(private readonly billing: BillingService) {}
 
   /** Marks expired active subscriptions as PAST_DUE. */
-  @ClusterCron(CronExpression.EVERY_HOUR)
+  @ScheduledTask({
+    id: 'billing.expire-subscriptions',
+    group: 'billing',
+    pattern: '0 * * * *',
+    tz: SCHEDULED_TASK_DEFAULT_TZ,
+    attempts: 1,
+  })
   async handleExpiredSubscriptionsCron(): Promise<void> {
     await this.billing.checkExpiredSubscriptions();
   }
 
   /** Repairs payments stuck between the claim and their side effects. */
-  @ClusterCron(CronExpression.EVERY_10_MINUTES)
+  @ScheduledTask({
+    id: 'billing.repair-stalled-finalisations',
+    group: 'billing',
+    pattern: '*/10 * * * *',
+    tz: SCHEDULED_TASK_DEFAULT_TZ,
+    attempts: 1,
+  })
   async handleStalledPaymentFinalisationsCron(): Promise<void> {
     await this.billing.repairStalledPaymentFinalisations();
   }
 
   /** Confirms bookings whose payment succeeded at the gateway but never reached us. */
-  @ClusterCron(CronExpression.EVERY_5_MINUTES)
+  @ScheduledTask({
+    id: 'billing.reconcile-stale-pending-payments',
+    group: 'billing',
+    pattern: '*/5 * * * *',
+    tz: SCHEDULED_TASK_DEFAULT_TZ,
+    attempts: 1,
+  })
   async handleStalePendingPaymentsCron(): Promise<void> {
     await this.billing.reconcileStalePendingPayments();
   }
 
   /** Payment-window sweep: expires (or finalises) checkout attempts past their window. */
-  @ClusterCron(CronExpression.EVERY_MINUTE)
+  @ScheduledTask({
+    id: 'billing.expire-unpaid-checkouts',
+    group: 'billing',
+    pattern: '* * * * *',
+    tz: SCHEDULED_TASK_DEFAULT_TZ,
+    attempts: 1,
+  })
   async handleUnpaidCheckoutsCron(): Promise<void> {
     await this.billing.expireUnpaidCheckouts();
   }
 
   /** Reconciles legacy paid appointments still stuck in SCHEDULED. */
-  @ClusterCron(CronExpression.EVERY_HOUR)
+  @ScheduledTask({
+    id: 'billing.reconcile-legacy-paid-appointments',
+    group: 'billing',
+    pattern: '0 * * * *',
+    tz: SCHEDULED_TASK_DEFAULT_TZ,
+    attempts: 1,
+  })
   async handleLegacyPaidAppointmentsCron(): Promise<void> {
     await this.billing.reconcileLegacyPaidAppointments();
   }

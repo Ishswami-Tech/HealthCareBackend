@@ -1,7 +1,7 @@
 /**
  * Background token / live-queue work of the in-person flow (product decision: token ALLOCATION
- * stays in the API's check-in transaction; this runs in the separate worker, where the crons fire
- * - the API registers ScheduleModule with `cronJobs: false`).
+ * stays in the API's check-in transaction; this runs in the separate worker, where scheduled
+ * tasks run as BullMQ job schedulers).
  *
  *   - every 5 min: rebuild + consistency check of every live queue of the day (per clinic with
  *     arrivals, all its locations), reusing the live-queue rebuild rules;
@@ -10,12 +10,14 @@
  *     normally fired by the queue mutation itself; the shared per appointment + threshold keys
  *     keep it to one message whoever runs first).
  *
- * Every cron is a @ClusterCron: one worker replica runs each tick. None of it touches the API
+ * Every job is a @ScheduledTask (BullMQ job scheduler): one run per tick. None of it touches the API
  * request path.
  */
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
-import { CronExpression } from '@nestjs/schedule';
-import { ClusterCron } from '@core/decorators/cluster-cron.decorator';
+import {
+  SCHEDULED_TASK_DEFAULT_TZ,
+  ScheduledTask,
+} from '@core/decorators/scheduled-task.decorator';
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -64,17 +66,35 @@ export class InPersonQueueMaintenanceService {
 
   // ------------------------------------------------------------------ crons
 
-  @ClusterCron(CronExpression.EVERY_5_MINUTES)
+  @ScheduledTask({
+    id: 'in-person-queue.reconcile-live-queues',
+    group: 'in-person-queue',
+    pattern: '*/5 * * * *',
+    tz: SCHEDULED_TASK_DEFAULT_TZ,
+    attempts: 1,
+  })
   async reconcileLiveQueuesCron(): Promise<void> {
     await this.reconcileLiveQueues();
   }
 
-  @ClusterCron('15 3 * * *')
+  @ScheduledTask({
+    id: 'in-person-queue.cleanup-token-counters',
+    group: 'in-person-queue',
+    pattern: '15 3 * * *',
+    tz: SCHEDULED_TASK_DEFAULT_TZ,
+    attempts: 3,
+  })
   async cleanupTokenCountersCron(): Promise<void> {
     await this.cleanupTokenCounters();
   }
 
-  @ClusterCron(CronExpression.EVERY_MINUTE)
+  @ScheduledTask({
+    id: 'in-person-queue.notify-queue-positions',
+    group: 'in-person-queue',
+    pattern: '* * * * *',
+    tz: SCHEDULED_TASK_DEFAULT_TZ,
+    attempts: 1,
+  })
   async notifyQueuePositionsCron(): Promise<void> {
     await this.notifyQueuePositions();
   }

@@ -1,6 +1,8 @@
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
-import { CronExpression } from '@nestjs/schedule';
-import { ClusterCron } from '@core/decorators/cluster-cron.decorator';
+import {
+  SCHEDULED_TASK_DEFAULT_TZ,
+  ScheduledTask,
+} from '@core/decorators/scheduled-task.decorator';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { ConfigService } from '@config/config.service';
@@ -114,7 +116,13 @@ export class VideoAppointmentSchedulerService {
   // ─────────────────────────────────────────────────────────────
 
   /** Check for doctor no-shows: sessions that never started */
-  @ClusterCron(CronExpression.EVERY_MINUTE)
+  @ScheduledTask({
+    id: 'video.doctor-no-shows',
+    group: 'video',
+    pattern: '* * * * *',
+    tz: SCHEDULED_TASK_DEFAULT_TZ,
+    attempts: 1,
+  })
   async handleDoctorNoShows(): Promise<void> {
     try {
       if (!this.configService.isVideoNoShowEnabled()) {
@@ -172,7 +180,13 @@ export class VideoAppointmentSchedulerService {
   }
 
   /** Check for patient no-shows: active sessions where patient never joined */
-  @ClusterCron(CronExpression.EVERY_MINUTE)
+  @ScheduledTask({
+    id: 'video.patient-no-shows',
+    group: 'video',
+    pattern: '* * * * *',
+    tz: SCHEDULED_TASK_DEFAULT_TZ,
+    attempts: 1,
+  })
   async handlePatientNoShows(): Promise<void> {
     try {
       if (!this.configService.isVideoNoShowEnabled()) {
@@ -266,7 +280,13 @@ export class VideoAppointmentSchedulerService {
    */
   private static readonly EXPIRY_BATCH_SIZE = 200;
 
-  @ClusterCron(CronExpression.EVERY_MINUTE)
+  @ScheduledTask({
+    id: 'video.expire-confirmed-appointments',
+    group: 'video',
+    pattern: '* * * * *',
+    tz: SCHEDULED_TASK_DEFAULT_TZ,
+    attempts: 1,
+  })
   async handleExpiredConfirmedVideoAppointments(): Promise<void> {
     try {
       const now = new Date();
@@ -380,7 +400,13 @@ export class VideoAppointmentSchedulerService {
    * COMPLETE_REMINDER_BEFORE_EXPIRY_MINUTES before it expires. A cache lock per visit and
    * stage keeps it to one message each, across ticks and across instances.
    */
-  @ClusterCron(CronExpression.EVERY_5_MINUTES)
+  @ScheduledTask({
+    id: 'video.open-visit-reminders',
+    group: 'video',
+    pattern: '*/5 * * * *',
+    tz: SCHEDULED_TASK_DEFAULT_TZ,
+    attempts: 1,
+  })
   async handleOpenVideoVisitReminders(): Promise<void> {
     try {
       const now = new Date();
@@ -531,7 +557,7 @@ export class VideoAppointmentSchedulerService {
   /**
    * Expire pending video appointment proposals that have passed their deadline.
    */
-  @ClusterCron(CronExpression.EVERY_10_MINUTES)
+  // Placeholder, not scheduled: there is nothing to expire yet.
   async handleExpiredProposals(): Promise<void> {
     // Placeholder for future implementation
   }
@@ -635,7 +661,13 @@ export class VideoAppointmentSchedulerService {
    * AppointmentsService.updateStatus so all status-transition side-effects
    * (events, notifications, audit) fire normally.
    */
-  @ClusterCron(CronExpression.EVERY_MINUTE)
+  @ScheduledTask({
+    id: 'video.expire-payment-windows',
+    group: 'video',
+    pattern: '* * * * *',
+    tz: SCHEDULED_TASK_DEFAULT_TZ,
+    attempts: 1,
+  })
   async handleExpiredPaymentWindows(): Promise<void> {
     try {
       const now = new Date();

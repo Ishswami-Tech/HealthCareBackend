@@ -1,40 +1,57 @@
 /**
  * Appointments scheduler
  * @module Appointments
- * @description Owns the appointment @Cron jobs (they fire on the worker only; the API registers
- * ScheduleModule with `cronJobs: false`).
+ * @description Owns the appointment scheduled jobs (they run on the worker only, as BullMQ job
+ * schedulers on healthcare-queue).
  *
  * Why a separate class: AppointmentsService is also registered under the 'APPOINTMENTS_SERVICE'
- * alias (`useExisting`), and @nestjs/schedule's explorer, unlike @nestjs/event-emitter's, does not
- * skip alias providers. Every @Cron on AppointmentsService was therefore registered TWICE on the
- * single worker: each tick ran twice, the locked crons logged "lock held by another replica" on
- * every tick (the twin had just taken the lock) and the lock-less ones really ran twice. This
- * class has no alias, so each job is registered once.
+ * alias (`useExisting`). @nestjs/schedule registered every @Cron on an alias twice, so each tick
+ * ran twice; keeping the jobs on a class without an alias avoids that kind of trap (the
+ * @ScheduledTask discovery also skips alias wrappers).
  *
- * Every job is a @ClusterCron: with several worker replicas each tick runs on one of them.
+ * Every job is a @ScheduledTask: a BullMQ job scheduler on healthcare-queue, one run per tick.
  */
 
 import { Injectable } from '@nestjs/common';
-import { CronExpression } from '@nestjs/schedule';
-import { ClusterCron } from '@core/decorators/cluster-cron.decorator';
-import { IST_TIMEZONE } from '@utils/date-time.util';
+import {
+  SCHEDULED_TASK_DEFAULT_TZ,
+  ScheduledTask,
+} from '@core/decorators/scheduled-task.decorator';
 import { AppointmentsService } from './appointments.service';
 
 @Injectable()
 export class AppointmentsSchedulerService {
   constructor(private readonly appointments: AppointmentsService) {}
 
-  @ClusterCron(CronExpression.EVERY_DAY_AT_3AM)
+  @ScheduledTask({
+    id: 'appointments.cancel-no-shows',
+    group: 'appointments',
+    pattern: '0 3 * * *',
+    tz: SCHEDULED_TASK_DEFAULT_TZ,
+    attempts: 3,
+  })
   async handleNoShowCancellationCron(): Promise<void> {
     await this.appointments.processNoShowCancellations();
   }
 
-  @ClusterCron(CronExpression.EVERY_DAY_AT_7AM, { timeZone: IST_TIMEZONE })
+  @ScheduledTask({
+    id: 'appointments.doctor-daily-summary',
+    group: 'appointments',
+    pattern: '0 7 * * *',
+    tz: SCHEDULED_TASK_DEFAULT_TZ,
+    attempts: 3,
+  })
   async handleDoctorDailyAppointmentSummaryCron(): Promise<void> {
     await this.appointments.triggerDoctorDailySummary({ triggeredBy: 'cron' });
   }
 
-  @ClusterCron(CronExpression.EVERY_HOUR)
+  @ScheduledTask({
+    id: 'appointments.expire-video-slot-confirmations',
+    group: 'appointments',
+    pattern: '0 * * * *',
+    tz: SCHEDULED_TASK_DEFAULT_TZ,
+    attempts: 1,
+  })
   async handleExpiredVideoSlotConfirmationCron(): Promise<void> {
     await this.appointments.processExpiredVideoSlotConfirmations();
   }
@@ -43,7 +60,13 @@ export class AppointmentsSchedulerService {
    * Closes every video visit that is still open when its window ends (see
    * AppointmentsService.processPastVideoCallClosures).
    */
-  @ClusterCron(CronExpression.EVERY_5_MINUTES)
+  @ScheduledTask({
+    id: 'appointments.close-past-video-calls',
+    group: 'appointments',
+    pattern: '*/5 * * * *',
+    tz: SCHEDULED_TASK_DEFAULT_TZ,
+    attempts: 1,
+  })
   async handlePastVideoCallClosureCron(): Promise<void> {
     await this.appointments.processPastVideoCallClosures();
   }
@@ -52,7 +75,13 @@ export class AppointmentsSchedulerService {
    * Expires in-clinic visits that never happened, hourly at :20 (see
    * AppointmentsService.processExpiredInPersonAppointments).
    */
-  @ClusterCron('20 * * * *')
+  @ScheduledTask({
+    id: 'appointments.expire-in-person',
+    group: 'appointments',
+    pattern: '20 * * * *',
+    tz: SCHEDULED_TASK_DEFAULT_TZ,
+    attempts: 1,
+  })
   async handleExpiredInPersonAppointmentsCron(): Promise<void> {
     await this.appointments.processExpiredInPersonAppointments();
   }

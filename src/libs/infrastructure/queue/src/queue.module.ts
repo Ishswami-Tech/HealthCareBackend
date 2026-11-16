@@ -1,4 +1,6 @@
 import { Module, DynamicModule, forwardRef } from '@nestjs/common';
+import { DiscoveryModule } from '@nestjs/core';
+import { ScheduledTasksService } from '@infrastructure/queue/src/scheduled/scheduled-tasks.service';
 import { BullModule, getQueueToken } from '@nestjs/bullmq';
 // Use direct import to avoid TDZ issues with barrel exports
 import { ConfigModule } from '@config/config.module';
@@ -128,6 +130,8 @@ export class QueueModule {
         forwardRef(() => EventsModule),
         QueueMonitoringModule,
         InvoicePDFModule,
+        // ScheduledTasksService (worker) discovers @ScheduledTask methods on the providers.
+        DiscoveryModule,
         BullModule.forRootAsync({
           imports: [forwardRef(() => ConfigModule)],
           useFactory: (configService: ConfigService) => {
@@ -256,6 +260,8 @@ export class QueueModule {
         // Enhanced worker configuration for 1M users
         ...(serviceName === 'worker'
           ? [
+              // @ScheduledTask jobs: registers their BullMQ schedulers and runs each tick.
+              ScheduledTasksService,
               {
                 provide: 'BULLMQ_WORKERS',
                 useFactory: (

@@ -26,10 +26,10 @@ export const QUEUE_DELAYS = {
   SCHEDULED: 0, // Use specific timestamp
 } as const;
 
-/** Plain-number retention, for callers whose option type only accepts a count. */
+/** Plain-number retention, for callers whose option type only accepts a count (see JOB_RETENTION). */
 export const JOB_RETENTION_COUNTS = {
-  removeOnComplete: 1000,
-  removeOnFail: 2000,
+  removeOnComplete: 50_000,
+  removeOnFail: 20_000,
 } as const;
 
 // Healthcare queue configuration
@@ -107,24 +107,29 @@ export const QUEUE_METRICS_CONFIG = {
 export const DEAD_LETTER_QUEUE = 'healthcare-queue-dead-letter';
 
 /**
- * Retention of finished jobs in the main queue. BullMQ keeps every finished job hash (with its
- * payload, which can hold PHI) until `removeOnComplete` / `removeOnFail` prunes it, and Dragonfly
- * runs with `noeviction`, so an unbounded count eventually fills memory and breaks enqueues.
- * Both a count and an age cap apply (whichever is reached first).
+ * Retention of finished jobs in the main queue: ONE policy for every job type.
+ *
+ * BullMQ prunes the completed (and failed) list QUEUE-WIDE with the options of whichever job just
+ * finished (moveToFinished → removeJobsByMaxAge/MaxCount on the shared set). A job type cannot
+ * keep a longer or larger history than the others: the next ordinary job trims it. So every job
+ * uses the same caps.
+ *
+ * - Age is the binding limit: 24 h completed, 7 days failed. Finished job hashes keep their
+ *   payload (which can hold PHI), so the window stays as short as it was.
+ * - The counts are only a memory backstop (Dragonfly runs with `noeviction`): large enough that
+ *   about 10k scheduled runs a day (@ScheduledTask) never push other jobs out within the window.
  */
 export const JOB_RETENTION = {
-  removeOnComplete: { count: 1000, age: 24 * 60 * 60 }, // newest 1000, at most 24h
-  removeOnFail: { count: 2000, age: 7 * 24 * 60 * 60 }, // newest 2000, at most 7 days
+  removeOnComplete: { count: 50_000, age: 24 * 60 * 60 }, // at most 24h (count: backstop)
+  removeOnFail: { count: 20_000, age: 7 * 24 * 60 * 60 }, // at most 7 days (count: backstop)
 } as const;
 
 /**
- * Queue notification jobs (POST /queue/notifications) are read back as the inbox, so they outlive
- * the default retention, but bounded: newest 5000, at most 7 days (they used to be kept forever).
+ * Queue notification jobs (POST /queue/notifications) are read back as the inbox. They share the
+ * queue-wide policy above: a longer setting here never held (other jobs finishing trimmed it to
+ * their own 24 h). A longer inbox needs its own store, not a longer queue retention.
  */
-export const NOTIFICATION_JOB_RETENTION = {
-  removeOnComplete: { count: 5000, age: 7 * 24 * 60 * 60 },
-  removeOnFail: { count: 5000, age: 7 * 24 * 60 * 60 },
-} as const;
+export const NOTIFICATION_JOB_RETENTION = JOB_RETENTION;
 
 /**
  * DLQ retention. DLQ entries have no consumer, so they sit in the `wait` list until they are
