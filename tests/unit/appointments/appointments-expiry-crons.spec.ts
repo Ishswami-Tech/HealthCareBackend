@@ -3,6 +3,7 @@
  * the past-video closure cron, the in-clinic expiry cron, and the 3 AM no-show cron that must leave
  * paid visits to the expiry path. Real service and real core on an in-memory database.
  */
+import { setClusterCronLock } from '@core/decorators/cluster-cron.decorator';
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 
 jest.mock('uuid', () => ({ v4: () => '00000000-0000-4000-8000-000000000000' }));
@@ -222,18 +223,20 @@ describe('AppointmentsService.processPastVideoCallClosures', () => {
     });
   });
 
-  describe('the cron entry point', () => {
-    it('logs a WARN when another replica holds the lock, and does not run', async () => {
-      harness.cache.heldLocks.add('lock:cron:appointments:past-video-closure');
+  describe('the cron entry point (@ClusterCron)', () => {
+    afterEach(() => setClusterCronLock(null));
+
+    it('does not run when another replica holds the lock', async () => {
+      setClusterCronLock({ tryLock: async () => 'held', onUnavailable: () => undefined });
       const run = jest.spyOn(harness.service, 'processPastVideoCallClosures');
 
       await schedulerFor(harness).handlePastVideoCallClosureCron();
 
       expect(run).not.toHaveBeenCalled();
-      expect(loggedWarning(harness, 'lock is held')).toBe(true);
     });
 
-    it('runs when it gets the lock, and does not log a warning', async () => {
+    it('runs when it gets the lock', async () => {
+      setClusterCronLock({ tryLock: async () => 'acquired', onUnavailable: () => undefined });
       const run = jest
         .spyOn(harness.service, 'processPastVideoCallClosures')
         .mockResolvedValue({ totalChecked: 0, closed: 0, failed: 0, details: [] });
@@ -241,7 +244,6 @@ describe('AppointmentsService.processPastVideoCallClosures', () => {
       await schedulerFor(harness).handlePastVideoCallClosureCron();
 
       expect(run).toHaveBeenCalledTimes(1);
-      expect(loggedWarning(harness, 'lock is held')).toBe(false);
     });
   });
 });
@@ -454,14 +456,17 @@ describe('AppointmentsService.processExpiredInPersonAppointments', () => {
     expect(loggedWarning(harness, 'cannot be parsed')).toBe(true);
   });
 
-  it('logs a WARN when another replica holds the lock', async () => {
-    harness.cache.heldLocks.add('lock:cron:appointments:in-person-expiry');
+  it('does not run when another replica holds the @ClusterCron lock', async () => {
+    setClusterCronLock({ tryLock: async () => 'held', onUnavailable: () => undefined });
     const run = jest.spyOn(harness.service, 'processExpiredInPersonAppointments');
 
-    await schedulerFor(harness).handleExpiredInPersonAppointmentsCron();
+    try {
+      await schedulerFor(harness).handleExpiredInPersonAppointmentsCron();
+    } finally {
+      setClusterCronLock(null);
+    }
 
     expect(run).not.toHaveBeenCalled();
-    expect(loggedWarning(harness, 'lock is held')).toBe(true);
   });
 });
 

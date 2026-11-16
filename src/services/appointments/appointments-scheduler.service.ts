@@ -10,30 +10,19 @@
  * single worker: each tick ran twice, the locked crons logged "lock held by another replica" on
  * every tick (the twin had just taken the lock) and the lock-less ones really ran twice. This
  * class has no alias, so each job is registered once.
+ *
+ * Every job is a @ClusterCron: with several worker replicas each tick runs on one of them.
  */
 
 import { Injectable } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { CronExpression } from '@nestjs/schedule';
 import { ClusterCron } from '@core/decorators/cluster-cron.decorator';
-import { CacheService } from '@infrastructure/cache/cache.service';
-import { LoggingService } from '@infrastructure/logging';
-import { LogLevel, LogType } from '@core/types';
 import { IST_TIMEZONE } from '@utils/date-time.util';
 import { AppointmentsService } from './appointments.service';
 
-const PAST_VIDEO_CLOSURE_LOCK_KEY = 'lock:cron:appointments:past-video-closure';
-/** Expires just before the next 5-minute tick, so a replica firing a moment later still skips. */
-const PAST_VIDEO_CLOSURE_LOCK_TTL_SECONDS = 240;
-const IN_PERSON_EXPIRY_LOCK_KEY = 'lock:cron:appointments:in-person-expiry';
-const IN_PERSON_EXPIRY_LOCK_TTL_SECONDS = 3300;
-
 @Injectable()
 export class AppointmentsSchedulerService {
-  constructor(
-    private readonly appointments: AppointmentsService,
-    private readonly cacheService: CacheService,
-    private readonly loggingService: LoggingService
-  ) {}
+  constructor(private readonly appointments: AppointmentsService) {}
 
   @ClusterCron(CronExpression.EVERY_DAY_AT_3AM)
   async handleNoShowCancellationCron(): Promise<void> {
@@ -52,17 +41,10 @@ export class AppointmentsSchedulerService {
 
   /**
    * Closes every video visit that is still open when its window ends (see
-   * AppointmentsService.processPastVideoCallClosures). One replica per tick: the lock is
-   * deliberately not released and expires just before the next tick.
+   * AppointmentsService.processPastVideoCallClosures).
    */
-  @Cron(CronExpression.EVERY_5_MINUTES)
+  @ClusterCron(CronExpression.EVERY_5_MINUTES)
   async handlePastVideoCallClosureCron(): Promise<void> {
-    const acquired = await this.acquireCronLock(
-      PAST_VIDEO_CLOSURE_LOCK_KEY,
-      PAST_VIDEO_CLOSURE_LOCK_TTL_SECONDS,
-      'AppointmentsScheduler.handlePastVideoCallClosureCron'
-    );
-    if (!acquired) return;
     await this.appointments.processPastVideoCallClosures();
   }
 
@@ -70,34 +52,8 @@ export class AppointmentsSchedulerService {
    * Expires in-clinic visits that never happened, hourly at :20 (see
    * AppointmentsService.processExpiredInPersonAppointments).
    */
-  @Cron('20 * * * *')
+  @ClusterCron('20 * * * *')
   async handleExpiredInPersonAppointmentsCron(): Promise<void> {
-    const acquired = await this.acquireCronLock(
-      IN_PERSON_EXPIRY_LOCK_KEY,
-      IN_PERSON_EXPIRY_LOCK_TTL_SECONDS,
-      'AppointmentsScheduler.handleExpiredInPersonAppointmentsCron'
-    );
-    if (!acquired) return;
     await this.appointments.processExpiredInPersonAppointments();
-  }
-
-  private async acquireCronLock(
-    lockKey: string,
-    ttlSeconds: number,
-    source: string
-  ): Promise<boolean> {
-    const acquired = await this.cacheService.acquireLock(lockKey, ttlSeconds);
-    if (!acquired) {
-      // With one worker this should now never print; if it does, another worker replica is
-      // running the same tick (or the cache is unreachable: acquireLock reports both as false).
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.WARN,
-        'Cron run skipped: its lock is held by another replica, or the cache is unavailable',
-        source,
-        { lockKey, ttlSeconds }
-      );
-    }
-    return acquired;
   }
 }

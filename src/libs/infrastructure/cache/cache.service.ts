@@ -775,6 +775,19 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return this.getProvider().acquireLock(key, ttlSeconds, value);
   }
 
+  /**
+   * Whether a lock taken with acquireLock is held. acquireLock answers false both when the lock
+   * is taken and when the cache cannot be asked; this tells them apart. It reads the raw key on
+   * the same provider (exists() would version the key and never see the lock).
+   */
+  async isLockHeld(key: string): Promise<boolean> {
+    try {
+      return await this.getProvider().exists(key);
+    } catch {
+      return false;
+    }
+  }
+
   async releaseLock(key: string): Promise<boolean> {
     return this.getProvider().releaseLock(key);
   }

@@ -3,6 +3,7 @@
  * completion matrix, reschedule ownership + slot race, clinic scoping behind the detail cache,
  * IN_PROGRESS -> EXPIRED restricted to the system, and the past-video-closure cron.
  */
+import { setClusterCronLock } from '@core/decorators/cluster-cron.decorator';
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 
 jest.mock('uuid', () => ({ v4: () => '00000000-0000-4000-8000-000000000000' }));
@@ -556,22 +557,34 @@ describe('AppointmentsService.rescheduleAppointment', () => {
 
 describe('AppointmentsSchedulerService.handlePastVideoCallClosureCron', () => {
   it('runs on one replica per tick: the second one skips', async () => {
-    const first = buildHarness();
-    const run = jest
-      .spyOn(first.service, 'processPastVideoCallClosures')
-      .mockResolvedValue({ totalChecked: 0, closed: 0, failed: 0, details: [] });
+    // One shared cache lock (@ClusterCron), two replicas.
+    const taken = new Set<string>();
+    setClusterCronLock({
+      tryLock: async key => {
+        if (taken.has(key)) return 'held';
+        taken.add(key);
+        return 'acquired';
+      },
+      onUnavailable: () => undefined,
+    });
+    try {
+      const first = buildHarness();
+      const run = jest
+        .spyOn(first.service, 'processPastVideoCallClosures')
+        .mockResolvedValue({ totalChecked: 0, closed: 0, failed: 0, details: [] });
+      await schedulerFor(first).handlePastVideoCallClosureCron();
 
-    await schedulerFor(first).handlePastVideoCallClosureCron();
-    // Same cache (same lock), second replica:
-    const second = buildHarness();
-    second.cache.heldLocks.add('lock:cron:appointments:past-video-closure');
-    const secondRun = jest
-      .spyOn(second.service, 'processPastVideoCallClosures')
-      .mockResolvedValue({ totalChecked: 0, closed: 0, failed: 0, details: [] });
-    await schedulerFor(second).handlePastVideoCallClosureCron();
+      const second = buildHarness();
+      const secondRun = jest
+        .spyOn(second.service, 'processPastVideoCallClosures')
+        .mockResolvedValue({ totalChecked: 0, closed: 0, failed: 0, details: [] });
+      await schedulerFor(second).handlePastVideoCallClosureCron();
 
-    expect(run).toHaveBeenCalledTimes(1);
-    expect(secondRun).not.toHaveBeenCalled();
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(secondRun).not.toHaveBeenCalled();
+    } finally {
+      setClusterCronLock(null);
+    }
   });
 
   it('bounds the candidate query: nothing in the future, a page cap, oldest first', async () => {

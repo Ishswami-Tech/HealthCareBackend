@@ -10,8 +10,8 @@
  *     normally fired by the queue mutation itself; the shared per appointment + threshold keys
  *     keep it to one message whoever runs first).
  *
- * Every cron takes the distributed cron lock first (one replica per tick; the lock is not released
- * and expires just before the next tick). None of it touches the API request path.
+ * Every cron is a @ClusterCron: one worker replica runs each tick. None of it touches the API
+ * request path.
  */
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { CronExpression } from '@nestjs/schedule';
@@ -32,12 +32,6 @@ const SOURCE = 'InPersonQueueMaintenanceService';
 /** Token counter rows (one per location/day) are kept this many days. */
 export const TOKEN_COUNTER_RETENTION_DAYS = 30;
 const LIVE_STATUSES = ['CONFIRMED', 'IN_PROGRESS'];
-
-export const QUEUE_MAINTENANCE_LOCKS = {
-  reconcile: { key: 'lock:cron:in-person:live-queue-reconcile', ttlSeconds: 240 },
-  counters: { key: 'lock:cron:in-person:token-counter-cleanup', ttlSeconds: 3000 },
-  notify: { key: 'lock:cron:in-person:queue-position-notify', ttlSeconds: 50 },
-} as const;
 
 /** Deletes the old counter rows and answers how many went (raw: the table has no Prisma model). */
 export const DELETE_OLD_TOKEN_COUNTERS_SQL = `
@@ -72,19 +66,16 @@ export class InPersonQueueMaintenanceService {
 
   @ClusterCron(CronExpression.EVERY_5_MINUTES)
   async reconcileLiveQueuesCron(): Promise<void> {
-    if (!(await this.acquire(QUEUE_MAINTENANCE_LOCKS.reconcile))) return;
     await this.reconcileLiveQueues();
   }
 
   @ClusterCron('15 3 * * *')
   async cleanupTokenCountersCron(): Promise<void> {
-    if (!(await this.acquire(QUEUE_MAINTENANCE_LOCKS.counters))) return;
     await this.cleanupTokenCounters();
   }
 
   @ClusterCron(CronExpression.EVERY_MINUTE)
   async notifyQueuePositionsCron(): Promise<void> {
-    if (!(await this.acquire(QUEUE_MAINTENANCE_LOCKS.notify))) return;
     await this.notifyQueuePositions();
   }
 
@@ -177,24 +168,6 @@ export class InPersonQueueMaintenanceService {
   }
 
   // ------------------------------------------------------------------ helpers
-
-  private async acquire(lock: { key: string; ttlSeconds: number }): Promise<boolean> {
-    try {
-      const acquired = await this.cache.acquireLock(lock.key, lock.ttlSeconds);
-      if (!acquired) {
-        void this.logging.log(
-          LogType.SYSTEM,
-          LogLevel.DEBUG,
-          'Cron run skipped: its lock is held by another replica',
-          SOURCE,
-          { lockKey: lock.key }
-        );
-      }
-      return acquired;
-    } catch {
-      return false;
-    }
-  }
 
   /** Clinics that hold a live doctor list of the day in the cache (never throws). */
   private async clinicsWithLiveLists(day: string): Promise<string[]> {

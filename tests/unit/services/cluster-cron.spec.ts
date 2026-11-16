@@ -5,13 +5,18 @@
  */
 
 import 'reflect-metadata';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import { CronExpression } from '@nestjs/schedule';
 
 import {
   ClusterCron,
+  REFUSING_CLUSTER_CRON_LOCK,
   clusterCronLockKey,
   clusterCronLockTtlSeconds,
   setClusterCronLock,
+  type ClusterCronLock,
+  type ClusterCronLockOutcome,
 } from '@core/decorators/cluster-cron.decorator';
 
 // @nestjs/schedule's metadata keys (schedule.constants; the package does not export the file).
@@ -22,9 +27,8 @@ class SweepJobs {
   runs = 0;
 
   @ClusterCron(CronExpression.EVERY_MINUTE)
-  async sweep(): Promise<string> {
+  async sweep(): Promise<void> {
     this.runs += 1;
-    return 'swept';
   }
 
   @ClusterCron('0 7 * * *', { timeZone: 'Asia/Kolkata', name: 'daily-summary' })
@@ -33,31 +37,45 @@ class SweepJobs {
   }
 }
 
+type MockLock = ClusterCronLock & {
+  tryLock: jest.Mock<Promise<ClusterCronLockOutcome>, [string, number]>;
+  onUnavailable: jest.Mock<void, [string]>;
+};
+
+function lockAnswering(outcome: ClusterCronLockOutcome): MockLock {
+  return {
+    tryLock: jest.fn<Promise<ClusterCronLockOutcome>, [string, number]>(async () => outcome),
+    onUnavailable: jest.fn<void, [string]>(),
+  };
+}
+
 afterEach(() => setClusterCronLock(null));
 
 describe('@ClusterCron', () => {
   it('runs the job on the replica that gets the lock, with a per-job key', async () => {
-    const acquireLock = jest.fn(async () => true);
-    setClusterCronLock({ acquireLock });
+    const lock = lockAnswering('acquired');
+    setClusterCronLock(lock);
     const jobs = new SweepJobs();
 
-    await expect(jobs.sweep()).resolves.toBe('swept');
+    await jobs.sweep();
 
     expect(jobs.runs).toBe(1);
-    expect(acquireLock).toHaveBeenCalledWith(
+    expect(lock.tryLock).toHaveBeenCalledWith(
       clusterCronLockKey('SweepJobs', 'sweep'),
       expect.any(Number)
     );
+    expect(lock.onUnavailable).not.toHaveBeenCalled();
   });
 
-  it('skips the tick on the replica that loses the lock', async () => {
-    let held = false;
+  it('runs each tick once across replicas', async () => {
+    let taken = false;
     setClusterCronLock({
-      acquireLock: async () => {
-        if (held) return false;
-        held = true;
-        return true;
+      tryLock: async () => {
+        if (taken) return 'held';
+        taken = true;
+        return 'acquired';
       },
+      onUnavailable: () => undefined,
     });
     const replicaA = new SweepJobs();
     const replicaB = new SweepJobs();
@@ -67,12 +85,35 @@ describe('@ClusterCron', () => {
     expect(replicaA.runs + replicaB.runs).toBe(1);
   });
 
-  it('skips the tick when the cache cannot be asked (same rule as the hand-locked crons)', async () => {
+  it('runs anyway and reports it when the cache cannot be asked', async () => {
+    const lock = lockAnswering('unavailable');
+    setClusterCronLock(lock);
+    const jobs = new SweepJobs();
+
+    await jobs.sweep();
+
+    expect(jobs.runs).toBe(1);
+    expect(lock.onUnavailable).toHaveBeenCalledWith('SweepJobs.sweep');
+  });
+
+  it('treats a lock source that throws as unavailable', async () => {
+    const onUnavailable = jest.fn();
     setClusterCronLock({
-      acquireLock: async () => {
+      tryLock: async () => {
         throw new Error('cache down');
       },
+      onUnavailable,
     });
+    const jobs = new SweepJobs();
+
+    await jobs.sweep();
+
+    expect(jobs.runs).toBe(1);
+    expect(onUnavailable).toHaveBeenCalledWith('SweepJobs.sweep');
+  });
+
+  it('starts no tick while the worker shuts down', async () => {
+    setClusterCronLock(REFUSING_CLUSTER_CRON_LOCK);
     const jobs = new SweepJobs();
 
     await jobs.sweep();
@@ -80,7 +121,7 @@ describe('@ClusterCron', () => {
     expect(jobs.runs).toBe(0);
   });
 
-  it('runs unlocked when no lock source is installed (API process, tests)', async () => {
+  it('runs unlocked when no lock source is installed (unit tests)', async () => {
     const jobs = new SweepJobs();
 
     await jobs.sweep();
@@ -116,6 +157,17 @@ describe('clusterCronLockTtlSeconds', () => {
     ).toBe(55);
   });
 
+  it('does not take the current tick for the next one when it fires a hair early', () => {
+    // The 10:00 tick firing at 09:59:59.998 must still lock until just before 10:01.
+    expect(
+      clusterCronLockTtlSeconds(
+        CronExpression.EVERY_MINUTE,
+        undefined,
+        at('2026-11-16T09:59:59.998Z')
+      )
+    ).toBe(55);
+  });
+
   it('holds a daily lock until just before the next day', () => {
     expect(
       clusterCronLockTtlSeconds('0 7 * * *', 'Asia/Kolkata', at('2026-11-16T01:30:00.000Z'))
@@ -141,20 +193,33 @@ describe('clusterCronLockTtlSeconds', () => {
 });
 
 describe('crons run on the worker only', () => {
-  // Source-level guard: these two lines are what keep scheduled jobs off the API replicas.
-  const read = (path: string): string =>
-    (jest.requireActual('fs') as typeof import('fs')).readFileSync(path, 'utf8');
+  // Source-level guard on the places that decide where scheduled jobs run. Paths resolve from
+  // this file, so the test does not depend on jest's working directory.
+  const source = (relative: string): string =>
+    readFileSync(resolve(__dirname, '../../..', relative), 'utf8');
 
   it('the API registers the scheduler with every cron job switched off', () => {
-    expect(read('src/app.module.ts')).toMatch(
-      /ScheduleModule\.forRoot\(\{\s*cronJobs:\s*false\s*\}\)/
-    );
-    expect(read('src/app.module.ts')).not.toContain('ClusterCronLockInitializer');
+    const app = source('src/app.module.ts');
+    expect(app).toMatch(/ScheduleModule\.forRoot\(\s*\{[^}]*\bcronJobs:\s*false\b/);
+    expect(app).not.toContain('ClusterCronLockInitializer');
   });
 
   it('the worker runs the jobs and installs the one-replica lock', () => {
-    const worker = read('src/worker-bootstrap.ts');
-    expect(worker).toMatch(/ScheduleModule\.forRoot\(\)/);
-    expect(worker).toMatch(/providers:\s*\[[^\]]*ClusterCronLockInitializer/);
+    const worker = source('src/worker-bootstrap.ts');
+    expect(worker).toMatch(/ScheduleModule\.forRoot\(\s*\)/);
+    expect(worker).toMatch(/providers:\s*\[[^\]]*\bClusterCronLockInitializer\b/);
+  });
+
+  it('no job is a plain @Cron any more', () => {
+    const files = [
+      'src/services/appointments/appointments-scheduler.service.ts',
+      'src/services/appointments/in-person/in-person-queue-maintenance.service.ts',
+      'src/services/appointments/plugins/video/video-scheduler.service.ts',
+      'src/services/billing/billing-scheduler.service.ts',
+      'src/libs/infrastructure/cache/services/cache-warming.service.ts',
+    ];
+    for (const file of files) {
+      expect(source(file)).not.toMatch(/@Cron\(/);
+    }
   });
 });

@@ -176,15 +176,12 @@ export function buildHarness(options: { db?: FakeDb } = {}) {
   };
 }
 
-/** The @Cron entry points (AppointmentsSchedulerService) over a harness's service, cache and logger. */
+/**
+ * The cron entry points (AppointmentsSchedulerService) over a harness's service. Their one-replica
+ * lock is @ClusterCron's: tests install a lock source with setClusterCronLock.
+ */
 export function schedulerFor(harness: {
   service: AppointmentsService;
-  cache: unknown;
-  logging: unknown;
 }): AppointmentsSchedulerService {
-  return new AppointmentsSchedulerService(
-    harness.service,
-    harness.cache as never,
-    harness.logging as never
-  );
+  return new AppointmentsSchedulerService(harness.service);
 }

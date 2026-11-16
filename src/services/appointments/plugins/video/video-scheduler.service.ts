@@ -1,5 +1,5 @@
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { CronExpression } from '@nestjs/schedule';
 import { ClusterCron } from '@core/decorators/cluster-cron.decorator';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
@@ -380,7 +380,7 @@ export class VideoAppointmentSchedulerService {
    * COMPLETE_REMINDER_BEFORE_EXPIRY_MINUTES before it expires. A cache lock per visit and
    * stage keeps it to one message each, across ticks and across instances.
    */
-  @Cron(CronExpression.EVERY_5_MINUTES)
+  @ClusterCron(CronExpression.EVERY_5_MINUTES)
   async handleOpenVideoVisitReminders(): Promise<void> {
     try {
       const now = new Date();
