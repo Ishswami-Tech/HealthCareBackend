@@ -111,6 +111,12 @@ function resolveServiceLabel(templateData: unknown): string {
   return appointmentType || 'Appointment';
 }
 
+/** The appointment row's own patientId, when the row was found and has one. */
+export function appointmentPatientId(appointment: unknown): string | undefined {
+  const patientId = (appointment as { patientId?: unknown } | null | undefined)?.patientId;
+  return typeof patientId === 'string' && patientId.trim() ? patientId : undefined;
+}
+
 @Injectable()
 export class AppointmentNotificationService {
   private readonly NOTIFICATION_CACHE_TTL = 3600; // 1 hour
@@ -788,6 +794,10 @@ export class AppointmentNotificationService {
       const appointment = await this.databaseService.findAppointmentByIdSafe(data.appointmentId);
       return {
         ...data,
+        // The recipient is the appointment's patient. Producers pass the event's userId first,
+        // which is whoever acted: 'system' for a cron expiry (no one notified) or the doctor who
+        // confirmed or completed the visit (the patient's notice sent to the doctor).
+        patientId: appointmentPatientId(appointment) ?? data.patientId,
         templateData: mergeAppointmentFacts(data.templateData, appointment, {
           // A follow-up notice names the future follow-up date; its appointmentId is the visit
           // it follows, whose date and time must not replace it.
