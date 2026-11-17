@@ -431,6 +431,10 @@ export class SecurityConfigService {
         'sentry-trace',
         'Idempotency-Key',
         'idempotency-key',
+        // The web app's API client set a custom User-Agent until 2026-11-17. Chromium drops it,
+        // but WebKit (every iOS browser) and Firefox send it, so their preflight asks for
+        // `user-agent`; without it here every iPhone API call failed ("Unable to load doctors").
+        'User-Agent',
       ],
       // Content-Disposition: the web app saves invoice / receipt / report files under the name
       // the server chose instead of a blob <uuid>. X-Request-ID: the id of the request's log
