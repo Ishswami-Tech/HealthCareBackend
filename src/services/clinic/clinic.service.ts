@@ -7,6 +7,10 @@ import {
 import { sanitizeBookableTreatmentTypesSetting } from '@utils/bookable-services.util';
 import { sanitizeWorkingDaysSetting } from '@utils/clinic-working-days.util';
 import {
+  mergeDoctorSummaryPatch,
+  sanitizeDoctorSummarySettings,
+} from '@utils/doctor-summary-settings.util';
+import {
   NO_EXPECTED_WALK_IN_FEE,
   resolveExpectedWalkInFee,
   resolveWalkInPlanSettings,
@@ -172,9 +176,14 @@ export class ClinicService {
       // Visit lengths (in-person / video minutes) are stored as whole minutes in [1, 240].
       // Patient-bookable services: a list of known, active catalog treatment types.
       // Working days (weekend booking) and the plan-less walk-in rule: see their utils.
-      sanitizedSettings['appointmentSettings'] = sanitizeWalkInPlanSettings(
-        sanitizeWorkingDaysSetting(
-          sanitizeBookableTreatmentTypesSetting(sanitizeVisitDurationSettings(appointmentSettings))
+      // Doctor WhatsApp summary timing (morning time, minutes before each window).
+      sanitizedSettings['appointmentSettings'] = sanitizeDoctorSummarySettings(
+        sanitizeWalkInPlanSettings(
+          sanitizeWorkingDaysSetting(
+            sanitizeBookableTreatmentTypesSetting(
+              sanitizeVisitDurationSettings(appointmentSettings)
+            )
+          )
         )
       );
     }
@@ -936,7 +945,11 @@ export class ClinicService {
           )
         : null;
       const mergedSettings = settingsToMerge
-        ? mergeClinicSettings(existing?.settings, settingsToMerge)
+        ? mergeDoctorSummaryPatch(
+            existing?.settings,
+            mergeClinicSettings(existing?.settings, settingsToMerge),
+            settingsToMerge
+          )
         : undefined;
 
       // Use executeHealthcareWrite for update with full optimization layers

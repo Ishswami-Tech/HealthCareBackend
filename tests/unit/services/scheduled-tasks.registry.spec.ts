@@ -30,13 +30,7 @@ const EXPECTED: Array<[name: string, prototype: object, rows: Row[]]> = [
     AppointmentsSchedulerService.prototype,
     [
       ['handleNoShowCancellationCron', 'appointments.cancel-no-shows', '0 3 * * *', IST, 3],
-      [
-        'handleDoctorDailyAppointmentSummaryCron',
-        'appointments.doctor-daily-summary',
-        '0 7 * * *',
-        IST,
-        3,
-      ],
+      ['handleDoctorSummariesCron', 'appointments.doctor-summaries', '* * * * *', IST, 1],
       [
         'handleExpiredVideoSlotConfirmationCron',
         'appointments.expire-video-slot-confirmations',

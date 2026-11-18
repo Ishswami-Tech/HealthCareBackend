@@ -8,6 +8,7 @@ import {
   AppointmentStatus,
   AppointmentTypeEnum as AppointmentType,
 } from '@core/types';
+import type { DoctorSummaryTypeFilter, DoctorSummaryWindowKind } from '@core/types/queue.types';
 import { formatDateKeyInIST, formatDateInIST } from '@utils/date-time.util';
 
 /**
@@ -15,6 +16,8 @@ import { formatDateKeyInIST, formatDateInIST } from '@utils/date-time.util';
  * appointment summaries. Used by:
  *   - DoctorAppointmentEventListener (event-triggered updates)
  *   - AppointmentsService cron job (daily 7AM IST push)
+ *   - AppointmentsService window summaries (15 min before each consultation window opens;
+ *     `typeFilter` limits the list to that window's visits, e.g. only VIDEO_CALL)
  *
  * All callers should call buildSummary() which returns null (with a DEBUG log)
  * when a pre-condition gate fails, rather than swallowing errors silently.
@@ -33,7 +36,16 @@ export class DoctorSummaryService {
    * @returns null if prefs/phone gate fails (with a DEBUG log explaining why),
    *   otherwise an object ready for the WhatsApp template formatter.
    */
-  async buildSummary(doctorId: string, clinicId: string) {
+  async buildSummary(
+    doctorId: string,
+    clinicId: string,
+    options: {
+      typeFilter?: DoctorSummaryTypeFilter;
+      dateKey?: string;
+      /** A window summary: named in the message, so it never reads as a repeat of the morning one. */
+      window?: { kind: DoctorSummaryWindowKind; start: string; end: string };
+    } = {}
+  ) {
     // 1. Resolve doctorUserId
     const doctorRecord = await this.databaseService.executeHealthcareRead<{
       id: string;
@@ -88,8 +100,12 @@ export class DoctorSummaryService {
       return null;
     }
 
-    // 4. Query today's CONFIRMED appointments (IST-correct boundaries)
-    const todayKey = formatDateKeyInIST(new Date());
+    // 4. Query the day's CONFIRMED appointments at THIS clinic (IST-correct boundaries). The day
+    //    is the job's own dateKey when set, so a job that runs after midnight lists its day.
+    const todayKey =
+      options.dateKey && /^\d{4}-\d{2}-\d{2}$/.test(options.dateKey)
+        ? options.dateKey
+        : formatDateKeyInIST(new Date());
     const summaryStart = new Date(`${todayKey}T00:00:00+05:30`);
     const summaryEnd = new Date(`${todayKey}T00:00:00+05:30`);
     summaryEnd.setDate(summaryEnd.getDate() + 1);
@@ -118,10 +134,12 @@ export class DoctorSummaryService {
         )?.({
           where: {
             doctorId,
+            clinicId,
             date: { gte: summaryStart, lt: summaryEnd },
             status: {
               in: [AppointmentStatus.CONFIRMED] as unknown as string[],
             },
+            ...(options.typeFilter ? { type: options.typeFilter } : {}),
           },
           select: {
             time: true,
@@ -143,7 +161,7 @@ export class DoctorSummaryService {
         LogLevel.DEBUG,
         `DoctorSummaryService: 0 appointments for doctor ${doctorUserId} at ${clinicId} on ${todayKey} — skipping summary`,
         'DoctorSummaryService',
-        { doctorId, doctorUserId, clinicId, todayKey }
+        { doctorId, doctorUserId, clinicId, todayKey, typeFilter: options.typeFilter }
       );
       return null;
     }
@@ -151,11 +169,13 @@ export class DoctorSummaryService {
     // 6. Format single-line list
     const appointmentsList = this.formatAppointmentsList(appointments);
     const totalCount = String(appointments.length);
-    const dateLabel = formatDateInIST(summaryStart, {
+    const dayLabel = formatDateInIST(summaryStart, {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
     });
+    const windowLabel = options.window ? this.formatWindowLabel(options.window) : null;
+    const dateLabel = windowLabel ? `${dayLabel} (${windowLabel})` : dayLabel;
     const doctorLastName = doctorUser?.lastName || doctorUser?.name || 'Doctor';
 
     return {
@@ -168,6 +188,31 @@ export class DoctorSummaryService {
       appointmentsList,
       totalCount,
     };
+  }
+
+  /**
+   * "video consultations 2:00 PM - 5:00 PM" / "OPD 9:00 AM - 5:00 PM", or null when the times are
+   * not HH:MM. Single line: it goes into a WhatsApp template parameter.
+   */
+  formatWindowLabel(window: {
+    kind: DoctorSummaryWindowKind;
+    start: string;
+    end: string;
+  }): string | null {
+    const clock = (time: string): string | null => {
+      const match = /^(\d{1,2}):(\d{2})$/.exec(time.trim());
+      if (!match) return null;
+      const hours = Number(match[1]);
+      const minutes = Number(match[2]);
+      if (hours > 23 || minutes > 59) return null;
+      const hour12 = hours % 12 === 0 ? 12 : hours % 12;
+      return `${hour12}:${String(minutes).padStart(2, '0')} ${hours < 12 ? 'AM' : 'PM'}`;
+    };
+    const start = clock(window.start);
+    const end = clock(window.end);
+    if (!start || !end) return null;
+    const name = window.kind === 'video' ? 'video consultations' : 'OPD';
+    return `${name} ${start} - ${end}`;
   }
 
   /**

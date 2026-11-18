@@ -43,6 +43,16 @@ function toHhMm(minutes: number): string {
 }
 
 /**
+ * The hours a doctor-clinic pair has when NO schedule layer is configured (and the pair has no
+ * DoctorClinic.startTime / endTime): the slot grid's legacy fallback, shared with the doctor
+ * summaries so both agree on when such a doctor works.
+ */
+export const LEGACY_DEFAULT_WORKING_HOURS: Readonly<SessionWindow> = Object.freeze({
+  start: '11:00',
+  end: '23:59',
+});
+
+/**
  * Intersects the configured layers. Returns `null` when no layer is configured (the caller keeps
  * its legacy fallback), `[]` when the configured layers leave no common time (closed day).
  */

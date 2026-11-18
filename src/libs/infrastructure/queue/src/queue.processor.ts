@@ -355,6 +355,7 @@ export class QueueProcessor {
         case JobType.APPOINTMENT:
           return await this.processAppointmentJob(job as unknown as Job<JobData>);
         case JobType.DOCTOR_SUMMARY:
+        case JobType.DOCTOR_WINDOW_SUMMARY:
           return await this.processDoctorSummaryJob(
             job as unknown as Job<CanonicalJobEnvelope<DoctorSummaryJobData>>
           );
@@ -808,7 +809,23 @@ export class QueueProcessor {
           throw new Error('DoctorSummaryService not available');
         }
 
-        const summary = await doctorSummaryService.buildSummary(payload.doctorId, payload.clinicId);
+        const summary = await doctorSummaryService.buildSummary(
+          payload.doctorId,
+          payload.clinicId,
+          {
+            ...(payload.typeFilter ? { typeFilter: payload.typeFilter } : {}),
+            ...(payload.dateKey ? { dateKey: payload.dateKey } : {}),
+            ...(payload.window && payload.windowStart && payload.windowEnd
+              ? {
+                  window: {
+                    kind: payload.window,
+                    start: payload.windowStart,
+                    end: payload.windowEnd,
+                  },
+                }
+              : {}),
+          }
+        );
 
         if (!summary) {
           // Pre-condition gate failed (prefs/phone missing). Log and mark success —
