@@ -5797,29 +5797,28 @@ export class AppointmentsController {
   }
 
   /**
-   * Manually trigger the doctor daily appointment summary
-   * Useful when the 7 AM cron misses execution (e.g., worker was down).
-   * The jobs are enqueued for the worker to process via WhatsApp.
+   * Manually send today's full-day doctor summary for the caller's clinic, e.g. when the
+   * scheduled morning summary was missed (worker down). Timing of the scheduled summaries is the
+   * clinic setting appointmentSettings.doctorSummary.
    */
   @Post('summary/trigger')
   @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @ClinicRoute()
   @RequireResourcePermission('appointments', 'update')
   @RateLimitAPI({ points: 5, duration: 60 })
   @ApiOperation({
     summary: 'Trigger doctor daily summary manually',
     description:
-      'Manually enqueues doctor daily appointment summary jobs. Use this when the 7 AM cron was missed (e.g., worker downtime). The worker must be running to process the queued jobs.',
+      "Enqueues today's full-day WhatsApp summary for each doctor of the caller's clinic (super admin without a clinic: every active clinic; doctors with no confirmed bookings get none). Use it when the scheduled morning summary was missed; the worker must be running to send them.",
   })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Doctor summary jobs enqueued',
   })
-  async triggerDoctorDailySummary(@Request() _req: ClinicAuthenticatedRequest): Promise<{
+  async triggerDoctorDailySummary(@Request() req: ClinicAuthenticatedRequest): Promise<{
     success: true;
     data: {
-      skipped: boolean;
-      reason?: string;
       todayKey: string;
       enqueuedCount: number;
       skipCount: number;
@@ -5827,15 +5826,19 @@ export class AppointmentsController {
     };
     message: string;
   }> {
+    // Clinic admins: their own clinic. Super admins: the clinic in context, or every clinic.
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId && req.user?.role !== Role.SUPER_ADMIN) {
+      throw new BadRequestException('Clinic context is required');
+    }
     const result = await this.appointmentService.triggerDoctorDailySummary({
+      ...(clinicId ? { clinicId } : {}),
       triggeredBy: 'manual',
     });
     return {
       success: true,
       data: result,
-      message: result.skipped
-        ? `Doctor summary skipped (${result.reason})`
-        : `Enqueued ${result.enqueuedCount} doctor summary job(s), skipped ${result.skipCount} existing`,
+      message: `Enqueued ${result.enqueuedCount} doctor summary job(s), skipped ${result.skipCount} existing`,
     };
   }
 }

@@ -35,6 +35,7 @@ describeWithRedis('scheduled tasks on real BullMQ', () => {
 
   const queueName = `scheduled-it-${Date.now()}`;
   const runs: Array<{ replica: string; jobId: string }> = [];
+  const services: ScheduledTasksService[] = [];
   let queue: Queue;
 
   class EverySecond {
@@ -64,6 +65,7 @@ describeWithRedis('scheduled tasks on real BullMQ', () => {
       queue,
       { log: async () => undefined } as never
     );
+    services.push(service);
     const worker = new Worker(
       queueName,
       async (job: Job<ScheduledTaskEnvelope>) => {
@@ -81,6 +83,7 @@ describeWithRedis('scheduled tasks on real BullMQ', () => {
   });
 
   afterAll(async () => {
+    for (const service of services) service.onModuleDestroy();
     await queue.obliterate({ force: true });
     await queue.close();
   });

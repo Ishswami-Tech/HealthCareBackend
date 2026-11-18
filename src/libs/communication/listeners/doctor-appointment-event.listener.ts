@@ -7,7 +7,9 @@ import { QueueService } from '@infrastructure/queue';
 import { DoctorSummaryService } from '@communication/services/doctor-summary.service';
 import { LogType, LogLevel } from '@core/types';
 import { JobType, JobPriorityLevel } from '@core/types/queue.types';
-import { formatDateKeyInIST, IST_TIMEZONE } from '@utils/date-time.util';
+import { formatDateKeyInIST, getClockPartsInIST } from '@utils/date-time.util';
+import { loadDoctorSummaryInputs } from '@services/appointments/doctor-summary-data';
+import { isWithinDoctorSummaryDay } from '@services/appointments/doctor-summary-schedule.util';
 
 type AppointmentConfirmedEventPayload = {
   appointmentId: string;
@@ -38,6 +40,9 @@ type AppointmentConfirmedEventPayload = {
  * - A 30-second in-memory dedup prevents the same appointment confirmation from
  *   billing + appointment services firing twice from creating extra jobs.
  * - Summary content (appointmentsList, totalCount) is computed at process time.
+ * - Only bookings for today, only between the day's first scheduled summary and the end of the
+ *   doctor's last window (clinic / doctor settings; see doctor-summary-schedule.util.ts), and
+ *   never for the appointment.confirmed that check-in re-emits.
  */
 @Injectable()
 export class DoctorAppointmentEventListener {
@@ -101,39 +106,67 @@ export class DoctorAppointmentEventListener {
       return;
     }
 
-    // Only send event-driven summary during daytime window (12:00–18:00 IST).
-    // Night bookings are included in the 7 AM cron summary instead.
-    const istHour = new Date(
-      new Date().toLocaleString('en-US', { timeZone: IST_TIMEZONE })
-    ).getHours();
-    if (istHour < 12 || istHour >= 18) {
+    // Check-in re-emits appointment.confirmed for a visit already in the summary; reacting to it
+    // would use up the day's one update before a real new booking arrives.
+    if (payload['checkInMethod'] !== undefined || payload['checkedInAt'] !== undefined) {
+      return;
+    }
+
+    // The summary lists today's visits: a booking for another day changes nothing in it.
+    const nowDate = new Date();
+    const todayKey = formatDateKeyInIST(nowDate);
+    const appointmentDate = payload.appointment?.['date'];
+    const appointmentDayKey =
+      typeof appointmentDate === 'string' || appointmentDate instanceof Date
+        ? formatDateKeyInIST(appointmentDate)
+        : '';
+    if (appointmentDayKey && appointmentDayKey !== todayKey) {
       void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.DEBUG,
-        `DoctorAppointmentEventListener: skipping event-driven summary — outside 12–18 IST window (current IST hour: ${istHour})`,
+        'DoctorAppointmentEventListener: booking is for another day — no summary update',
         'DoctorAppointmentEventListener',
-        { doctorId, clinicId, istHour }
+        { doctorId, clinicId, appointmentId: payload.appointmentId }
       );
       return;
     }
 
     try {
-      // 1. Resolve doctorUserId (cheap pre-check — no prefs/phone query yet)
-      const doctorUserId = await this.resolveDoctorUserId(doctorId);
-      if (!doctorUserId) {
+      // 1. The doctor-clinic pair with its stored hours and the clinic's summary timing.
+      const clock = getClockPartsInIST(nowDate);
+      const { pairs, overrides } = await loadDoctorSummaryInputs(this.databaseService, todayKey, {
+        doctorId,
+        clinicId,
+      });
+      const pair = pairs[0];
+      if (!pair || !clock) {
         void this.loggingService.log(
           LogType.APPOINTMENT,
           LogLevel.DEBUG,
-          `DoctorAppointmentEventListener: doctor ${doctorId} not found`,
+          `DoctorAppointmentEventListener: doctor ${doctorId} is not linked to active clinic ${clinicId}`,
           'DoctorAppointmentEventListener',
           { doctorId, clinicId }
         );
         return;
       }
+      const doctorUserId = pair.doctorUserId;
+
+      // Only between the day's first scheduled summary (earlier bookings are in it) and the
+      // end of the doctor's last window; both come from the clinic / doctor settings.
+      const nowMinutes = clock.hour * 60 + clock.minute;
+      if (!isWithinDoctorSummaryDay(pair, overrides, todayKey, nowMinutes)) {
+        void this.loggingService.log(
+          LogType.APPOINTMENT,
+          LogLevel.DEBUG,
+          'DoctorAppointmentEventListener: skipping event-driven summary — outside the doctor summary day',
+          'DoctorAppointmentEventListener',
+          { doctorId, clinicId, nowMinutes }
+        );
+        return;
+      }
 
       // 2. Build per-day jobId — ensures only ONE event-driven summary per doctor per day.
-      //    The cron job uses a "-cron" suffix, so this never collides with it.
-      const todayKey = formatDateKeyInIST(new Date());
+      //    The scheduled summaries use "-cron" / "-<window>-window" suffixes, so no collision.
       const dedupJobId = `doctor-summary-${doctorUserId}-${clinicId}-${todayKey}-event`;
       const existingEventJob = await this.queueService.getJob('healthcare-queue', dedupJobId);
       if (existingEventJob) {
@@ -156,6 +189,7 @@ export class DoctorAppointmentEventListener {
           doctorUserId,
           clinicId,
           triggeredBy: 'appointment_confirmed',
+          dateKey: todayKey,
         },
         {
           priority: JobPriorityLevel.NORMAL,
@@ -192,29 +226,5 @@ export class DoctorAppointmentEventListener {
         }
       );
     }
-  }
-
-  // ──────────────────────────────────────────────
-  // Private helpers
-  // ──────────────────────────────────────────────
-
-  private async resolveDoctorUserId(doctorId: string): Promise<string | null> {
-    const record: { id: string; userId: string } | null =
-      await this.databaseService.executeHealthcareRead<{
-        id: string;
-        userId: string;
-      } | null>(async client => {
-        const prismaClient = client as unknown as Record<string, unknown>;
-        const result = (
-          (prismaClient['doctor'] as Record<string, unknown> | undefined)?.['findUnique'] as
-            ((args: unknown) => Promise<{ id: string; userId: string } | null>) | undefined
-        )?.({
-          where: { id: doctorId },
-          select: { id: true, userId: true },
-        });
-        return result ?? null;
-      });
-
-    return record?.userId ?? null;
   }
 }

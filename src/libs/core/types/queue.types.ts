@@ -115,11 +115,26 @@ export interface EmailJobData {
 }
 
 // Doctor summary job data
+/** Which of the day's appointments a doctor summary lists, by Appointment.type. */
+export type DoctorSummaryTypeFilter = { in: string[] } | { notIn: string[] };
+
+/** The consultation window a "before the window" doctor summary is sent for. */
+export type DoctorSummaryWindowKind = 'in_person' | 'video';
+
 export interface DoctorSummaryJobData {
   doctorId: string;
   doctorUserId: string;
   clinicId: string;
-  triggeredBy?: 'cron' | 'appointment_confirmed';
+  /** 'cron' (7 AM), 'appointment_confirmed', 'window_reminder' or 'manual'. */
+  triggeredBy?: string;
+  /** Set on window summaries: which window, and which appointments it lists (absent = all). */
+  window?: DoctorSummaryWindowKind;
+  /** Window summaries: the window's HH:MM IST start and end, named in the message. */
+  windowStart?: string;
+  windowEnd?: string;
+  typeFilter?: DoctorSummaryTypeFilter;
+  /** IST day (YYYY-MM-DD) the summary is for; absent on older jobs = the day it runs. */
+  dateKey?: string;
   // Below fields are optional — populated at process time by DoctorSummaryService.
   // Old in-flight jobs may still carry them (precomputed at enqueue time).
   phone?: string;
@@ -173,6 +188,13 @@ export enum JobType {
   CHEQUP = 'chequp',
   DOCTOR_AVAILABILITY = 'doctor_availability',
   DOCTOR_SUMMARY = 'doctor_summary',
+  /**
+   * A doctor summary for one consultation window (listing only that window's visits). Its own
+   * type, not DOCTOR_SUMMARY: a worker from before window summaries existed would send it as a
+   * full-day list; with this type it rejects the job, which retries until a current worker
+   * takes it (rolling deploys).
+   */
+  DOCTOR_WINDOW_SUMMARY = 'doctor_window_summary',
   QUEUE_MANAGEMENT = 'queue_management',
   PAYMENT_PROCESSING = 'payment_processing',
   ANALYTICS = 'analytics',
@@ -459,6 +481,8 @@ export interface EnterpriseJobOptions {
   timeout?: number;
   delay?: number;
   attempts?: number;
+  /** Retry back-off between attempts; default exponential from 2 s. */
+  backoff?: { type: 'exponential' | 'fixed'; delay: number };
   /** BullMQ KeepJobs: true / a count / `{ count, age (seconds) }`. */
   removeOnComplete?: boolean | number | { count: number; age?: number };
   removeOnFail?: boolean | number | { count: number; age?: number };

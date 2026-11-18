@@ -12,10 +12,19 @@
  * - each run is listed in the queue dashboard under the "Scheduled Tasks" filter group, and the
  *   schedules in Bull Board's Job Schedulers view.
  *
- * Both replicas register at boot: upsertJobScheduler is idempotent per scheduler id.
+ * Both replicas register at boot: upsertJobScheduler is idempotent per scheduler id. Each worker
+ * re-checks every RECONCILE_INTERVAL_MS as well: during a rolling deploy a worker of the previous
+ * release that restarts re-registers ITS task set (removing a task the new release added), and
+ * the next check of a current worker puts it back. Unchanged schedulers are never touched.
  */
 
-import { Inject, Injectable, forwardRef, type OnApplicationBootstrap } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  forwardRef,
+  type OnApplicationBootstrap,
+  type OnModuleDestroy,
+} from '@nestjs/common';
 import { DiscoveryService, MetadataScanner, Reflector } from '@nestjs/core';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Job, Queue } from 'bullmq';
@@ -50,6 +59,9 @@ const RETRY_BACKOFF = { type: 'exponential', delay: 60_000 } as const;
 
 /** How many active jobs the overlap guard inspects (the worker runs at most 100 at once). */
 const ACTIVE_SCAN_LIMIT = 500;
+
+/** How often each worker re-checks that the schedulers match its tasks. */
+export const RECONCILE_INTERVAL_MS = 10 * 60_000;
 
 export interface ScheduledTaskData {
   taskId: string;
@@ -113,8 +125,9 @@ export function scheduledTaskEnvelope(options: ScheduledTaskOptions): ScheduledT
 }
 
 @Injectable()
-export class ScheduledTasksService implements OnApplicationBootstrap {
+export class ScheduledTasksService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly tasks = new Map<string, DiscoveredTask>();
+  private reconcileTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private readonly discovery: DiscoveryService,
@@ -126,15 +139,30 @@ export class ScheduledTasksService implements OnApplicationBootstrap {
 
   async onApplicationBootstrap(): Promise<void> {
     this.ensureDiscovered();
+    await this.reconcile('boot');
+    this.reconcileTimer = setInterval(() => {
+      void this.reconcile('check');
+    }, RECONCILE_INTERVAL_MS);
+    this.reconcileTimer.unref?.();
+  }
+
+  onModuleDestroy(): void {
+    if (this.reconcileTimer) clearInterval(this.reconcileTimer);
+    this.reconcileTimer = null;
+  }
+
+  /** registerSchedulers, never throwing: the worker keeps processing other jobs. */
+  private async reconcile(reason: 'boot' | 'check'): Promise<void> {
     try {
-      await this.registerSchedulers();
+      await this.registerSchedulers({ logUnchanged: reason === 'boot' });
     } catch (error) {
-      // The worker keeps processing other jobs; the schedulers registered on the previous boot
-      // stay in place and keep firing.
+      // The schedulers already registered stay in place and keep firing.
       void this.logging.log(
         LogType.QUEUE,
         LogLevel.ERROR,
-        'Could not register the scheduled tasks with BullMQ',
+        reason === 'boot'
+          ? 'Could not register the scheduled tasks with BullMQ'
+          : 'Could not re-check the scheduled tasks with BullMQ',
         SOURCE,
         { error: error instanceof Error ? error.message : String(error) }
       );
@@ -199,7 +227,7 @@ export class ScheduledTasksService implements OnApplicationBootstrap {
    * scheduledTaskSignature: a restart or a second replica must not touch running ticks), and
    * removes this app's schedulers that are no longer defined.
    */
-  async registerSchedulers(): Promise<void> {
+  async registerSchedulers(options: { logUnchanged?: boolean } = {}): Promise<void> {
     const existing = new Map(
       (await this.queue.getJobSchedulers(0, -1)).map(scheduler => [scheduler.key, scheduler])
     );
@@ -246,6 +274,7 @@ export class ScheduledTasksService implements OnApplicationBootstrap {
       }
     }
 
+    if (options.logUnchanged === false && updated.length === 0 && removed.length === 0) return;
     void this.logging.log(
       LogType.QUEUE,
       LogLevel.INFO,

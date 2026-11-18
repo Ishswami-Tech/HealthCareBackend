@@ -18,7 +18,7 @@ import { QueueService, AppointmentQueueService } from '@infrastructure/queue';
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events/event.service';
 import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
-import { JobType, JobPriorityLevel } from '@core/types/queue.types';
+import { JobType, JobPriorityLevel, type DoctorSummaryJobData } from '@core/types/queue.types';
 import type { EnterpriseEventPayload } from '@core/types/event.types';
 import { HealthcareErrorsService } from '@core/errors';
 import { HealthcareError } from '@core/errors';
@@ -28,9 +28,11 @@ import {
   formatDateInIST,
   formatDateTimeInIST,
   formatDateKeyInIST,
-  IST_TIMEZONE,
+  getClockPartsInIST,
   nowIso,
 } from '../../libs/utils/date-time.util';
+import { planDoctorSummaries } from './doctor-summary-schedule.util';
+import { loadDoctorSummaryInputs } from './doctor-summary-data';
 
 // Core Services
 import { CoreAppointmentService } from './core/core-appointment.service';
@@ -143,6 +145,10 @@ import {
   SAFE_APPOINTMENT_USER_SELECT,
   toSafeAppointmentUsers,
 } from './core/appointment-response-redaction.util';
+
+/** Window summary retries: 8 attempts 30 s apart (see triggerScheduledDoctorSummaries). */
+const WINDOW_SUMMARY_ATTEMPTS = 8;
+const WINDOW_SUMMARY_RETRY_DELAY_MS = 30_000;
 
 type AssistantDoctorCoverageEntry = {
   assistantDoctorId: string;
@@ -618,41 +624,24 @@ export class AppointmentsService {
   }
 
   /**
-   * Shared implementation for the 7 AM cron (AppointmentsSchedulerService) and the manual-trigger endpoint.
-   * Enqueues one DOCTOR_SUMMARY job per doctor-clinic pair.
+   * Manual full-day doctor summary (POST /appointments/summary/trigger) for one clinic, or for
+   * every active clinic when `clinicId` is omitted (super admin), e.g. when the scheduled morning
+   * summary was missed. The scheduled summaries are
+   * triggerScheduledDoctorSummaries. No weekday rule: a day without confirmed bookings sends
+   * nothing (DoctorSummaryService skips it), so working days stay a clinic setting.
+   * Enqueues one DOCTOR_SUMMARY job per doctor of the clinic.
    */
-  async triggerDoctorDailySummary(opts: { triggeredBy?: string; dateKey?: string } = {}) {
+  async triggerDoctorDailySummary(opts: { clinicId?: string; triggeredBy?: string } = {}) {
     const runStart = Date.now();
-    const todayKey = opts.dateKey || formatDateKeyInIST(new Date());
+    const todayKey = formatDateKeyInIST(new Date());
     const triggeredBy = opts.triggeredBy || 'manual';
-
-    const istDay = new Date(
-      new Date().toLocaleString('en-US', { timeZone: IST_TIMEZONE })
-    ).getDay();
-    if (istDay === 0 || istDay === 6) {
-      void this.loggingService.log(
-        LogType.NOTIFICATION,
-        LogLevel.DEBUG,
-        'Doctor daily appointment summary skipped — weekend',
-        'AppointmentsService',
-        { todayKey, istDay, triggeredBy }
-      );
-      return {
-        skipped: true,
-        reason: 'weekend',
-        todayKey,
-        enqueuedCount: 0,
-        skipCount: 0,
-        totalDoctors: 0,
-      };
-    }
 
     await this.loggingService.log(
       LogType.NOTIFICATION,
       LogLevel.INFO,
       'Doctor daily appointment summary started',
       'AppointmentsService',
-      { todayKey, triggeredBy }
+      { todayKey, triggeredBy, clinicId: opts.clinicId }
     );
 
     const doctorClinics = await this.databaseService.executeHealthcareRead<
@@ -660,6 +649,10 @@ export class AppointmentsService {
     >(async client => {
       const prismaClient = client as unknown as Prisma.TransactionClient;
       return await prismaClient.doctorClinic.findMany({
+        where: {
+          ...(opts.clinicId ? { clinicId: opts.clinicId } : {}),
+          clinic: { isActive: true, deletedAt: null },
+        },
         select: {
           doctorId: true,
           clinicId: true,
@@ -689,6 +682,7 @@ export class AppointmentsService {
             doctorUserId: dc.doctor.userId,
             clinicId: dc.clinicId,
             triggeredBy,
+            dateKey: todayKey,
           },
           {
             priority: JobPriorityLevel.NORMAL,
@@ -724,12 +718,108 @@ export class AppointmentsService {
     );
 
     return {
-      skipped: false,
       todayKey,
       enqueuedCount,
       skipCount,
       totalDoctors: doctorClinics.length,
     };
+  }
+
+  /**
+   * Runs every minute and enqueues the doctor summaries due now, per each clinic's
+   * `appointmentSettings.doctorSummary`: the morning full-day summary at `morningTime`, and one
+   * summary `beforeWindowMinutes` before each consultation window (in-person OPD, video) opens.
+   * The timing rules live in doctor-summary-schedule.util.ts; job ids are per doctor, clinic,
+   * day and summary, so each is sent once. Empty days send nothing (DoctorSummaryService).
+   */
+  async triggerScheduledDoctorSummaries(now: Date = new Date()) {
+    const clock = getClockPartsInIST(now);
+    if (!clock) {
+      return { todayKey: '', due: 0, enqueued: 0, alreadyQueued: 0, retried: 0, failed: 0 };
+    }
+    const todayKey = formatDateKeyInIST(now);
+    const nowMinutes = clock.hour * 60 + clock.minute;
+
+    const { pairs, overrides } = await loadDoctorSummaryInputs(this.databaseService, todayKey);
+
+    const due = planDoctorSummaries(pairs, overrides, todayKey, nowMinutes);
+    let enqueued = 0;
+    let alreadyQueued = 0;
+    let retried = 0;
+    let failed = 0;
+
+    for (const summary of due) {
+      try {
+        const existing = await this.queueService.getJob('healthcare-queue', summary.jobId);
+        if (existing) {
+          // A summary whose job used up its attempts (WhatsApp down, or old workers rejecting a
+          // window summary during a rolling deploy) is retried while it is still due.
+          if ((await existing.getState()) === 'failed') {
+            await existing.retry('failed');
+            retried++;
+          } else {
+            alreadyQueued++;
+          }
+          continue;
+        }
+        const isMorning = summary.kind === 'morning';
+        const data: DoctorSummaryJobData = {
+          doctorId: summary.doctorId,
+          doctorUserId: summary.doctorUserId,
+          clinicId: summary.clinicId,
+          triggeredBy: isMorning ? 'cron' : 'window_reminder',
+          dateKey: todayKey,
+          ...(summary.kind !== 'morning'
+            ? {
+                window: summary.kind,
+                windowStart: summary.at,
+                ...(summary.windowEnd ? { windowEnd: summary.windowEnd } : {}),
+              }
+            : {}),
+          ...(summary.typeFilter ? { typeFilter: summary.typeFilter } : {}),
+        };
+        await this.queueService.addJob(
+          isMorning ? JobType.DOCTOR_SUMMARY : JobType.DOCTOR_WINDOW_SUMMARY,
+          isMorning ? 'send-doctor-daily-summary' : 'send-doctor-window-summary',
+          data,
+          isMorning
+            ? { priority: JobPriorityLevel.NORMAL, correlationId: summary.jobId, attempts: 3 }
+            : {
+                priority: JobPriorityLevel.NORMAL,
+                correlationId: summary.jobId,
+                // ~3.5 minutes of retries: long enough for a rolling deploy to replace a worker
+                // that does not know this job type, short enough to land before the window.
+                attempts: WINDOW_SUMMARY_ATTEMPTS,
+                backoff: { type: 'fixed', delay: WINDOW_SUMMARY_RETRY_DELAY_MS },
+              }
+        );
+        enqueued++;
+        void this.loggingService.log(
+          LogType.NOTIFICATION,
+          LogLevel.INFO,
+          `Doctor ${summary.kind} summary enqueued (${isMorning ? 'morning time' : 'window opens'} ${summary.at} IST)`,
+          'AppointmentsService',
+          {
+            doctorId: summary.doctorId,
+            clinicId: summary.clinicId,
+            kind: summary.kind,
+            at: summary.at,
+            jobId: summary.jobId,
+          }
+        );
+      } catch (error) {
+        failed++;
+        void this.loggingService.log(
+          LogType.NOTIFICATION,
+          LogLevel.ERROR,
+          `Failed to enqueue doctor ${summary.kind} summary: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'AppointmentsService',
+          { doctorId: summary.doctorId, clinicId: summary.clinicId, jobId: summary.jobId }
+        );
+      }
+    }
+
+    return { todayKey, due: due.length, enqueued, alreadyQueued, retried, failed };
   }
 
   async processExpiredVideoSlotConfirmations(settings?: {

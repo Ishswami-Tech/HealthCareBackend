@@ -44,7 +44,10 @@ import {
   resolveVisitDurationMinutes,
   visitMinutesForType,
 } from '@utils/visit-duration.util';
-import { intersectSessionLayers } from '@services/appointments/core/session-layers.util';
+import {
+  intersectSessionLayers,
+  LEGACY_DEFAULT_WORKING_HOURS,
+} from '@services/appointments/core/session-layers.util';
 import { type DayBookability, resolveDayBookability } from '@utils/clinic-working-days.util';
 
 // DTOs and Types
@@ -2052,10 +2055,7 @@ export class CoreAppointmentService {
         return extractSessions(value);
       };
 
-      const defaultWorkingHours = {
-        start: '11:00',
-        end: '23:59',
-      };
+      const defaultWorkingHours = { ...LEGACY_DEFAULT_WORKING_HOURS };
       const workingHours = { ...defaultWorkingHours };
       let sessionWindows: SessionWindow[] = [];
       // Slot grid step = the visit length of the requested type (clinic setting, defaults

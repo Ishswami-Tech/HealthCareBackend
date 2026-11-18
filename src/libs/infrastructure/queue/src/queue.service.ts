@@ -692,7 +692,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
         priority: this.getJobPriority(options.priority),
         delay: options.delay || 0,
         attempts: options.attempts || 3,
-        backoff: {
+        backoff: options.backoff ?? {
           type: 'exponential',
           delay: 2000,
         },

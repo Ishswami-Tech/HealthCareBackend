@@ -34,15 +34,20 @@ export class AppointmentsSchedulerService {
     await this.appointments.processNoShowCancellations();
   }
 
+  /**
+   * Doctor WhatsApp summaries: the morning full-day summary and one before each consultation
+   * window. Their times are clinic settings (appointmentSettings.doctorSummary), so this checks
+   * every minute what is due instead of firing at a fixed hour (two cheap reads per check).
+   */
   @ScheduledTask({
-    id: 'appointments.doctor-daily-summary',
+    id: 'appointments.doctor-summaries',
     group: 'appointments',
-    pattern: '0 7 * * *',
+    pattern: '* * * * *',
     tz: SCHEDULED_TASK_DEFAULT_TZ,
-    attempts: 3,
+    attempts: 1,
   })
-  async handleDoctorDailyAppointmentSummaryCron(): Promise<void> {
-    await this.appointments.triggerDoctorDailySummary({ triggeredBy: 'cron' });
+  async handleDoctorSummariesCron(): Promise<void> {
+    await this.appointments.triggerScheduledDoctorSummaries();
   }
 
   @ScheduledTask({
