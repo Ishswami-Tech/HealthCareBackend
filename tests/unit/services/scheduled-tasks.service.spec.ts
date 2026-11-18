@@ -72,6 +72,11 @@ type ExistingScheduler = {
   template?: { data?: unknown };
 };
 
+const createdServices: ScheduledTasksService[] = [];
+afterEach(() => {
+  for (const service of createdServices.splice(0)) service.onModuleDestroy();
+});
+
 function setup(
   options: { existingSchedulers?: Array<string | ExistingScheduler>; active?: Partial<Job>[] } = {}
 ): {
@@ -106,6 +111,7 @@ function setup(
     queue as unknown as Queue,
     { log } as never
   );
+  createdServices.push(service);
   return { service, jobs, queue, log };
 }
 
@@ -222,6 +228,59 @@ describe('ScheduledTasksService', () => {
 
     expect(queue.removeJobScheduler).toHaveBeenCalledTimes(1);
     expect(queue.removeJobScheduler).toHaveBeenCalledWith('scheduled:old.renamed');
+  });
+
+  it('re-checks every 10 minutes: puts back a removed scheduler, touches nothing unchanged', async () => {
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+    try {
+      const { service, queue, log } = setup();
+      await service.onApplicationBootstrap();
+      expect(queue.upsertJobScheduler).toHaveBeenCalledTimes(2);
+
+      // A worker of the previous release restarted and removed test.daily; test.sweep is intact.
+      const sweep = service.definitions().find(task => task.id === 'test.sweep');
+      queue.getJobSchedulers.mockResolvedValue([
+        {
+          key: 'scheduled:test.sweep',
+          name: 'test.sweep',
+          pattern: '* * * * *',
+          tz: 'Asia/Kolkata',
+          template: { data: sweep ? scheduledTaskEnvelope(sweep) : undefined },
+        },
+      ]);
+      queue.upsertJobScheduler.mockClear();
+      log.mockClear();
+      await jest.advanceTimersByTimeAsync(10 * 60_000);
+
+      expect(queue.upsertJobScheduler).toHaveBeenCalledTimes(1);
+      expect(queue.upsertJobScheduler.mock.calls[0]?.[0]).toBe('scheduled:test.daily');
+      expect(log).toHaveBeenCalledTimes(1);
+
+      // Everything in place: the next check changes nothing and logs nothing.
+      queue.getJobSchedulers.mockResolvedValue(
+        service.definitions().map(task => ({
+          key: `scheduled:${task.id}`,
+          name: task.id,
+          pattern: task.pattern,
+          tz: task.tz,
+          template: { data: scheduledTaskEnvelope(task) },
+        }))
+      );
+      queue.upsertJobScheduler.mockClear();
+      log.mockClear();
+      await jest.advanceTimersByTimeAsync(10 * 60_000);
+      expect(queue.upsertJobScheduler).not.toHaveBeenCalled();
+      expect(queue.removeJobScheduler).not.toHaveBeenCalled();
+      expect(log).not.toHaveBeenCalled();
+
+      // Shut down: no more checks.
+      service.onModuleDestroy();
+      queue.getJobSchedulers.mockClear();
+      await jest.advanceTimersByTimeAsync(10 * 60_000);
+      expect(queue.getJobSchedulers).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('keeps the worker up when registration fails (and logs it)', async () => {
