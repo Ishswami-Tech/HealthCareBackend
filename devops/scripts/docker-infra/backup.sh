@@ -31,8 +31,13 @@ CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
 
 # Fixed container names for infrastructure (never change)
 POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-$(docker ps --filter 'ancestor=postgres:' --format '{{.Names}}' | head -1)}"
-DRAGONFLY_CONTAINER="${DRAGONFLY_CONTAINER:-$(docker ps --filter 'ancestor=docker.dragonflydb.io/dragonflydb/dragonfly' --format '{{.Names}}' | head -1)}"
-REDIS_CONTAINER="redis"  # Optional: for redis-cli tool access
+# The control plane's HA Dragonfly copy: a replica of the Sentinel-managed master (temps-ha/
+# dragonfly-start). Never the old Coolify `redis-dragonfly`, which holds stale data.
+DRAGONFLY_CONTAINER="${DRAGONFLY_CONTAINER:-redis-dragonfly-cache}"
+# The Sentinels that pick the Dragonfly master (control plane). When present, the backup copy must
+# be replicating from the master they name, so a copy left behind by a failover is never saved.
+DRAGONFLY_SENTINEL_CONTAINER="${DRAGONFLY_SENTINEL_CONTAINER:-dragonfly-sentinel}"
+DRAGONFLY_SENTINEL_NAME="${DRAGONFLY_SENTINEL_NAME:-dragonfly}"
 
 # Temps HA Postgres helpers (temps_ha_postgres_enabled, resolve_postgres_primary, pg_tool) live in
 # shared/utils.sh, shared with restore.sh.
@@ -477,254 +482,156 @@ EOF
     fi
 }
 
-# Helper function to backup dragonfly to specific path
+# redis-cli inside the Dragonfly container, authenticated with the server's own --requirepass.
+# The password is read from the server's argv INSIDE the container and never leaves it: it is not
+# on the host command line, in the environment of this script, or in any log.
+dragonfly_cli() {
+    local container="$1"
+    shift
+    docker exec -i "$container" sh -s -- "$@" <<'SH'
+args=""
+for p in /proc/[0-9]*; do
+    a=$(tr '\0' '\n' < "$p/cmdline" 2>/dev/null) || continue
+    case "$(printf '%s\n' "$a" | head -1)" in
+        dragonfly|*/dragonfly|redis-server|*/redis-server) args="$a"; break ;;
+    esac
+done
+[ -n "$args" ] || args=$(tr '\0' '\n' < /proc/1/cmdline)
+flag() { printf '%s\n' "$args" | sed -n "s/^--$1=//p" | head -1; }
+next() { printf '%s\n' "$args" | grep -A1 -x -- "--$1" | sed -n 2p; }
+pw=$(flag requirepass); [ -n "$pw" ] || pw=$(next requirepass)
+port=$(flag port); [ -n "$port" ] || port=$(next port)
+[ -n "$pw" ] && export REDISCLI_AUTH="$pw"
+exec redis-cli -p "${port:-6379}" --no-auth-warning "$@"
+SH
+}
+
+# Back up Dragonfly (all logical DBs: app cache/sessions/token blacklist in db0, HCB BullMQ in db1,
+# social-media BullMQ in db5) as one gzipped RDB file.
+#
+# Taken from the control plane's replica, so the India master is never asked to snapshot. A replica
+# whose master link is down holds stale data, so the backup refuses instead of saving it. The
+# snapshot is written under a name of its own as a single RDB file (restorable by any Dragonfly or
+# Redis with --dbfilename), copied out, and removed from the container so the volume does not grow.
 backup_dragonfly_to_path() {
     local backup_file="$1"
     local container="${DRAGONFLY_CONTAINER}"
-    
+    local snapshot="hcb-backup-${TIMESTAMP}"
+
     if ! validate_container_name "$container"; then
         log_error "Invalid container name: ${container}"
         return 1
     fi
-    
-    local temp_rdb="/tmp/dragonfly-${TIMESTAMP}.rdb"
-    
-    log_info "Starting Dragonfly backup..."
-    
+    log_info "Starting Dragonfly backup from ${container}..."
     if ! container_running "$container"; then
-        log_error "Dragonfly container is not running"
+        log_error "Dragonfly container ${container} is not running"
         return 1
     fi
-    
-    # Check if redis-cli is available - try multiple sources:
-    # 1. Inside Dragonfly container
-    # 2. In a separate Redis container (if available)
-    # 3. On the host system
-    local cli_available=false
-    local redis_cli_cmd=""
-    
-    # First, try inside Dragonfly container
-    if docker exec "$container" sh -c "command -v redis-cli >/dev/null 2>&1" 2>/dev/null; then
-        cli_available=true
-        redis_cli_cmd="docker exec $container redis-cli -p 6379"
-        log_info "Using redis-cli from Dragonfly container"
-    # Try using Redis container (if available) to connect to Dragonfly
-    elif container_running "${REDIS_CONTAINER}" 2>/dev/null && \
-         docker exec "${REDIS_CONTAINER}" sh -c "command -v redis-cli >/dev/null 2>&1" 2>/dev/null; then
-        cli_available=true
-        # Get Dragonfly container IP or use hostname
-        local dragonfly_host="dragonfly"
-        local dragonfly_port="6379"
-        redis_cli_cmd="docker exec ${REDIS_CONTAINER} redis-cli -h ${dragonfly_host} -p ${dragonfly_port}"
-        # Suppressing verbose connection message
-    # Try host system redis-cli
-    elif command -v redis-cli >/dev/null 2>&1; then
-        cli_available=true
-        # Get Dragonfly container IP
-        local dragonfly_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container" 2>/dev/null || echo "")
-        if [ -n "$dragonfly_ip" ]; then
-            redis_cli_cmd="redis-cli -h ${dragonfly_ip} -p 6379"
-            log_info "Using redis-cli from host system to connect to Dragonfly at ${dragonfly_ip}"
-        else
-            # Fallback to hostname
-            redis_cli_cmd="redis-cli -h dragonfly -p 6379"
-            log_info "Using redis-cli from host system to connect to Dragonfly"
-        fi
-    else
-        log_warning "redis-cli not found in Dragonfly container, Redis container, or host system"
+
+    local repl
+    if ! repl=$(dragonfly_cli "$container" INFO replication | tr -d '\r') || [ -z "$repl" ]; then
+        log_error "Cannot query Dragonfly in ${container}"
+        return 1
     fi
-    
-    # Use SAVE command to create snapshot
-    local save_success=false
-    if [ "$cli_available" = true ] && [ -n "$redis_cli_cmd" ]; then
-        # Test connection first
-        if ! eval "$redis_cli_cmd PING" >/dev/null 2>&1; then
-            log_error "Cannot connect to Dragonfly with redis-cli - connection test failed"
-            cli_available=false
-        else
-            log_info "Successfully connected to Dragonfly"
-            
-            # Check Dragonfly configuration for backup directory and filename
-            local config_dir_output=$(eval "$redis_cli_cmd CONFIG GET dir" 2>/dev/null || echo "")
-            local backup_dir=$(echo "$config_dir_output" | grep -v "^dir$" | tail -1 | xargs || echo "")
-            
-            local config_dbfilename_output=$(eval "$redis_cli_cmd CONFIG GET dbfilename" 2>/dev/null || echo "")
-            local db_filename=$(echo "$config_dbfilename_output" | grep -v "^dbfilename$" | tail -1 | xargs || echo "dump.rdb")
-            
-            if [ -n "$backup_dir" ]; then
-                log_info "Dragonfly configured backup directory: ${backup_dir}, filename: ${db_filename}"
-            else
-                : # Suppressing verbose directory message
-            fi
-            
-            # Try SAVE first (blocking but immediate)
-            # Suppressing verbose SAVE command message
-            local save_output=$(eval "$redis_cli_cmd SAVE" 2>&1)
-            local save_exit_code=$?
-            
-            if [ $save_exit_code -eq 0 ] && echo "$save_output" | grep -qiE "(OK|ok)"; then
-                save_success=true
-                # Suppressing verbose success message
-            else
-                log_warning "SAVE command failed (exit: $save_exit_code, output: '${save_output}'), trying BGSAVE..."
-                # Try BGSAVE (background save) which is non-blocking
-                local bgsave_output=$(eval "$redis_cli_cmd BGSAVE" 2>&1)
-                local bgsave_exit_code=$?
-                
-                if [ $bgsave_exit_code -eq 0 ] && echo "$bgsave_output" | grep -qiE "(OK|Background saving|Background)"; then
-                    # Suppressing verbose BGSAVE start message
-                    # Wait for BGSAVE to complete (max 60 seconds for large datasets)
-                    local wait_count=0
-                    local max_wait=60
-                    while [ $wait_count -lt $max_wait ]; do
-                        sleep 1
-                        wait_count=$((wait_count + 1))
-                        # Check if save is in progress
-                        local persistence_info=$(eval "$redis_cli_cmd INFO persistence" 2>/dev/null || echo "")
-                        if echo "$persistence_info" | grep -q "rdb_bgsave_in_progress:0"; then
-                            # Check if save was successful
-                            if echo "$persistence_info" | grep -q "rdb_last_bgsave_status:ok"; then
-                                save_success=true
-                                # Suppressing verbose completion message
-                                break
-                            else
-                                log_warning "BGSAVE completed but status is not OK"
-                                break
-                            fi
-                        fi
-                        # Suppressing progress messages (only show if it takes too long)
-                        if [ $wait_count -eq $max_wait ]; then
-                            log_warning "BGSAVE taking longer than expected (${wait_count}s)"
-                        fi
-                    done
-                    if [ "$save_success" = false ]; then
-                        log_warning "BGSAVE did not complete within ${max_wait} seconds or status is not OK"
-                    fi
-                else
-                    log_error "BGSAVE command also failed (exit: $bgsave_exit_code, output: '${bgsave_output}')"
-                fi
-            fi
-        fi
-    else
-        log_error "redis-cli not available and no alternative method found"
+    if grep -q '^NOAUTH\|^ERR' <<<"$repl"; then
+        log_error "Dragonfly in ${container} refused the query: $(head -1 <<<"$repl")"
+        return 1
     fi
-    
-    if [ "$save_success" = true ]; then
-        # Give SAVE a moment to complete file write (especially for large datasets)
-        sleep 2
-        
-        # Build RDB file paths - prioritize configured path from Dragonfly CONFIG
-        local rdb_paths=()
-        
-        # First, try the configured path from CONFIG GET (most reliable)
-        if [ -n "$backup_dir" ] && [ -n "$db_filename" ]; then
-            local configured_path="${backup_dir}/${db_filename}"
-            rdb_paths+=("$configured_path")
-        fi
-        
-        # Then try common default locations
-        rdb_paths+=(
-            "/data/dump.rdb"
-            "/var/lib/dragonfly/dump.rdb"
-            "/tmp/dump.rdb"
-            "/dump.rdb"
-        )
-        
-        # Also try with just the filename in common directories (in case dir is empty)
-        if [ -n "$db_filename" ] && [ "$db_filename" != "dump.rdb" ]; then
-            rdb_paths+=(/data/${db_filename} /var/lib/dragonfly/${db_filename})
-        fi
-
-        # Dragonfly sometimes stores as backup-dump.rdb
-        rdb_paths+=(/data/backup-dump.rdb)
-
-
-        local rdb_found=false
-        local checked_paths=()
-        for rdb_path in "${rdb_paths[@]}"; do
-            checked_paths+=("$rdb_path")
-            # First check if file exists in container
-            if docker exec "$container" test -f "$rdb_path" 2>/dev/null; then
-                # File exists, try to copy it
-                if docker cp "${container}:${rdb_path}" "$temp_rdb" 2>/dev/null; then
-                    if [ -f "$temp_rdb" ] && [ -s "$temp_rdb" ]; then
-                        rdb_found=true
-                        log_info "Found RDB file at configured path: ${rdb_path}"
-                        break
-                    else
-                        log_warning "RDB file at ${rdb_path} exists but is empty or copy failed"
-                    fi
-                else
-                    log_warning "RDB file at ${rdb_path} exists but docker cp failed"
-                fi
+    local role master
+    role=$(sed -n 's/^role://p' <<<"$repl")
+    case "$role" in
+        slave|replica)
+            master="$(sed -n 's/^master_host://p' <<<"$repl"):$(sed -n 's/^master_port://p' <<<"$repl")"
+            if ! grep -qx 'master_link_status:up' <<<"$repl"; then
+                log_error "Dragonfly copy ${container} lost its master (${master}); not backing up stale data"
+                return 1
             fi
-        done
-        
-        if [ "$rdb_found" = false ]; then
-            # Try the most recent .dfs snapshot file (Dragonfly uses timestamped .dfs)
-            local found_dfs_files
-            found_dfs_files=$(docker exec "$container" find /data -maxdepth 1 -name "dump-*summary.dfs" -type f 2>/dev/null | sort -r | head -3 || echo "")
-            if [ -n "$found_dfs_files" ]; then
-                local dfs_path
-                dfs_path=$(echo "$found_dfs_files" | head -1)
-                checked_paths+=("$dfs_path")
-                log_info "Trying Dragonfly .dfs snapshot: $dfs_path"
-                if docker cp "${container}:${dfs_path}" "$temp_rdb" 2>/dev/null; then
-                    if [ -f "$temp_rdb" ] && [ -s "$temp_rdb" ]; then
-                        rdb_found=true
-                        source_file="$dfs_path"
-                        log_info "Found .dfs snapshot at: $dfs_path"
-                    fi
+            if container_running "$DRAGONFLY_SENTINEL_CONTAINER" 2>/dev/null; then
+                local sentinel_master
+                sentinel_master=$(docker exec "$DRAGONFLY_SENTINEL_CONTAINER" sh -c \
+                    'REDISCLI_AUTH="$(cat /data/sentinel.password 2>/dev/null)" redis-cli -p 26379 --no-auth-warning sentinel get-master-addr-by-name "$1"' \
+                    sh "$DRAGONFLY_SENTINEL_NAME" 2>/dev/null | tr -d '\r' | paste -sd: -)
+                if [ "$sentinel_master" != "$master" ]; then
+                    log_error "Dragonfly copy ${container} replicates from ${master}, but Sentinel's master is '${sentinel_master:-unknown}' (after a failover?); not backing up possibly stale data"
+                    return 1
                 fi
+            else
+                log_warning "Sentinel container ${DRAGONFLY_SENTINEL_CONTAINER} not running; checked the replication link only"
             fi
-        fi
+            ;;
+        master) master="self" ;;
+        *)
+            log_error "Unexpected Dragonfly role '${role}' in ${container}"
+            return 1
+            ;;
+    esac
 
-        if [ "$rdb_found" = false ]; then
-            log_error "No snapshot file found after SAVE. Checked paths: ${checked_paths[*]}"
-            if [ -n "$found_dfs_files" ]; then
-                log_error "Available .dfs files: $(echo "$found_dfs_files" | tr '\n' ' ')"
-            fi
-        fi
+    local dir
+    dir=$(dragonfly_cli "$container" CONFIG GET dir | tr -d '\r' | sed -n 2p)
+    dir="${dir:-/data}"
 
-        if [ "$rdb_found" = true ]; then
-            # Compress
-            if gzip -c "$temp_rdb" > "$backup_file"; then
-                rm -f "$temp_rdb"
-                chmod 600 "$backup_file"
-                local checksum=$(calculate_checksum "$backup_file")
-                local size=$(get_file_size "$backup_file")
-                local key_count="0"
-                if [ "$cli_available" = true ] && [ -n "$redis_cli_cmd" ]; then
-                    key_count=$(eval "$redis_cli_cmd DBSIZE" 2>/dev/null | xargs || echo "0")
-                fi
-                
-                BACKUP_RESULTS[dragonfly_local]="success"
-                log_success "Dragonfly backup created: ${backup_file}"
-                
-                # Upload to S3 with retry logic
-                local backup_dir_name=$(dirname "$backup_file" 2>/dev/null || echo "")
-                local backup_type=$(basename "$backup_dir_name" 2>/dev/null || echo "dragonfly")
-                local s3_path="backups/dragonfly/${backup_type}/dragonfly-${TIMESTAMP}.rdb.gz"
-                if s3_upload_with_retry "$backup_file" "$s3_path" 3 5; then
-                    BACKUP_RESULTS[dragonfly_s3]="success"
-                else
-                    log_warning "S3 upload failed, but local backup succeeded"
-                    BACKUP_RESULTS[dragonfly_s3]="failed"
-                fi
-                
-                # Extract array values to variables for use in heredoc (fixes syntax error)
-                local dragonfly_local_status="${BACKUP_RESULTS[dragonfly_local]}"
-                local dragonfly_s3_status="${BACKUP_RESULTS[dragonfly_s3]}"
-                
-                # Store metadata
-                cat > "${BACKUP_DIR}/metadata/dragonfly-${TIMESTAMP}.json" <<EOF
+    local save_output
+    save_output=$(dragonfly_cli "$container" SAVE RDB "$snapshot" | tr -d '\r')
+    if [ "$save_output" != "OK" ]; then
+        log_error "Dragonfly SAVE failed in ${container}: ${save_output}"
+        return 1
+    fi
+
+    local temp_rdb
+    temp_rdb=$(mktemp "/tmp/dragonfly-${TIMESTAMP}.XXXXXX")
+    local copied=true
+    docker cp "${container}:${dir}/${snapshot}.rdb" "$temp_rdb" 2>/dev/null || copied=false
+    docker exec "$container" rm -f "${dir}/${snapshot}.rdb" >/dev/null 2>&1 || \
+        log_warning "Could not remove ${dir}/${snapshot}.rdb from ${container}"
+    if [ "$copied" != true ] || [ ! -s "$temp_rdb" ]; then
+        rm -f "$temp_rdb"
+        log_error "Dragonfly snapshot ${dir}/${snapshot}.rdb could not be copied out of ${container}"
+        return 1
+    fi
+
+    if ! gzip -c "$temp_rdb" > "$backup_file"; then
+        rm -f "$temp_rdb" "$backup_file"
+        log_error "Could not compress the Dragonfly snapshot"
+        return 1
+    fi
+    rm -f "$temp_rdb"
+    chmod 600 "$backup_file"
+
+    local checksum size keyspace_json key_count
+    checksum=$(calculate_checksum "$backup_file")
+    size=$(get_file_size "$backup_file")
+    # Keys per logical DB, e.g. {"db0":2558,"db1":10320,"db5":1044}, and their total.
+    keyspace_json=$(dragonfly_cli "$container" INFO keyspace | tr -d '\r' | \
+        sed -n 's/^\(db[0-9]*\):keys=\([0-9]*\).*/"\1":\2/p' | paste -sd, -)
+    keyspace_json="{${keyspace_json}}"
+    key_count=$(grep -oE ':[0-9]+' <<<"$keyspace_json" | tr -d ':' | awk '{ t += $1 } END { print t + 0 }')
+
+    BACKUP_RESULTS[dragonfly_local]="success"
+    log_success "Dragonfly backup created: ${backup_file} (${key_count} keys ${keyspace_json}, from ${role} of ${master})"
+
+    local backup_type s3_path
+    backup_type=$(basename "$(dirname "$backup_file")")
+    s3_path="backups/dragonfly/${backup_type}/dragonfly-${TIMESTAMP}.rdb.gz"
+    if s3_upload_with_retry "$backup_file" "$s3_path" 3 5; then
+        BACKUP_RESULTS[dragonfly_s3]="success"
+    else
+        log_warning "S3 upload failed, but local backup succeeded"
+        BACKUP_RESULTS[dragonfly_s3]="failed"
+    fi
+
+    local dragonfly_local_status="${BACKUP_RESULTS[dragonfly_local]}"
+    local dragonfly_s3_status="${BACKUP_RESULTS[dragonfly_s3]}"
+    cat > "${BACKUP_DIR}/metadata/dragonfly-${TIMESTAMP}.json" <<EOF
 {
   "backup_id": "${BACKUP_ID}",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "file": "dragonfly-${TIMESTAMP}.rdb.gz",
+  "format": "rdb",
   "size": "${size}",
   "checksum": "sha256:${checksum}",
   "key_count": ${key_count},
+  "keyspace": ${keyspace_json},
+  "source": { "container": "${container}", "role": "${role}", "master": "${master}" },
   "local_path": "${backup_file}",
   "s3_path": "${s3_path}",
   "storage": {
@@ -733,14 +640,7 @@ backup_dragonfly_to_path() {
   }
 }
 EOF
-                
-                return 0
-            fi
-        fi
-    fi
-    
-    log_error "Dragonfly backup failed"
-    return 1
+    return 0
 }
 
 # ============================================================================
