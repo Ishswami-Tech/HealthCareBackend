@@ -215,6 +215,55 @@ SENTINEL_PASSWORD_FILE=~/hcb-dragonfly/sentinel.password bash dragonfly-start/in
 DOCKER="sudo -n docker" SENTINEL_PASSWORD_FILE=~/hcb-dragonfly/sentinel.password bash dragonfly-start/install.sh  # temps-worker
 ```
 
+## Dragonfly backup and restore (control plane)
+
+`docker-infra/backup.sh` (cron `0 */12 * * *` via `run-backup-12h.sh`, log
+`/var/log/backups/12h.log`) backs up every Dragonfly database in one file:
+db0 (app cache, sessions, token blacklist, locks), db1 (HCB BullMQ queues and their
+run-once markers) and db5 (social-media BullMQ). It snapshots the control plane's own
+`redis-dragonfly-cache` (Temps service `dragonfly-cache`, a live replica of the
+master), so the India master is never asked to snapshot and no S3 key is needed on
+any other node. The upload uses the existing rclone remote.
+
+What it does: authenticates inside the container (the password never leaves it),
+refuses when the copy's master link is down or its master is not the one the
+Sentinels name (after a failover, until failback), runs `SAVE RDB hcb-backup-<ts>`,
+copies that single RDB file out, removes it from the container, and stores
+`dragonfly/<type>/dragonfly-<ts>.rdb.gz` locally and under `backups/dragonfly/` in S3.
+The metadata JSON records keys per database and the source copy/master. The old
+Coolify `redis-dragonfly` container is stale and is never backed up.
+
+**Check a backup** (safe, any machine with Docker; tested with v2.0.2 and v2.1.0):
+
+```bash
+docker volume create df-drill
+gunzip -c dragonfly-<ts>.rdb.gz | docker run --rm -i -v df-drill:/data alpine sh -c 'cat > /data/dump.rdb'
+docker run -d --name df-drill -v df-drill:/data docker.dragonflydb.io/dragonflydb/dragonfly:v2.0.2 \
+  dragonfly --dbfilename=dump --requirepass=drill
+docker exec -e REDISCLI_AUTH=drill df-drill redis-cli --no-auth-warning info keyspace   # compare with the metadata "keyspace"
+docker rm -f df-drill && docker volume rm df-drill
+```
+
+**Restore into the live HA set** (replaces ALL data in db0/db1/db5 on every copy; for
+data loss or corruption only, and only with the user's go-ahead). No restart and no
+failover: `DFLY LOAD` on the master replaces its dataset online and the replicas
+follow over their existing link (verified on scratch v2.0.2: master and replica both
+held exactly the snapshot afterwards; ACL users survived).
+
+1. Find the master: `sentinel get-master-addr-by-name dragonfly` (normally temps-worker).
+2. Copy the backup into the master copy's data dir:
+   `gunzip -c dragonfly-<ts>.rdb.gz > /tmp/hcb-restore.rdb && sudo -n docker cp /tmp/hcb-restore.rdb redis-dragonfly-cache:/data/hcb-restore.rdb`
+3. Load it, authenticating inside the container as backup.sh does:
+   `redis-cli ... DFLY LOAD hcb-restore.rdb`, then `INFO keyspace` on the master and on
+   each replica (Oracle, contabo-ds, control plane) must match the metadata.
+4. Remove `/data/hcb-restore.rdb` from the container and `/tmp/hcb-restore.rdb`.
+5. Check `hcb-dragonfly-acl` still lists the `social_media` user on each copy (it
+   re-creates it if missing) and that the HCB worker and social-media worker resume
+   their queues. Sessions and refresh tokens revert to the backup's point in time.
+
+`docker-infra/restore.sh`'s Dragonfly step targets the old single-container layout
+(a container named `dragonfly`); do not use it for the HA set.
+
 ## Upgrade safety
 
 Nothing here edits a file Temps owns or reads Temps' internal database, so
