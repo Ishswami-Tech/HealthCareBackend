@@ -105,6 +105,23 @@ export interface PaymentStatusResult {
 }
 
 /**
+ * Re-open an order the app created earlier (a checkout retry), without creating a new one.
+ */
+export interface ResumePaymentIntentOptions {
+  orderId: string;
+  amount: number; // Smallest currency unit (paise for INR), the amount the order must still be for
+  currency: string;
+}
+
+/** Why an earlier order cannot be handed to the patient again. */
+export type ResumeRejectReason =
+  'not_found' | 'paid' | 'expired' | 'not_active' | 'amount_mismatch' | 'no_session';
+
+export type ResumePaymentIntentResult =
+  | { resumable: true; result: PaymentResult }
+  | { resumable: false; reason: ResumeRejectReason; orderStatus?: string };
+
+/**
  * Webhook Verification Options
  */
 export interface WebhookVerificationOptions {
@@ -132,6 +149,15 @@ export interface PaymentProviderAdapter {
    * Verify payment status
    */
   verifyPayment(options: PaymentStatusOptions): Promise<PaymentStatusResult>;
+
+  /**
+   * Look up an order this app created earlier and return it again if the patient can still pay
+   * it (active, same amount, enough time left). Read-only: never creates an order. Resolves
+   * `{ resumable: false, reason }` when the order exists but must not be reused (or is unknown);
+   * rejects only when the lookup itself fails. Optional: providers without it keep the plain
+   * create-with-the-same-order-id retry.
+   */
+  resumePaymentIntent?(options: ResumePaymentIntentOptions): Promise<ResumePaymentIntentResult>;
 
   /**
    * Process refund

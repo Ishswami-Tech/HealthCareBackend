@@ -25,6 +25,13 @@ export const PROVIDER_MIN_ORDER_EXPIRY_MINUTES = 15;
  */
 export const PROVIDER_EXPIRY_BUFFER_SECONDS = 60;
 
+/**
+ * A checkout retry hands the patient the earlier provider order again only while at least this
+ * much of it is left; with less, completing a UPI / card payment before the provider closes the
+ * order is unlikely, so a fresh order is opened instead.
+ */
+export const MIN_RESUMABLE_ORDER_SECONDS = 180;
+
 export function getPaymentWindowMinutes(): number {
   const raw = getEnv('PAYMENT_WINDOW_MINUTES') || getEnv('VIDEO_PAYMENT_WINDOW_MINUTES');
   const parsed = raw ? Number(raw) : NaN;

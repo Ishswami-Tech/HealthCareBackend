@@ -27,6 +27,8 @@ import {
   PaymentStatusResult,
   RefundOptions,
   RefundResult,
+  ResumePaymentIntentOptions,
+  ResumePaymentIntentResult,
   WebhookVerificationOptions,
   PaymentProviderAdapter,
   PaymentProvider,
@@ -418,6 +420,62 @@ export class PaymentService {
       { clinicId }
     );
     throw lastError || new Error('Failed to create payment intent');
+  }
+
+  /**
+   * Checkout retry: ask the provider the earlier order was opened on whether the patient can still
+   * pay it. Read-only. Resolves `undefined` when the answer is unknown - demo mode, a provider
+   * without resume support, or a failed lookup - so the caller keeps its plain retry path (whose
+   * duplicate-order handling validates the order too). Never falls back to another provider.
+   */
+  async resumePaymentIntent(
+    clinicId: string,
+    options: ResumePaymentIntentOptions,
+    provider: PaymentProvider
+  ): Promise<ResumePaymentIntentResult | undefined> {
+    if (this.isDemoPaymentMode()) {
+      return undefined;
+    }
+
+    try {
+      const adapter = await this.getProviderAdapter(clinicId, provider);
+      if (!adapter.resumePaymentIntent) {
+        return undefined;
+      }
+
+      const outcome = await adapter.resumePaymentIntent(options);
+      if (!outcome.resumable) {
+        return outcome;
+      }
+
+      // Same shape createPaymentIntent returns, so callers treat both alike.
+      return {
+        resumable: true,
+        result: {
+          ...outcome.result,
+          metadata: {
+            ...(outcome.result.metadata || {}),
+            amount: options.amount,
+            displayAmount: formatCurrencyFromMinorUnits(options.amount, options.currency),
+            currency: options.currency,
+          },
+        },
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        'Could not look up the earlier provider order for a checkout retry; retrying with the same order id',
+        'PaymentService.resumePaymentIntent',
+        {
+          clinicId,
+          provider,
+          orderId: options.orderId,
+          error: toError(error, 'order lookup failed').message,
+        }
+      );
+      return undefined;
+    }
   }
 
   /**

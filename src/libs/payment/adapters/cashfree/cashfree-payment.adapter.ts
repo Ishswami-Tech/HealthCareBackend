@@ -22,12 +22,19 @@ import type {
   PaymentStatusOptions,
   PaymentStatusResult,
   RefundOptions,
+  ResumePaymentIntentOptions,
+  ResumePaymentIntentResult,
+  ResumeRejectReason,
   RefundResult,
   WebhookVerificationOptions,
   PaymentProviderConfig,
 } from '@core/types/payment.types';
 import * as crypto from 'crypto';
-import { getProviderOrderExpiry, toIstIsoString } from '@config/payment-window.config';
+import {
+  getProviderOrderExpiry,
+  MIN_RESUMABLE_ORDER_SECONDS,
+  toIstIsoString,
+} from '@config/payment-window.config';
 
 // Cashfree PG API types (v2025-01-01)
 interface CashfreeOrderRequest {
@@ -285,14 +292,17 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
     return undefined;
   }
 
-  private async fetchOrderById(orderId: string): Promise<CashfreeOrderStatusResponse> {
+  private async fetchOrderById(
+    orderId: string,
+    requestOptions: { suppressErrorLogging?: boolean } = {}
+  ): Promise<CashfreeOrderStatusResponse> {
     if (!this.httpService) {
       throw new Error('HTTP service not initialized');
     }
 
     const response = await this.httpService.get<CashfreeOrderStatusResponse>(
-      `${this.baseUrl}/orders/${orderId}`,
-      { headers: this.getHeaders() }
+      `${this.baseUrl}/orders/${encodeURIComponent(orderId)}`,
+      { headers: this.getHeaders(), ...requestOptions }
     );
 
     if (!response.data?.order_id) {
@@ -351,6 +361,102 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         clearTimeout(timer);
       }
     }
+  }
+
+  /**
+   * Whether an existing order may be handed to the patient again for `amountInUnits`: it must
+   * still be ACTIVE, for the same amount and currency, carry a checkout session, and have at least
+   * MIN_RESUMABLE_ORDER_SECONDS left before Cashfree closes it. Returns why not, or null if it may.
+   */
+  private assessExistingOrder(
+    order: CashfreeOrderStatusResponse,
+    amountInUnits: number,
+    currency: string
+  ): ResumeRejectReason | null {
+    const status = String(order.order_status || '').toUpperCase();
+    if (status === 'PAID') return 'paid';
+    if (status === 'EXPIRED') return 'expired';
+    if (status !== 'ACTIVE') return 'not_active';
+
+    const sameCurrency =
+      String(order.order_currency || '').toUpperCase() === currency.toUpperCase();
+    if (
+      !sameCurrency ||
+      Math.round(Number(order.order_amount) * 100) !== Math.round(amountInUnits * 100)
+    ) {
+      return 'amount_mismatch';
+    }
+
+    // An unparsable expiry is treated as closing now: a fresh order is always safe to open.
+    const expiresAt = Date.parse(order.order_expiry_time);
+    if (
+      !Number.isFinite(expiresAt) ||
+      expiresAt - Date.now() < MIN_RESUMABLE_ORDER_SECONDS * 1000
+    ) {
+      return 'expired';
+    }
+
+    if (!order.payment_session_id) return 'no_session';
+    return null;
+  }
+
+  /** The pending PaymentResult the checkout needs, for a created or a resumed order. */
+  private toPendingOrderResult(
+    data: CashfreeOrderResponse | CashfreeOrderStatusResponse,
+    amount: number,
+    currency: string
+  ): PaymentResult {
+    const pendingResult = this.createPendingResult(data.order_id, amount, currency, data.order_id);
+    const responseOrderMeta = data.order_meta || {};
+    const redirectUrl =
+      (typeof responseOrderMeta.payment_link === 'string'
+        ? responseOrderMeta.payment_link
+        : undefined) || (typeof data.payment_link === 'string' ? data.payment_link : undefined);
+    pendingResult.metadata = {
+      environment: this.environment,
+      ...(data.payment_session_id ? { paymentSessionId: data.payment_session_id } : {}),
+      ...(redirectUrl ? { redirectUrl } : {}),
+      orderStatus: data.order_status,
+    };
+    pendingResult.providerResponse = data;
+    return pendingResult;
+  }
+
+  /**
+   * Checkout retry: return the order opened earlier if the patient can still pay it, without
+   * sending a create (which Cashfree answers with 409 for an existing order id). Read-only.
+   */
+  async resumePaymentIntent(
+    options: ResumePaymentIntentOptions
+  ): Promise<ResumePaymentIntentResult> {
+    let order: CashfreeOrderStatusResponse;
+    try {
+      // A missing order is an expected answer here (reported as not_found), so the HTTP layer
+      // must not log it as an error; any other failure is rethrown for the caller to handle.
+      order = await this.fetchOrderById(options.orderId, { suppressErrorLogging: true });
+    } catch (error) {
+      if (this.getHttpStatus(error) === 404) {
+        return { resumable: false, reason: 'not_found' };
+      }
+      throw error;
+    }
+
+    const reason = this.assessExistingOrder(order, options.amount / 100, options.currency);
+    if (reason) {
+      return { resumable: false, reason, orderStatus: order.order_status };
+    }
+
+    await this.logger.log(
+      LogType.PAYMENT,
+      LogLevel.INFO,
+      'Cashfree order resumed for checkout retry',
+      'CashfreePaymentAdapter',
+      { orderId: order.order_id, orderExpiryTime: order.order_expiry_time }
+    );
+    return {
+      resumable: true,
+      result: this.toPendingOrderResult(order, options.amount, options.currency),
+    };
   }
 
   async verify(): Promise<boolean> {
@@ -522,7 +628,18 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
               }
             );
 
-            data = await this.fetchOrderById(orderId);
+            // Only hand back an order the patient can still pay for this exact amount: an
+            // expired, paid or different-amount order must never reach the checkout.
+            const existing = await this.fetchOrderById(orderId);
+            const reason = this.assessExistingOrder(existing, amountInUnits, options.currency);
+            if (reason) {
+              const notReusable = new Error(
+                `Cashfree order ${orderId} already exists and cannot be reused (${reason}, status ${existing.order_status})`
+              ) as Error & { cause?: unknown };
+              notReusable.cause = error;
+              throw notReusable;
+            }
+            data = existing;
             break;
           }
 
@@ -566,25 +683,7 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         }
       );
 
-      const pendingResult = this.createPendingResult(
-        data.order_id,
-        options.amount,
-        options.currency,
-        data.order_id
-      );
-      const responseOrderMeta = data.order_meta || {};
-      const redirectUrl =
-        (typeof responseOrderMeta.payment_link === 'string'
-          ? responseOrderMeta.payment_link
-          : undefined) || (typeof data.payment_link === 'string' ? data.payment_link : undefined);
-      pendingResult.metadata = {
-        environment: this.environment,
-        ...(data.payment_session_id ? { paymentSessionId: data.payment_session_id } : {}),
-        ...(redirectUrl ? { redirectUrl } : {}),
-        orderStatus: data.order_status,
-      };
-      pendingResult.providerResponse = data;
-      return pendingResult;
+      return this.toPendingOrderResult(data, options.amount, options.currency);
     } catch (error) {
       await this.logger.log(
         LogType.PAYMENT,

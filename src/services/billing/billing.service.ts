@@ -913,6 +913,78 @@ export class BillingService implements OnModuleInit {
     return appConfig.baseUrl || appConfig.apiUrl || this.configService.getEnv('BASE_URL') || '';
   }
 
+  /**
+   * Which gateway order a VIDEO_CALL checkout opens.
+   *
+   * A first attempt gets the invoice's order id. A retry first asks the gateway the earlier order
+   * was opened on whether the patient can still pay it (active, same amount, time left): if so,
+   * that order is handed back without creating anything. A paid order means the money already
+   * arrived (the callback/webhook just has not landed yet), so no second order is opened. Any
+   * other unusable order (expired, closed, different amount, unknown) gets a fresh order id - the
+   * invoice's own id may be the earlier order's id, which the gateway refuses to create again.
+   * When the gateway cannot answer (provider without resume support, lookup failure, demo mode)
+   * the earlier order id is retried as before; the provider adapter validates that path too.
+   */
+  private async resolveAppointmentGatewayOrder(args: {
+    clinicId: string;
+    invoice: { id: string; invoiceNumber: string };
+    existingGatewayOrderId?: string | undefined;
+    existingProvider?: string | undefined;
+    requestedProvider?: PaymentProvider;
+    amountMinor: number;
+  }): Promise<{ gatewayOrderId: string; resumedIntent: PaymentResult | null }> {
+    const { invoice, existingGatewayOrderId, requestedProvider } = args;
+    if (!existingGatewayOrderId) {
+      return {
+        gatewayOrderId: this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id),
+        resumedIntent: null,
+      };
+    }
+
+    const existingProvider = Object.values(PaymentProvider).find(
+      value => value === args.existingProvider
+    );
+    // Resume only on the gateway the earlier order lives on; a checkout explicitly asking for a
+    // different gateway keeps the plain retry.
+    const outcome =
+      existingProvider && (!requestedProvider || requestedProvider === existingProvider)
+        ? await this.paymentService.resumePaymentIntent(
+            args.clinicId,
+            { orderId: existingGatewayOrderId, amount: args.amountMinor, currency: 'INR' },
+            existingProvider
+          )
+        : undefined;
+
+    if (!outcome) {
+      return { gatewayOrderId: existingGatewayOrderId, resumedIntent: null };
+    }
+    if (outcome.resumable) {
+      return { gatewayOrderId: existingGatewayOrderId, resumedIntent: outcome.result };
+    }
+    if (outcome.reason === 'paid') {
+      throw new ConflictException(
+        'Payment for this appointment has already been received and is being confirmed. Please refresh in a moment.'
+      );
+    }
+
+    void this.loggingService.log(
+      LogType.PAYMENT,
+      LogLevel.INFO,
+      'Earlier gateway order cannot be reused; opening a fresh order for the checkout retry',
+      'BillingService.resolveAppointmentGatewayOrder',
+      {
+        clinicId: args.clinicId,
+        previousOrderId: existingGatewayOrderId,
+        reason: outcome.reason,
+        orderStatus: outcome.orderStatus,
+      }
+    );
+    return {
+      gatewayOrderId: this.buildGatewayOrderId(invoice.invoiceNumber, Date.now().toString(36)),
+      resumedIntent: null,
+    };
+  }
+
   private buildGatewayOrderId(baseOrderId: string, uniqueKey: string): string {
     const normalizedBase = String(baseOrderId || '').replace(/[^A-Za-z0-9_-]/g, '-');
     const normalizedUnique = String(uniqueKey || '')
@@ -5504,10 +5576,11 @@ export class BillingService implements OnModuleInit {
     const existingPaymentMetadata = existingPayment
       ? this.asRecord(existingPayment.metadata)
       : null;
+    // The gateway order id of the earlier attempt. (A payment session id is not an order id and
+    // must never be sent back to the gateway as one.)
     const existingGatewayOrderId =
       this.asSafeString(existingPaymentMetadata?.['orderId']) ||
-      this.asSafeString(existingPaymentMetadata?.['paymentIntentId']) ||
-      this.asSafeString(existingPaymentMetadata?.['paymentSessionId']);
+      this.asSafeString(existingPaymentMetadata?.['paymentIntentId']);
     const existingInvoice = existingPayment?.invoiceId
       ? await this.databaseService.findInvoiceByIdSafe(existingPayment.invoiceId)
       : null;
@@ -5569,10 +5642,16 @@ export class BillingService implements OnModuleInit {
       canReuseExistingInvoice && existingInvoice
         ? existingInvoice
         : await createAppointmentInvoice();
-    const gatewayOrderId =
-      existingGatewayOrderId || this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id);
     const appointmentTotalAmount = this.getInvoiceTotalAmount(invoice, appointmentAmount);
     const resolvedAppointmentTax = this.roundToTwo(appointmentTotalAmount - appointmentAmount);
+    const { gatewayOrderId, resumedIntent } = await this.resolveAppointmentGatewayOrder({
+      clinicId: appointment.clinicId,
+      invoice,
+      existingGatewayOrderId,
+      existingProvider: this.asSafeString(existingPaymentMetadata?.['provider']),
+      ...(provider ? { requestedProvider: provider } : {}),
+      amountMinor: Math.round(appointmentTotalAmount * 100),
+    });
 
     // Create payment intent via payment service
     // SECURITY: Use ConfigService instead of hardcoded URL
@@ -5613,11 +5692,13 @@ export class BillingService implements OnModuleInit {
       },
     };
 
-    const paymentIntentResult: PaymentResult = await this.paymentService.createPaymentIntent(
-      appointment.clinicId,
-      paymentIntentOptions,
-      provider
-    );
+    const paymentIntentResult: PaymentResult =
+      resumedIntent ??
+      (await this.paymentService.createPaymentIntent(
+        appointment.clinicId,
+        paymentIntentOptions,
+        provider
+      ));
     // Extract payment intent details with proper type checking
     const paymentId = paymentIntentResult.paymentId || '';
     const orderId = paymentIntentResult.orderId || '';
