@@ -1003,6 +1003,28 @@ cleanup_old_backups_aggressive() {
     log_success "Aggressive cleanup completed"
 }
 
+# Failed-upload queue: one "timestamp|local_file|s3_path" line per upload that
+# s3_upload_with_retry gave up on. 'backup.sh retry' (and every scheduled backup
+# run while S3 is healthy) drains it.
+FAILED_UPLOADS_LOG_PRIMARY="/var/log/backups/failed-uploads.txt"
+
+failed_upload_queue_logs() {
+    # Both locations s3_upload_with_retry may have written to.
+    local log
+    for log in "$FAILED_UPLOADS_LOG_PRIMARY" "${BACKUP_DIR}/failed-uploads.txt"; do
+        [[ -s "$log" ]] && echo "$log"
+    done
+    return 0
+}
+
+failed_upload_queued_files() {
+    # Local paths still waiting for an S3 copy (one per line).
+    local log
+    while IFS= read -r log; do
+        cut -d'|' -f2 "$log" 2>/dev/null || true
+    done < <(failed_upload_queue_logs)
+}
+
 cleanup_backup_type() {
     local backup_type="$1"
     local keep_count="$2"
@@ -1012,17 +1034,25 @@ cleanup_backup_type() {
     local dragonfly_dir="${BACKUP_DIR}/dragonfly/${backup_type}"
     local env_dir="${BACKUP_DIR}/env/${backup_type}"
 
-    if [[ -d "$postgres_dir" ]]; then
-        ls -t "$postgres_dir"/*.sql.gz 2>/dev/null | tail -n +$((keep_count + 1)) | xargs rm -f 2>/dev/null || true
-    fi
+    # Never delete a local file whose S3 copy is still queued for retry: it is the
+    # only copy (2026-11-17 a pre-deployment dump was lost this way).
+    local queued
+    queued="$(failed_upload_queued_files | sort -u)"
 
-    if [[ -d "$dragonfly_dir" ]]; then
-        ls -t "$dragonfly_dir"/*.rdb.gz 2>/dev/null | tail -n +$((keep_count + 1)) | xargs rm -f 2>/dev/null || true
-    fi
-
-    if [[ -d "$env_dir" ]]; then
-        ls -t "$env_dir"/*.tar.gz 2>/dev/null | tail -n +$((keep_count + 1)) | xargs rm -f 2>/dev/null || true
-    fi
+    local pair dir pattern old
+    for pair in "${postgres_dir}|*.sql.gz" "${dragonfly_dir}|*.rdb.gz" "${env_dir}|*.tar.gz"; do
+        dir="${pair%%|*}"
+        pattern="${pair#*|}"
+        [[ -d "$dir" ]] || continue
+        while IFS= read -r old; do
+            [[ -n "$old" ]] || continue
+            if [[ -n "$queued" ]] && grep -qxF -- "$old" <<< "$queued"; then
+                log_warning "Retention: keeping ${old} (S3 copy still queued for retry)"
+                continue
+            fi
+            rm -f -- "$old"
+        done < <(ls -t "$dir"/$pattern 2>/dev/null | tail -n +$((keep_count + 1)) || true)
+    done
 }
 
 # 2. S3 Upload with Retry Logic
@@ -1048,8 +1078,14 @@ s3_upload_with_retry() {
         fi
     done
     
+    # retry_failed_uploads re-queues its own failures; don't double-queue them here.
+    if [[ "${S3_NO_REQUEUE:-0}" == "1" ]]; then
+        log_error "S3 upload failed: ${s3_path}"
+        return 1
+    fi
+
     # Store failed upload for later retry (use backup directory if /var/log is not accessible)
-    local failed_uploads_log="/var/log/backups/failed-uploads.txt"
+    local failed_uploads_log="$FAILED_UPLOADS_LOG_PRIMARY"
     local failed_uploads_dir="$(dirname "$failed_uploads_log")"
     
     # Try to create directory, fall back to backup directory if permission denied

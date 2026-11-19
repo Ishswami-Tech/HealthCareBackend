@@ -125,57 +125,92 @@ EOF
 # ============================================================================
 
 retry_failed_uploads() {
-    FAILED_UPLOADS_LOG="/var/log/backups/failed-uploads.txt"
-    
-    if [[ ! -f "$FAILED_UPLOADS_LOG" ]]; then
+    local logs=()
+    local log
+    while IFS= read -r log; do logs+=("$log"); done < <(failed_upload_queue_logs)
+
+    if [[ ${#logs[@]} -eq 0 ]]; then
         log_info "No failed uploads to retry"
         return 0
     fi
-    
+
     log_info "Retrying failed S3 uploads..."
-    
-    # Create temporary file for remaining failures
-    TEMP_FILE=$(mktemp)
-    SUCCESS_COUNT=0
-    FAIL_COUNT=0
-    
+
+    # Snapshot the queue first, so entries appended while we work (by us or a
+    # concurrent run) are never re-read in this loop.
+    local work_file remaining
+    work_file=$(mktemp)
+    remaining=$(mktemp)
+    local part
+    for log in "${logs[@]}"; do
+        # mv within the same directory is atomic: a concurrent append either lands
+        # before (and is in our snapshot) or creates a fresh queue file.
+        part=$(mktemp "${log}.retry.XXXXXX" 2>/dev/null) || part=""
+        if [[ -n "$part" ]] && mv -f "$log" "$part" 2>/dev/null; then
+            cat "$part" >> "$work_file"
+            rm -f "$part"
+        else
+            [[ -n "$part" ]] && rm -f "$part"
+            cat "$log" >> "$work_file" 2>/dev/null || true
+            : > "$log" 2>/dev/null || true
+        fi
+    done
+
+    local success_count=0 fail_count=0 dropped_count=0 s3_down=0
+    local timestamp file s3_path
+    local -A seen=()
     while IFS='|' read -r timestamp file s3_path; do
-        log_info "Retrying upload: $(basename "$file") -> $s3_path"
-        
-        # Check if local file still exists
+        [[ -n "$file" && -n "$s3_path" ]] || continue
+        [[ -z "${seen[$s3_path]:-}" ]] || continue
+        seen[$s3_path]=1
+
         if [[ ! -f "$file" ]]; then
-            log_warning "Local file no longer exists: $file"
-            FAIL_COUNT=$((FAIL_COUNT + 1))
+            log_warning "Dropping queued upload, local file no longer exists: $file"
+            dropped_count=$((dropped_count + 1))
             continue
         fi
-        
-        # Retry upload with retry logic
-        if s3_upload_with_retry "$file" "$s3_path" 3 5; then
+
+        if [[ "$s3_down" == "1" ]]; then
+            echo "$timestamp|$file|$s3_path" >> "$remaining"
+            fail_count=$((fail_count + 1))
+            continue
+        fi
+
+        log_info "Retrying upload: $(basename "$file") -> $s3_path"
+        if S3_NO_REQUEUE=1 s3_upload_with_retry "$file" "$s3_path" 3 5; then
             log_success "Upload succeeded: $s3_path"
-            SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+            success_count=$((success_count + 1))
         else
             log_error "Upload still failing: $s3_path"
-            echo "$timestamp|$file|$s3_path" >> "$TEMP_FILE"
-            FAIL_COUNT=$((FAIL_COUNT + 1))
+            echo "$timestamp|$file|$s3_path" >> "$remaining"
+            fail_count=$((fail_count + 1))
+            # S3 not responding: keep the rest queued instead of waiting out a
+            # timeout per file.
+            [[ "${S3_LAST_UPLOAD_TIMED_OUT:-0}" == "1" ]] && s3_down=1
         fi
-    done < "$FAILED_UPLOADS_LOG"
-    
-    # Replace failed uploads log with remaining failures
-    if [[ -s "$TEMP_FILE" ]]; then
-        mv "$TEMP_FILE" "$FAILED_UPLOADS_LOG"
-        log_warning "Still have $FAIL_COUNT failed uploads"
-    else
-        rm -f "$FAILED_UPLOADS_LOG" "$TEMP_FILE"
-        log_success "All failed uploads have been retried successfully!"
+    done < "$work_file"
+    rm -f "$work_file"
+
+    # Re-queue what is still failing (append: keeps anything queued meanwhile).
+    if [[ -s "$remaining" ]]; then
+        mkdir -p "$(dirname "$FAILED_UPLOADS_LOG_PRIMARY")" 2>/dev/null || true
+        if ! cat "$remaining" >> "$FAILED_UPLOADS_LOG_PRIMARY" 2>/dev/null; then
+            cat "$remaining" >> "${BACKUP_DIR}/failed-uploads.txt"
+        fi
     fi
-    
-    log_info "Retry summary: $SUCCESS_COUNT succeeded, $FAIL_COUNT failed"
-    
-    if [[ $FAIL_COUNT -gt 0 ]]; then
-        send_alert "WARNING" "S3 upload retry: $SUCCESS_COUNT succeeded, $FAIL_COUNT still failing"
+    rm -f "$remaining"
+    for log in "${logs[@]}"; do
+        [[ -s "$log" ]] || rm -f "$log"
+    done
+
+    log_info "Retry summary: $success_count succeeded, $fail_count still failing, $dropped_count dropped (local file gone)"
+
+    if [[ $fail_count -gt 0 || $dropped_count -gt 0 ]]; then
+        send_alert "WARNING" "S3 upload retry: $success_count succeeded, $fail_count still failing, $dropped_count dropped (local file gone)"
         return 1
     fi
-    
+
+    log_success "All failed uploads have been retried successfully!"
     return 0
 }
 
@@ -382,6 +417,12 @@ main_backup() {
         exit 1
     fi
     log_success "Backup metadata verified: ${METADATA_FILE}"
+
+    # Drain uploads queued by earlier runs (e.g. an S3 outage), but only when this
+    # run just reached S3, so a still-down S3 doesn't add a timeout per entry.
+    if [[ "${BACKUP_RESULTS[postgres_s3]:-failed}" == "success" ]] && [[ -n "$(failed_upload_queue_logs)" ]]; then
+        retry_failed_uploads || log_warning "Some queued S3 uploads are still failing (kept queued; local copies are protected from retention)"
+    fi
 
     # Cleanup old backups based on retention policy (only successful ones are kept)
     cleanup_old_backups_by_type "$backup_type"
