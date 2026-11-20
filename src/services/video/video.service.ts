@@ -101,6 +101,11 @@ import {
   type AppointmentPaymentLike,
 } from '@services/appointments/core/appointment-payment.util';
 import { findTerminatingProvider } from '@services/video/providers/video-provider.helpers';
+import {
+  recordParticipantJoined,
+  recordParticipantsLeft,
+} from '@services/video/video-participants.helpers';
+import { supportsRawSql } from '@infrastructure/queue/src/services/location-token.allocator';
 
 export type { VideoCall, VideoCallSettings };
 
@@ -770,6 +775,8 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           provider.generateMeetingToken(resolvedAppointmentId, userId, userRole, userInfo),
         preferredProvider
       );
+
+      await this.recordParticipantJoin(resolvedAppointmentId, userId, userRole);
 
       // The web client's Join button only asks for a token and never calls the start route, so a
       // doctor's join used to leave the visit CONFIRMED (to be auto-expired hours later) and the
@@ -1844,6 +1851,8 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         provider => provider.startConsultation(resolvedAppointmentId, userId, userRole)
       );
 
+      await this.recordParticipantJoin(resolvedAppointmentId, userId, userRole);
+
       // Anyone allowed in can open and join the call once the join window is open (15 minutes
       // before the visit): a confirmed patient does not need the doctor to be there first.
       // Only the appointment STATUS waits for the doctor. It becomes IN_PROGRESS when the
@@ -1957,6 +1966,63 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     return `${frontendBaseUrl.replace(/\/+$/, '')}/meet/${encodeURIComponent(appointmentId)}`;
   }
 
+  /**
+   * Record a join in `video_participants` (see video-participants.helpers). Best effort: the
+   * caller is already being let into the call, so a failed write is logged and never turned into
+   * a failed join. The system caller (meeting-URL lookup) is not a person and is skipped.
+   */
+  private async recordParticipantJoin(
+    appointmentId: string,
+    userId: string,
+    userRole: VideoCallerRole
+  ): Promise<void> {
+    if (!userId || userId === VideoService.SYSTEM_CALLER_USER_ID) {
+      return;
+    }
+    try {
+      await this.databaseService.executeInTransaction(async client => {
+        if (!supportsRawSql(client)) {
+          throw new Error('Recording a video participant needs a SQL-capable transaction client');
+        }
+        return await recordParticipantJoined(client, { appointmentId, userId, userRole });
+      });
+    } catch (error: unknown) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Could not record the video participant join: ${extractErrorMessage(error) ?? 'Unknown error'}`,
+        'VideoService.recordParticipantJoin',
+        { appointmentId, userRole }
+      );
+    }
+  }
+
+  /**
+   * Record a leave in `video_participants`: one user's row, or (no `userId`) every row still open
+   * because the consultation ended. Best effort, like recordParticipantJoin.
+   */
+  private async recordParticipantLeave(appointmentId: string, userId?: string): Promise<void> {
+    try {
+      await this.databaseService.executeInTransaction(async client => {
+        if (!supportsRawSql(client)) {
+          throw new Error('Recording a video participant needs a SQL-capable transaction client');
+        }
+        return await recordParticipantsLeft(client, {
+          appointmentId,
+          ...(userId ? { userId } : {}),
+        });
+      });
+    } catch (error: unknown) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Could not record the video participant leave: ${extractErrorMessage(error) ?? 'Unknown error'}`,
+        'VideoService.recordParticipantLeave',
+        { appointmentId }
+      );
+    }
+  }
+
   private async markAppointmentStartedByDoctor(
     appointment: {
       id: string;
@@ -2043,6 +2109,8 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       this.buildPlaceholderConsultationSession(
         appointment as unknown as Parameters<VideoService['buildPlaceholderConsultationSession']>[0]
       );
+
+    await this.recordParticipantLeave(appointmentId, userId);
 
     void this.loggingService.log(
       LogType.APPOINTMENT,
@@ -2179,6 +2247,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           endTime: new Date(),
         };
       }
+
+      // The call is over for everyone still in it.
+      await this.recordParticipantLeave(resolvedAppointmentId);
 
       // Save session notes if provided
       if (sessionNotes) {
@@ -2534,6 +2605,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
       await provider.terminateRoom(consultation.roomId);
       await provider.endConsultation(appointmentId, userId, 'clinic_admin');
+      await this.recordParticipantLeave(appointmentId);
       await this.invalidateAppointmentCacheQuietly({
         id: appointmentId,
         clinicId: consultation.clinicId,

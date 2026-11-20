@@ -81,6 +81,8 @@ export function createHarness(): {
     videoConsultation: Record<string, jest.Mock>;
   };
   databaseService: Record<string, jest.Mock>;
+  /** The raw-SQL transaction client handed to executeInTransaction (video_participants writes). */
+  rawSql: { $queryRawUnsafe: jest.Mock };
   cacheService: Record<string, jest.Mock>;
   eventService: { emitEnterprise: jest.Mock };
   loggingService: { log: jest.Mock };
@@ -122,6 +124,9 @@ export function createHarness(): {
     },
   };
 
+  // No consultation row by default, so participant recording is a no-op unless a test arranges it.
+  const rawSql = { $queryRawUnsafe: jest.fn().mockResolvedValue([]) };
+
   const databaseService = {
     findAppointmentByIdSafe: jest.fn().mockResolvedValue(makeAppointment()),
     executeRead: jest.fn(
@@ -137,6 +142,10 @@ export function createHarness(): {
         operation(clients)
     ),
     executeRawQuery: jest.fn().mockResolvedValue([]),
+    executeInTransaction: jest.fn(
+      async (operation: (client: unknown) => Promise<unknown>): Promise<unknown> =>
+        operation(rawSql)
+    ),
   };
 
   const cacheService = {
@@ -188,6 +197,7 @@ export function createHarness(): {
     provider,
     clients,
     databaseService,
+    rawSql,
     cacheService,
     eventService,
     loggingService,
