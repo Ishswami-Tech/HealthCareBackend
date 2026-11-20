@@ -1,0 +1,13 @@
+[Unit]
+Description=Move Temps apps to contabo-ds while both primary nodes are down, and back again
+After=docker.service
+
+[Service]
+Type=oneshot
+User=deploy
+Environment=STATE_DIR=/home/deploy/.local/state/temps-ds-fallback
+# DRY_RUN=1 here logs what would happen and changes nothing (see install-ds-fallback.sh).
+EnvironmentFile=-/etc/default/temps-ds-fallback
+ExecStart=/usr/local/bin/temps-ds-fallback
+# Seven apps, each move waiting up to DEPLOY_TIMEOUT_SECS (15 min) for its deployment.
+TimeoutStartSec=2h

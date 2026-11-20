@@ -6,7 +6,7 @@ Production runs as a whole-site pair on Temps:
 | ------------ | --------------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------- | -------------------------- |
 | Postgres     | temps-worker `postgres-postgres-main-1` (10.201.0.5:6261) | contabo-ds main-2 (10.201.0.7:6262) | pg_auto_failover, automatic                                   | `ha-failback.sh`           |
 | Dragonfly    | temps-worker 10.201.0.5:6512 (replica-priority 10)        | contabo-ds 10.201.0.7:6512          | Sentinel on the control plane (10.201.0.1:6579), automatic    | `ha-failback.sh`           |
-| API / worker | 1 replica on each node (`targetNodes [6, 9]`, replicas 2) | —                                   | proxy retries on the other copy; Temps reschedules after 90 s | `ha-failback.sh` redeploys |
+| API / worker | 1 replica on temps-worker and oracle-main (`targetNodes [6, 10]`, replicas 2) | contabo-ds, only while both are down | proxy retries on the other copy; Temps reschedules after 90 s; `ds-fallback.sh` moves to contabo-ds after 5 min | `ds-fallback.sh`, then `ha-failback.sh` |
 
 The app follows both data moves without a restart (`primary-tracker.ts`,
 `CACHE_SENTINELS`).
@@ -110,6 +110,41 @@ journalctl -u hcb-ha-failback.service -f                                      # 
 To change the default site, set `PREFERRED_PG_NODE`, `PREFERRED_CACHE` and
 `PREFERRED_NODE_NAME` in a drop-in for `hcb-ha-failback.service` (and give the
 new preferred Dragonfly node the lowest replica-priority).
+
+## ds-fallback (control plane only)
+
+Every Temps app (HealthCareBackend API and worker, DSSOne, social-media web and
+worker, Governance Ops, Vishwayog) targets the two primaries, temps-worker and
+oracle-main (`targetNodes [6, 10]`); Temps moves a copy between them by itself.
+contabo-ds is the last resort and stays out of the targets: Temps would place
+copies there in normal operation, and a Europe copy serving beside the India ones
+broke doctor loading on 2026-11-17. `temps-ds-fallback.timer` runs `ds-fallback.sh`
+every minute as `deploy`:
+
+- A node is up while its Temps agent accepts a TCP connection on port 3100 over
+  the mesh (a stopped, rebooting or frozen VM does not).
+- Fallback: once all of an app's primaries have been down for `DOWN_SECS` (300),
+  its public URL no longer answers (so the control plane merely losing the mesh
+  moves nothing) and contabo-ds is up, it sets the app's `target_nodes` to `[9]`
+  and redeploys the current deployment (Temps' rollback to it: same image, no
+  rebuild, no new code), one app at a time, API first.
+- Restore: once one of its primaries has been up for `UP_SECS` (300), it sets
+  `[6, 10]` again and redeploys the current deployment, which lands on the
+  primaries. Postgres and Dragonfly then move home through `ha-failback`.
+- Apps built only for amd64 (Governance Ops and Vishwayog, built by Temps on the
+  amd64 control plane) list only temps-worker as their primary: Temps never places
+  them on the arm64 oracle-main, so for them temps-worker down is "both down".
+- A failed move is retried after `RETRY_SECS` (600). State is in
+  `~deploy/.local/state/temps-ds-fallback` (`<app>.on-fallback` while moved).
+- Uses the Temps API with the `temps-local` CLI context's key; only the
+  `target_nodes` field is sent (never the console's Save, which unpublishes the
+  tunnels).
+
+```bash
+sudo bash install-ds-fallback.sh            # first install: DRY_RUN=1 (logs only)
+journalctl -u temps-ds-fallback.service -f
+sudo sed -i 's/^DRY_RUN=.*/DRY_RUN=0/' /etc/default/temps-ds-fallback   # go live
+```
 
 ## direct-link (temps-worker <-> oracle-main)
 

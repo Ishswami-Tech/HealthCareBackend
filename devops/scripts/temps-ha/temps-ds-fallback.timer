@@ -1,0 +1,10 @@
+[Unit]
+Description=Check every minute whether Temps apps must move to or back from contabo-ds
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
