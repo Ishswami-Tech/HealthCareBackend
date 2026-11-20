@@ -46,7 +46,8 @@
     "ip-address": "10.7.5",
     "@fastify/busboy": "3.2.2",
     "@xhmikosr/decompress": "11.1.4",
-    "glob": "14.0.3"
+    "glob": "14.0.3",
+    "effect": "3.22.5"
   },
   "scripts": {
     "build": "node scripts/build.js",
