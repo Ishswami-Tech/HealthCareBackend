@@ -21,10 +21,15 @@
 # temps-worker's copy was hung after a reboot, data failed back at 14:11/14:13, and logins
 # on contabo-ds took up to 22 s until that copy served again at 14:19).
 #
-# Apps: once both data primaries are back, redeploys the current image of each app
-#       that has no replica on the preferred node, so Temps spreads the replicas again.
+# Apps: one copy on each target node (TARGET_NODES). Temps never rebalances by itself, so
+#       the current image of an app is redeployed (Temps spreads the copies again) when
+#         - it has no copy on the preferred node, once both data primaries are back there; or
+#         - it has a copy there, but another target node that is up (its Temps agent answers)
+#           has none or more than one, e.g. after oracle-main or oracle-vm2-dss was down.
+#       Either has to hold for STABLE_SECS first.
 #
 # Env overrides: PREFERRED_PG_NODE, PREFERRED_CACHE, PREFERRED_NODE_NAME, PREFERRED_NODE_ADDRESS,
+# TARGET_NODES, AGENT_PORT,
 # API_APP, API_HEALTH_PATH, PROBE_TIMEOUT_SECS, APPS, APP_CHECK_SECS,
 # TEMPS_CLI_VERSION,
 # STABLE_SECS, COOLDOWN_SECS, MAX_LAG_BYTES, DRY_RUN=1 (log what would happen, change nothing).
@@ -39,6 +44,10 @@ DRY_RUN="${DRY_RUN:-0}"
 PREFERRED_NODE_NAME="${PREFERRED_NODE_NAME:-temps-worker-ubuntu}"     # Temps node name
 APPS="${APPS:-4:4:healthcarebackend 5:5:healthcarebackend-worker}"     # project:env:slug
 APP_CHECK_SECS="${APP_CHECK_SECS:-300}"
+# Every node an app keeps exactly one copy on (Temps node name:mesh address); same set as the
+# apps' targetNodes [6,10,11]. A node counts only while its Temps agent accepts a connection.
+TARGET_NODES="${TARGET_NODES:-temps-worker-ubuntu:10.201.0.5 main-server:10.201.0.8 oracale-vm2-dss:10.201.0.6}"
+AGENT_PORT="${AGENT_PORT:-3100}"
 # Where the API copy on the preferred node is reached from here (its published port is looked up).
 PREFERRED_NODE_ADDRESS="${PREFERRED_NODE_ADDRESS:-10.201.0.5}"         # temps-worker mesh IP
 API_APP="${API_APP:-4:4}"                                             # project:env of the API
@@ -249,16 +258,35 @@ temps_cli() {
   fi
 }
 
-# Prints "slug|image of the current deployment|running copies on PREFERRED_NODE_NAME|deploys in flight".
+# Target nodes whose Temps agent answers on AGENT_PORT (same test as ds-fallback), by name.
+UP_TARGET_NODES=""
+up_target_nodes() {
+  if [[ -z "$UP_TARGET_NODES" ]]; then
+    local entry name addr
+    for entry in $TARGET_NODES; do
+      name="${entry%%:*}" addr="${entry#*:}"
+      if timeout "$PROBE_TIMEOUT_SECS" bash -c ">/dev/tcp/$addr/$AGENT_PORT" 2>/dev/null; then
+        UP_TARGET_NODES+="$name "
+      fi
+    done
+    UP_TARGET_NODES="${UP_TARGET_NODES:- }"
+  fi
+  echo "$UP_TARGET_NODES"
+}
+
+# Prints "slug|image of the current deployment|running copies on PREFERRED_NODE_NAME|deploys in
+# flight|up target nodes (other than the preferred one) without exactly one copy, comma-separated".
 app_rows() {
-  local spec pid eid slug deps ctrs
+  local spec pid eid slug deps ctrs up
+  up=$(up_target_nodes)
   for spec in $APPS; do
     IFS=: read -r pid eid slug <<<"$spec"
     deps=$(temps_cli deployments list -p "$slug" --environment-id "$eid" -n 10 --json) || return 1
     ctrs=$(temps_cli containers list -p "$pid" -e "$eid" --json) || return 1
-    DEPS="$deps" CTRS="$ctrs" python3 - "$slug" "$PREFERRED_NODE_NAME" "$IN_FLIGHT_MAX_SECS" <<'PY' || return 1
+    DEPS="$deps" CTRS="$ctrs" python3 - "$slug" "$PREFERRED_NODE_NAME" "$IN_FLIGHT_MAX_SECS" "$up" <<'PY' || return 1
 import json, os, sys, time
 slug, node, max_age = sys.argv[1], sys.argv[2], int(sys.argv[3])
+up_nodes = [n for n in sys.argv[4].split() if n != node]
 deps = json.loads(os.environ["DEPS"]); deps = deps.get("deployments", deps) if isinstance(deps, dict) else deps
 ctrs = json.loads(os.environ["CTRS"])
 running = [c for c in ctrs if c.get("status") == "running"]
@@ -278,18 +306,24 @@ for d in deps:
 if len(images) != 1:
     busy += 1          # zero or mixed images: something is mid-change, leave it alone
 on_node = sum(1 for c in running if c.get("node_name") == node)
-print(f"{slug}|{next(iter(images), '')}|{on_node}|{busy}")
+unbalanced = [n for n in up_nodes if sum(1 for c in running if c.get("node_name") == n) != 1]
+print(f"{slug}|{next(iter(images), '')}|{on_node}|{busy}|{','.join(unbalanced)}")
 PY
   done
 }
 
+# Apps that need a redeploy, from app_rows output: no copy on the preferred node (only once the
+# data is back there: DATA_READY=1), or a copy there but an up target node without exactly one.
+apps_needing_spread() {
+  awk -F'|' -v data="$1" '($3 == 0 && data == 1) || ($3 > 0 && $5 != "") {print $1}' <<<"$2"
+}
+
 failback_apps() {
-  local rows slug image on_node
-  # Once the preferred node's data members are back (at home, or healthy replicas): the data
-  # waits for an API copy there, so the copy cannot in turn wait for the data.
-  local layer
+  local rows slug image on_node unbalanced need data_ready=1 layer
+  # The data waits for an API copy on the preferred node, so a copy missing THERE is put back
+  # only once the preferred node's data members are back (at home, or healthy replicas).
   for layer in pg cache; do
-    [[ "$(cat "$STATE_DIR/$layer.at-home" 2>/dev/null)" == 1 || -f "$STATE_DIR/$layer.healthy-since" ]] || return 0
+    [[ "$(cat "$STATE_DIR/$layer.at-home" 2>/dev/null)" == 1 || -f "$STATE_DIR/$layer.healthy-since" ]] || data_ready=0
   done
   if [[ -f "$STATE_DIR/apps.backoff-until" ]] && (( now < $(cat "$STATE_DIR/apps.backoff-until") )); then
     return 0
@@ -302,11 +336,12 @@ failback_apps() {
   echo "$now" >"$STATE_DIR/apps.last-check"
 
   rows=$(app_rows) || { log "apps: Temps CLI failed; skipping"; return 0; }
-  if grep -q '|[1-9][0-9]*$' <<<"$rows"; then
+  if awk -F'|' '$4 > 0 {found=1} END {exit !found}' <<<"$rows"; then
     unstable apps; return 0                    # a deploy is running
   fi
-  if ! awk -F'|' '$3==0 {found=1} END {exit !found}' <<<"$rows"; then
-    unstable apps; return 0                    # every app already has a copy there
+  need=$(apps_needing_spread "$data_ready" "$rows")
+  if [[ -z "$need" ]]; then
+    unstable apps; return 0                    # one copy on every up target node
   fi
 
   local up; up=$(stable apps)
@@ -315,23 +350,27 @@ failback_apps() {
 
   [[ "$DRY_RUN" == 1 ]] || mark_failback apps
   # One app at a time: parallel deploys of the same image raced on the image import.
-  while IFS='|' read -r slug image on_node _; do
-    [[ "$on_node" == 0 && -n "$image" ]] || continue
-    log "apps: $slug has no copy on $PREFERRED_NODE_NAME; redeploying $image to spread it"
+  while IFS='|' read -r slug image on_node _ unbalanced; do
+    grep -qx "$slug" <<<"$need" && [[ -n "$image" ]] || continue
+    if [[ "$on_node" == 0 ]]; then
+      log "apps: $slug has no copy on $PREFERRED_NODE_NAME; redeploying $image to spread it"
+    else
+      log "apps: $slug does not have exactly one copy on $unbalanced; redeploying $image to spread it"
+    fi
     if [[ "$DRY_RUN" == 1 ]]; then log "apps: DRY_RUN, not deploying"; continue; fi
     temps_cli deploy:image --image "$image" -p "$slug" -e production -y --timeout 900 \
       || log "apps: redeploy of $slug failed; will retry after the cooldown"
   done <<<"$rows"
   [[ "$DRY_RUN" == 1 ]] && return 0
 
-  # Temps decides placement. If it still put no copy on the preferred node (drained or offline
-  # there, which this CLI key cannot see), redeploying again every cooldown would only churn
+  # Temps decides placement. If it still did not spread the copies (a node drained or offline
+  # in Temps, which this CLI key cannot see), redeploying again every cooldown would only churn
   # production: back off.
   local after
   after=$(app_rows) || return 0
-  if awk -F'|' '$3==0 {found=1} END {exit !found}' <<<"$after"; then
+  if [[ -n "$(apps_needing_spread "$data_ready" "$after")" ]]; then
     echo $((now + APP_BACKOFF_SECS)) >"$STATE_DIR/apps.backoff-until"
-    log "apps: Temps still placed no copy on $PREFERRED_NODE_NAME (drained or offline there?); not redeploying again for ${APP_BACKOFF_SECS}s"
+    log "apps: Temps still did not place one copy on each target node (drained or offline there?); not redeploying again for ${APP_BACKOFF_SECS}s"
   else
     rm -f "$STATE_DIR/apps.backoff-until"
   fi
