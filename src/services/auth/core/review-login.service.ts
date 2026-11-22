@@ -1,6 +1,7 @@
 import { HttpStatus, Inject, Injectable, forwardRef } from '@nestjs/common';
 import { randomInt } from 'crypto';
 import { ConfigService } from '@config/config.service';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { CredentialEncryptionService } from '@communication/config/credential-encryption.service';
@@ -38,7 +39,8 @@ export type ReviewLoginIssued = { status: ReviewLoginStatus; otp: string };
  * Login for app store reviewers, who cannot receive a real OTP. A super admin turns it on for
  * one phone number for a limited time; the backend generates the code and stores it encrypted
  * in "system_settings". It is read on every OTP request, so enabling, rotating or disabling
- * takes effect immediately on every instance, and it switches itself off at expiresAt.
+ * takes effect immediately on every instance, and it switches itself off at expiresAt. Any code
+ * already requested for the number is cleared on every change, so an old code never outlives it.
  */
 @Injectable()
 export class ReviewLoginService {
@@ -50,7 +52,9 @@ export class ReviewLoginService {
     @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
     @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => CacheService))
+    private readonly cacheService: CacheService
   ) {}
 
   /** The live review login, or null when off, expired or unreadable. */
@@ -111,10 +115,14 @@ export class ReviewLoginService {
   }
 
   async disable(actorId: string): Promise<ReviewLoginStatus> {
+    const previous = await this.readStored();
     await this.databaseService.executeRawQuery(
       'DELETE FROM "system_settings" WHERE "settingKey" = $1',
       [REVIEW_LOGIN_SETTING_KEY]
     );
+    if (previous) {
+      await this.clearPendingCode(previous.phone);
+    }
     this.audit('disabled', actorId);
     return this.toStatus(null);
   }
@@ -125,6 +133,7 @@ export class ReviewLoginService {
     actorId: string,
     action: string
   ): Promise<ReviewLoginIssued> {
+    const previous = await this.readStored();
     const length = this.configService.getEnvNumber('OTP_LENGTH', 6);
     const otp = String(randomInt(Math.pow(10, length - 1), Math.pow(10, length)));
     const stored: StoredReviewLogin = {
@@ -143,8 +152,35 @@ export class ReviewLoginService {
       `,
       [REVIEW_LOGIN_SETTING_KEY, JSON.stringify(stored)]
     );
+    await this.clearPendingCode(phone);
+    if (previous && previous.phone !== phone) {
+      await this.clearPendingCode(previous.phone);
+    }
     this.audit(action, actorId, { expiresAt });
     return { status: this.toStatus(stored), otp };
+  }
+
+  /**
+   * Drops any login code already requested for this number (OtpService stores it under
+   * otp:<phone> when the code is requested). Without this, a code requested before a rotate or
+   * disable would keep verifying until its OTP expiry. It only deletes, never writes the new code,
+   * so a staff account on the number can never end up holding a review code.
+   */
+  private async clearPendingCode(phone: string): Promise<void> {
+    try {
+      await Promise.all([
+        this.cacheService.del(`otp:${phone}`),
+        this.cacheService.del(`otp_verified:${phone}`),
+      ]);
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SECURITY,
+        LogLevel.WARN,
+        'Review login changed but a pending code could not be cleared',
+        'ReviewLoginService',
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+    }
   }
 
   private async readStored(): Promise<StoredReviewLogin | null> {

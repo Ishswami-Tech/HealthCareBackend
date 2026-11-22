@@ -10,11 +10,13 @@ import type { DatabaseService } from '@infrastructure/database/database.service'
 import type { CredentialEncryptionService } from '@communication/config/credential-encryption.service';
 import type { ConfigService } from '@config/config.service';
 import type { LoggingService } from '@infrastructure/logging/logging.service';
+import type { CacheService } from '@infrastructure/cache/cache.service';
 
 jest.mock('@infrastructure/database/database.service');
 jest.mock('@communication/config/credential-encryption.service');
 jest.mock('@infrastructure/logging/logging.service');
 jest.mock('@config/config.service');
+jest.mock('@infrastructure/cache/cache.service');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -47,12 +49,18 @@ function createHarness() {
   };
   const config = { getEnvNumber: jest.fn((_key: string, fallback: number) => fallback) };
   const logging = { log: jest.fn() };
+  // Pending login codes, keyed like OtpService (otp:<phone>, otp_verified:<phone>).
+  const pending = new Map<string, unknown>();
+  const cache = {
+    del: jest.fn(async (key: string) => (pending.delete(key) ? 1 : 0)),
+  };
 
   const service = new ReviewLoginService(
     database as unknown as DatabaseService,
     encryption as unknown as CredentialEncryptionService,
     config as unknown as ConfigService,
-    logging as unknown as LoggingService
+    logging as unknown as LoggingService,
+    cache as unknown as CacheService
   );
 
   return {
@@ -60,6 +68,8 @@ function createHarness() {
     database,
     encryption,
     logging,
+    cache,
+    pending,
     getRow: () => row,
     setRow: (value: string | null) => {
       row = value;
@@ -205,5 +215,74 @@ describe('ReviewLoginService', () => {
     expect(logged).toContain('admin-1');
     expect(logged).not.toContain(issued.otp);
     expect(logged).not.toContain(rotated.otp);
+  });
+
+  describe('pending codes', () => {
+    const phone = '+919000000001';
+    const other = '+919000000002';
+
+    it('clears a code requested before a new one is generated', async () => {
+      const h = createHarness();
+      await h.service.enable(phone, 14, 'admin-1');
+      h.pending.set(`otp:${phone}`, { otp: 'old' });
+      h.pending.set(`otp_verified:${phone}`, { otp: 'old' });
+
+      await h.service.regenerate('admin-1');
+
+      expect(h.pending.has(`otp:${phone}`)).toBe(false);
+      expect(h.pending.has(`otp_verified:${phone}`)).toBe(false);
+    });
+
+    it('clears a requested code when turned off', async () => {
+      const h = createHarness();
+      await h.service.enable(phone, 14, 'admin-1');
+      h.pending.set(`otp:${phone}`, { otp: 'old' });
+
+      await h.service.disable('admin-1');
+
+      expect(h.pending.has(`otp:${phone}`)).toBe(false);
+    });
+
+    it('clears the previous number when switched to another number', async () => {
+      const h = createHarness();
+      await h.service.enable(phone, 14, 'admin-1');
+      h.pending.set(`otp:${phone}`, { otp: 'old' });
+
+      await h.service.enable(other, 14, 'admin-1');
+
+      expect(h.pending.has(`otp:${phone}`)).toBe(false);
+      expect(h.cache.del).toHaveBeenCalledWith(`otp:${other}`);
+    });
+
+    it('never writes the new code into the pending slot', async () => {
+      const h = createHarness();
+      await h.service.enable(phone, 14, 'admin-1');
+
+      await h.service.regenerate('admin-1');
+
+      expect(h.pending.size).toBe(0);
+      expect(Object.keys(h.cache)).toEqual(['del']);
+    });
+
+    it('still completes and warns when the cache cannot be cleared', async () => {
+      const h = createHarness();
+      await h.service.enable(phone, 14, 'admin-1');
+      h.cache.del.mockRejectedValue(new Error('cache down'));
+
+      await expect(h.service.regenerate('admin-1')).resolves.toMatchObject({
+        status: { enabled: true },
+      });
+      expect(JSON.stringify(h.logging.log.mock.calls)).toContain(
+        'pending code could not be cleared'
+      );
+    });
+
+    it('does nothing to the cache when turning off while already off', async () => {
+      const h = createHarness();
+
+      await h.service.disable('admin-1');
+
+      expect(h.cache.del).not.toHaveBeenCalled();
+    });
   });
 });
