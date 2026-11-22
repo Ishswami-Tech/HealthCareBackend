@@ -15,10 +15,17 @@
 #
 # The app follows both moves by itself (PrismaService primary tracker + Sentinel client).
 #
+# Data moves back only once the API copy on the preferred node has answered /infra-health
+# for STABLE_SECS too. Until then every request is served by the other node's copy, and
+# moving the data away from it puts 130 ms under each query and cache call (2026-11-13:
+# temps-worker's copy was hung after a reboot, data failed back at 14:11/14:13, and logins
+# on contabo-ds took up to 22 s until that copy served again at 14:19).
+#
 # Apps: once both data primaries are back, redeploys the current image of each app
 #       that has no replica on the preferred node, so Temps spreads the replicas again.
 #
-# Env overrides: PREFERRED_PG_NODE, PREFERRED_CACHE, PREFERRED_NODE_NAME, APPS, APP_CHECK_SECS,
+# Env overrides: PREFERRED_PG_NODE, PREFERRED_CACHE, PREFERRED_NODE_NAME, PREFERRED_NODE_ADDRESS,
+# API_APP, API_HEALTH_PATH, PROBE_TIMEOUT_SECS, APPS, APP_CHECK_SECS,
 # TEMPS_CLI_VERSION,
 # STABLE_SECS, COOLDOWN_SECS, MAX_LAG_BYTES, DRY_RUN=1 (log what would happen, change nothing).
 set -euo pipefail
@@ -32,6 +39,11 @@ DRY_RUN="${DRY_RUN:-0}"
 PREFERRED_NODE_NAME="${PREFERRED_NODE_NAME:-temps-worker-ubuntu}"     # Temps node name
 APPS="${APPS:-4:4:healthcarebackend 5:5:healthcarebackend-worker}"     # project:env:slug
 APP_CHECK_SECS="${APP_CHECK_SECS:-300}"
+# Where the API copy on the preferred node is reached from here (its published port is looked up).
+PREFERRED_NODE_ADDRESS="${PREFERRED_NODE_ADDRESS:-10.201.0.5}"         # temps-worker mesh IP
+API_APP="${API_APP:-4:4}"                                             # project:env of the API
+API_HEALTH_PATH="${API_HEALTH_PATH:-/infra-health}"   # no DB/cache checks: answers wherever data is
+PROBE_TIMEOUT_SECS="${PROBE_TIMEOUT_SECS:-5}"
 TEMPS_CLI_VERSION="${TEMPS_CLI_VERSION:-0.1.38}"
 # The pinned CLI installed by install-ha-failback.sh; npx (needs the npm registry) only as fallback.
 TEMPS_CLI_HOME="${TEMPS_CLI_HOME:-/home/deploy/.local/share/hcb-temps-cli}"
@@ -68,6 +80,57 @@ cooling_down() {
   [[ -f "$f" ]] && (( now - $(cat "$f") < COOLDOWN_SECS ))
 }
 mark_failback() { echo "$now" >"$STATE_DIR/$1.last-failback"; unstable "$1"; }
+
+# ---------------------------------------------------------------- API on the preferred node
+# Seconds the API copy on the preferred node has answered API_HEALTH_PATH without a miss (-1 when
+# it does not, so it blocks even with STABLE_SECS=0). Probed directly: Temps' own health state is set at deploy time only, so a copy
+# that hung later still reads "healthy" there. Probed at most once per run, and only while a
+# data primary is away from home (the callers ask), so it costs nothing in normal operation.
+API_SERVING_SECS=""
+api_serving_secs() {
+  if [[ -z "$API_SERVING_SECS" ]]; then
+    if api_copy_answers; then
+      API_SERVING_SECS=$(stable api)
+    else
+      [[ -f "$STATE_DIR/api.healthy-since" ]] && log "api: no copy on $PREFERRED_NODE_NAME answers $API_HEALTH_PATH; data stays where the serving copy is"
+      unstable api
+      API_SERVING_SECS=-1
+    fi
+  fi
+  echo "$API_SERVING_SECS"
+}
+
+# True when a running API copy on the preferred node answers API_HEALTH_PATH with 2xx.
+api_copy_answers() {
+  local pid eid ctrs id port
+  IFS=: read -r pid eid <<<"$API_APP"
+  ctrs=$(temps_cli containers list -p "$pid" -e "$eid" --json) || return 1
+  for id in $(CTRS="$ctrs" python3 -c '
+import json, os, sys
+for c in json.loads(os.environ["CTRS"]):
+    if c.get("status") == "running" and c.get("node_name") == sys.argv[1]:
+        print(c["container_id"])' "$PREFERRED_NODE_NAME"); do
+    port=$(temps_cli containers show -p "$pid" -e "$eid" -c "$id" --json \
+      | python3 -c 'import json, sys; print(json.load(sys.stdin).get("host_port") or "")') || continue
+    [[ "$port" =~ ^[0-9]+$ ]] || continue
+    curl -fsS -m "$PROBE_TIMEOUT_SECS" -o /dev/null \
+      "http://$PREFERRED_NODE_ADDRESS:$port$API_HEALTH_PATH" 2>/dev/null && return 0
+  done
+  return 1
+}
+
+# Data may move home only once the API there has served for STABLE_SECS as well.
+api_ready_for() {
+  local layer="$1" api_up
+  api_up=$(api_serving_secs)
+  if (( api_up < 0 || api_up < STABLE_SECS )); then
+    [[ -f "$STATE_DIR/$layer.waiting-api" ]] \
+      || log "$layer: preferred node ready, waiting for its API copy to serve for ${STABLE_SECS}s ($( ((api_up < 0)) && echo 'not answering' || echo "${api_up}s so far" ))"
+    touch "$STATE_DIR/$layer.waiting-api"
+    return 1
+  fi
+  rm -f "$STATE_DIR/$layer.waiting-api"
+}
 
 # ---------------------------------------------------------------- Postgres
 monitor_sql() {
@@ -106,9 +169,11 @@ SQL
     unstable pg; return 0
   fi
 
+  api_serving_secs >/dev/null   # keep the API's stability window running alongside
   local up; up=$(stable pg)
   if (( up < STABLE_SECS )); then return 0; fi
   if cooling_down pg; then return 0; fi
+  api_ready_for postgres || return 0
 
   log "postgres: $PREFERRED_PG_NODE healthy secondary for ${up}s (lag ${lag}B); promoting it back to primary"
   if [[ "$DRY_RUN" == 1 ]]; then log "postgres: DRY_RUN, not promoting"; return 0; fi
@@ -154,9 +219,11 @@ failback_cache() {
     unstable cache; return 0
   fi
 
+  api_serving_secs >/dev/null
   local up; up=$(stable cache)
   if (( up < STABLE_SECS )); then return 0; fi
   if cooling_down cache; then return 0; fi
+  api_ready_for cache || return 0
 
   log "cache: $PREFERRED_CACHE healthy replica for ${up}s; asking Sentinel to fail over from $master"
   if [[ "$DRY_RUN" == 1 ]]; then log "cache: DRY_RUN, not failing over"; return 0; fi
@@ -167,8 +234,9 @@ failback_cache() {
 # ---------------------------------------------------------------- App replicas
 # targetNodes [6,10,11] with 3 replicas means one API and one worker on each node, but
 # Temps never rebalances: replicas rescheduled onto contabo-ds while temps-worker was
-# down stay there. Once the data layer is back on the preferred node (which also
-# proves that node is up), redeploy the current image so Temps spreads them again.
+# down stay there. Once the preferred node's data members are back (which also proves
+# that node is up), redeploy the current image so Temps spreads them again; the data
+# itself moves home only after that copy serves (api_ready_for).
 #
 # Uses only the Temps CLI (the supported API), pinned to the version this was tested
 # with, never Temps' internal database, so Temps upgrades cannot break it.
@@ -217,8 +285,12 @@ PY
 
 failback_apps() {
   local rows slug image on_node
-  # Only once Postgres and Dragonfly are both back home: whole-site failback.
-  [[ "$(cat "$STATE_DIR/pg.at-home" 2>/dev/null)" == 1 && "$(cat "$STATE_DIR/cache.at-home" 2>/dev/null)" == 1 ]] || return 0
+  # Once the preferred node's data members are back (at home, or healthy replicas): the data
+  # waits for an API copy there, so the copy cannot in turn wait for the data.
+  local layer
+  for layer in pg cache; do
+    [[ "$(cat "$STATE_DIR/$layer.at-home" 2>/dev/null)" == 1 || -f "$STATE_DIR/$layer.healthy-since" ]] || return 0
+  done
   if [[ -f "$STATE_DIR/apps.backoff-until" ]] && (( now < $(cat "$STATE_DIR/apps.backoff-until") )); then
     return 0
   fi

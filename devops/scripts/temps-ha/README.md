@@ -88,12 +88,20 @@ a healthy, caught-up replica for `STABLE_SECS` (300) in a row, it moves the
 primary back, at most once per `COOLDOWN_SECS` (1800) per layer so a flapping
 node cannot bounce it:
 
+Postgres and Dragonfly also wait until the API copy on the preferred node has
+answered `/infra-health` for `STABLE_SECS`, probed directly at
+`PREFERRED_NODE_ADDRESS:<host port>` (Temps' own health state is set at deploy
+time only). Until then all three stay together on the standby. 2026-11-13:
+temps-worker's copy was hung after a reboot, data failed back at 14:11/14:13
+without this check, and logins on contabo-ds took up to 22 s until 14:19.
+
 1. Postgres:
    `pgautofailover.perform_promotion('default', 'postgres-postgres-main-1')`
    (planned switchover; writes pause for a few seconds).
 2. Dragonfly: `SENTINEL FAILOVER dragonfly`, only if Sentinel would pick the
    preferred node.
-3. Apps, once both data primaries are home: redeploys the current image of each
+3. Apps, once the preferred node's Postgres and Dragonfly are back (home, or
+   healthy replicas, so the data never waits on a copy that waits on it): redeploys the current image of each
    app that has no running copy on `temps-worker-ubuntu`, one app at a time
    (Temps never rebalances on its own). If Temps still places no copy there
    (drained or offline - the CLI key cannot read node settings), it backs off
