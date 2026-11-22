@@ -100,15 +100,23 @@ without this check, and logins on contabo-ds took up to 22 s until 14:19.
    (planned switchover; writes pause for a few seconds).
 2. Dragonfly: `SENTINEL FAILOVER dragonfly`, only if Sentinel would pick the
    preferred node.
-3. Apps, once the preferred node's Postgres and Dragonfly are back (home, or
-   healthy replicas, so the data never waits on a copy that waits on it):
-   redeploys the current image of each app that has no running copy on
-   `temps-worker-ubuntu`, one app at a time (Temps never rebalances on its own).
-   If Temps still places no copy there (drained or offline - the CLI key cannot
-   read node settings), it backs off for 6 h instead of redeploying every
-   cooldown. A deployment unfinished for over 2 h (e.g. paused) is logged as
-   stuck and does not block failback. Uses the Temps CLI pinned to
-   `@temps-sdk/cli@0.1.38`, installed once under
+3. Apps: one copy on each of `TARGET_NODES` (temps-worker, oracle-main,
+   oracle-vm2-dss; the apps' `targetNodes [6, 10, 11]`). Temps never rebalances
+   on its own, so the current image of an app is redeployed, one app at a time,
+   when
+   - it has no running copy on `temps-worker-ubuntu`, once the preferred node's
+     Postgres and Dragonfly are back (home, or healthy replicas, so the data
+     never waits on a copy that waits on it); or
+   - it has a copy there, but another target node that is up (its Temps agent
+     answers on port 3100) has no copy or more than one, e.g. after oracle-main
+     or oracle-vm2-dss was down (added 2026-11-23; before, only temps-worker was
+     checked).
+
+   Either must hold for `STABLE_SECS`. If Temps still does not spread the copies
+   (a node drained or offline - the CLI key cannot read node settings), it backs
+   off for 6 h instead of redeploying every cooldown. A deployment unfinished
+   for over 2 h (e.g. paused) is logged as stuck and does not block failback.
+   Uses the Temps CLI pinned to `@temps-sdk/cli@0.1.38`, installed once under
    `~deploy/.local/share/hcb-temps-cli` (npx only as a fallback).
 
 ```bash
