@@ -903,8 +903,11 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Explicit per-process pool budget (audit P1). Defaults: API 25, worker 10. Budget rule:
-    // api_replicas * (pool + 2 health) + worker * (pool + 2) + ~10 admin/backup/migrate must stay
-    // below Postgres max_connections (prod 120). Always set DB_POOL_SIZE explicitly per service.
+    // api_copies * (pool + 2 health) + worker_copies * (pool + 2) + ~10 admin/backup/migrate,
+    // plus every other app on the same cluster, must stay below Postgres max_connections. Prod
+    // (Temps, 2026-11-23): postgres-main max_connections=100, shared with DSSOne, social-media,
+    // governance-ops and vishwayog; 3 API copies (DB_POOL_SIZE=12) + 3 workers (6) = 66 at full
+    // use. A rolling deploy briefly adds the new copy's pool. Always set DB_POOL_SIZE per service.
     const isWorkerProcess = (getEnv('APP_MODE') || '').toLowerCase() === 'worker';
     this.poolSize = getEnvNumber('DB_POOL_SIZE', isWorkerProcess ? 10 : 25);
 

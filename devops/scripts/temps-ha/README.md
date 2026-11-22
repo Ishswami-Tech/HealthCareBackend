@@ -12,9 +12,10 @@ The app follows both data moves without a restart (`primary-tracker.ts`,
 `CACHE_SENTINELS`).
 
 Requests enter through the Temps proxy on the control plane, which round-robins
-across both API copies. Per the Temps docs it health-checks a copy only at
-deploy time and retries a request once on another copy only when it cannot
-connect. Drill 2026-11-13 (probe every second through the public domain):
+across the three API copies (one per India node). Per the Temps docs it
+health-checks a copy only at deploy time and retries a request once on another
+copy only when it cannot connect. Drill 2026-11-13 (probe every second through
+the public domain):
 
 | Copy on temps-worker                     | Result                                                              |
 | ---------------------------------------- | ------------------------------------------------------------------- |
@@ -132,12 +133,13 @@ new preferred Dragonfly node the lowest replica-priority).
 ## ds-fallback (control plane only)
 
 Every Temps app (HealthCareBackend API and worker, DSSOne, social-media web and
-worker, Governance Ops, Vishwayog) targets the two primaries, temps-worker and
-oracle-main (`targetNodes [6, 10]`); Temps moves a copy between them by itself.
-contabo-ds is the last resort and stays out of the targets: Temps would place
-copies there in normal operation, and a Europe copy serving beside the India
-ones broke doctor loading on 2026-11-17. `temps-ds-fallback.timer` runs
-`ds-fallback.sh` every minute as `deploy`:
+worker, Governance Ops, Vishwayog) targets the India primaries temps-worker,
+oracle-main and oracle-vm2-dss (`targetNodes [6, 10, 11]`, one copy on each);
+Temps moves a copy between them by itself. contabo-ds is the last resort and
+stays out of the targets: Temps would place copies there in normal operation,
+and a Europe copy serving beside the India ones broke doctor loading on
+2026-11-17. `temps-ds-fallback.timer` runs `ds-fallback.sh` every minute as
+`deploy`:
 
 - A node is up while its Temps agent accepts a TCP connection on port 3100 over
   the mesh (a stopped, rebooting or frozen VM does not).
@@ -147,12 +149,14 @@ ones broke doctor loading on 2026-11-17. `temps-ds-fallback.timer` runs
   and redeploys the current deployment (Temps' rollback to it: same image, no
   rebuild, no new code), one app at a time, API first.
 - Restore: once one of its primaries has been up for `UP_SECS` (300), it sets
-  `[6, 10]` again and redeploys the current deployment, which lands on the
-  primaries. Postgres and Dragonfly then move home through `ha-failback`.
-- Apps built only for amd64 (Governance Ops and Vishwayog, built by Temps on the
-  amd64 control plane) list only temps-worker as their primary: Temps never
-  places them on the arm64 oracle-main, so for them temps-worker down is "both
-  down".
+  `[6, 10, 11]` (`NORMAL_TARGETS`) again and redeploys the current deployment,
+  which lands on the primaries. Postgres and Dragonfly then move home through
+  `ha-failback`.
+- Apps built only for amd64 (Governance Ops and Vishwayog while Temps still
+  builds them on the amd64 control plane) list only temps-worker as their
+  primary: Temps never places them on the arm64 Oracle nodes, so for them
+  temps-worker down is "all primaries down". Once such an app deploys a
+  multi-arch image, list `6,10,11` for it in `APPS`.
 - A failed move is retried after `RETRY_SECS` (600). State is in
   `~deploy/.local/state/temps-ds-fallback` (`<app>.on-fallback` while moved,
   `<app>.deploy` = the target nodes and id of the deployment a move started).
