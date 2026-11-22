@@ -150,12 +150,15 @@ export const DLQ_CONFIG = {
  * Worker shutdown and health.
  *
  * On SIGTERM the worker stops fetching new jobs and waits up to `closeTimeoutMs` for in-flight
- * jobs to finish before force-closing (a force-closed job is retried after the stall check). The
- * container `stop_grace_period` must be larger than `shutdownTimeoutMs`.
+ * jobs to finish before force-closing (a force-closed job is retried after the stall check; the
+ * completion marker keeps a job that did finish from running twice). The container's stop grace
+ * must be larger than `shutdownTimeoutMs`: Temps stops containers with a fixed 10 s grace before
+ * SIGKILL (temps-agent "Stopping container ... grace_seconds=Some(10)"), and it is not
+ * configurable per project, so the drain plus app.close() fit in 9 s.
  */
 export const WORKER_LIFECYCLE = {
-  closeTimeoutMs: 25_000,
-  shutdownTimeoutMs: 35_000,
+  closeTimeoutMs: 6_000,
+  shutdownTimeoutMs: 9_000,
   heartbeatIntervalMs: 15_000,
   /** A heartbeat older than this means the worker process is hung or dead. */
   heartbeatMaxAgeMs: 60_000,
