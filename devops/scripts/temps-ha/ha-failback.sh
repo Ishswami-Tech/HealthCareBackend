@@ -165,7 +165,7 @@ failback_cache() {
 }
 
 # ---------------------------------------------------------------- App replicas
-# targetNodes [6,9] with 2 replicas means one API and one worker on each node, but
+# targetNodes [6,10,11] with 3 replicas means one API and one worker on each node, but
 # Temps never rebalances: replicas rescheduled onto contabo-ds while temps-worker was
 # down stay there. Once the data layer is back on the preferred node (which also
 # proves that node is up), redeploy the current image so Temps spreads them again.

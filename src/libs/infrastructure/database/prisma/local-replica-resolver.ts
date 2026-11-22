@@ -40,10 +40,15 @@ import {
  */
 const MESH_IP_BY_NODE_NAME: Readonly<Record<string, string>> = {
   'contabo-healthcare': '10.201.0.1',
-  'oracle-main': '10.201.0.2',
   'temps-worker': '10.201.0.5',
   'temps-worker-ubuntu': '10.201.0.5',
-  'temps-control-plane': '10.201.0.6',
+  // oracle-vm2-dss (Temps node 11); its OS/Temps name is spelled "oracale".
+  'oracale-vm2-dss': '10.201.0.6',
+  'oracle-vm2-dss': '10.201.0.6',
+  'contabo-ds': '10.201.0.7',
+  // oracle-main's Temps node name.
+  'main-server': '10.201.0.8',
+  'oracle-main': '10.201.0.8',
 };
 
 const CONNECT_TIMEOUT_MS = 2000;

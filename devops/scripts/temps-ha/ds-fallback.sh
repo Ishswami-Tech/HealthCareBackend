@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Last-resort placement for the Temps apps: contabo-ds runs an app only while BOTH of its
+# Last-resort placement for the Temps apps: contabo-ds runs an app only while ALL of its
 # primary nodes are down.
 #
-# Every app's environment targets the two primaries, temps-worker and oracle-main
-# (target_nodes [6,10]). Temps itself moves a copy between them when one fails, but it has no
+# Every app's environment targets the three India primaries, temps-worker, oracle-main and
+# oracle-vm2-dss (target_nodes [6,10,11], one copy on each). Temps itself moves a copy between
+# them when one fails, but it has no
 # notion of a node that may only be used once the others are gone: with contabo-ds among the
 # targets it would place copies there in normal operation, and Europe must never serve beside
 # India (2026-11-17: an API copy on contabo-ds broke doctor loading). So contabo-ds stays out of
@@ -19,7 +20,7 @@
 #
 # An app's primaries are the nodes its image can run on: apps built only for amd64 (Temps builds
 # them on the amd64 control plane) list just temps-worker, since Temps never places them on the
-# arm64 oracle-main; for them, temps-worker down is "both primaries down".
+# arm64 oracle-main / oracle-vm2-dss; for them, temps-worker down is "all primaries down".
 #
 # A node is up while its Temps agent accepts a TCP connection on AGENT_PORT over the mesh: a
 # stopped, rebooting or frozen VM does not. The public URL check guards against the control
@@ -32,19 +33,19 @@
 set -euo pipefail
 
 # id:name:mesh-address
-PRIMARY_NODES="${PRIMARY_NODES:-6:temps-worker-ubuntu:10.201.0.5 10:main-server:10.201.0.8}"
+PRIMARY_NODES="${PRIMARY_NODES:-6:temps-worker-ubuntu:10.201.0.5 10:main-server:10.201.0.8 11:oracale-vm2-dss:10.201.0.6}"
 FALLBACK_NODE="${FALLBACK_NODE:-9:contabo-ds:10.201.0.7}"
-NORMAL_TARGETS="${NORMAL_TARGETS:-[6,10]}"
+NORMAL_TARGETS="${NORMAL_TARGETS:-[6,10,11]}"
 # project|environment|slug|primary node ids|public URL that answers only while a copy serves it.
 # In priority order: the patient-facing API first, workers last.
 APPS="${APPS:-
-4|4|healthcarebackend|6,10|https://api-in.ishswami.in/health
-12|13|dataspace-one|6,10|https://one.dataspacesecurity.com/
-8|8|social-media-web|6,10|https://social-media.ishswami.in/api/health
+4|4|healthcarebackend|6,10,11|https://api-in.ishswami.in/health
+12|13|dataspace-one|6,10,11|https://one.dataspacesecurity.com/
+8|8|social-media-web|6,10,11|https://social-media.ishswami.in/api/health
 7|7|governance-ops|6|https://governanceops.dataspacesecurity.com/
 6|6|vishwayog|6|https://www.shreevishwayogayurved.com/
-5|5|healthcarebackend-worker|6,10|https://healthcare-worker.ishswami.in/health
-9|9|social-media-worker|6,10|https://social-media-worker.ishswami.in/health
+5|5|healthcarebackend-worker|6,10,11|https://healthcare-worker.ishswami.in/health
+9|9|social-media-worker|6,10,11|https://social-media-worker.ishswami.in/health
 }"
 DOWN_SECS="${DOWN_SECS:-300}"       # Temps marks a node offline after 90 s and fails over after 300 s
 UP_SECS="${UP_SECS:-300}"

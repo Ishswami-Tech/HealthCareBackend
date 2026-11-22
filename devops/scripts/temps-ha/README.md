@@ -2,11 +2,11 @@
 
 Production runs as a whole-site pair on Temps:
 
-| Layer        | Default (preferred)                                       | Standby                             | Failover                                                      | Failback                   |
-| ------------ | --------------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------- | -------------------------- |
-| Postgres     | temps-worker `postgres-postgres-main-1` (10.201.0.5:6261) | contabo-ds main-2 (10.201.0.7:6262) | pg_auto_failover, automatic                                   | `ha-failback.sh`           |
-| Dragonfly    | temps-worker 10.201.0.5:6512 (replica-priority 10)        | contabo-ds 10.201.0.7:6512          | Sentinel on the control plane (10.201.0.1:6579), automatic    | `ha-failback.sh`           |
-| API / worker | 1 replica on temps-worker and oracle-main (`targetNodes [6, 10]`, replicas 2) | contabo-ds, only while both are down | proxy retries on the other copy; Temps reschedules after 90 s; `ds-fallback.sh` moves to contabo-ds after 5 min | `ds-fallback.sh`, then `ha-failback.sh` |
+| Layer        | Default (preferred)                                       | Standby, in failover order                                                                                     | Failover                                                         | Failback                                |
+| ------------ | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | --------------------------------------- |
+| Postgres     | temps-worker `postgres-postgres-main-1` (10.201.0.5:6261) | oracle-main main-3 (10.201.0.8:6263, priority 50), oracle-vm2-dss main-4 (10.201.0.6:6264, 30), contabo-ds main-2 (10.201.0.7:6262, 10) | pg_auto_failover (monitor on the control plane), automatic        | `ha-failback.sh`                        |
+| Dragonfly    | temps-worker 10.201.0.5:6512 (replica-priority 10)        | oracle-main (20), oracle-vm2-dss 10.201.0.6:6512 (30), contabo-ds (50); control-plane copy priority 0 (never) | 3 Sentinels (control plane, oracle-main, contabo-ds; quorum 2)    | `ha-failback.sh`                        |
+| Apps         | 1 replica on each of temps-worker, oracle-main and oracle-vm2-dss (`targetNodes [6, 10, 11]`, replicas 3) | contabo-ds, only while all three are down                                                      | the other two copies keep serving; `ds-fallback.sh` moves to contabo-ds after 5 min | `ds-fallback.sh`, then `ha-failback.sh` |
 
 The app follows both data moves without a restart (`primary-tracker.ts`,
 `CACHE_SENTINELS`).
@@ -37,7 +37,8 @@ sudo bash install-mesh-ha-allow.sh                              # worker nodes
 sudo HA_EXTRA_SOURCES=10.0.1.0/24 bash install-mesh-ha-allow.sh # extra container subnets, if any
 ```
 
-Installed on temps-worker, contabo-ds and the control plane (2026-11-13).
+Installed on temps-worker, contabo-ds and the control plane (2026-11-13), oracle-main (2026-11-14)
+and oracle-vm2-dss (2026-11-22).
 
 ### Cluster DNS rule (added 2026-11-14)
 
@@ -227,7 +228,7 @@ copy whenever it is missing. `hcb-redis-forwarder` answers `dragonfly:6379` on
 reports `role:master`, so social-media follows cache failovers.
 
 The password lives only in `social_media.pass` (0600; `/etc/hcb-dragonfly-acl/` on
-temps-worker and Oracle, `~/hcb-dragonfly-acl/` on contabo-ds). The app's REDIS_URL
+temps-worker, oracle-main and oracle-vm2-dss, `~/hcb-dragonfly-acl/` on contabo-ds). The app's REDIS_URL
 (`redis://social_media:<pw>@dragonfly:6379/5`) is in `~/social-media-redis-url.txt`
 on the control plane. The old standalone `dragonfly` container on temps-worker is
 stopped (restart=no) with a snapshot of its keys on its volume; its stale queue
@@ -340,7 +341,7 @@ held exactly the snapshot afterwards; ACL users survived).
    `gunzip -c dragonfly-<ts>.rdb.gz > /tmp/hcb-restore.rdb && sudo -n docker cp /tmp/hcb-restore.rdb redis-dragonfly-cache:/data/hcb-restore.rdb`
 3. Load it, authenticating inside the container as backup.sh does:
    `redis-cli ... DFLY LOAD hcb-restore.rdb`, then `INFO keyspace` on the master and on
-   each replica (Oracle, contabo-ds, control plane) must match the metadata.
+   each replica (oracle-main, oracle-vm2-dss, contabo-ds, control plane) must match the metadata.
 4. Remove `/data/hcb-restore.rdb` from the container and `/tmp/hcb-restore.rdb`.
 5. Check `hcb-dragonfly-acl` still lists the `social_media` user on each copy (it
    re-creates it if missing) and that the HCB worker and social-media worker resume

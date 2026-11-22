@@ -1,5 +1,5 @@
 # Answers "dragonfly:6379" for social-media and forwards to whichever HA Dragonfly
-# copy is master right now (temps-worker, then Oracle, then contabo-ds). The check
+# copy is master right now (temps-worker, then oracle-main, then oracle-vm2-dss, then contabo-ds). The check
 # logs in as social_media (database 5 only) and requires "role:master".
 # Rendered on the node from social_media.pass; the rendered file is never committed.
 global
@@ -27,4 +27,5 @@ backend redis_master
   default-server inter 2s fall 2 rise 1 on-marked-down shutdown-sessions
   server temps-worker 10.201.0.5:6512 check
   server oracle       10.201.0.8:6512 check
+  server oracle-vm2   10.201.0.6:6512 check
   server contabo-ds   10.201.0.7:6512 check
