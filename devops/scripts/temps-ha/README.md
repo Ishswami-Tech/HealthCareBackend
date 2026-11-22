@@ -229,7 +229,7 @@ sudo ACL_DIR=/etc/hcb-dragonfly-acl bash dragonfly-acl/install.sh            # r
 sudo ACL_DIR=/etc/hcb-dragonfly-acl bash dragonfly-acl/install-forwarder.sh  # forwarder
 ```
 
-## dragonfly-start (temps-worker, Oracle, contabo-ds) — start as Sentinel's replica
+## dragonfly-start (every copy, incl. the control plane) — start as Sentinel's replica
 
 Dragonfly cannot persist a Sentinel `REPLICAOF` (no `CONFIG REWRITE`), so a fixed
 `--replicaof` flag is wrong after the first failover. Each HA copy's
@@ -243,11 +243,28 @@ primary back to temps-worker once it is a healthy replica again.
 `install.sh` copies image, flags, ports, volume and logging from the running
 container, drops `--replicaof`, and refuses on the current master (run
 `SENTINEL FAILOVER dragonfly` first). Sentinel password: `~/hcb-dragonfly/sentinel.password`
-(0600) on each node. The control plane's copy is Temps-managed and is left alone.
+(0600) on each node.
+
+The control plane's copy (Temps service `dragonfly-cache`, which `backup.sh`
+snapshots) was created before the announce flags existed, with a fixed
+`--replicaof` to temps-worker and no `--replica_announce_ip`. It registered with the
+master as `10.201.0.1:6379` (its in-container port; the published one is 6512), so the
+Sentinels marked it `s_down` and never repointed it: after the 2026-11-22 failover it
+kept asking temps-worker, by then a replica, and failed with "Replicating a replica"
+until failback. It was recreated through `start.sh` the same day, announcing
+`10.201.0.1:6512` with `--replica_priority=0` so it is never promoted. `install.sh`
+takes the missing flags from `ANNOUNCE_IP`/`ANNOUNCE_PORT`/`REPLICA_PRIORITY`; flags the
+container already has win. Afterwards run `SENTINEL RESET dragonfly` on one Sentinel at
+a time (wait until it lists the replicas again) to drop the old `:6379` entry.
+Temps still owns this service's record; if Temps ever recreates the container, it comes
+back with a fixed `--replicaof`, so run this again.
 
 ```bash
 SENTINEL_PASSWORD_FILE=~/hcb-dragonfly/sentinel.password bash dragonfly-start/install.sh
 DOCKER="sudo -n docker" SENTINEL_PASSWORD_FILE=~/hcb-dragonfly/sentinel.password bash dragonfly-start/install.sh  # temps-worker
+# control plane (Sentinel password: /data/sentinel.password in the dragonfly-sentinel container)
+ANNOUNCE_IP=10.201.0.1 ANNOUNCE_PORT=6512 REPLICA_PRIORITY=0 \
+  SENTINEL_PASSWORD_FILE=~/hcb-dragonfly/sentinel.password bash dragonfly-start/install.sh
 ```
 
 ## mesh-recover (every node, incl. the control plane)
@@ -336,6 +353,7 @@ upgrading Temps (server, agent or CLI) does not overwrite or break it:
 | `hcb-ha-failback` timer + `/usr/local/bin/hcb-ha-failback`                  | pg_auto_failover monitor SQL API, Sentinel commands, Temps CLI (pinned)         |
 | `hcb-mesh-recover` + `/etc/sysctl.d/90-temps-mesh-bind.conf` (every node)  | Docker CLI, kernel                                                              |
 | `dragonfly-sentinel` container, `redis-dragonfly-cache` on the worker nodes | not managed by Temps (no Temps labels)                                          |
+| control plane `redis-dragonfly-cache` flags/entrypoint (`dragonfly-start`)  | Temps service `dragonfly-cache`; a Temps recreate drops them (see above)        |
 
 After a Temps upgrade, check:
 

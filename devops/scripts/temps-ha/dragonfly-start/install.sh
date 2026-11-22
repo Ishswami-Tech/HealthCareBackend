@@ -9,6 +9,12 @@
 # DOCKER="sudo -n docker" where the user is not in the docker group.
 # Refuses on the current master: run `SENTINEL FAILOVER dragonfly` first so
 # the copy being recreated is a replica, then this costs no write gap.
+#
+# A copy created before the announce flags existed (the control plane's) has
+# no --replica_announce_ip/--announce_port: pass them as ANNOUNCE_IP and
+# ANNOUNCE_PORT (its mesh address and published port). REPLICA_PRIORITY adds
+# --replica_priority when the copy has none; 0 means Sentinel never promotes it.
+# Flags the container already has always win over these.
 set -euo pipefail
 cd "$(dirname "$0")"
 C=redis-dragonfly-cache
@@ -55,7 +61,12 @@ for a in "${cmd[@]}"; do
         *) args+=("$a") ;;
     esac
 done
-[ -n "$ip" ] && [ -n "$port" ] || { echo "no --replica_announce_ip/--announce_port in $C's flags" >&2; exit 1; }
+if [ -z "$ip" ] && [ -n "${ANNOUNCE_IP:-}" ]; then ip="$ANNOUNCE_IP"; args+=("--replica_announce_ip=$ip"); fi
+if [ -z "$port" ] && [ -n "${ANNOUNCE_PORT:-}" ]; then port="$ANNOUNCE_PORT"; args+=("--announce_port=$port"); fi
+if [ -n "${REPLICA_PRIORITY:-}" ] && ! printf '%s\n' "${args[@]}" | grep -q '^--replica_priority='; then
+    args+=("--replica_priority=$REPLICA_PRIORITY")
+fi
+[ -n "$ip" ] && [ -n "$port" ] || { echo "no --replica_announce_ip/--announce_port in $C's flags; set ANNOUNCE_IP and ANNOUNCE_PORT" >&2; exit 1; }
 [ -n "$volume" ] || { echo "$C has no named volume at /data" >&2; exit 1; }
 
 # The Sentinels' view of the master, asked from inside the running copy
