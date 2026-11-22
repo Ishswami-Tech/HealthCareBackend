@@ -85,8 +85,14 @@ export function initSentry(): boolean {
   const environment = process.env['SENTRY_ENVIRONMENT'] || process.env['NODE_ENV'] || 'development';
   const isProd = environment === 'production';
 
-  // Performance tracing is opt-in; default a low prod rate and off elsewhere.
-  const tracesSampleRate = parseRate(process.env['SENTRY_TRACES_SAMPLE_RATE'], isProd ? 0.1 : 0);
+  // One tracing pipeline: when OpenTelemetry owns tracing (./otel), Sentry only
+  // reports errors (linked to the active OTel trace id below) and sends no
+  // transactions of its own. Both went to the same Temps instance before, so every
+  // sampled request was traced twice (2026-11-22). Without OTel, Sentry's own
+  // performance tracing is opt-in: a low prod rate and off elsewhere.
+  const tracesSampleRate = isOtelEnabled()
+    ? 0
+    : parseRate(process.env['SENTRY_TRACES_SAMPLE_RATE'], isProd ? 0.1 : 0);
 
   Sentry.init({
     dsn,

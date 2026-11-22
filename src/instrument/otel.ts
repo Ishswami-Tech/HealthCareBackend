@@ -21,6 +21,18 @@
  * `openTelemetryIntegration()` when this is active so errors carry the active
  * OTel trace id.
  *
+ * Sampling (head-based, parent-based): a new trace is kept with probability
+ * OTEL_TRACES_SAMPLER_ARG; a request that arrives with a sampled/unsampled parent
+ * keeps that decision, so a trace is never cut in half across services. When
+ * OTEL_TRACES_SAMPLER is not set, `applyTraceSamplingDefaults` sets
+ * `parentbased_traceidratio` with 10% in production (100% elsewhere); explicit
+ * OTEL_TRACES_SAMPLER / OTEL_TRACES_SAMPLER_ARG values always win. Postgres and
+ * Redis spans are only recorded inside an existing request/job span
+ * (`requireParentSpan`), so background pool pings, failover-monitor polling and
+ * queue polling never become traces of their own. Before this, every pool
+ * connect and every monitor query was its own always-sampled trace: ~93k spans
+ * an hour, of which ~2.5k hourly request traces were real traffic (2026-11-22).
+ *
  * Privacy: only structural spans are produced. No request/response bodies or
  * headers are recorded (no header-to-attribute mapping, no request/response
  * hooks), and pg statements are not enriched with parameters.
@@ -40,7 +52,11 @@ import { IORedisInstrumentation } from '@opentelemetry/instrumentation-ioredis';
 const DEFAULT_SERVICE_NAME = 'healthcare-api';
 
 /** Probe/scrape endpoints that would only add noise (and cost) to traces. */
-const NOISY_PATH = /\/(health|healthz|ready|readiness|live|liveness|ping|metrics)\/?$/i;
+const NOISY_PATH =
+  /\/(health|healthz|infra-health|ready|readiness|live|liveness|ping|metrics)\/?$/i;
+
+/** Share of new (root) traces kept in production when no sampler is configured. */
+export const DEFAULT_PRODUCTION_TRACE_RATIO = 0.1;
 
 let otelEnabled = false;
 let sdk: NodeSDK | undefined;
@@ -51,9 +67,28 @@ function hasOtlpEndpoint(): boolean {
   return Boolean(base) || Boolean(traces);
 }
 
-function isNoisyRequest(request: IncomingMessage): boolean {
+/** @internal exported for tests */
+export function isNoisyRequest(request: Pick<IncomingMessage, 'url'>): boolean {
   const path = (request.url ?? '').split('?')[0] ?? '';
   return NOISY_PATH.test(path);
+}
+
+/**
+ * Fill in the standard OpenTelemetry sampler variables when they are not set, so
+ * the SDK samples parent-based with a production-safe ratio instead of its
+ * always-on default. Values that are already set (by ops, Temps or a test) are
+ * never changed. The NodeSDK reads these when it builds its sampler.
+ * @internal exported for tests
+ */
+export function applyTraceSamplingDefaults(env: NodeJS.ProcessEnv = process.env): void {
+  if (env['OTEL_TRACES_SAMPLER']?.trim()) {
+    return;
+  }
+  env['OTEL_TRACES_SAMPLER'] = 'parentbased_traceidratio';
+  if (!env['OTEL_TRACES_SAMPLER_ARG']?.trim()) {
+    const isProd = env['NODE_ENV'] === 'production';
+    env['OTEL_TRACES_SAMPLER_ARG'] = String(isProd ? DEFAULT_PRODUCTION_TRACE_RATIO : 1);
+  }
 }
 
 /**
@@ -69,6 +104,7 @@ export function initOtel(): boolean {
   }
 
   try {
+    applyTraceSamplingDefaults();
     sdk = new NodeSDK({
       serviceName: process.env['OTEL_SERVICE_NAME']?.trim() || DEFAULT_SERVICE_NAME,
       traceExporter: new OTLPTraceExporter(),
@@ -83,8 +119,9 @@ export function initOtel(): boolean {
         }),
         new FastifyInstrumentation(),
         new NestInstrumentation(),
-        new PgInstrumentation({ enhancedDatabaseReporting: false }),
-        new IORedisInstrumentation(),
+        // Only inside a request/job span: pool pings and monitor polling are not traces.
+        new PgInstrumentation({ enhancedDatabaseReporting: false, requireParentSpan: true }),
+        new IORedisInstrumentation({ requireParentSpan: true }),
       ],
     });
     sdk.start();
