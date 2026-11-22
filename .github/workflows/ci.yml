@@ -228,9 +228,10 @@ jobs:
   # ============================================================================
   # JOB: docker-build — Build and push by digest
   # ============================================================================
-  # linux/amd64 and linux/arm64: the arm64 node (oracle-main) is rejoining the cluster
-  # as a standby, and Temps only places a replica on a node the image has a platform
-  # for. Each platform builds natively on its own runner (ubuntu-24.04-arm for arm64),
+  # linux/amd64 and linux/arm64: production runs one API and one worker copy on each of
+  # temps-worker (amd64), oracle-main and oracle-vm2-dss (both arm64), and Temps only places a
+  # copy on a node the image has a platform for. Each platform builds natively on its own
+  # runner (ubuntu-24.04-arm for arm64),
   # as on preprod: building arm64 under QEMU on ubuntu-latest hung in
   # `yarn prisma:generate` for 20+ minutes. docker-build-merge below combines the
   # per-platform digests into one multi-arch tag.
@@ -244,11 +245,8 @@ jobs:
     needs: [detect-changes]
     if: github.event_name == 'push'
     timeout-minutes: 30
-    # Production runs on amd64 only; arm64 is for the standby. A failed arm64 leg (runner
-    # outage, an arm-only build break) must never hold up a production deploy: the job
-    # still succeeds, and docker-build-merge publishes the digests that were built
-    # (amd64 alone for that run).
-    continue-on-error: ${{ matrix.platform == 'linux/arm64' }}
+    # No continue-on-error: two of the three production copies run arm64, so a failed arm64
+    # build or smoke test blocks the tags and the deploy exactly like a failed amd64 one.
     strategy:
       fail-fast: false
       matrix:
@@ -309,6 +307,17 @@ jobs:
           cache-to: type=gha,mode=max,ignore-error=true,scope=build-${{ env.PLATFORM_PAIR }}
           platforms: ${{ matrix.platform }}
           outputs: type=image,name=${{ steps.image.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+
+      # Start the image just pushed (by digest) on this runner's own architecture, the way
+      # production runs it: API with migrations against a throwaway Postgres + Dragonfly, then the
+      # worker; fails unless /infra-health, /health (database + cache) and the worker healthcheck
+      # pass and `uname -m` is the expected architecture. Nothing is tagged until both legs pass.
+      - name: Smoke-test the image on ${{ matrix.platform }}
+        timeout-minutes: 12
+        run: |
+          bash devops/scripts/ci/image-smoke.sh \
+            "${{ steps.image.outputs.image }}@${{ steps.build.outputs.digest }}" \
+            "${{ matrix.platform == 'linux/arm64' && 'aarch64' || 'x86_64' }}"
 
       - name: Export digest
         run: |
@@ -500,6 +509,8 @@ jobs:
           # gate — it's the one project that already exists either way.
           TEMPS_WORKER_PROJECT: ${{ github.ref == 'refs/heads/main' && vars.TEMPS_WORKER_PROD_PROJECT || 'healthcarebackend-worker' }}
           TEMPS_ENVIRONMENT: production
+          # Same CLI version as devops/scripts/temps-ha (ha-failback, verify-temps-deploy.sh).
+          TEMPS_CLI_VERSION: "0.1.38"
         run: |
           echo "Deploying to: ${DEPLOY_ENV} (image: ${IMAGE_FULL})"
 
@@ -532,24 +543,24 @@ jobs:
             # Temps decides which nodes may run an image from the platforms
             # present in the control plane's LOCAL image store, and its own
             # pull only fetches the host's platform (amd64). Without the arm64
-            # variant held locally the arm64 node (oracle-main) is excluded and,
-            # with one replica per node, the deploy fails to schedule. Pull it
-            # first so Temps sees both platforms (2026-11-14).
+            # variant held locally the arm64 nodes (oracle-main, oracle-vm2-dss)
+            # are excluded and, with one replica per node, the deploy fails to
+            # schedule. Pull it first so Temps sees both platforms (2026-11-14).
             for attempt in 1 2 3; do
               docker pull -q --platform linux/arm64 '${IMAGE_FULL}' >/dev/null && break
               if [ \$attempt = 3 ]; then
-                echo '::error::Could not pull the linux/arm64 variant of ${IMAGE_FULL} (arm64 docker-build failed, or the registry kept failing). oracle-main runs arm64, so Temps would refuse to schedule this deploy.'
+                echo '::error::Could not pull the linux/arm64 variant of ${IMAGE_FULL} (the registry kept failing). oracle-main and oracle-vm2-dss run arm64, so Temps would refuse to schedule this deploy.'
                 exit 1
               fi
               echo \"arm64 pull attempt \$attempt failed; retrying in 10s\"
               sleep 10
             done
-            npx -y @temps-sdk/cli --target-context temps-local deploy:image \
+            npx -y @temps-sdk/cli@${TEMPS_CLI_VERSION} --target-context temps-local deploy:image \
               --image '${IMAGE_FULL}' \
               -p '${TEMPS_PROJECT}' \
               -e '${TEMPS_ENVIRONMENT}' \
               -y --timeout 600
-            npx -y @temps-sdk/cli --target-context temps-local deploy:image \
+            npx -y @temps-sdk/cli@${TEMPS_CLI_VERSION} --target-context temps-local deploy:image \
               --image '${IMAGE_FULL}' \
               -p '${TEMPS_WORKER_PROJECT}' \
               -e '${TEMPS_ENVIRONMENT}' \
@@ -574,7 +585,7 @@ jobs:
   post-deploy:
     name: "Post-Deploy (Verify + Backup)"
     runs-on: ubuntu-latest
-    needs: [deploy]
+    needs: [deploy, docker-build-merge]
     if: always() && needs.deploy.result == 'success'
     timeout-minutes: 15
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'preprod' }}
@@ -598,33 +609,22 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          echo -e "Host *\n  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null" >> ~/.ssh/config
 
-      - name: Verify deployment on VPS
+      # One copy of the API and of the worker on each India node, all running the image this
+      # run deployed, every API copy answering on its node, and the public /health 200. Runs on
+      # the control plane (Temps CLI there); the script is piped from this checkout. A failed
+      # check fails this job and skips the success backup.
+      - name: Verify the deployment on every node
         id: verify
         env:
-          SSH_OPTS: ${{ vars.SSH_OPTS || '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' }}
-          DEPLOY_PATH: ${{ steps.resolve.outputs.deploy_path }}
-          CONTAINER_PREFIX: ${{ github.ref == 'refs/heads/main' && 'latest-' || 'preprod-' }}
-          VPS_API_PORT: ${{ github.ref == 'refs/heads/main' && '8088' || '8090' }}
-          DEPLOY_ENV: ${{ steps.resolve.outputs.deploy_env }}
+          IMAGE_FULL: ${{ needs.docker-build-merge.outputs.image_name }}:${{ github.ref == 'refs/heads/main' && 'main' || 'preprod' }}-${{ github.sha }}
         run: |
-          echo "Running post-deploy verification (env: ${DEPLOY_ENV})..."
-          echo "CONTAINER_PREFIX=${CONTAINER_PREFIX}"
-
-          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
-            cd '${DEPLOY_PATH}' && \
-            BASE_DIR='${DEPLOY_PATH}' \
-            CONTAINER_PREFIX='${CONTAINER_PREFIX}' \
-            DEPLOY_ENV='${DEPLOY_ENV}' \
-            VPS_API_PORT='${VPS_API_PORT}' \
-            bash devops/scripts/docker-infra/verify.sh deployment
-          " && echo "verified=true" >> $GITHUB_OUTPUT || echo "verified=false" >> $GITHUB_OUTPUT
+          ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            "bash -s -- '${IMAGE_FULL}'" < devops/scripts/ci/verify-temps-deploy.sh
+          echo "verified=true" >> "$GITHUB_OUTPUT"
 
       - name: Trigger success backup on VPS
-        if: ${{ steps.verify.outputs.verified == 'true' }}
         env:
-          SSH_OPTS: ${{ vars.SSH_OPTS || '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' }}
           DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
         run: |
           ssh ${{ env.SSH_OPTS }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
