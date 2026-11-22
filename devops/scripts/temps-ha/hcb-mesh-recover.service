@@ -1,0 +1,12 @@
+[Unit]
+Description=Start containers that failed at boot before the Temps mesh was up
+After=docker.service temps-agent.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hcb-mesh-recover
+TimeoutStartSec=20min
+
+[Install]
+WantedBy=multi-user.target
