@@ -250,6 +250,30 @@ SENTINEL_PASSWORD_FILE=~/hcb-dragonfly/sentinel.password bash dragonfly-start/in
 DOCKER="sudo -n docker" SENTINEL_PASSWORD_FILE=~/hcb-dragonfly/sentinel.password bash dragonfly-start/install.sh  # temps-worker
 ```
 
+## mesh-recover (every node, incl. the control plane)
+
+Docker starts containers before the Temps agent brings up `temps-wg0`, so every
+container that publishes a port on the node's mesh address (app replicas,
+`postgres-main-N`, `redis-dragonfly-cache`, `dragonfly-sentinel`,
+`hcb-pg-role`) failed at boot with `cannot assign requested address`. Docker
+never retries a failed start, and some containers even came back with no network
+attached. Seen on oracle-main's reboot 2026-11-22: 9 of 12 containers stayed
+down until started by hand.
+
+- `90-temps-mesh-bind.conf`: `net.ipv4.ip_nonlocal_bind=1`, so Docker can bind
+  the mesh address before it exists. This alone prevents the failure.
+- `hcb-mesh-recover.service` (oneshot at boot): waits for `temps-wg0`, then, for
+  containers with restart policy `always`/`unless-stopped` only, reattaches any
+  that lost their network (to their `NetworkMode` network) and starts any whose
+  last start failed on networking, databases and caches first. Containers
+  stopped on purpose have no start error and are left alone. Logs
+  `nothing to recover` when the sysctl did its job.
+
+Install on each node with `sudo ./install-mesh-recover.sh` (nothing running is
+restarted). Tested 2026-11-22 on oracale-vm2-dss: without the fix a test
+container on the mesh address stayed down after reboot; with it, it was up
+before the mesh existed.
+
 ## Dragonfly backup and restore (control plane)
 
 `docker-infra/backup.sh` (cron `0 */12 * * *` via `run-backup-12h.sh`, log
@@ -310,7 +334,7 @@ upgrading Temps (server, agent or CLI) does not overwrite or break it:
 | `hcb-node-watchdog` + `/usr/local/sbin/hcb-node-watchdog`                   | Docker CLI, systemctl                                                           |
 | `hcb-direct-link` timer + `/usr/local/sbin/hcb-direct-link`                 | own WireGuard iface + `inet hcb_direct`; one tagged rule in `inet temps_network` |
 | `hcb-ha-failback` timer + `/usr/local/bin/hcb-ha-failback`                  | pg_auto_failover monitor SQL API, Sentinel commands, Temps CLI (pinned)         |
-| `/etc/sysctl.d/90-temps-mesh-bind.conf` (temps-worker)                      | kernel                                                                          |
+| `hcb-mesh-recover` + `/etc/sysctl.d/90-temps-mesh-bind.conf` (every node)  | Docker CLI, kernel                                                              |
 | `dragonfly-sentinel` container, `redis-dragonfly-cache` on the worker nodes | not managed by Temps (no Temps labels)                                          |
 
 After a Temps upgrade, check:
@@ -331,10 +355,9 @@ After a Temps upgrade, check:
    preferred node or runtime health check would make parts of this folder
    unnecessary.
 
-## Related host fix on temps-worker (not in this folder)
+## Related: Temps agent start on temps-worker
 
-- `net.ipv4.ip_nonlocal_bind=1` (`/etc/sysctl.d/90-temps-mesh-bind.conf`):
-  containers publish on 10.201.0.5, which only exists once the agent brings the
-  mesh up. `temps-agent.service` itself is left exactly as Temps installs it;
-  the node watchdog starts the agent if a slow Docker start made systemd give up
-  on it.
+`temps-agent.service` itself is left exactly as Temps installs it; the node
+watchdog starts the agent if a slow Docker start made systemd give up on it.
+The mesh-address bind fix that used to be described here is now
+[mesh-recover](#mesh-recover-every-node-incl-the-control-plane), on every node.
