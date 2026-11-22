@@ -7,7 +7,6 @@ import {
   Inject,
   forwardRef,
   Optional,
-  OnModuleInit,
 } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { DatabaseService } from '@infrastructure/database';
@@ -273,8 +272,14 @@ type BillingAccessContext = {
 /** Upper bound of one "open appointment payment" request (gateway round trip included). */
 const APPOINTMENT_PAYMENT_LOCK_TTL_SECONDS = 30;
 
+/** Cross-copy invoice WhatsApp lock: held at most this long by a send that never finished. */
+const INVOICE_WHATSAPP_LOCK_TTL_SECONDS = 60;
+/** How long a duplicate request on another copy waits for the first send's result. */
+const INVOICE_WHATSAPP_WAIT_MS = 20_000;
+const INVOICE_WHATSAPP_POLL_MS = 500;
+
 @Injectable()
-export class BillingService implements OnModuleInit {
+export class BillingService {
   private appointmentsServiceRef: AppointmentsServiceLike | null = null;
   private readonly invoiceWhatsAppSendLocks = new Map<string, Promise<boolean>>();
 
@@ -304,21 +309,10 @@ export class BillingService implements OnModuleInit {
     private readonly queueService?: QueueService
   ) {}
 
-  onModuleInit(): void {
-    void this.reconcileLegacyPaidAppointments().catch(async error => {
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to start appointment payment reconciliation: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        'BillingService',
-        {
-          error: error instanceof Error ? error.stack : undefined,
-        }
-      );
-    });
-  }
+  // No boot-time reconcileLegacyPaidAppointments(): every API and worker copy (3 + 3) ran it on
+  // each start, a full scan of completed payments six times per deploy. The worker-only hourly
+  // scheduled task 'billing.reconcile-legacy-paid-appointments' (BillingSchedulerService) runs
+  // it once across the cluster.
 
   private paymentStoreRef: BillingPaymentStore | null = null;
   private subscriptionStoreRef: BillingSubscriptionStore | null = null;
@@ -417,6 +411,29 @@ export class BillingService implements OnModuleInit {
     await this.invalidateUserEntityCaches(userId, 'user_subscriptions');
   }
 
+  /** Result of the same invoice's send running on another API copy (false if none arrives). */
+  private async awaitOtherCopyInvoiceWhatsAppSend(
+    invoiceId: string,
+    recentKey: string
+  ): Promise<boolean> {
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Invoice WhatsApp send already in progress on another instance; waiting for its result',
+      'BillingService',
+      { invoiceId }
+    );
+    const deadline = Date.now() + INVOICE_WHATSAPP_WAIT_MS;
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, INVOICE_WHATSAPP_POLL_MS));
+      const result = await this.cacheService.get<string | boolean>(recentKey).catch(() => null);
+      if (result !== null && result !== undefined) {
+        return String(result) === 'true';
+      }
+    }
+    return false;
+  }
+
   private async withInvoiceWhatsAppSendLock(
     invoiceId: string,
     task: () => Promise<boolean>
@@ -451,11 +468,25 @@ export class BillingService implements OnModuleInit {
     }
 
     const taskPromise = (async () => {
+      // Cross-copy lock: the API runs one copy per node and the recent-send marker above is
+      // written only after the send, so two requests for the same invoice on different copies
+      // would both send. The second waits for the first one's result instead. Fails open when
+      // the cache is unreachable (the in-process lock still holds).
+      const inflightKey = `billing:invoice-whatsapp:inflight:${invoiceId}`;
+      const acquired = await this.cacheService
+        .acquireLock(inflightKey, INVOICE_WHATSAPP_LOCK_TTL_SECONDS)
+        .catch(() => true);
       try {
+        if (!acquired) {
+          return await this.awaitOtherCopyInvoiceWhatsAppSend(invoiceId, recentKey);
+        }
         const sent = await task();
         await this.cacheService.set(recentKey, String(sent), 60).catch(() => undefined);
         return sent;
       } finally {
+        if (acquired) {
+          await this.cacheService.releaseLock(inflightKey).catch(() => false);
+        }
         this.invoiceWhatsAppSendLocks.delete(invoiceId);
       }
     })();

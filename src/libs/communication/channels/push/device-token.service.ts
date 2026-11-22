@@ -251,7 +251,7 @@ export class DeviceTokenService implements OnModuleInit {
     updates?: Partial<DeviceTokenData>
   ): Promise<boolean> {
     try {
-      const existingData = this.tokenStore.get(oldToken);
+      const existingData = await this.findToken(oldToken);
       if (!existingData) {
         void this.loggingService.log(
           LogType.SYSTEM,
@@ -436,7 +436,7 @@ export class DeviceTokenService implements OnModuleInit {
    */
   async deactivateDeviceToken(token: string, requestingUserId?: string): Promise<boolean> {
     try {
-      const tokenData = this.tokenStore.get(token);
+      const tokenData = await this.findToken(token);
 
       if (!tokenData) {
         void this.loggingService.log(
@@ -540,10 +540,44 @@ export class DeviceTokenService implements OnModuleInit {
   }
 
   /**
-   * Gets all active tokens for a user
-   * @param userId - User ID to get tokens for
-   * @returns Array of active device tokens for the user
+   * The token's data from this process's cache, else from the database (and then cached). The
+   * cache is per process and loaded at start-up, while the API runs one copy per node: a token
+   * registered through another copy after this one started is only in the database, and a
+   * sign-out or token refresh that lands here must still find it.
    */
+  private async findToken(token: string): Promise<DeviceTokenData | null> {
+    const cached = this.tokenStore.get(token);
+    if (cached) return cached;
+    if (!this.databaseService) return null;
+
+    try {
+      const row = await this.databaseService.executeHealthcareRead(async client => {
+        const delegate = (
+          client as unknown as {
+            deviceToken?: { findUnique: (args: unknown) => Promise<unknown> };
+          }
+        ).deviceToken;
+        return delegate ? delegate.findUnique({ where: { token } }) : null;
+      });
+      if (!this.isPersistedDeviceToken(row)) return null;
+      const persisted = this.normalizePersistedToken(row);
+      this.tokenStore.set(token, persisted);
+      return persisted;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'Failed to read a device token from the database',
+        'DeviceTokenService',
+        {
+          token: this.maskToken(token),
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }
+      );
+      return null;
+    }
+  }
+
   /**
    * Active tokens for a user, read from the database when it is available. The in-memory map is
    * per process and only loaded at start-up, so a token the phone registered through the API
