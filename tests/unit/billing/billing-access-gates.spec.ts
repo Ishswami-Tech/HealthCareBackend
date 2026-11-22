@@ -34,6 +34,7 @@ import { BillingController } from '@services/billing/controllers/billing.control
 import { Role } from '@core/types/enums.types';
 
 const CLINIC_OTHER = 'clinic-other';
+const INVOICE_ID = 'inv-1';
 
 function rolesOf(method: keyof BillingController): string[] {
   const handler = BillingController.prototype[method] as unknown as object;
@@ -129,7 +130,7 @@ describe('GET invoices/download/:fileName', () => {
   function setup(status = 'PAID') {
     const db = new FakeBillingDb();
     db.seed('invoice', {
-      id: 'inv-1',
+      id: INVOICE_ID,
       invoiceNumber: 'INV-2026-000001',
       userId: 'patient-a',
       clinicId: CLINIC_ID,
@@ -161,7 +162,7 @@ describe('GET invoices/download/:fileName', () => {
   ])('lets the invoice owner download %s', async fileName => {
     const { service } = setup();
 
-    await expect(service.assertInvoiceFileAccess(fileName, OWNER)).resolves.toBeUndefined();
+    await expect(service.assertInvoiceFileAccess(fileName, OWNER)).resolves.toBe(INVOICE_ID);
   });
 
   it('lets staff of the invoice clinic download it', async () => {
@@ -173,7 +174,7 @@ describe('GET invoices/download/:fileName', () => {
         role: 'RECEPTIONIST',
         clinicId: CLINIC_ID,
       })
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(INVOICE_ID);
   });
 
   it("refuses another patient and another clinic's staff", async () => {

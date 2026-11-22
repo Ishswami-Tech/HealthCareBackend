@@ -123,6 +123,18 @@ export function isPhiStorageFolder(folder: string): boolean {
   return PHI_STORAGE_FOLDERS.includes(top);
 }
 
+/** True for the S3 error of a key that does not exist (NoSuchKey / NotFound / HTTP 404). */
+export function isMissingObjectError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) {
+    return false;
+  }
+  const { name, $metadata } = error as {
+    name?: unknown;
+    $metadata?: { httpStatusCode?: unknown };
+  };
+  return name === 'NoSuchKey' || name === 'NotFound' || $metadata?.httpStatusCode === 404;
+}
+
 /** True when `storedUrl` starts with one of our own URL prefixes (case-insensitive). */
 export function startsWithOwnedPrefix(
   storedUrl: string | null | undefined,
@@ -779,6 +791,61 @@ export class S3StorageService implements OnModuleInit {
     }
 
     return false;
+  }
+
+  /**
+   * True when S3 was configured at startup (S3_ENABLED and a bucket), even if the client then
+   * failed to initialise. Callers that must never write protected files to the pod-local disk
+   * use this, not `isS3Enabled()`, to decide between S3 and the disk.
+   */
+  isS3Configured(): boolean {
+    return this.s3Configured;
+  }
+
+  /**
+   * Stores `body` as a private object under exactly `key` (no generated prefix), so a caller
+   * that knows the key can read it back from any replica. Throws when S3 is not usable.
+   */
+  async putObject(key: string, body: Buffer, contentType: string): Promise<void> {
+    if (!this.s3Client || !this.config.bucket) {
+      throw new Error('S3 client not initialized');
+    }
+    const client = this.s3Client as S3Client;
+    await client.send(
+      new PutObjectCommand({
+        Bucket: this.config.bucket,
+        Key: key,
+        Body: body,
+        ContentType: contentType,
+      })
+    );
+  }
+
+  /**
+   * Reads a whole object (meant for small files such as invoice PDFs). Resolves null when the
+   * object does not exist; throws when S3 is not usable or on any other error.
+   */
+  async getObjectBuffer(key: string): Promise<Buffer | null> {
+    if (!this.s3Client || !this.config.bucket) {
+      throw new Error('S3 client not initialized');
+    }
+    const client = this.s3Client as S3Client;
+    try {
+      const response = await client.send(
+        new GetObjectCommand({ Bucket: this.config.bucket, Key: key })
+      );
+      const body = response.Body as
+        { transformToByteArray?: () => Promise<Uint8Array> } | undefined;
+      if (!body?.transformToByteArray) {
+        return null;
+      }
+      return Buffer.from(await body.transformToByteArray());
+    } catch (error) {
+      if (isMissingObjectError(error)) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   /**

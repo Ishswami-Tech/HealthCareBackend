@@ -288,3 +288,53 @@ describe('S3StorageService.deleteFile', () => {
     expect(sentCommands()).not.toContain('DeleteObjectCommand');
   });
 });
+
+describe('S3StorageService exact-key objects (invoice PDFs)', () => {
+  beforeEach(() => {
+    sendMock.mockReset().mockResolvedValue({});
+  });
+
+  it('puts a private object under exactly the given key', async () => {
+    const { service } = await createService();
+    sendMock.mockClear();
+
+    await service.putObject('invoices/invoice_A_1.pdf', Buffer.from('pdf'), 'application/pdf');
+
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    const command = sendMock.mock.calls[0]?.[0] as { input: Record<string, unknown> };
+    expect(command.constructor.name).toBe('PutObjectCommand');
+    expect(command.input).toEqual({
+      Bucket: 'healthcaredata',
+      Key: 'invoices/invoice_A_1.pdf',
+      Body: Buffer.from('pdf'),
+      ContentType: 'application/pdf',
+    });
+  });
+
+  it('reads an object back, and answers null for a missing key', async () => {
+    const { service } = await createService();
+    sendMock.mockResolvedValueOnce({
+      Body: { transformToByteArray: () => Promise.resolve(new Uint8Array([1, 2, 3])) },
+    });
+    await expect(service.getObjectBuffer('invoices/a.pdf')).resolves.toEqual(
+      Buffer.from([1, 2, 3])
+    );
+
+    sendMock.mockRejectedValueOnce(Object.assign(new Error('missing'), { name: 'NoSuchKey' }));
+    await expect(service.getObjectBuffer('invoices/b.pdf')).resolves.toBeNull();
+
+    sendMock.mockRejectedValueOnce(new Error('S3 unreachable'));
+    await expect(service.getObjectBuffer('invoices/c.pdf')).rejects.toThrow('S3 unreachable');
+  });
+
+  it('reports S3 as configured even when the client failed to initialise', async () => {
+    sendMock.mockReset().mockRejectedValue(new Error('endpoint unreachable'));
+    const { service } = await createService();
+
+    expect(service.isS3Enabled()).toBe(false);
+    expect(service.isS3Configured()).toBe(true);
+    await expect(service.putObject('invoices/a.pdf', Buffer.from('x'), 'x')).rejects.toThrow(
+      'S3 client not initialized'
+    );
+  });
+});
