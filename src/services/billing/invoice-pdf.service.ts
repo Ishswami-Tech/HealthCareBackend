@@ -7,9 +7,18 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { randomBytes } from 'crypto';
 import type { InvoicePDFData } from '@core/types/billing.types';
+import { S3StorageService } from '@infrastructure/storage/s3-storage.service';
 import { formatDateInIST } from '../../libs/utils/date-time.util';
 
 type PDFDocumentInstance = InstanceType<typeof PDFDocument>;
+
+/** File names generateInvoicePDF() produces (older ones have no random suffix). */
+const INVOICE_FILE_NAME = /^invoice_[A-Za-z0-9._-]+\.pdf$/;
+
+/** S3 key of a stored invoice PDF; `invoices` is one of the PHI folders (never public). */
+export function invoiceObjectKey(fileName: string): string {
+  return `invoices/${path.basename(fileName)}`;
+}
 
 type NormalizedLineItem = {
   description: string;
@@ -52,7 +61,8 @@ export class InvoicePDFService {
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    private readonly s3StorageService: S3StorageService
   ) {
     const storageDir = path.join(process.cwd(), 'storage', 'invoices');
     const tmpDir = path.join('/tmp', 'invoices');
@@ -89,40 +99,66 @@ export class InvoicePDFService {
     }
   }
 
+  /** Renders the invoice PDF in memory, without storing it anywhere. */
+  async renderInvoicePDF(data: InvoicePDFData): Promise<Buffer> {
+    const doc = new PDFDocument({
+      size: 'A4',
+      margin: 0,
+      bufferPages: true,
+      info: {
+        Title: `Invoice ${data.invoiceNumber}`,
+        Author: data.clinicName,
+        Subject: 'Healthcare invoice',
+      },
+    });
+
+    const chunks: Buffer[] = [];
+    const done = new Promise<Buffer>((resolve, reject) => {
+      doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+    });
+
+    this.renderInvoice(doc, data);
+    doc.end();
+    return await done;
+  }
+
+  /**
+   * Renders the invoice PDF and stores it where every replica can read it back: in S3 under
+   * `invoices/<fileName>` whenever S3 is configured (the API and worker copies run on different
+   * nodes, and a container's disk is wiped on each deploy). Only without S3 (local development)
+   * is it written to this process's disk. With S3 configured but unreachable this throws
+   * instead of writing a patient's invoice to the local disk.
+   *
+   * `filePath` is the storage reference saved as the invoice's `pdfFilePath`: the S3 key, or
+   * the local path.
+   */
   async generateInvoicePDF(data: InvoicePDFData): Promise<{ filePath: string; fileName: string }> {
     try {
       // Unguessable suffix: the name is only a locator, access is still checked per invoice.
       const fileName = `invoice_${data.invoiceNumber}_${Date.now()}-${randomBytes(8).toString('hex')}.pdf`;
-      const filePath = path.join(this.invoicesDir, fileName);
+      const pdf = await this.renderInvoicePDF(data);
 
-      const doc = new PDFDocument({
-        size: 'A4',
-        margin: 0,
-        bufferPages: true,
-        info: {
-          Title: `Invoice ${data.invoiceNumber}`,
-          Author: data.clinicName,
-          Subject: 'Healthcare invoice',
-        },
-      });
-
-      const writeStream = fs.createWriteStream(filePath);
-      doc.pipe(writeStream);
-
-      this.renderInvoice(doc, data);
-      doc.end();
-
-      await new Promise<void>((resolve, reject) => {
-        writeStream.on('finish', () => resolve());
-        writeStream.on('error', reject);
-      });
+      let filePath: string;
+      if (this.s3StorageService.isS3Configured()) {
+        filePath = invoiceObjectKey(fileName);
+        await this.s3StorageService.putObject(filePath, pdf, 'application/pdf');
+      } else {
+        filePath = path.join(this.invoicesDir, fileName);
+        await fs.promises.writeFile(filePath, pdf);
+      }
 
       void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
         `Invoice PDF generated successfully: ${fileName}`,
         'InvoicePDFService',
-        { fileName, invoiceNumber: data.invoiceNumber }
+        {
+          fileName,
+          invoiceNumber: data.invoiceNumber,
+          storage: this.s3StorageService.isS3Configured() ? 's3' : 'local',
+        }
       );
 
       return { filePath, fileName };
@@ -898,43 +934,39 @@ export class InvoicePDFService {
     return `${baseUrl}/api/v1/billing/invoices/download/${fileName}`;
   }
 
-  deleteInvoicePDF(fileName: string): void {
-    try {
-      const sanitizedName = path.basename(fileName);
-      const filePath = path.join(this.invoicesDir, sanitizedName);
+  /**
+   * The stored PDF behind a download link's file name, or null when it is not stored (anymore).
+   * Reads S3 when configured; also looks at this process's disk, which is where PDFs went
+   * before they were stored in S3 and where they go without S3.
+   */
+  async getStoredInvoicePDF(fileName: string): Promise<Buffer | null> {
+    const sanitizedName = path.basename(fileName);
+    if (!INVOICE_FILE_NAME.test(sanitizedName)) {
+      return null;
+    }
 
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
+    if (this.s3StorageService.isS3Configured()) {
+      try {
+        const stored = await this.s3StorageService.getObjectBuffer(invoiceObjectKey(sanitizedName));
+        if (stored) {
+          return stored;
+        }
+      } catch (error) {
+        // S3 unreachable: the caller re-renders the PDF from the invoice instead.
         void this.loggingService.log(
-          LogType.BUSINESS,
-          LogLevel.INFO,
-          `Invoice PDF deleted: ${fileName}`,
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Could not read a stored invoice PDF from S3',
           'InvoicePDFService',
-          { fileName }
+          { fileName: sanitizedName, error: error instanceof Error ? error.message : 'Unknown' }
         );
       }
-    } catch (error) {
-      void this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to delete invoice PDF: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'InvoicePDFService',
-        {
-          error: error instanceof Error ? error.message : 'Unknown error',
-          stack: error instanceof Error ? error.stack : undefined,
-        }
-      );
     }
-  }
 
-  invoicePDFExists(fileName: string): boolean {
-    const sanitizedName = path.basename(fileName);
-    const filePath = path.join(this.invoicesDir, sanitizedName);
-    return fs.existsSync(filePath);
-  }
-
-  getInvoiceFilePath(fileName: string): string {
-    const sanitizedName = path.basename(fileName);
-    return path.join(this.invoicesDir, sanitizedName);
+    try {
+      return await fs.promises.readFile(path.join(this.invoicesDir, sanitizedName));
+    } catch {
+      return null;
+    }
   }
 }

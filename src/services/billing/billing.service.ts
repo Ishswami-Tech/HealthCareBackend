@@ -2785,7 +2785,11 @@ export class BillingService implements OnModuleInit {
    * Generated invoice PDFs are named `invoice_<invoiceNumber>_<suffix>.pdf`. Downloading by file
    * name must pass the same ownership / clinic check as reading the invoice itself.
    */
-  async assertInvoiceFileAccess(fileName: string, requester?: BillingAccessContext): Promise<void> {
+  /** Resolves the invoice id behind a PDF download link after the access checks pass. */
+  async assertInvoiceFileAccess(
+    fileName: string,
+    requester?: BillingAccessContext
+  ): Promise<string> {
     const baseName = String(fileName).split(/[\\/]/).pop() ?? '';
     const invoiceNumber = /^invoice_(.+)_[^_]+\.pdf$/.exec(baseName)?.[1];
     if (!invoiceNumber) {
@@ -2797,6 +2801,7 @@ export class BillingService implements OnModuleInit {
     }
     this.assertBillingEntityAccess(invoice, requester);
     assertReceiptAvailable(invoice.status);
+    return String(invoice.id);
   }
 
   async updateInvoice(id: string, data: UpdateInvoiceDto, requester?: BillingAccessContext) {

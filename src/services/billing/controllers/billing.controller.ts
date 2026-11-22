@@ -20,7 +20,7 @@ import {
 } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { FastifyReply } from 'fastify';
-import * as fs from 'fs';
+import * as path from 'path';
 import { BillingService } from '@services/billing/billing.service';
 import { InvoicePDFService } from '@services/billing/invoice-pdf.service';
 import { QueueService } from '@queue/src/queue.service';
@@ -1355,11 +1355,8 @@ export class BillingController {
   }
 
   /**
-   * Patient-facing smart PDF download.
-   * 1. If the invoice already has a generated PDF on disk → stream it immediately.
-   * 2. Otherwise → generate synchronously (saves pdfFilePath + pdfUrl back to the invoice)
-   *    and ALSO enqueue a background job so the file is treated as "persisted"
-   *    for subsequent WhatsApp delivery / admin use.
+   * Patient-facing PDF download: renders the receipt from the current invoice data and sends
+   * it straight back (nothing is stored, so any replica can answer).
    */
   @Get(['invoices/:id/pdf-download', 'invoices/:id/download'])
   @Roles(
@@ -1389,25 +1386,20 @@ export class BillingController {
     assertReceiptAvailable(invoice['status'] as string | undefined);
 
     const pdfData = await this.billingService.buildInvoicePDFData(invoiceId, accessContext);
-    const { filePath } = await this.invoicePDFService.generateInvoicePDF(pdfData);
+    const pdf = await this.invoicePDFService.renderInvoicePDF(pdfData);
 
     const invoiceNumber = (invoice['invoiceNumber'] as string | null | undefined) || invoiceId;
-    const downloadName = `invoice-${invoiceNumber}.pdf`;
-    const fileStream = fs.createReadStream(filePath);
-    const cleanupTempFile = () => {
-      if (fs.existsSync(filePath)) {
-        this.invoicePDFService.deleteInvoicePDF(filePath.split(/[/\\]/).pop() || filePath);
-      }
-    };
-
-    fileStream.on('close', cleanupTempFile);
-    fileStream.on('error', cleanupTempFile);
-
     res.type('application/pdf');
-    res.header('Content-Disposition', `attachment; filename="${downloadName}"`);
-    return res.send(fileStream);
+    res.header('Content-Disposition', `attachment; filename="invoice-${invoiceNumber}.pdf"`);
+    return res.send(pdf);
   }
 
+  /**
+   * The link sent with a receipt (`pdfUrl`). Serves the stored PDF from S3, so it works on
+   * every replica and survives deploys. A link whose PDF is no longer stored (made before PDFs
+   * went to S3, when they lived on one container's disk) is answered with a fresh rendering of
+   * the same invoice instead of a 404.
+   */
   @Get('invoices/download/:fileName')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.RECEPTIONIST, Role.PATIENT)
   @RequireResourcePermission('invoices', 'read')
@@ -1417,23 +1409,19 @@ export class BillingController {
     @Request() req?: ClinicAuthenticatedRequest
   ) {
     // Resolve the invoice from the file name and apply the same ownership / clinic check as
-    // reading the invoice itself (before the file system is touched).
-    await this.billingService.assertInvoiceFileAccess(
-      fileName,
-      this.buildBillingAccessContext(req)
-    );
+    // reading the invoice itself (before any storage is touched).
+    const accessContext = this.buildBillingAccessContext(req);
+    const invoiceId = await this.billingService.assertInvoiceFileAccess(fileName, accessContext);
 
-    // Check if file exists
-    if (!this.invoicePDFService.invoicePDFExists(fileName)) {
-      throw new NotFoundException('Invoice PDF not found');
-    }
-
-    const filePath = this.invoicePDFService.getInvoiceFilePath(fileName);
-    const fileStream = fs.createReadStream(filePath);
+    const pdf =
+      (await this.invoicePDFService.getStoredInvoicePDF(fileName)) ??
+      (await this.invoicePDFService.renderInvoicePDF(
+        await this.billingService.buildInvoicePDFData(invoiceId, accessContext)
+      ));
 
     res.type('application/pdf');
-    res.header('Content-Disposition', `attachment; filename="${fileName}"`);
-    return res.send(fileStream);
+    res.header('Content-Disposition', `attachment; filename="${path.basename(fileName)}"`);
+    return res.send(pdf);
   }
 
   @Post('subscriptions/:id/send-confirmation')

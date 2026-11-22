@@ -2,9 +2,10 @@ import { Module } from '@nestjs/common';
 import { InvoicePDFService } from './invoice-pdf.service';
 import { LoggingModule } from '@infrastructure/logging';
 import { ConfigModule } from '@config/config.module';
+import { StorageModule } from '@infrastructure/storage/storage.module';
 
 @Module({
-  imports: [ConfigModule, LoggingModule],
+  imports: [ConfigModule, LoggingModule, StorageModule],
   providers: [
     InvoicePDFService,
     {
