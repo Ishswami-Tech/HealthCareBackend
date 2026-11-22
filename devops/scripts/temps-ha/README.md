@@ -135,7 +135,16 @@ every minute as `deploy`:
   amd64 control plane) list only temps-worker as their primary: Temps never places
   them on the arm64 oracle-main, so for them temps-worker down is "both down".
 - A failed move is retried after `RETRY_SECS` (600). State is in
-  `~deploy/.local/state/temps-ds-fallback` (`<app>.on-fallback` while moved).
+  `~deploy/.local/state/temps-ds-fallback` (`<app>.on-fallback` while moved,
+  `<app>.deploy` = the target nodes and id of the deployment a move started).
+- The rollback call answers only after Temps has copied the image to the node
+  (minutes for Governance Ops' 4 GB image), though the deployment already exists.
+  On 2026-11-22 a 60 s client timeout made every attempt look failed: the
+  deployment came up at 13:17, yet each retry started a new one over it (seven
+  needless restarts until 14:27). Now a rollback that has not answered after
+  `ROLLBACK_TIMEOUT_SECS` (300) is followed up by finding the deployment it created,
+  a later run follows the deployment in `<app>.deploy` instead of starting another,
+  and a deployment superseded by a newer one hands over to that one.
 - Uses the Temps API with the `temps-local` CLI context's key; only the
   `target_nodes` field is sent (never the console's Save, which unpublishes the
   tunnels).

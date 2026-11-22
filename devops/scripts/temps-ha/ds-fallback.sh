@@ -26,7 +26,7 @@
 # plane alone losing the mesh: if anyone still serves the app, it is not moved.
 #
 # Env overrides: APPS, PRIMARY_NODES, FALLBACK_NODE, NORMAL_TARGETS, DOWN_SECS, UP_SECS,
-# RETRY_SECS, AGENT_PORT, PROBE_TIMEOUT_SECS, DEPLOY_TIMEOUT_SECS, STATE_DIR, TEMPS_CONTEXTS,
+# RETRY_SECS, AGENT_PORT, PROBE_TIMEOUT_SECS, DEPLOY_TIMEOUT_SECS, ROLLBACK_TIMEOUT_SECS, STATE_DIR, TEMPS_CONTEXTS,
 # TEMPS_CONTEXT, DRY_RUN=1 (log what would happen, change nothing),
 # FAKE_DOWN_NODES=6,10 (testing: treat these node ids as down without probing them).
 set -euo pipefail
@@ -52,6 +52,7 @@ RETRY_SECS="${RETRY_SECS:-600}"     # after a failed move, wait this long before
 AGENT_PORT="${AGENT_PORT:-3100}"
 PROBE_TIMEOUT_SECS="${PROBE_TIMEOUT_SECS:-5}"
 DEPLOY_TIMEOUT_SECS="${DEPLOY_TIMEOUT_SECS:-900}"
+ROLLBACK_TIMEOUT_SECS="${ROLLBACK_TIMEOUT_SECS:-300}"  # how long to wait for the rollback call itself
 DRY_RUN="${DRY_RUN:-0}"
 FAKE_DOWN_NODES="${FAKE_DOWN_NODES:-}"
 STATE_DIR="${STATE_DIR:-/var/lib/temps-ds-fallback}"
@@ -76,51 +77,121 @@ log_once() {
 #   targets PROJECT ENV JSON   set the environment's target_nodes, and nothing else (never the
 #                              console's Save, which also rewrites the security settings and
 #                              unpublishes the tunnels)
-#   redeploy PROJECT ENV       redeploy the environment's current deployment where its targets
+#   redeploy PROJECT ENV TARGETS TRACK_FILE
+#                              redeploy the environment's current deployment where its targets
 #                              now point (Temps' rollback to it: same image, no rebuild), and wait
 #                              until that deployment finishes; fails unless it completed
+#
+# The rollback call can take minutes to answer: Temps first copies the image to the node (4 GB for
+# governance-ops) but has already created the deployment. On 2026-11-22 a 60 s client timeout made
+# every attempt look failed although the deployment came up, and each retry started a new
+# deployment over the running one (seven needless restarts). So: a timed-out rollback is followed
+# up by finding the deployment it created; the deployment started for a move is remembered in
+# TRACK_FILE ("<targets> <id>") and a later run follows it instead of starting another; and a
+# deployment superseded by a newer one hands over to that one.
 temps_api() {
-  python3 - "$TEMPS_CONTEXTS" "$TEMPS_CONTEXT" "$DEPLOY_TIMEOUT_SECS" "$@" <<'PY'
-import json, sys, time, urllib.request
-contexts, name, timeout, cmd, project, env = sys.argv[1:7]
+  python3 - "$TEMPS_CONTEXTS" "$TEMPS_CONTEXT" "$DEPLOY_TIMEOUT_SECS" "$ROLLBACK_TIMEOUT_SECS" "$@" <<'PY'
+import json, socket, sys, time, urllib.error, urllib.request
+contexts, name, timeout, rollback_timeout, cmd, project, env = sys.argv[1:8]
 ctx = next(c for c in json.load(open(contexts)) if c["name"] == name)
 
-def call(method, path, body=None):
+def call(method, path, body=None, timeout=60):
     req = urllib.request.Request(
         ctx["url"] + path, method=method,
         data=None if body is None else json.dumps(body).encode(),
         headers={"Authorization": "Bearer " + ctx["apiKey"], "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=60) as r:
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         raw = r.read()
         return json.loads(raw) if raw else None
 
 if cmd == "targets":
-    call("PUT", f"/projects/{project}/environments/{env}/settings", {"target_nodes": json.loads(sys.argv[7])})
+    call("PUT", f"/projects/{project}/environments/{env}/settings", {"target_nodes": json.loads(sys.argv[8])})
     sys.exit(0)
 
+def timed_out(e):
+    return isinstance(e, (TimeoutError, socket.timeout)) or (
+        isinstance(e, urllib.error.URLError) and not isinstance(e, urllib.error.HTTPError)
+        and isinstance(e.reason, (TimeoutError, socket.timeout)))
+
 if cmd == "redeploy":
-    deps = call("GET", f"/projects/{project}/deployments?environment_id={env}&per_page=50")["deployments"]
-    current = [d for d in deps if d.get("is_current") and str(d.get("environment_id")) == env]
+    targets, track = sys.argv[8], sys.argv[9]
+    BAD = ("failed", "cancelled")
+    deadline = time.time() + int(timeout)
+
+    def env_deps():
+        deps = call("GET", f"/projects/{project}/deployments?environment_id={env}&per_page=50")["deployments"]
+        return [d for d in deps if str(d.get("environment_id")) == env]
+
+    def remember(i):
+        with open(track, "w") as f:
+            f.write(f"{targets} {i}\n")
+
+    def follow(i):
+        """Wait for deployment i; if something newer supersedes it, follow that one instead."""
+        while True:
+            status = call("GET", f"/projects/{project}/deployments/{i}").get("status")
+            if status == "completed":
+                sys.exit(0)
+            if status in BAD:
+                sys.exit(f"deployment {i} {status}")
+            if status == "stopped":
+                newer = [d for d in env_deps() if d["id"] > i]
+                if not newer:
+                    sys.exit(f"deployment {i} stopped")
+                i = max(d["id"] for d in newer)
+                print(f"superseded; following deployment {i}", flush=True)
+                remember(i)
+                continue
+            if time.time() > deadline:
+                sys.exit(f"deployment {i} not finished after {timeout}s")
+            time.sleep(10)
+
+    # A deployment an earlier run started for this same move: follow it, never start another over it.
+    try:
+        prev_targets, prev_id = open(track).read().split()
+        prev_id = int(prev_id)
+    except (OSError, ValueError):
+        prev_targets = prev_id = None
+    if prev_id is not None and prev_targets == targets:
+        status = call("GET", f"/projects/{project}/deployments/{prev_id}").get("status")
+        superseded = status == "stopped" and any(d["id"] > prev_id for d in env_deps())
+        if status not in BAD and (status != "stopped" or superseded):
+            print(f"following deployment {prev_id} started earlier ({status})", flush=True)
+            follow(prev_id)
+
+    deps = env_deps()
+    current = [d for d in deps if d.get("is_current")]
     if not current:
         sys.exit("no current deployment to redeploy")
-    new = call("POST", f"/projects/{project}/deployments/{current[0]['id']}/rollback")
-    print(f"redeploying deployment {current[0]['id']} as {new['id']}", flush=True)
-    deadline = time.time() + int(timeout)
-    while time.time() < deadline:
-        time.sleep(10)
-        status = call("GET", f"/projects/{project}/deployments/{new['id']}").get("status")
-        if status == "completed":
-            sys.exit(0)
-        if status in ("failed", "cancelled", "stopped"):
-            sys.exit(f"deployment {new['id']} {status}")
-    sys.exit(f"deployment {new['id']} not finished after {timeout}s")
+    newest_before = max(d["id"] for d in deps)
+    try:
+        new_id = call("POST", f"/projects/{project}/deployments/{current[0]['id']}/rollback",
+                      timeout=int(rollback_timeout))["id"]
+        print(f"redeploying deployment {current[0]['id']} as {new_id}", flush=True)
+    except Exception as e:
+        if not timed_out(e):
+            raise
+        new_id = None
+        for _ in range(30):
+            newer = [d["id"] for d in env_deps() if d["id"] > newest_before]
+            if newer:
+                new_id = max(newer)
+                break
+            time.sleep(10)
+        if new_id is None:
+            sys.exit(f"rollback of deployment {current[0]['id']} timed out and no new deployment appeared")
+        print(f"rollback of deployment {current[0]['id']} still running after {rollback_timeout}s; "
+              f"following deployment {new_id}", flush=True)
+    remember(new_id)
+    follow(new_id)
 sys.exit(f"unknown command {cmd}")
 PY
 }
 set_targets() { temps_api targets "$1" "$2" "$3"; }
+# redeploy_current PROJECT ENV SLUG TARGETS
 redeploy_current() {
   local out rc=0
-  out=$(temps_api redeploy "$1" "$2" 2>&1) || rc=$?
+  out=$(temps_api redeploy "$1" "$2" "$4" "$STATE_DIR/$3.deploy" 2>&1) || rc=$?
   log "$3: ${out//$'\n'/; }"
   return "$rc"
 }
@@ -194,8 +265,8 @@ move() {
   echo "$now" >"$STATE_DIR/$slug.last-attempt"
   set_targets "$project" "$env" "$targets" || { log "$slug: could not set its targets; retrying in ${RETRY_SECS}s"; return 1; }
   [[ "$targets" == "[$FALLBACK_ID]" ]] && echo moving >"$STATE_DIR/$slug.on-fallback"
-  if redeploy_current "$project" "$env" "$slug"; then
-    rm -f "$STATE_DIR/$slug.last-attempt"; log "$slug: now on $where"; return 0
+  if redeploy_current "$project" "$env" "$slug" "$targets"; then
+    rm -f "$STATE_DIR/$slug.last-attempt" "$STATE_DIR/$slug.deploy"; log "$slug: now on $where"; return 0
   fi
   log "$slug: deploy to $where failed; retrying in ${RETRY_SECS}s"; return 1
 }
