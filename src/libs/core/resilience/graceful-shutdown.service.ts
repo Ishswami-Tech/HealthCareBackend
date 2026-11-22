@@ -7,6 +7,53 @@ import { IoAdapter } from '@nestjs/platform-socket.io';
 import { createFrameworkAdapter } from '@infrastructure/framework/adapters/fastify.adapter';
 import { describeProcessWarning } from '@core/resilience/process-warning.util';
 
+/** Whole API shutdown budget; Temps SIGKILLs a container 10 s after SIGTERM. */
+export const SHUTDOWN_TIMEOUT_MS = 9_000;
+/** How long running HTTP requests may take to finish after SIGTERM. */
+export const IN_FLIGHT_WAIT_MS = 6_000;
+/** How often connections that went idle during the drain are closed. */
+const IDLE_SWEEP_MS = 100;
+
+/** The parts of Node's http.Server the drain uses (closeIdle/All exist since Node 18.2). */
+export interface ClosableHttpServer {
+  close: (callback?: (err?: Error) => void) => void;
+  closeIdleConnections?: () => void;
+  closeAllConnections?: () => void;
+}
+
+/**
+ * Stops accepting connections, closes idle keep-alive connections at once, and waits up to
+ * `waitMs` for the requests still running to finish; whatever is left open then is closed.
+ */
+export async function drainHttpServer(
+  server: ClosableHttpServer,
+  waitMs: number,
+  log: (message: string) => void = () => undefined
+): Promise<'drained' | 'timed-out'> {
+  const outcome = await new Promise<'drained' | 'timed-out'>(resolve => {
+    // A keep-alive connection whose request finishes after close() stays open (idle) and would
+    // hold close() until the wait is over: keep closing connections as they go idle.
+    const idleSweep = setInterval(() => server.closeIdleConnections?.(), IDLE_SWEEP_MS);
+    const timer = setTimeout(() => {
+      clearInterval(idleSweep);
+      resolve('timed-out');
+    }, waitMs);
+    server.close(() => {
+      clearTimeout(timer);
+      clearInterval(idleSweep);
+      resolve('drained');
+    });
+    server.closeIdleConnections?.();
+  });
+  if (outcome === 'timed-out') {
+    log(`Requests still running after ${waitMs}ms; closing their connections`);
+    server.closeAllConnections?.();
+  } else {
+    log('HTTP server drained');
+  }
+  return outcome;
+}
+
 /**
  * Graceful Shutdown Service
  *
@@ -62,8 +109,18 @@ export class GracefulShutdownService {
   }
 
   /**
-   * Handle graceful shutdown
+   * Handle graceful shutdown: the ONE SIGTERM/SIGINT path of the API (main.ts turns Nest's own
+   * shutdown hooks off when this service is available, so they no longer tear the database and
+   * cache down at the same moment while requests are still running).
+   *
+   * Temps stops a container with a 10 s grace before SIGKILL, so everything below fits in
+   * SHUTDOWN_TIMEOUT_MS:
+   *   1. stop accepting connections, close idle keep-alive ones (the proxy holds them open for
+   *      up to 65 s), and wait up to IN_FLIGHT_WAIT_MS for running requests to finish;
+   *   2. close what is still open, then database, Redis pub/sub and the Nest app.
    */
+  private shuttingDown = false;
+
   private async handleShutdown(
     signal: string,
     app: INestApplication,
@@ -71,44 +128,32 @@ export class GracefulShutdownService {
     pubClient: RedisClient | null,
     subClient: RedisClient | null
   ): Promise<void> {
+    if (this.shuttingDown) return;
+    this.shuttingDown = true;
     this.logger.log(`Received ${signal}, starting graceful shutdown...`);
 
     const shutdownTimeout = setTimeout(() => {
       this.logger.error('Shutdown timed out, forcing exit');
       process.exit(1);
-    }, 10000);
+    }, SHUTDOWN_TIMEOUT_MS);
 
     try {
-      // Close WebSocket connections gracefully
-      if (customWebSocketAdapter && app) {
-        this.logger.log('Closing WebSocket connections...');
+      if (app) {
         try {
           // Use framework adapter to get HTTP server (framework-agnostic approach)
           const frameworkAdapter = createFrameworkAdapter();
-          const httpServer = frameworkAdapter.getHttpServer(app) as {
-            close: (callback?: (err?: Error) => void) => void;
-          } | null;
+          const httpServer = frameworkAdapter.getHttpServer(app) as ClosableHttpServer | null;
           if (httpServer && typeof httpServer.close === 'function') {
-            await new Promise<void>(resolve => {
-              const timeout = setTimeout(() => {
-                this.logger.warn('WebSocket server close timeout, continuing...');
-                resolve();
-              }, 3000);
-
-              httpServer.close((err?: Error) => {
-                clearTimeout(timeout);
-                if (err) {
-                  this.logger.warn('Error closing WebSocket server:', err);
-                } else {
-                  this.logger.log('WebSocket server closed successfully');
-                }
-                resolve();
-              });
-            });
+            await drainHttpServer(httpServer, IN_FLIGHT_WAIT_MS, message =>
+              this.logger.log(message)
+            );
           }
-        } catch (wsError) {
-          this.logger.warn('Error during WebSocket cleanup:', wsError);
+        } catch (httpError) {
+          this.logger.warn('Error while draining the HTTP server:', httpError);
         }
+      }
+      if (customWebSocketAdapter) {
+        this.logger.log('HTTP server and WebSocket connections closed');
       }
 
       // Close database connections

@@ -957,7 +957,10 @@ async function bootstrap() {
         'redis-ui',
         'prisma',
       ],
-      enableShutdownHooks: true,
+      // GracefulShutdownService is the API's single SIGTERM path (drain HTTP, then close DB,
+      // cache and the app). Nest's own hooks would start destroying modules at the same moment,
+      // under requests that are still running; they are only the fallback without it.
+      enableShutdownHooks: !gracefulShutdownService,
     };
 
     // Configure middleware (pipes, versioning, prefix, shutdown hooks)
