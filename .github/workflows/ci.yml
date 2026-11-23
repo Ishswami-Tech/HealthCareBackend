@@ -215,6 +215,12 @@ jobs:
           DATABASE_URL: postgresql://placeholder:placeholder@db:5432/placeholder?schema=public
         run: yarn prisma:generate
 
+      # Appointment status-transition / cancel rules the clients rely on. It ran only from the
+      # optional `yarn pre-push` script, where plain node could not resolve the @core path
+      # aliases, so it had silently stopped running; here it gates the tags and the deploy.
+      - name: Production contract check
+        run: yarn contract:check
+
       # Every validation step of `yarn build`, on the committed source (no ESLint --fix /
       # Prettier --write pass first: the image is compiled from the committed source, so that
       # is what must pass). BUILD_ENV=development is the environment `yarn build` resolved

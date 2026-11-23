@@ -62,7 +62,7 @@
     "validate:build": "yarn validate:all && yarn build:test",
     "build:test": "tsc --noEmit --incremental false",
     "type-check": "tsc --noEmit",
-    "contract:check": "node --experimental-strip-types scripts/production-contract-check.ts",
+    "contract:check": "tsx scripts/production-contract-check.ts",
     "lint": "yarn eslint \"src/**/*.ts\" --fix",
     "lint:check": "yarn eslint \"src/**/*.ts\" --max-warnings 0",
     "format": "prettier --write \"src/**/*.ts\"",
