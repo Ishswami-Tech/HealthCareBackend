@@ -52,6 +52,7 @@ import { formatDateInIST, formatDateKeyInIST, nowIso } from '../../../utils/date
 type InvoicePDFServiceType = {
   generateInvoicePDF: (data: InvoicePDFData) => Promise<{ filePath: string; fileName: string }>;
   getPublicInvoiceUrl: (fileName: string) => string;
+  deleteStoredInvoicePDF: (filePath: string | null | undefined) => Promise<void>;
 };
 
 // Type-only import to avoid a circular dependency between the queue module
@@ -1832,6 +1833,10 @@ export class QueueProcessor {
         pdfFilePath: filePath,
         pdfUrl,
       });
+      // The PDF this one replaces would otherwise stay in S3 forever (patient data).
+      if (invoice.pdfFilePath && invoice.pdfFilePath !== filePath) {
+        await invoicePDFService.deleteStoredInvoicePDF(invoice.pdfFilePath);
+      }
 
       void this.loggingService.log(
         LogType.QUEUE,

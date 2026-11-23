@@ -154,11 +154,13 @@ export const DLQ_CONFIG = {
  * completion marker keeps a job that did finish from running twice). The container's stop grace
  * must be larger than `shutdownTimeoutMs`: Temps stops containers with a fixed 10 s grace before
  * SIGKILL (temps-agent "Stopping container ... grace_seconds=Some(10)"), and it is not
- * configurable per project, so the drain plus app.close() fit in 9 s.
+ * configurable per project. The drain gets as much of that as possible (8 s), since a job cut off
+ * is re-run after the stall check; the worker's app.close() takes well under a second (measured
+ * 0.3 s for the whole stop), so the hard exit at 9.5 s still lands before the SIGKILL.
  */
 export const WORKER_LIFECYCLE = {
-  closeTimeoutMs: 6_000,
-  shutdownTimeoutMs: 9_000,
+  closeTimeoutMs: 8_000,
+  shutdownTimeoutMs: 9_500,
   heartbeatIntervalMs: 15_000,
   /** A heartbeat older than this means the worker process is hung or dead. */
   heartbeatMaxAgeMs: 60_000,

@@ -775,8 +775,9 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return this.getProvider().acquireLock(key, ttlSeconds, value);
   }
 
-  async releaseLock(key: string): Promise<boolean> {
-    return this.getProvider().releaseLock(key);
+  /** See ICacheProvider.releaseLock: with `value`, only the holder that set it releases. */
+  async releaseLock(key: string, value?: string): Promise<boolean> {
+    return this.getProvider().releaseLock(key, value);
   }
 
   async exists(key: string): Promise<boolean> {

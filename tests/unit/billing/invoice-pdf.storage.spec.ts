@@ -41,6 +41,7 @@ interface FakeS3 {
   objects: Map<string, Buffer>;
   putObject: jest.Mock;
   getObjectBuffer: jest.Mock;
+  deleteFile: jest.Mock;
   isS3Configured: () => boolean;
 }
 
@@ -54,6 +55,7 @@ function fakeS3(configured: boolean): FakeS3 {
       return Promise.resolve();
     }),
     getObjectBuffer: jest.fn((key: string) => Promise.resolve(objects.get(key) ?? null)),
+    deleteFile: jest.fn((key: string) => Promise.resolve(objects.delete(key))),
     isS3Configured: () => s3.configured,
   };
   return s3;
@@ -154,6 +156,30 @@ describe('InvoicePDFService storage', () => {
 
       await expect(service.getStoredInvoicePDF(fileName)).resolves.toBeNull();
       expect(s3.getObjectBuffer).not.toHaveBeenCalled();
+    }
+  );
+
+  it('deletes the PDF a newer one replaced, in S3 and on the local disk', async () => {
+    const s3 = fakeS3(true);
+    const service = createService(s3);
+    const { filePath } = await service.generateInvoicePDF(PDF_DATA);
+
+    await service.deleteStoredInvoicePDF(filePath);
+    expect(s3.objects.has(filePath)).toBe(false);
+
+    const local = createService(fakeS3(false));
+    const { filePath: localPath, fileName } = await local.generateInvoicePDF(PDF_DATA);
+    expect(localInvoiceFiles()).toEqual([fileName]);
+    await local.deleteStoredInvoicePDF(localPath);
+    expect(localInvoiceFiles()).toEqual([]);
+  });
+
+  it.each([null, '', '/etc/passwd', 'documents/invoice_x.pdf', '../invoices/invoice_a_1.pdf'])(
+    'never deletes anything for the stored path %p',
+    async filePath => {
+      const s3 = fakeS3(true);
+      await createService(s3).deleteStoredInvoicePDF(filePath);
+      expect(s3.deleteFile).not.toHaveBeenCalled();
     }
   );
 });

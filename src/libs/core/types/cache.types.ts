@@ -547,9 +547,10 @@ export interface ICacheProvider {
   acquireLock(key: string, ttlSeconds: number, value?: string): Promise<boolean>;
 
   /**
-   * Release a lock key.
+   * Release a lock key. With `value`, only while the key still holds that value (the owner's
+   * token), so a holder whose TTL expired cannot delete the lock another holder took since.
    */
-  releaseLock(key: string): Promise<boolean>;
+  releaseLock(key: string, value?: string): Promise<boolean>;
 
   /**
    * Check if key exists

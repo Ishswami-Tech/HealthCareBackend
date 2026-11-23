@@ -33,12 +33,17 @@ function sharedCache() {
       values.set(key, value);
       return Promise.resolve();
     }),
-    acquireLock: jest.fn((key: string) => {
+    acquireLock: jest.fn((key: string, _ttl: number, value = '1') => {
       if (values.has(key)) return Promise.resolve(false);
-      values.set(key, '1');
+      values.set(key, value);
       return Promise.resolve(true);
     }),
-    releaseLock: jest.fn((key: string) => Promise.resolve(values.delete(key))),
+    releaseLock: jest.fn((key: string, value?: string) => {
+      if (value !== undefined && values.get(key) !== value) return Promise.resolve(false);
+      return Promise.resolve(values.delete(key));
+    }),
+    ping: jest.fn(() => Promise.resolve('PONG')),
+    values,
   };
 }
 
@@ -85,10 +90,26 @@ describe('invoice WhatsApp send lock across API copies', () => {
 
   it('still sends when the shared cache cannot be reached', async () => {
     const cache = sharedCache();
-    cache.acquireLock.mockRejectedValue(new Error('cache down'));
+    // What the real providers do with the cache down: acquireLock answers false, ping fails.
+    cache.acquireLock.mockResolvedValue(false);
+    cache.ping.mockRejectedValue(new Error('cache down'));
     const send = jest.fn(() => Promise.resolve(true));
 
     await expect(copyWith(cache)('inv-1', send)).resolves.toBe(true);
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("never releases a lock another copy took after this one's expired", async () => {
+    const cache = sharedCache();
+    const copyA = copyWith(cache);
+    const key = 'billing:invoice-whatsapp:inflight:inv-1';
+
+    await copyA('inv-1', () => {
+      // A's lock expires mid-send and copy B takes it.
+      cache.values.set(key, 'copy-b-token');
+      return Promise.resolve(true);
+    });
+
+    expect(cache.values.get(key)).toBe('copy-b-token');
   });
 });

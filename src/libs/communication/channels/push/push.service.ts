@@ -375,10 +375,10 @@ export class PushNotificationService implements OnModuleInit {
     let platform: 'ios' | 'android' | 'web' = 'android';
 
     if (this.deviceTokenService && userId) {
-      // From the database: a token registered through another API copy is not in this cache.
-      const userTokens = await this.deviceTokenService.getActiveUserTokens(userId);
-      const tokenData = userTokens.find(token => token.token === deviceToken);
-      if (tokenData) {
+      // One token, from the database when this copy has not seen it (registered through
+      // another API copy).
+      const tokenData = await this.deviceTokenService.findToken(deviceToken);
+      if (tokenData && tokenData.userId === userId) {
         platform = tokenData.platform;
       }
     }

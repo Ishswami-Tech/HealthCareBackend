@@ -19,30 +19,62 @@ export interface ClosableHttpServer {
   close: (callback?: (err?: Error) => void) => void;
   closeIdleConnections?: () => void;
   closeAllConnections?: () => void;
+  on?: (event: 'request', listener: (req: TrackedRequest, res: TrackedResponse) => void) => void;
+}
+
+interface TrackedRequest {
+  url?: string;
+}
+interface TrackedResponse {
+  once: (event: 'close', listener: () => void) => void;
 }
 
 /**
- * Stops accepting connections, closes idle keep-alive connections at once, and waits up to
- * `waitMs` for the requests still running to finish; whatever is left open then is closed.
+ * Counts the HTTP requests the server is running. Socket.IO's own traffic (`/socket.io/`
+ * long-polling, held open for ~25 s by design) is left out: it is not work a client waits on,
+ * and WebSocket connections are upgrades, not requests, so neither holds the drain.
+ */
+export function trackInFlightRequests(server: ClosableHttpServer): () => number {
+  let inFlight = 0;
+  server.on?.('request', (req, res) => {
+    if (req.url?.startsWith('/socket.io/')) return;
+    inFlight++;
+    res.once('close', () => {
+      inFlight--;
+    });
+  });
+  return () => inFlight;
+}
+
+/**
+ * Stops accepting connections, closes idle keep-alive connections at once and as they go idle,
+ * and waits up to `waitMs` until no request is running (`inFlight`, when tracked) or every
+ * connection has closed; whatever is left open then is closed. Open WebSocket connections do not
+ * hold it up when `inFlight` is given: the app closes Socket.IO afterwards (app.close()).
  */
 export async function drainHttpServer(
   server: ClosableHttpServer,
   waitMs: number,
-  log: (message: string) => void = () => undefined
+  log: (message: string) => void = () => undefined,
+  inFlight?: () => number
 ): Promise<'drained' | 'timed-out'> {
   const outcome = await new Promise<'drained' | 'timed-out'>(resolve => {
+    let settled = false;
+    const finish = (result: 'drained' | 'timed-out'): void => {
+      if (settled) return;
+      settled = true;
+      clearInterval(sweep);
+      clearTimeout(timer);
+      resolve(result);
+    };
     // A keep-alive connection whose request finishes after close() stays open (idle) and would
     // hold close() until the wait is over: keep closing connections as they go idle.
-    const idleSweep = setInterval(() => server.closeIdleConnections?.(), IDLE_SWEEP_MS);
-    const timer = setTimeout(() => {
-      clearInterval(idleSweep);
-      resolve('timed-out');
-    }, waitMs);
-    server.close(() => {
-      clearTimeout(timer);
-      clearInterval(idleSweep);
-      resolve('drained');
-    });
+    const sweep = setInterval(() => {
+      server.closeIdleConnections?.();
+      if (inFlight && inFlight() === 0) finish('drained');
+    }, IDLE_SWEEP_MS);
+    const timer = setTimeout(() => finish('timed-out'), waitMs);
+    server.close(() => finish('drained'));
     server.closeIdleConnections?.();
   });
   if (outcome === 'timed-out') {
@@ -69,6 +101,8 @@ export async function drainHttpServer(
 @Injectable()
 export class GracefulShutdownService {
   private readonly logger = new Logger(GracefulShutdownService.name);
+  private shuttingDown = false;
+  private inFlightRequests: (() => number) | undefined;
 
   constructor(
     @Inject(forwardRef(() => LoggingService))
@@ -101,6 +135,13 @@ export class GracefulShutdownService {
   ): void {
     const signals = ['SIGTERM', 'SIGINT'];
 
+    // Count running requests from now on, so the drain waits for them and not for open
+    // WebSocket connections.
+    const httpServer = this.getHttpServer(app);
+    if (httpServer) {
+      this.inFlightRequests = trackInFlightRequests(httpServer);
+    }
+
     signals.forEach(signal => {
       process.on(signal, () => {
         void this.handleShutdown(signal, app, customWebSocketAdapter, pubClient, subClient);
@@ -119,8 +160,6 @@ export class GracefulShutdownService {
    *      up to 65 s), and wait up to IN_FLIGHT_WAIT_MS for running requests to finish;
    *   2. close what is still open, then database, Redis pub/sub and the Nest app.
    */
-  private shuttingDown = false;
-
   private async handleShutdown(
     signal: string,
     app: INestApplication,
@@ -140,12 +179,13 @@ export class GracefulShutdownService {
     try {
       if (app) {
         try {
-          // Use framework adapter to get HTTP server (framework-agnostic approach)
-          const frameworkAdapter = createFrameworkAdapter();
-          const httpServer = frameworkAdapter.getHttpServer(app) as ClosableHttpServer | null;
-          if (httpServer && typeof httpServer.close === 'function') {
-            await drainHttpServer(httpServer, IN_FLIGHT_WAIT_MS, message =>
-              this.logger.log(message)
+          const httpServer = this.getHttpServer(app);
+          if (httpServer) {
+            await drainHttpServer(
+              httpServer,
+              IN_FLIGHT_WAIT_MS,
+              message => this.logger.log(message),
+              this.inFlightRequests
             );
           }
         } catch (httpError) {
@@ -192,6 +232,13 @@ export class GracefulShutdownService {
       this.logger.error('Error during shutdown:', error);
       process.exit(1);
     }
+  }
+
+  /** The Node HTTP server behind the app (framework-agnostic), or null. */
+  private getHttpServer(app: INestApplication | null | undefined): ClosableHttpServer | null {
+    if (!app) return null;
+    const server = createFrameworkAdapter().getHttpServer(app) as ClosableHttpServer | null;
+    return server && typeof server.close === 'function' ? server : null;
   }
 }
 

@@ -28,6 +28,10 @@ import {
   type CacheConnectionTarget,
 } from '@infrastructure/cache/utils/cache-connection-target.util';
 
+/** Deletes KEYS[1] only while it still holds ARGV[1]; returns 1 when it deleted it. */
+const RELEASE_LOCK_IF_VALUE_SCRIPT =
+  "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
+
 /**
  * Base class for cache client services (Redis/Dragonfly)
  * Provides common functionality for both providers
@@ -383,8 +387,20 @@ export abstract class BaseCacheClientService {
     }
   }
 
-  async releaseLock(key: string): Promise<boolean> {
-    return (await this.del(key)) > 0;
+  async releaseLock(key: string, value?: string): Promise<boolean> {
+    if (value === undefined) {
+      return (await this.del(key)) > 0;
+    }
+    if (!this.client || this.client.status !== 'ready') {
+      return false;
+    }
+    try {
+      // Compare-and-delete in one step: only the holder that set `value` removes the lock.
+      const deleted = await this.client.eval(RELEASE_LOCK_IF_VALUE_SCRIPT, 1, key, value);
+      return deleted === 1;
+    } catch {
+      return false;
+    }
   }
 
   async exists(key: string): Promise<number> {
