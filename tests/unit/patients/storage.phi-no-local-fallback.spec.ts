@@ -333,8 +333,8 @@ describe('S3StorageService exact-key objects (invoice PDFs)', () => {
 
     expect(service.isS3Enabled()).toBe(false);
     expect(service.isS3Configured()).toBe(true);
-    await expect(service.putObject('invoices/a.pdf', Buffer.from('x'), 'x')).rejects.toThrow(
-      'S3 client not initialized'
-    );
+    await expect(service.putObject('invoices/a.pdf', Buffer.from('x'), 'x')).rejects.toMatchObject({
+      code: 'EXTERNAL_SERVICE_UNAVAILABLE',
+    });
   });
 });

@@ -47,6 +47,15 @@ function sharedCache() {
   };
 }
 
+/** Resolves once `condition` holds (polled every few ms, fails the test after 2 s). */
+async function until(condition: () => boolean): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error('condition not reached');
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+}
+
 function copyWith(cache: ReturnType<typeof sharedCache>): LockFn {
   const { service } = createBillingService({ cacheService: cache as never });
   const lock = (service as unknown as { withInvoiceWhatsAppSendLock: LockFn })
@@ -69,8 +78,9 @@ describe('invoice WhatsApp send lock across API copies', () => {
     const sendB = jest.fn(() => Promise.resolve(true));
 
     const resultA = copyA('inv-1', sendA);
-    await new Promise(resolve => setImmediate(resolve)); // A holds the lock, its send is running
+    await until(() => sendA.mock.calls.length === 1); // A holds the lock, its send is running
     const resultB = copyB('inv-1', sendB);
+    await until(() => cache.acquireLock.mock.calls.length >= 2); // B found the lock taken
     releaseSend(true);
 
     await expect(resultA).resolves.toBe(true);
@@ -111,5 +121,31 @@ describe('invoice WhatsApp send lock across API copies', () => {
     });
 
     expect(cache.values.get(key)).toBe('copy-b-token');
+  });
+
+  it('answers false at once when the first copy finished without a result', async () => {
+    const cache = sharedCache();
+    const copyA = copyWith(cache);
+    const copyB = copyWith(cache);
+    let failSend: (error: Error) => void = () => undefined;
+
+    const sendA = jest.fn(
+      () =>
+        new Promise<boolean>((_resolve, reject) => {
+          failSend = reject;
+        })
+    );
+    const sendB = jest.fn(() => Promise.resolve(true));
+    const resultA = copyA('inv-1', sendA);
+    await until(() => sendA.mock.calls.length === 1);
+    const started = Date.now();
+    const resultB = copyB('inv-1', sendB);
+    await until(() => cache.acquireLock.mock.calls.length >= 2);
+    failSend(new Error('provider error'));
+
+    await expect(resultA).rejects.toThrow('provider error');
+    await expect(resultB).resolves.toBe(false);
+    expect(sendB).not.toHaveBeenCalled();
+    expect(Date.now() - started).toBeLessThan(3_000);
   });
 });
