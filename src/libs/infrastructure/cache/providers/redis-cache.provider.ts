@@ -55,8 +55,8 @@ export class RedisCacheProvider implements IAdvancedCacheProvider {
     return this.redisService.acquireLock(key, ttlSeconds, value);
   }
 
-  async releaseLock(key: string): Promise<boolean> {
-    return this.redisService.releaseLock(key);
+  async releaseLock(key: string, value?: string): Promise<boolean> {
+    return this.redisService.releaseLock(key, value);
   }
 
   async exists(key: string): Promise<boolean> {

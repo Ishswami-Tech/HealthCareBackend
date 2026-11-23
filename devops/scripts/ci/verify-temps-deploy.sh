@@ -31,18 +31,25 @@ temps_cli() {
 }
 
 # Prints one problem per line for project $1 / environment $2 (nothing when it is as expected),
-# then "PORTS <node> <host port>..." for the API's copies.
+# then "CONTAINER <node> <container id>" for each running copy. Never fails: an unreadable answer
+# from the CLI (e.g. an HTML error page during a deploy) is reported as a problem, so the retry
+# loop below tries again instead of `set -e` ending the check on the first glitch.
 check_app() {
   local pid="$1" eid="$2" label="$3" ctrs
   ctrs=$(temps_cli containers list -p "$pid" -e "$eid" --json) || {
     echo "$label: Temps CLI could not list containers"
     return 0
   }
-  CTRS="$ctrs" python3 - "$label" "$IMAGE" "$EXPECTED_NODES" <<'PY'
+  CTRS="$ctrs" python3 - "$label" "$IMAGE" "$EXPECTED_NODES" <<'PY' || echo "$label: could not read the container list"
 import json, os, sys
 label, image, expected = sys.argv[1], sys.argv[2], sys.argv[3].split()
 nodes = [e.split(":")[0] for e in expected]
-running = [c for c in json.loads(os.environ["CTRS"]) if c.get("status") == "running"]
+try:
+    containers = json.loads(os.environ["CTRS"])
+except ValueError:
+    print(f"{label}: the Temps CLI answered something other than JSON")
+    sys.exit(0)
+running = [c for c in containers if isinstance(c, dict) and c.get("status") == "running"]
 for node in nodes:
     n = sum(1 for c in running if c.get("node_name") == node)
     if n != 1:
@@ -81,7 +88,7 @@ while :; do
   problems=""
   for spec in $APPS; do
     IFS=: read -r pid eid label <<<"$spec"
-    out=$(check_app "$pid" "$eid" "$label")
+    out=$(check_app "$pid" "$eid" "$label" || echo "$label: check failed")
     problems+=$(grep -v '^CONTAINER ' <<<"$out" || true)$'\n'
     if [[ "$label" == api ]]; then
       problems+=$(probe_api_copies "$pid" "$eid" "$(grep '^CONTAINER ' <<<"$out" || true)")$'\n'

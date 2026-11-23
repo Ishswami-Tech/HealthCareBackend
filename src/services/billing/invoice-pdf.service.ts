@@ -935,6 +935,37 @@ export class InvoicePDFService {
   }
 
   /**
+   * Deletes a stored invoice PDF that a newer one replaced (best effort: a failure is logged and
+   * leaves only an orphaned object behind). `filePath` is the invoice's previous `pdfFilePath`:
+   * an S3 key `invoices/...`, or a file in this process's invoice directory. Anything else is
+   * ignored. A link to the deleted PDF still works: the download re-renders the invoice.
+   */
+  async deleteStoredInvoicePDF(filePath: string | null | undefined): Promise<void> {
+    if (!filePath) return;
+    const fileName = path.basename(filePath);
+    if (!INVOICE_FILE_NAME.test(fileName)) return;
+    try {
+      if (filePath === invoiceObjectKey(fileName)) {
+        if (this.s3StorageService.isS3Configured()) {
+          await this.s3StorageService.deleteFile(filePath);
+        }
+        return;
+      }
+      if (path.resolve(filePath) === path.join(this.invoicesDir, fileName)) {
+        await fs.promises.unlink(filePath).catch(() => undefined);
+      }
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'Could not delete a replaced invoice PDF',
+        'InvoicePDFService',
+        { fileName, error: error instanceof Error ? error.message : 'Unknown error' }
+      );
+    }
+  }
+
+  /**
    * The stored PDF behind a download link's file name, or null when it is not stored (anymore).
    * Reads S3 when configured; also looks at this process's disk, which is where PDFs went
    * before they were stored in S3 and where they go without S3.

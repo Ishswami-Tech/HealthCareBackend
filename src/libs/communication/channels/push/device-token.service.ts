@@ -545,7 +545,7 @@ export class DeviceTokenService implements OnModuleInit {
    * registered through another copy after this one started is only in the database, and a
    * sign-out or token refresh that lands here must still find it.
    */
-  private async findToken(token: string): Promise<DeviceTokenData | null> {
+  async findToken(token: string): Promise<DeviceTokenData | null> {
     const cached = this.tokenStore.get(token);
     if (cached) return cached;
     if (!this.databaseService) return null;

@@ -9,6 +9,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
+import { randomUUID } from 'crypto';
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -411,6 +412,35 @@ export class BillingService {
     await this.invalidateUserEntityCaches(userId, 'user_subscriptions');
   }
 
+  /**
+   * 'acquired', 'held-elsewhere' (another copy is sending this invoice), or 'cache-unavailable'.
+   * acquireLock() also answers false when the cache is unreachable, so a false is only taken as
+   * "held elsewhere" while the cache answers a ping; otherwise the send goes ahead without the
+   * cross-copy lock (fail open: the in-process lock still holds) instead of never sending.
+   */
+  private async acquireInvoiceWhatsAppLock(
+    key: string,
+    token: string
+  ): Promise<'acquired' | 'held-elsewhere' | 'cache-unavailable'> {
+    const acquired = await this.cacheService
+      .acquireLock(key, INVOICE_WHATSAPP_LOCK_TTL_SECONDS, token)
+      .catch(() => false);
+    if (acquired) return 'acquired';
+    const reachable = await this.cacheService
+      .ping()
+      .then(reply => reply === 'PONG')
+      .catch(() => false);
+    if (reachable) return 'held-elsewhere';
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.WARN,
+      'Cache unreachable: sending the invoice WhatsApp without the cross-instance lock',
+      'BillingService',
+      { lockKey: key }
+    );
+    return 'cache-unavailable';
+  }
+
   /** Result of the same invoice's send running on another API copy (false if none arrives). */
   private async awaitOtherCopyInvoiceWhatsAppSend(
     invoiceId: string,
@@ -470,22 +500,21 @@ export class BillingService {
     const taskPromise = (async () => {
       // Cross-copy lock: the API runs one copy per node and the recent-send marker above is
       // written only after the send, so two requests for the same invoice on different copies
-      // would both send. The second waits for the first one's result instead. Fails open when
-      // the cache is unreachable (the in-process lock still holds).
+      // would both send. The second waits for the first one's result instead.
       const inflightKey = `billing:invoice-whatsapp:inflight:${invoiceId}`;
-      const acquired = await this.cacheService
-        .acquireLock(inflightKey, INVOICE_WHATSAPP_LOCK_TTL_SECONDS)
-        .catch(() => true);
+      const lockToken = `${process.pid}:${randomUUID()}`;
+      const lock = await this.acquireInvoiceWhatsAppLock(inflightKey, lockToken);
       try {
-        if (!acquired) {
+        if (lock === 'held-elsewhere') {
           return await this.awaitOtherCopyInvoiceWhatsAppSend(invoiceId, recentKey);
         }
         const sent = await task();
         await this.cacheService.set(recentKey, String(sent), 60).catch(() => undefined);
         return sent;
       } finally {
-        if (acquired) {
-          await this.cacheService.releaseLock(inflightKey).catch(() => false);
+        if (lock === 'acquired') {
+          // Only our own token: after a TTL expiry another copy may hold the lock by now.
+          await this.cacheService.releaseLock(inflightKey, lockToken).catch(() => false);
         }
         this.invoiceWhatsAppSendLocks.delete(invoiceId);
       }
@@ -9257,6 +9286,10 @@ export class BillingService {
         pdfFilePath: filePath,
         pdfUrl,
       });
+      // The PDF this one replaces would otherwise stay in S3 forever (patient data).
+      if (invoice.pdfFilePath && invoice.pdfFilePath !== filePath) {
+        await this.invoicePDFService.deleteStoredInvoicePDF(invoice.pdfFilePath);
+      }
 
       void this.loggingService.log(
         LogType.SYSTEM,

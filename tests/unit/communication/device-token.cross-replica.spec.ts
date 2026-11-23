@@ -114,4 +114,13 @@ describe('DeviceTokenService across API copies', () => {
 
     await expect(copy.deactivateDeviceToken('unknown-token', 'user-1')).resolves.toBe(false);
   });
+
+  it("finds one token's data from the database for the SNS fallback", async () => {
+    const { copyB } = await registeredOnAnotherCopy();
+
+    await expect(copyB.findToken(TOKEN)).resolves.toMatchObject({
+      userId: 'user-1',
+      platform: 'android',
+    });
+  });
 });

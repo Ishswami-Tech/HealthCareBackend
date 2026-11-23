@@ -1241,6 +1241,11 @@ async function bootstrap() {
       }
 
       // Setup graceful shutdown handlers using GracefulShutdownService
+      // Nest's own shutdown hooks were left off because GracefulShutdownService is the single
+      // SIGTERM path; when its handlers end up not installed, turn Nest's back on, or SIGTERM
+      // would only reach the OTel flush (whose listener stops Node's default exit) and the
+      // container would hang until it is killed.
+      let shutdownHandlersInstalled = false;
       if (app && gracefulShutdownService) {
         try {
           // Check if setupShutdownHandlers method exists
@@ -1252,6 +1257,7 @@ async function bootstrap() {
               pubClient,
               subClient
             );
+            shutdownHandlersInstalled = true;
             logger.log('Graceful shutdown handlers configured successfully');
           } else {
             logger.warn(
@@ -1279,6 +1285,10 @@ async function bootstrap() {
             'GracefulShutdownService is undefined, skipping graceful shutdown handlers setup'
           );
         }
+      }
+      if (!shutdownHandlersInstalled && app && gracefulShutdownService) {
+        app.enableShutdownHooks();
+        logger.warn('Graceful shutdown handlers not installed; using Nest shutdown hooks instead');
       }
     } catch (listenError) {
       const errorMessage = listenError instanceof Error ? listenError.message : 'Unknown error';
