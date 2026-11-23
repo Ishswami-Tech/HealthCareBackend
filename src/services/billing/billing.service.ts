@@ -275,8 +275,6 @@ const APPOINTMENT_PAYMENT_LOCK_TTL_SECONDS = 30;
 
 /** Cross-copy invoice WhatsApp lock: held at most this long by a send that never finished. */
 const INVOICE_WHATSAPP_LOCK_TTL_SECONDS = 60;
-/** How long a duplicate request on another copy waits for the first send's result. */
-const INVOICE_WHATSAPP_WAIT_MS = 20_000;
 const INVOICE_WHATSAPP_POLL_MS = 500;
 
 @Injectable()
@@ -414,23 +412,25 @@ export class BillingService {
 
   /**
    * 'acquired', 'held-elsewhere' (another copy is sending this invoice), or 'cache-unavailable'.
-   * acquireLock() also answers false when the cache is unreachable, so a false is only taken as
-   * "held elsewhere" while the cache answers a ping; otherwise the send goes ahead without the
-   * cross-copy lock (fail open: the in-process lock still holds) instead of never sending.
+   * acquireLock() also answers false when the cache is unreachable, so the cache is pinged FIRST
+   * (ping also brings a reconnecting client back): unreachable -> the send goes ahead without the
+   * cross-copy lock (fail open: the in-process lock still holds) instead of never sending;
+   * reachable -> a false from acquireLock means the lock really is held.
    */
   private async acquireInvoiceWhatsAppLock(
     key: string,
     token: string
   ): Promise<'acquired' | 'held-elsewhere' | 'cache-unavailable'> {
-    const acquired = await this.cacheService
-      .acquireLock(key, INVOICE_WHATSAPP_LOCK_TTL_SECONDS, token)
-      .catch(() => false);
-    if (acquired) return 'acquired';
     const reachable = await this.cacheService
       .ping()
       .then(reply => reply === 'PONG')
       .catch(() => false);
-    if (reachable) return 'held-elsewhere';
+    if (reachable) {
+      const acquired = await this.cacheService
+        .acquireLock(key, INVOICE_WHATSAPP_LOCK_TTL_SECONDS, token)
+        .catch(() => false);
+      return acquired ? 'acquired' : 'held-elsewhere';
+    }
     void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.WARN,
@@ -441,10 +441,16 @@ export class BillingService {
     return 'cache-unavailable';
   }
 
-  /** Result of the same invoice's send running on another API copy (false if none arrives). */
+  /**
+   * Result of the same invoice's send running on another API copy. Waits for as long as that
+   * copy holds the lock (at most its TTL), so a slow but successful send is not reported as a
+   * failure here; false only when the holder finished (or its lock expired) without a result.
+   */
   private async awaitOtherCopyInvoiceWhatsAppSend(
     invoiceId: string,
-    recentKey: string
+    recentKey: string,
+    lockKey: string,
+    token: string
   ): Promise<boolean> {
     void this.loggingService.log(
       LogType.SYSTEM,
@@ -453,12 +459,19 @@ export class BillingService {
       'BillingService',
       { invoiceId }
     );
-    const deadline = Date.now() + INVOICE_WHATSAPP_WAIT_MS;
+    const readResult = async (): Promise<boolean | null> => {
+      const result = await this.cacheService.get<string | boolean>(recentKey).catch(() => null);
+      return result === null || result === undefined ? null : String(result) === 'true';
+    };
+    const deadline = Date.now() + (INVOICE_WHATSAPP_LOCK_TTL_SECONDS + 2) * 1000;
     while (Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, INVOICE_WHATSAPP_POLL_MS));
-      const result = await this.cacheService.get<string | boolean>(recentKey).catch(() => null);
-      if (result !== null && result !== undefined) {
-        return String(result) === 'true';
+      const result = await readResult();
+      if (result !== null) return result;
+      // The holder is gone (finished without a result, or its lock expired): one last look.
+      if (await this.cacheService.acquireLock(lockKey, 1, token).catch(() => false)) {
+        await this.cacheService.releaseLock(lockKey, token).catch(() => false);
+        return (await readResult()) ?? false;
       }
     }
     return false;
@@ -506,7 +519,12 @@ export class BillingService {
       const lock = await this.acquireInvoiceWhatsAppLock(inflightKey, lockToken);
       try {
         if (lock === 'held-elsewhere') {
-          return await this.awaitOtherCopyInvoiceWhatsAppSend(invoiceId, recentKey);
+          return await this.awaitOtherCopyInvoiceWhatsAppSend(
+            invoiceId,
+            recentKey,
+            inflightKey,
+            lockToken
+          );
         }
         const sent = await task();
         await this.cacheService.set(recentKey, String(sent), 60).catch(() => undefined);
@@ -2843,9 +2861,9 @@ export class BillingService {
 
   /**
    * Generated invoice PDFs are named `invoice_<invoiceNumber>_<suffix>.pdf`. Downloading by file
-   * name must pass the same ownership / clinic check as reading the invoice itself.
+   * name must pass the same ownership / clinic check as reading the invoice itself. Resolves the
+   * invoice id behind the link once the checks pass.
    */
-  /** Resolves the invoice id behind a PDF download link after the access checks pass. */
   async assertInvoiceFileAccess(
     fileName: string,
     requester?: BillingAccessContext

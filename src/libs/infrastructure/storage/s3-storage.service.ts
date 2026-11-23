@@ -20,7 +20,9 @@
  * All type assertions below are safe and verified by TypeScript compilation.
  */
 
-import { Inject, Injectable, OnModuleInit, forwardRef } from '@nestjs/common';
+import { HttpStatus, Inject, Injectable, OnModuleInit, forwardRef } from '@nestjs/common';
+import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
 import { ConfigService } from '@config/config.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
@@ -123,16 +125,27 @@ export function isPhiStorageFolder(folder: string): boolean {
   return PHI_STORAGE_FOLDERS.includes(top);
 }
 
+/** The fields of an AWS SDK v3 service error this module looks at. */
+type S3ServiceErrorLike = Error & { $metadata?: { httpStatusCode?: number } };
+
 /** True for the S3 error of a key that does not exist (NoSuchKey / NotFound / HTTP 404). */
-export function isMissingObjectError(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) {
-    return false;
-  }
-  const { name, $metadata } = error as {
-    name?: unknown;
-    $metadata?: { httpStatusCode?: unknown };
-  };
-  return name === 'NoSuchKey' || name === 'NotFound' || $metadata?.httpStatusCode === 404;
+export function isMissingObjectError(error: S3ServiceErrorLike): boolean {
+  return (
+    error.name === 'NoSuchKey' ||
+    error.name === 'NotFound' ||
+    error.$metadata?.httpStatusCode === 404
+  );
+}
+
+/** Raised by the exact-key methods when S3 is not configured or its client failed to start. */
+function s3UnavailableError(operation: string): HealthcareError {
+  return new HealthcareError(
+    ErrorCode.EXTERNAL_SERVICE_UNAVAILABLE,
+    'Object storage (S3) is not available',
+    HttpStatus.SERVICE_UNAVAILABLE,
+    { operation },
+    'S3StorageService'
+  );
 }
 
 /** True when `storedUrl` starts with one of our own URL prefixes (case-insensitive). */
@@ -808,7 +821,7 @@ export class S3StorageService implements OnModuleInit {
    */
   async putObject(key: string, body: Buffer, contentType: string): Promise<void> {
     if (!this.s3Client || !this.config.bucket) {
-      throw new Error('S3 client not initialized');
+      throw s3UnavailableError('putObject');
     }
     const client = this.s3Client as S3Client;
     await client.send(
@@ -827,7 +840,7 @@ export class S3StorageService implements OnModuleInit {
    */
   async getObjectBuffer(key: string): Promise<Buffer | null> {
     if (!this.s3Client || !this.config.bucket) {
-      throw new Error('S3 client not initialized');
+      throw s3UnavailableError('getObjectBuffer');
     }
     const client = this.s3Client as S3Client;
     try {
@@ -841,7 +854,7 @@ export class S3StorageService implements OnModuleInit {
       }
       return Buffer.from(await body.transformToByteArray());
     } catch (error) {
-      if (isMissingObjectError(error)) {
+      if (error instanceof Error && isMissingObjectError(error)) {
         return null;
       }
       throw error;
