@@ -73,9 +73,60 @@ export interface AccessLogLineInput {
   readonly slowThresholdMs?: number | undefined;
 }
 
+/**
+ * Query parameters whose values are credentials (the payment callback carries a signed
+ * `handoff_token` JWT in its URL, and it was written verbatim into the access log).
+ */
+const SENSITIVE_PARAM_PATTERN =
+  /token|secret|passw(?:or)?d|signature|api[-_]?key|private[-_]?key|authorization|session[-_]?id|jwt/i;
+const SENSITIVE_PARAM_NAMES: ReadonlySet<string> = new Set(['code', 'otp', 'sig', 'key', 'auth']);
+
+export const REDACTED = 'REDACTED';
+
+export function isSensitiveParamName(name: string): boolean {
+  return SENSITIVE_PARAM_PATTERN.test(name) || SENSITIVE_PARAM_NAMES.has(name.toLowerCase());
+}
+
+function decodeParamName(raw: string): string {
+  try {
+    return decodeURIComponent(raw.replace(/\+/g, ' '));
+  } catch {
+    return raw;
+  }
+}
+
+/** The URL with the values of credential-like query parameters replaced (path untouched). */
+export function redactUrl(url: string): string {
+  const queryStart = url.indexOf('?');
+  if (queryStart === -1) return url;
+  const hashStart = url.indexOf('#', queryStart);
+  const query = url.slice(queryStart + 1, hashStart === -1 ? undefined : hashStart);
+  const redacted = query
+    .split('&')
+    .map(pair => {
+      const eq = pair.indexOf('=');
+      const name = eq === -1 ? pair : pair.slice(0, eq);
+      return eq !== -1 && isSensitiveParamName(decodeParamName(name))
+        ? `${name}=${REDACTED}`
+        : pair;
+    })
+    .join('&');
+  return `${url.slice(0, queryStart)}?${redacted}`;
+}
+
+/** A parsed query object with the values of credential-like parameters replaced. */
+export function redactQuery<T extends Record<string, unknown>>(query: T): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(query).map(([name, value]) => [
+      name,
+      isSensitiveParamName(name) ? REDACTED : value,
+    ])
+  );
+}
+
 /** `GET /api/v1/x [200] 42ms rid=abc`, plus ` SLOW route=/api/v1/x/:id` above the threshold. */
 export function formatAccessLogLine(input: AccessLogLineInput): string {
-  const base = `${input.method} ${input.url} [${input.statusCode}] ${input.durationMs}ms rid=${input.requestId}`;
+  const base = `${input.method} ${redactUrl(input.url)} [${input.statusCode}] ${input.durationMs}ms rid=${input.requestId}`;
   if (!isSlowRequest(input.durationMs, input.slowThresholdMs ?? SLOW_REQUEST_THRESHOLD_MS)) {
     return base;
   }

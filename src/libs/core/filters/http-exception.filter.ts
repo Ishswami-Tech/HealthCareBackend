@@ -11,6 +11,7 @@ import { ConfigService } from '@config/config.service';
 import { FastifyReply } from 'fastify';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
+import { redactQuery, redactUrl } from '@infrastructure/logging/access-log.util';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { captureError } from '../../../instrument/sentry';
@@ -237,9 +238,11 @@ export class HttpExceptionFilter implements ExceptionFilter {
     // Enhanced error logging with better context
     const requestId = typeof request.id === 'string' ? request.id : undefined;
     const ridSuffix = requestId ? ` rid=${requestId}` : '';
+    // Credentials in the query string (e.g. the payment handoff_token) never reach logs or Sentry.
+    const loggedUrl = redactUrl(request.url);
     const errorLog: ErrorLog = {
       ...(requestId ? { requestId } : {}),
-      path: request.url,
+      path: loggedUrl,
       method: request.method,
       statusCode: status,
       timestamp: nowIso(),
@@ -247,7 +250,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       ...(stackTrace && { stack: stackTrace }),
       body: this.sanitizeRequestBody(request.body),
       headers: this.sanitizeHeaders(request.headers),
-      ...(request.query && { query: request.query }),
+      ...(request.query && { query: redactQuery(request.query as Record<string, unknown>) }),
       ...(request.params && { params: request.params }),
       ...(request.headers['user-agent'] && {
         userAgent: request.headers['user-agent'],
@@ -265,7 +268,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `[ERROR] [API] ${request.method} ${request.url} [${status}]${ridSuffix} failed: ${errorMessage}`,
+        `[ERROR] [API] ${request.method} ${loggedUrl} [${status}]${ridSuffix} failed: ${errorMessage}`,
         'HttpExceptionFilter',
         errorLog as unknown as Record<string, unknown>
       );
@@ -301,7 +304,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.INFO,
-        `[${errorType}] [API] ${request.method} ${request.url} [${status}]${ridSuffix} failed: ${errorMessage}`,
+        `[${errorType}] [API] ${request.method} ${loggedUrl} [${status}]${ridSuffix} failed: ${errorMessage}`,
         'HttpExceptionFilter',
         {
           ...errorLog,

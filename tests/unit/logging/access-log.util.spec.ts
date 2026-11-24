@@ -4,6 +4,8 @@ import {
   accessLogSeverity,
   formatAccessLogLine,
   isSlowRequest,
+  redactQuery,
+  redactUrl,
   resolveRequestId,
   toDurationMs,
 } from '@infrastructure/logging/access-log.util';
@@ -95,5 +97,44 @@ describe('formatAccessLogLine', () => {
         requestId: 'rid-12345678',
       })
     ).toContain('SLOW route=/api/v1/queue');
+  });
+});
+
+describe('credential redaction in logged URLs', () => {
+  const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJvcmRlcklkIjoiSU5WLTEifQ.c2lnbmF0dXJl';
+
+  it('masks the payment handoff_token in the access line (was logged verbatim)', () => {
+    const line = formatAccessLogLine({
+      method: 'POST',
+      url: `/api/v1/payments/callback/handoff?handoff_token=${jwt}&status=PAID`,
+      statusCode: 200,
+      durationMs: 900,
+      requestId: 'rid-12345678',
+      route: '/api/v1/payments/callback/handoff',
+    });
+    expect(line).not.toContain(jwt);
+    expect(line).toContain('handoff_token=REDACTED&status=PAID');
+    expect(line).toContain('SLOW route=/api/v1/payments/callback/handoff');
+  });
+
+  it('masks every credential-like parameter and leaves the rest alone', () => {
+    expect(
+      redactUrl(
+        '/x?access_token=a&refresh-token=b&password=c&signature=d&api_key=e&code=f&otp=1&page=2&q=token'
+      )
+    ).toBe(
+      '/x?access_token=REDACTED&refresh-token=REDACTED&password=REDACTED&signature=REDACTED&api_key=REDACTED&code=REDACTED&otp=REDACTED&page=2&q=token'
+    );
+    expect(redactUrl('/x?handoff%5Ftoken=a')).toBe('/x?handoff%5Ftoken=REDACTED');
+    expect(redactUrl('/x?flag&token=a#frag')).toBe('/x?flag&token=REDACTED');
+    expect(redactUrl('/api/v1/appointments/42')).toBe('/api/v1/appointments/42');
+  });
+
+  it('masks credential values in a parsed query object', () => {
+    expect(redactQuery({ handoff_token: jwt, status: 'PAID', limit: '10' })).toEqual({
+      handoff_token: 'REDACTED',
+      status: 'PAID',
+      limit: '10',
+    });
   });
 });
