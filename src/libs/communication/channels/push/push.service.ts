@@ -11,6 +11,7 @@ import {
   resolvePushTargets,
   summarizePushResults,
 } from '@communication/channels/push/push-targets.util';
+import { isUnregisteredFcmTokenError } from '@communication/channels/push/device-token-errors.util';
 
 /** Upper bound for a single Expo Push API call so a slow provider cannot stall callers. */
 const EXPO_REQUEST_TIMEOUT_MS = 10_000;
@@ -47,6 +48,18 @@ export class PushNotificationService implements OnModuleInit {
   private initializeFirebase(): void {
     try {
       const firebaseClient = new FirebaseGoogleClient(this.configService);
+      const keyProblem = firebaseClient.getPrivateKeyProblem();
+      if (keyProblem) {
+        // Was found only on each send, as OpenSSL's "DECODER routines::unsupported".
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          `FIREBASE_PRIVATE_KEY is set but unusable (${keyProblem}); FCM push is disabled until it is fixed`,
+          'PushNotificationService'
+        );
+        this.isInitialized = false;
+        return;
+      }
       if (!firebaseClient.isMessagingConfigured()) {
         void this.loggingService.log(
           LogType.SYSTEM,
@@ -92,7 +105,9 @@ export class PushNotificationService implements OnModuleInit {
 
     const fcmResult = await this.sendViaFCM(deviceToken, notification, userId);
 
-    if (fcmResult.success) {
+    // SNS cannot help a token FCM no longer knows, and is not configured in production: in both
+    // cases the FCM result is the answer (was: "Both FCM and SNS failed" on every stale token).
+    if (fcmResult.success || fcmResult.tokenUnregistered || !this.isSnsBackupAvailable()) {
       return {
         ...fcmResult,
         provider: 'fcm',
@@ -333,8 +348,17 @@ export class PushNotificationService implements OnModuleInit {
       return { success: true, messageId: response };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      if (this.isUnregisteredTokenError(errorMessage)) {
+      if (isUnregisteredFcmTokenError(error)) {
+        // An uninstalled app or a rotated token: routine, so the token is retired, not alerted on.
         await this.deviceTokenService?.deactivateDeviceToken(deviceToken, userId);
+        void this.loggingService.log(
+          LogType.NOTIFICATION,
+          LogLevel.INFO,
+          'FCM token no longer registered; device token deactivated',
+          'PushNotificationService',
+          { fcmError: errorMessage, deviceToken: this.maskToken(deviceToken), userId }
+        );
+        return { success: false, error: errorMessage, tokenUnregistered: true };
       }
 
       void this.loggingService.log(
@@ -684,10 +708,8 @@ export class PushNotificationService implements OnModuleInit {
     );
   }
 
-  private isUnregisteredTokenError(error?: string): boolean {
-    return Boolean(
-      error && /UNREGISTERED|NOT_FOUND|registration-token-not-registered/i.test(error)
-    );
+  private isSnsBackupAvailable(): boolean {
+    return Boolean(this.snsBackupService?.isHealthy());
   }
 
   isHealthy(): boolean {

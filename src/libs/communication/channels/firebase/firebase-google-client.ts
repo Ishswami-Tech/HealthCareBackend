@@ -1,6 +1,7 @@
 import { GoogleAuth } from 'google-auth-library';
 import { existsSync, readFileSync } from 'fs';
 import { ConfigService } from '@config/config.service';
+import { parseServiceAccountPrivateKey } from '@communication/channels/firebase/private-key.util';
 
 type QueryValue = string | number | boolean;
 type FirebaseRequestError = Error & {
@@ -14,6 +15,8 @@ export class FirebaseGoogleClient {
   private readonly projectId: string | undefined;
   private readonly clientEmail: string | undefined;
   private readonly privateKey: string | undefined;
+  /** Why the configured private key is unusable (no key value in it), or undefined. */
+  private readonly privateKeyProblem: string | undefined;
   private readonly databaseUrl: string | undefined;
 
   constructor(private readonly configService: ConfigService) {
@@ -28,9 +31,13 @@ export class FirebaseGoogleClient {
       fileCredentials?.projectId;
     this.clientEmail =
       this.configService.getEnv('FIREBASE_CLIENT_EMAIL') || fileCredentials?.clientEmail;
-    this.privateKey = this.normalizePrivateKey(
-      this.configService.getEnv('FIREBASE_PRIVATE_KEY') || fileCredentials?.privateKey
-    );
+    const rawPrivateKey =
+      this.configService.getEnv('FIREBASE_PRIVATE_KEY') || fileCredentials?.privateKey;
+    const parsedKey = parseServiceAccountPrivateKey(rawPrivateKey);
+    this.privateKey = parsedKey.key;
+    // "not set" is the ordinary unconfigured case; anything else is a broken value.
+    this.privateKeyProblem =
+      rawPrivateKey !== undefined && rawPrivateKey.trim() !== '' ? parsedKey.problem : undefined;
     this.databaseUrl =
       this.configService.getEnv('FIREBASE_DATABASE_URL') ||
       this.configService.getEnv('FCM_DATABASE_URL') ||
@@ -39,6 +46,14 @@ export class FirebaseGoogleClient {
 
   isMessagingConfigured(): boolean {
     return Boolean(this.projectId && this.clientEmail && this.privateKey);
+  }
+
+  /**
+   * Set when FIREBASE_PRIVATE_KEY (or the credentials file's key) is present but unusable, e.g.
+   * a placeholder or a key mangled by the env editor. Describes the shape only, never the value.
+   */
+  getPrivateKeyProblem(): string | undefined {
+    return this.privateKeyProblem;
   }
 
   isDatabaseConfigured(): boolean {
@@ -198,10 +213,6 @@ export class FirebaseGoogleClient {
     } catch {
       return null;
     }
-  }
-
-  private normalizePrivateKey(value?: string): string | undefined {
-    return value?.replace(/\\n/g, '\n');
   }
 
   private async requestJson<T>(

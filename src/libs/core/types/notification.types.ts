@@ -43,6 +43,8 @@ export interface PushNotificationResult {
   error?: string;
   provider?: string;
   usedFallback?: boolean;
+  /** FCM no longer knows this device token; it was deactivated (routine, not an outage). */
+  tokenUnregistered?: boolean;
   successCount?: number;
   failureCount?: number;
   results?: Array<{
