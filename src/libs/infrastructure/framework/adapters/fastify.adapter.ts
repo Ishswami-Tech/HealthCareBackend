@@ -26,11 +26,12 @@
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { INestApplication, Logger, LogLevel } from '@nestjs/common';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest, RequestPayload } from 'fastify';
 import { getEnvBoolean, getEnvWithDefault } from '@config/environment/utils';
 import {
   dropContentTypeOfEmptyBody,
   settleEmptyChunkedBody,
+  type EmptyBodyRequest,
 } from '@infrastructure/framework/adapters/empty-body.util';
 import { REQUEST_ID_HEADER, resolveRequestId } from '@infrastructure/logging/access-log.util';
 import {
@@ -203,18 +204,26 @@ export class FastifyFrameworkAdapter implements IFastifyFrameworkAdapter {
 
     // A request without a body never fails on its Content-Type (see empty-body.util): settled
     // from the headers when they prove the body empty, else (chunked, as the Temps proxy forwards
-    // every request) by reading the stream before Fastify picks a parser.
+    // requests) by reading the stream before Fastify picks a parser.
     const fastify = this.getHttpServer(app);
-    fastify.addHook('onRequest', (request, reply, done) => {
-      dropContentTypeOfEmptyBody(request.headers);
+    const emptyBodyView = (request: FastifyRequest): EmptyBodyRequest => ({
+      method: request.method,
+      httpVersionMajor: request.raw.httpVersionMajor,
+      headers: request.headers,
+    });
+    fastify.addHook('onRequest', (request, reply, done): void => {
+      dropContentTypeOfEmptyBody(emptyBodyView(request));
       // Every response (guard refusals and errors included) carries the id its log lines use.
       reply.header(REQUEST_ID_HEADER, request.id);
       done();
     });
-    fastify.addHook('preParsing', async (request, _reply, payload) => {
-      await settleEmptyChunkedBody(request.headers, payload);
-      return payload;
-    });
+    fastify.addHook(
+      'preParsing',
+      async (request, _reply, payload: RequestPayload): Promise<RequestPayload> => {
+        await settleEmptyChunkedBody(emptyBodyView(request), payload);
+        return payload;
+      }
+    );
 
     return app;
   }

@@ -8,33 +8,65 @@
  *
  * - a client that declares a content type but sends nothing (`Content-Length: 0`, or no length):
  *   many clients do that for action routes without a payload;
- * - the Temps proxy, which forwards every request with `Transfer-Encoding: chunked`, even a
- *   bodyless DELETE whose client sent `Content-Length: 0`. The headers then say "a body of unknown
- *   length follows" and Fastify parses it: `DELETE /auth/admin/review-login` from the web portal
+ * - the Temps proxy, which forwards requests with `Transfer-Encoding: chunked`, even a bodyless
+ *   DELETE whose client sent `Content-Length: 0`. The headers then say "a body of unknown length
+ *   follows" and Fastify parses it: `DELETE /auth/admin/review-login` from the web portal
  *   (no Content-Type) got 415.
  *
  * The first is settled from the headers (onRequest); the second only by reading the stream, which
  * is done before parsing (preParsing): when it ends without a byte, the request is rewritten as the
  * bodyless request it is. The route then sees `body === undefined`. A request with a body is left
  * exactly as it was, so its parsing, JSON validation and 415 for an unsupported type are unchanged.
+ *
+ * Left alone on purpose:
+ * - methods Fastify never parses (GET, HEAD, TRACE), and QUERY, which must carry a Content-Type;
+ * - multipart requests: @fastify/multipart answers an empty upload with its own clear error, and
+ *   upload routes rely on `request.isMultipart()`;
+ * - HTTP/2, where a body travels in DATA frames and often has no Content-Length, so the headers
+ *   never prove the body empty (Transfer-Encoding does not exist there either).
  */
 import type { Readable } from 'stream';
 
 export type RequestHeaderBag = Record<string, string | string[] | undefined>;
 
+/** The parts of an incoming request the empty-body rules look at (headers are edited in place). */
+export interface EmptyBodyRequest {
+  readonly method: string;
+  readonly httpVersionMajor: number;
+  readonly headers: RequestHeaderBag;
+}
+
 type StreamError = Error & { statusCode?: number };
+
+/** Methods whose body Fastify parses and that may go without a Content-Type. */
+const PARSED_BODY_METHODS: ReadonlySet<string> = new Set([
+  'DELETE',
+  'OPTIONS',
+  'PATCH',
+  'POST',
+  'PUT',
+]);
 
 function headerText(value: string | string[] | undefined): string {
   return (Array.isArray(value) ? value[0] : value)?.trim().toLowerCase() ?? '';
 }
 
+/** Whether the empty-body rules apply to this request at all (see the module notes). */
+function isInScope(request: EmptyBodyRequest): boolean {
+  return (
+    PARSED_BODY_METHODS.has(request.method.toUpperCase()) &&
+    !headerText(request.headers['content-type']).startsWith('multipart/')
+  );
+}
+
 /**
- * True when the headers alone prove there is no body: no transfer encoding, and a
+ * True when the headers alone prove there is no body: HTTP/1.x, no transfer encoding, and a
  * `Content-Length` of 0 or none at all (HTTP/1.1: no message body; Fastify uses the same rule).
  */
-export function headersDeclareNoBody(headers: RequestHeaderBag): boolean {
-  if (headerText(headers['transfer-encoding'])) return false;
-  const length = headerText(headers['content-length']);
+export function headersDeclareNoBody(request: EmptyBodyRequest): boolean {
+  if (request.httpVersionMajor >= 2) return false;
+  if (headerText(request.headers['transfer-encoding'])) return false;
+  const length = headerText(request.headers['content-length']);
   return length === '' || length === '0';
 }
 
@@ -42,9 +74,10 @@ export function headersDeclareNoBody(headers: RequestHeaderBag): boolean {
  * Removes the content type of a request whose headers prove it has no body (in place: Fastify
  * reads the request's own header object). Returns true when it did.
  */
-export function dropContentTypeOfEmptyBody(headers: RequestHeaderBag): boolean {
-  if (headers['content-type'] === undefined || !headersDeclareNoBody(headers)) return false;
-  delete headers['content-type'];
+export function dropContentTypeOfEmptyBody(request: EmptyBodyRequest): boolean {
+  if (request.headers['content-type'] === undefined) return false;
+  if (!isInScope(request) || !headersDeclareNoBody(request)) return false;
+  delete request.headers['content-type'];
   return true;
 }
 
@@ -93,13 +126,13 @@ export function streamHasData(stream: Readable): Promise<boolean> {
  * did.
  */
 export async function settleEmptyChunkedBody(
-  headers: RequestHeaderBag,
+  request: EmptyBodyRequest,
   payload: Readable
 ): Promise<boolean> {
-  if (!headerText(headers['transfer-encoding'])) return false;
+  if (!isInScope(request) || !headerText(request.headers['transfer-encoding'])) return false;
   if (await streamHasData(payload)) return false;
-  delete headers['transfer-encoding'];
-  delete headers['content-length'];
-  delete headers['content-type'];
+  delete request.headers['transfer-encoding'];
+  delete request.headers['content-length'];
+  delete request.headers['content-type'];
   return true;
 }

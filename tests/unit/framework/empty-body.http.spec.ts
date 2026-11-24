@@ -12,7 +12,7 @@
 import { afterAll, beforeAll, describe, expect, it } from '@jest/globals';
 import * as http from 'http';
 import type { AddressInfo } from 'net';
-import { Body, Controller, Delete, Module, Param, Post, Put, Logger } from '@nestjs/common';
+import { Body, Controller, Delete, Module, Param, Post, Put } from '@nestjs/common';
 import type { INestApplication } from '@nestjs/common';
 import { FastifyFrameworkAdapter } from '@infrastructure/framework/adapters/fastify.adapter';
 
@@ -43,6 +43,9 @@ class EchoController {
 
 @Module({ controllers: [EchoController] })
 class EchoModule {}
+
+/** createApplication still takes a Nest logger for interface reasons; it never uses it. */
+type UnusedAdapterLogger = Parameters<FastifyFrameworkAdapter['createApplication']>[2];
 
 interface SendOptions {
   readonly contentType?: string;
@@ -99,7 +102,7 @@ describe('empty request bodies through the real Fastify setup', () => {
         connectionTimeout: 5_000,
         requestTimeout: 5_000,
       },
-      new Logger('EmptyBodySpec')
+      {} as UnusedAdapterLogger
     );
     await app.listen(0, '127.0.0.1');
     port = (app.getHttpServer().address() as AddressInfo).port;
@@ -134,6 +137,7 @@ describe('empty request bodies through the real Fastify setup', () => {
     it('accepts a DELETE declaring text/plain with no body', async () => {
       const res = await send('DELETE', { chunked, contentType: 'text/plain' });
       expect(res.status).toBe(200);
+      expect(res.json.body).toBeNull();
     });
 
     it('accepts an empty body whatever media type it declares', async () => {
