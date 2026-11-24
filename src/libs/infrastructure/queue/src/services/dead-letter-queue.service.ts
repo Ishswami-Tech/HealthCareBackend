@@ -154,7 +154,7 @@ export class DeadLetterQueueService implements OnModuleDestroy {
       };
 
       await this.dlqQueue.add('dead-letter', entry, {
-        jobId: `dlq-${job.id}`,
+        jobId: deadLetterJobId(String(job.id)),
         removeOnComplete: DLQ_CONFIG.removeOnComplete,
         removeOnFail: DLQ_CONFIG.removeOnFail,
         priority: 0,
@@ -256,7 +256,7 @@ export class DeadLetterQueueService implements OnModuleDestroy {
     }
 
     const added = await target.add(entry.name, entry.data, buildRetryOptions(entry));
-    if (!added?.id || (isCustomJobId(entry.jobId) && String(added.id) !== entry.jobId)) {
+    if (!added?.id || (isReusableCustomJobId(entry.jobId) && String(added.id) !== entry.jobId)) {
       throw new Error(
         `Re-enqueue of DLQ job ${jobId} to ${entry.originalQueue} was not accepted; DLQ entry kept`
       );
@@ -344,11 +344,26 @@ export class DeadLetterQueueService implements OnModuleDestroy {
 }
 
 /**
- * BullMQ auto-generated ids are integers, and BullMQ refuses integer CUSTOM ids ("Custom Id
- * cannot be integers"), so only a producer-chosen (non-integer) id is reused on re-add.
+ * Whether BullMQ accepts `jobId` as a CUSTOM id on add(). It refuses integers ("Custom Id cannot
+ * be integers": those are its own auto ids) and ids with ':' unless they split into exactly three
+ * parts ("Custom Id cannot contain :"), the shape of its legacy repeat ids. Its own job-scheduler
+ * ids (`repeat:<schedulerId>:<millis>`) skip that check, so a scheduled task, whose scheduler id is
+ * `scheduled:<task>`, runs as `repeat:scheduled:<task>:<millis>`: an id BullMQ itself created but
+ * will not accept back.
  */
-function isCustomJobId(jobId: string): boolean {
-  return `${parseInt(jobId, 10)}` !== jobId;
+export function isReusableCustomJobId(jobId: string): boolean {
+  if (`${parseInt(jobId, 10)}` === jobId) return false;
+  return !jobId.includes(':') || jobId.split(':').length === 3;
+}
+
+/**
+ * The DLQ copy's id: deterministic (a job failing twice is stored once) and always accepted by
+ * BullMQ. ':' is percent-encoded ('%' first, so distinct ids stay distinct): `dlq-${id}` of a
+ * scheduled task's `repeat:scheduled:<task>:<millis>` was refused, and the failed job was lost
+ * instead of reaching the DLQ.
+ */
+export function deadLetterJobId(jobId: string): string {
+  return `dlq-${jobId.replace(/%/g, '%25').replace(/:/g, '%3A')}`;
 }
 
 function buildRetryOptions(entry: Partial<DeadLetterEntry>): JobsOptions {
@@ -356,7 +371,8 @@ function buildRetryOptions(entry: Partial<DeadLetterEntry>): JobsOptions {
   const backoff: NonNullable<JobsOptions['backoff']> = savedBackoff ?? DEFAULT_RETRY_BACKOFF;
   return {
     ...(entry.opts ?? {}),
-    ...(entry.jobId && isCustomJobId(entry.jobId) ? { jobId: entry.jobId } : {}),
+    // An id BullMQ would refuse is not reused: the job is re-added under a fresh auto id.
+    ...(entry.jobId && isReusableCustomJobId(entry.jobId) ? { jobId: entry.jobId } : {}),
     attempts: DEFAULT_RETRY_ATTEMPTS,
     backoff,
     removeOnComplete: JOB_RETENTION.removeOnComplete,

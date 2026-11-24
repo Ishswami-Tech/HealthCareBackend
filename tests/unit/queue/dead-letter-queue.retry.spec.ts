@@ -9,11 +9,14 @@ jest.mock('../../../src/libs/infrastructure/database/database.service', () => ({
 
 import {
   DeadLetterQueueService,
+  deadLetterJobId,
+  isReusableCustomJobId,
   type DeadLetterEntry,
   type DeadLetterQueueLike,
 } from '../../../src/libs/infrastructure/queue/src/services/dead-letter-queue.service';
 import type { DatabaseService } from '../../../src/libs/infrastructure/database/database.service';
 import type { LoggingService } from '../../../src/libs/infrastructure/logging';
+import type { Job } from 'bullmq';
 
 interface FakeJob {
   id: string;
@@ -27,11 +30,20 @@ interface FakeJob {
   retry: (state: string, opts: unknown) => Promise<void>;
 }
 
-/** In-memory stand-in for a BullMQ queue with BullMQ's duplicate-id semantics. */
+/** BullMQ 5/6 Job.validateOptions rules for a custom jobId on add(). */
+function assertBullMqAcceptsCustomId(jobId: string): void {
+  if (`${parseInt(jobId, 10)}` === jobId) throw new Error('Custom Id cannot be integers');
+  if (jobId.includes(':') && jobId.split(':').length !== 3) {
+    throw new Error('Custom Id cannot contain :');
+  }
+}
+
+/** In-memory stand-in for a BullMQ queue with BullMQ's duplicate-id and custom-id semantics. */
 class FakeQueue {
   readonly jobs = new Map<string, FakeJob>();
   private nextId = 100;
   readonly add = jest.fn(async (name: string, data: unknown, opts: { jobId?: string } = {}) => {
+    if (opts.jobId !== undefined) assertBullMqAcceptsCustomId(opts.jobId);
     const id = opts.jobId ?? String(this.nextId++);
     const existing = this.jobs.get(id);
     if (existing) return existing; // BullMQ: duplicate jobId is silently ignored
@@ -156,6 +168,19 @@ describe('DeadLetterQueueService.retryDeadLetter', () => {
     expect(target.jobs.get('100')?.state).toBe('waiting');
   });
 
+  it('re-adds a pruned scheduled-task job under a fresh id BullMQ accepts', async () => {
+    const original = 'repeat:scheduled:billing-sweep:1795000000000';
+    const dlqId = deadLetterJobId(original);
+    dlq.put(dlqId, 'dead-letter', entry(original), 'waiting');
+
+    const result = await service.retryDeadLetter(dlqId);
+
+    const opts = target.add.mock.calls[0]?.[2] as { jobId?: string };
+    expect(opts.jobId).toBeUndefined();
+    expect(result).toEqual({ outcome: 'requeued', originalQueue: ORIGINAL_QUEUE, jobId: '100' });
+    expect(dlq.jobs.has(dlqId)).toBe(false);
+  });
+
   it('does not re-add a job that is still pending, and clears the DLQ copy', async () => {
     target.put('reminder-a-1', 'appointment', {}, 'delayed');
     const dlqJob = dlq.put('dlq-reminder-a-1', 'dead-letter', entry('reminder-a-1'), 'waiting');
@@ -189,5 +214,80 @@ describe('DeadLetterQueueService.retryDeadLetter', () => {
 
     expect(target.close).toHaveBeenCalledTimes(1);
     expect(dlq.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('DeadLetterQueueService.moveToDeadLetter', () => {
+  let dlq: FakeQueue;
+  let log: ReturnType<typeof jest.fn>;
+  let service: DeadLetterQueueService;
+
+  beforeEach(() => {
+    log = jest.fn(async () => undefined);
+    service = new DeadLetterQueueService(
+      {} as DatabaseService,
+      { log } as unknown as LoggingService
+    );
+    service.initialize({ host: 'x', port: 1, db: 1 }, name => {
+      const queue = new FakeQueue(name);
+      if (name === 'healthcare-queue-dead-letter') dlq = queue;
+      return queue as unknown as DeadLetterQueueLike;
+    });
+  });
+
+  function failedJob(id: string): Job {
+    return {
+      id,
+      name: 'scheduled-task',
+      queueName: ORIGINAL_QUEUE,
+      data: { taskId: 'billing-sweep' },
+      opts: { priority: 2, attempts: 3 },
+      attemptsMade: 3,
+    } as unknown as Job;
+  }
+
+  const loggedErrors = (): string[] =>
+    log.mock.calls.filter(call => call[1] === 'ERROR').map(call => String(call[2]));
+
+  it.each([
+    ['a scheduled task (BullMQ scheduler id with a colon)', 'repeat:scheduled:billing-sweep:1795'],
+    ['a legacy repeat job', 'repeat:abc123:1795'],
+    ['a plain custom id', 'reminder-a-1'],
+    ['a BullMQ integer id', '1987'],
+  ])('stores %s in the DLQ (was: "Custom Id cannot contain :")', async (_label, id) => {
+    await service.moveToDeadLetter(failedJob(id), new Error('boom'));
+
+    expect(loggedErrors()).toEqual([]);
+    const stored = dlq.jobs.get(deadLetterJobId(id));
+    expect(stored).toBeDefined();
+    expect((stored?.data as DeadLetterEntry).jobId).toBe(id);
+  });
+
+  it('stores a job that fails twice only once', async () => {
+    const id = 'repeat:scheduled:billing-sweep:1795';
+    await service.moveToDeadLetter(failedJob(id), new Error('boom'));
+    await service.moveToDeadLetter(failedJob(id), new Error('boom again'));
+
+    expect(dlq.jobs.size).toBe(1);
+  });
+});
+
+describe('dead-letter job ids', () => {
+  it('never produce an id BullMQ refuses, and keep distinct ids distinct', () => {
+    const ids = ['repeat:scheduled:a:1', 'repeat%3Ascheduled:a:1', 'a:b', 'a%3Ab', 'x', '42'];
+    const dlqIds = ids.map(deadLetterJobId);
+    for (const dlqId of dlqIds) {
+      expect(dlqId).not.toContain(':');
+      expect(() => assertBullMqAcceptsCustomId(dlqId)).not.toThrow();
+    }
+    expect(new Set(dlqIds).size).toBe(ids.length);
+  });
+
+  it('reuses an original id only when BullMQ accepts it back', () => {
+    expect(isReusableCustomJobId('reminder-a-1')).toBe(true);
+    expect(isReusableCustomJobId('repeat:abc:1795')).toBe(true);
+    expect(isReusableCustomJobId('repeat:scheduled:task:1795')).toBe(false);
+    expect(isReusableCustomJobId('a:b')).toBe(false);
+    expect(isReusableCustomJobId('1987')).toBe(false);
   });
 });
