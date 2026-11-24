@@ -26,6 +26,7 @@ import {
   PrimaryFollowingClient,
   startPrimaryTracking,
 } from '@infrastructure/database/prisma/primary-tracker';
+import { resolvePoolIdleSettings } from '@infrastructure/database/prisma/pool-idle.util';
 
 /** The pool-config form of PrismaPg's constructor argument (typed by the adapter's own @types/pg). */
 type PgAdapterPoolConfig = Extract<
@@ -1006,6 +1007,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       Client?: PgAdapterPoolConfig['Client'];
       ssl?: boolean | { rejectUnauthorized: boolean };
       max?: number;
+      min?: number;
+      idleTimeoutMillis?: number;
+      keepAlive?: boolean;
+      keepAliveInitialDelayMillis?: number;
       connectionTimeoutMillis?: number;
       statement_timeout?: number;
       lock_timeout?: number;
@@ -1013,6 +1018,8 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     } = {
       connectionString,
       max: this.poolSize, // DB_POOL_SIZE (default: API 25, worker 10)
+      // Warm connections between requests (was pg.Pool's 10 s idle reap: see pool-idle.util).
+      ...resolvePoolIdleSettings(this.poolSize, getEnvNumber),
       connectionTimeoutMillis: connectionTimeout,
       ...(statementTimeoutMs > 0 && { statement_timeout: statementTimeoutMs }),
       ...(lockTimeoutMs > 0 && { lock_timeout: lockTimeoutMs }),
