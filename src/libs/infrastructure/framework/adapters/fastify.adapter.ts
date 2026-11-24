@@ -28,7 +28,10 @@ import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify
 import { INestApplication, Logger, LogLevel } from '@nestjs/common';
 import type { FastifyInstance } from 'fastify';
 import { getEnvBoolean, getEnvWithDefault } from '@config/environment/utils';
-import { dropEmptyJsonContentType } from '@infrastructure/framework/adapters/empty-json-body.util';
+import {
+  dropContentTypeOfEmptyBody,
+  settleEmptyChunkedBody,
+} from '@infrastructure/framework/adapters/empty-body.util';
 import { REQUEST_ID_HEADER, resolveRequestId } from '@infrastructure/logging/access-log.util';
 import {
   IFrameworkAdapter,
@@ -198,12 +201,19 @@ export class FastifyFrameworkAdapter implements IFastifyFrameworkAdapter {
       ),
     ]);
 
-    // An empty body sent as application/json is "no body", not a 400 (see empty-json-body.util).
-    this.getHttpServer(app).addHook('onRequest', (request, reply, done) => {
-      dropEmptyJsonContentType(request.headers);
+    // A request without a body never fails on its Content-Type (see empty-body.util): settled
+    // from the headers when they prove the body empty, else (chunked, as the Temps proxy forwards
+    // every request) by reading the stream before Fastify picks a parser.
+    const fastify = this.getHttpServer(app);
+    fastify.addHook('onRequest', (request, reply, done) => {
+      dropContentTypeOfEmptyBody(request.headers);
       // Every response (guard refusals and errors included) carries the id its log lines use.
       reply.header(REQUEST_ID_HEADER, request.id);
       done();
+    });
+    fastify.addHook('preParsing', async (request, _reply, payload) => {
+      await settleEmptyChunkedBody(request.headers, payload);
+      return payload;
     });
 
     return app;

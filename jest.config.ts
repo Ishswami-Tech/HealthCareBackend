@@ -44,6 +44,15 @@ function ensureVmModules(): void {
 
 ensureVmModules();
 
+/**
+ * Tests never report to Sentry. src/instrument/sentry.ts initializes on import with the shared
+ * production DSN unless SENTRY_DSN is set, so every suite that imports the exception filter used
+ * to start it. Each start also subscribes Sentry's Fastify integration to a process-wide
+ * diagnostics channel; with two in one worker, the next real Fastify instance failed with
+ * "The decorator 'opentelemetry' has already been added!". Empty = disabled (workers inherit it).
+ */
+process.env['SENTRY_DSN'] = '';
+
 const moduleMapper = {
   '^@infrastructure/(.*)$': '<rootDir>/src/libs/infrastructure/$1',
   '^@services/(.*)$': '<rootDir>/src/services/$1',
