@@ -132,8 +132,8 @@ new preferred Dragonfly node the lowest replica-priority).
 
 ## ds-fallback (control plane only)
 
-Every Temps app (HealthCareBackend API and worker, DSSOne, social-media web and
-worker, Governance Ops, Vishwayog) targets the India primaries temps-worker,
+Every Temps app (HealthCareBackend API and worker, HealthCare web, DSSOne, social-media
+web and worker, Governance Ops, Vishwayog) targets the India primaries temps-worker,
 oracle-main and oracle-vm2-dss (`targetNodes [6, 10, 11]`, one copy on each);
 Temps moves a copy between them by itself. contabo-ds is the last resort and
 stays out of the targets: Temps would place copies there in normal operation,
