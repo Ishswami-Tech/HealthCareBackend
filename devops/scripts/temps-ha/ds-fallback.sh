@@ -40,7 +40,7 @@ NORMAL_TARGETS="${NORMAL_TARGETS:-[6,10,11]}"
 # In priority order: the patient-facing API first, workers last.
 APPS="${APPS:-
 4|4|healthcarebackend|6,10,11|https://api-in.ishswami.in/health
-15|18|healthcare-web|6,10,11|https://prod.viddhakarma.com/api/health
+15|18|healthcare-web|6,10,11|https://www.viddhakarma.com/api/health
 12|13|dataspace-one|6,10,11|https://one.dataspacesecurity.com/
 8|8|social-media-web|6,10,11|https://social-media.ishswami.in/api/health
 7|7|governance-ops|6|https://governanceops.dataspacesecurity.com/
