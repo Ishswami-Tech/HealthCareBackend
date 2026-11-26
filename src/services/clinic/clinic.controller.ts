@@ -23,6 +23,7 @@ import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { Roles } from '@core/decorators/roles.decorator';
 import { HealthcareErrorsService } from '@core/errors';
+import { isExpectedClientError } from '@core/errors/expected-client-error.util';
 import { Role } from '@core/types/enums.types';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import {
@@ -497,10 +498,12 @@ export class ClinicController {
       this.logger.log(`Retrieved clinic for user ${userId} successfully`);
       return toSafeClinicResponse(result);
     } catch (_error) {
-      this.logger.error(
-        `Failed to get user clinic: ${(_error as Error).message}`,
-        (_error as Error).stack
-      );
+      if (!isExpectedClientError(_error)) {
+        this.logger.error(
+          `Failed to get user clinic: ${(_error as Error).message}`,
+          (_error as Error).stack
+        );
+      }
       throw _error;
     }
   }
@@ -573,10 +576,12 @@ export class ClinicController {
       if (_error instanceof ForbiddenException) {
         throw _error;
       }
-      this.logger.error(
-        `Failed to get clinic ${id}: ${_error instanceof Error ? _error.message : 'Unknown _error'}`,
-        _error instanceof Error ? _error.stack : ''
-      );
+      if (!isExpectedClientError(_error)) {
+        this.logger.error(
+          `Failed to get clinic ${id}: ${_error instanceof Error ? _error.message : 'Unknown _error'}`,
+          _error instanceof Error ? _error.stack : ''
+        );
+      }
       throw _error;
     }
   }
@@ -606,7 +611,9 @@ export class ClinicController {
       this.logger.log(`Getting stats for clinic ${id}`);
       return await this.clinicService.getClinicStats(id);
     } catch (_error) {
-      this.logger.error(`Failed to get clinic stats: ${(_error as Error).message}`);
+      if (!isExpectedClientError(_error)) {
+        this.logger.error(`Failed to get clinic stats: ${(_error as Error).message}`);
+      }
       throw _error;
     }
   }
@@ -653,7 +660,9 @@ export class ClinicController {
       this.logger.log(`Getting operating hours for clinic ${id}`);
       return await this.clinicLocationService.getClinicOperatingHours(id);
     } catch (_error) {
-      this.logger.error(`Failed to get clinic operating hours: ${(_error as Error).message}`);
+      if (!isExpectedClientError(_error)) {
+        this.logger.error(`Failed to get clinic operating hours: ${(_error as Error).message}`);
+      }
       throw _error;
     }
   }
@@ -727,10 +736,12 @@ export class ClinicController {
       this.logger.log(`Clinic ${id} updated successfully`);
       return toSafeClinicResponse(result);
     } catch (_error) {
-      this.logger.error(
-        `Failed to update clinic ${id}: ${_error instanceof Error ? _error.message : 'Unknown _error'}`,
-        _error instanceof Error ? _error.stack : ''
-      );
+      if (!isExpectedClientError(_error)) {
+        this.logger.error(
+          `Failed to update clinic ${id}: ${_error instanceof Error ? _error.message : 'Unknown _error'}`,
+          _error instanceof Error ? _error.stack : ''
+        );
+      }
       throw _error;
     }
   }
@@ -780,10 +791,12 @@ export class ClinicController {
       this.logger.log(`Clinic ${id} deleted successfully`);
       return { message: 'Clinic deleted successfully' };
     } catch (_error) {
-      this.logger.error(
-        `Failed to delete clinic ${id}: ${_error instanceof Error ? _error.message : 'Unknown _error'}`,
-        _error instanceof Error ? _error.stack : ''
-      );
+      if (!isExpectedClientError(_error)) {
+        this.logger.error(
+          `Failed to delete clinic ${id}: ${_error instanceof Error ? _error.message : 'Unknown _error'}`,
+          _error instanceof Error ? _error.stack : ''
+        );
+      }
       throw _error;
     }
   }
@@ -844,10 +857,12 @@ export class ClinicController {
       this.logger.log(`Clinic admin assigned successfully`);
       return toSafeClinicResponse(result);
     } catch (_error) {
-      this.logger.error(
-        `Failed to assign clinic admin: ${(_error as Error).message}`,
-        (_error as Error).stack
-      );
+      if (!isExpectedClientError(_error)) {
+        this.logger.error(
+          `Failed to assign clinic admin: ${(_error as Error).message}`,
+          (_error as Error).stack
+        );
+      }
       throw _error;
     }
   }
@@ -886,10 +901,12 @@ export class ClinicController {
       this.logger.log(`Retrieved clinic by app name ${appName} successfully`);
       return toSafeClinicResponse(result);
     } catch (_error) {
-      this.logger.error(
-        `Failed to get clinic by app name ${appName}: ${(_error as Error).message}`,
-        (_error as Error).stack
-      );
+      if (!isExpectedClientError(_error)) {
+        this.logger.error(
+          `Failed to get clinic by app name ${appName}: ${(_error as Error).message}`,
+          (_error as Error).stack
+        );
+      }
       throw _error;
     }
   }
@@ -957,10 +974,12 @@ export class ClinicController {
       this.logger.log(`Retrieved ${result?.length || 0} doctors for clinic ${id}`);
       return result;
     } catch (_error) {
-      this.logger.error(
-        `Failed to get clinic doctors for clinic ${id}: ${(_error as Error).message}`,
-        (_error as Error).stack
-      );
+      if (!isExpectedClientError(_error)) {
+        this.logger.error(
+          `Failed to get clinic doctors for clinic ${id}: ${(_error as Error).message}`,
+          (_error as Error).stack
+        );
+      }
       throw _error;
     }
   }
@@ -997,10 +1016,12 @@ export class ClinicController {
       this.logger.log(`Retrieved ${result?.length || 0} staff for clinic ${id}`);
       return result;
     } catch (_error) {
-      this.logger.error(
-        `Failed to get clinic staff for clinic ${id}: ${(_error as Error).message}`,
-        (_error as Error).stack
-      );
+      if (!isExpectedClientError(_error)) {
+        this.logger.error(
+          `Failed to get clinic staff for clinic ${id}: ${(_error as Error).message}`,
+          (_error as Error).stack
+        );
+      }
       throw _error;
     }
   }
@@ -1081,10 +1102,12 @@ export class ClinicController {
       );
       return result;
     } catch (_error) {
-      this.logger.error(
-        `Failed to get clinic patients for clinic ${id}: ${(_error as Error).message}`,
-        (_error as Error).stack
-      );
+      if (!isExpectedClientError(_error)) {
+        this.logger.error(
+          `Failed to get clinic patients for clinic ${id}: ${(_error as Error).message}`,
+          (_error as Error).stack
+        );
+      }
       throw _error;
     }
   }
@@ -1135,10 +1158,12 @@ export class ClinicController {
       );
       return result;
     } catch (_error) {
-      this.logger.error(
-        `Failed to get patients for doctor ${doctorId} in clinic ${id}: ${(_error as Error).message}`,
-        (_error as Error).stack
-      );
+      if (!isExpectedClientError(_error)) {
+        this.logger.error(
+          `Failed to get patients for doctor ${doctorId} in clinic ${id}: ${(_error as Error).message}`,
+          (_error as Error).stack
+        );
+      }
       throw _error;
     }
   }
@@ -1261,10 +1286,12 @@ export class ClinicController {
       this.logger.log(`User ${userId} associated with clinic ${data.appName} successfully`);
       return toSafeClinicResponse(result);
     } catch (_error) {
-      this.logger.error(
-        `Failed to associate user with clinic: ${_error instanceof Error ? _error.message : 'Unknown _error'}`,
-        _error instanceof Error ? _error.stack : ''
-      );
+      if (!isExpectedClientError(_error)) {
+        this.logger.error(
+          `Failed to associate user with clinic: ${_error instanceof Error ? _error.message : 'Unknown _error'}`,
+          _error instanceof Error ? _error.stack : ''
+        );
+      }
       throw _error;
     }
   }

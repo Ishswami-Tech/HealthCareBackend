@@ -8,6 +8,7 @@ import { Injectable, Inject } from '@nestjs/common';
 import { BaseCacheMiddleware } from './base-cache.middleware';
 import type { CacheMiddlewareContext } from './cache-middleware.interface';
 import { LogType, LogLevel } from '@core/types';
+import { isCallerFetchError } from '@infrastructure/cache/utils/caller-fetch-error.util';
 
 interface LoggerLike {
   log(
@@ -61,6 +62,11 @@ export class MetricsCacheMiddleware extends BaseCacheMiddleware {
   }
 
   protected async processError(context: CacheMiddlewareContext, error: Error): Promise<Error> {
+    // The caller's own fetch threw (e.g. NotFoundException): not a cache failure, so it is
+    // neither counted nor logged here. CacheService.cache() rethrows it to the caller.
+    if (isCallerFetchError(error)) {
+      return error;
+    }
     this.metrics.failedOperations++;
     const startTime = context.metadata?.['startTime'] as number | undefined;
     if (startTime) {

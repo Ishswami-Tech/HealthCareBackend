@@ -37,6 +37,11 @@ import { CacheProviderFactory } from '@infrastructure/cache/providers/cache-prov
 import { canClearProtectedPatterns } from '@infrastructure/cache/utils/protected-keys.util';
 import { escapeGlobLiteral } from '@infrastructure/cache/utils/pattern-delete.util';
 import { SingleFlight } from '@infrastructure/cache/utils/single-flight.util';
+import {
+  isCallerFetchError,
+  markCallerFetchError,
+  unwrapCallerFetchError,
+} from '@infrastructure/cache/utils/caller-fetch-error.util';
 import { scopeInvalidationTags } from '@infrastructure/cache/utils/tag-scope.util';
 import {
   BoundedIdSet,
@@ -497,6 +502,17 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   ): Promise<T> {
     const startTime = Date.now();
 
+    // Errors from the caller's own fetch (e.g. NotFoundException) are its result, not a cache
+    // failure: mark them so the catch below and the repository middleware pass them through.
+    const callerFetch = async (): Promise<T> => {
+      try {
+        return await fetchFn();
+      } catch (error) {
+        markCallerFetchError(error);
+        throw error;
+      }
+    };
+
     try {
       // Check circuit breaker
       if (!this.circuitBreaker?.canExecute()) {
@@ -536,12 +552,12 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       // skipped fill-coordination for exactly that case).
       let missOccurred = false;
       const coordinatedFetchFn = options.forceRefresh
-        ? fetchFn
+        ? callerFetch
         : async (): Promise<T> => {
             missOccurred = true;
             const releaseFill = await this.coordinateFill(key);
             try {
-              return await fetchFn();
+              return await callerFetch();
             } finally {
               await releaseFill();
             }
@@ -569,6 +585,13 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
       return result;
     } catch (error) {
+      // The caller's own fetch failed (a 404, a validation error, a DB error in its query): the
+      // cache worked. Rethrow it as-is - no circuit-breaker failure, no cache-failure log, and no
+      // second and third run of the same fetch that would only fail again.
+      if (isCallerFetchError(error)) {
+        throw unwrapCallerFetchError(error);
+      }
+
       // Record failure
       if (this.circuitBreaker) {
         this.circuitBreaker.recordFailure();
