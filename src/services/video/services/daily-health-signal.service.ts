@@ -2,6 +2,7 @@ import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { ConfigService } from '@config/config.service';
+import { HttpService } from '@infrastructure/http';
 import { LogType, LogLevel } from '@core/types';
 
 type DailyHealthState = 'healthy' | 'unhealthy' | 'unknown';
@@ -17,20 +18,25 @@ const CALL_OUTAGE_STATUSES = new Set(['partial_outage', 'major_outage']);
 const STATUS_PAGE_TIMEOUT_MS = 5000;
 /** Status-page verdicts expire sooner than token/webhook signals so a recovery is noticed quickly. */
 const STATUS_PAGE_SIGNAL_TTL_SECONDS = 5 * 60;
+/**
+ * When the status page cannot be read, remember that for a minute so health checks don't wait up
+ * to STATUS_PAGE_TIMEOUT_MS on every call while it is down.
+ */
+const STATUS_PAGE_FAILURE_TTL_SECONDS = 60;
 const DEFAULT_SIGNAL_TTL_SECONDS = 30 * 60;
 
 type StatusPageComponent = { name: string; status: string };
 
 /**
  * Daily's status page is a Statuspage.io site. Its machine-readable summary lives at
- * `/api/v2/summary.json`; a configured URL that already points at a JSON file is used as is.
+ * `/api/v2/summary.json` on the site's root, whatever page the configured URL points at; a URL
+ * that already points at a JSON file is used as is. Throws on a malformed URL.
  */
 export function resolveDailyStatusSummaryUrl(statusUrl: string): string {
   if (/\.json(\?|$)/i.test(statusUrl)) {
-    return statusUrl;
+    return new URL(statusUrl).toString();
   }
-  const base = statusUrl.endsWith('/') ? statusUrl : `${statusUrl}/`;
-  return new URL('api/v2/summary.json', base).toString();
+  return new URL('/api/v2/summary.json', statusUrl).toString();
 }
 
 /**
@@ -92,6 +98,8 @@ export type DailyHealthSignal = {
   state: DailyHealthState;
   source: 'token' | 'webhook' | 'status-page' | 'manual';
   lastUpdatedAt: string;
+  /** Lifetime in seconds, when it differs from the default for its source. */
+  ttlSeconds?: number;
   lastEventType?: string;
   lastRoom?: string;
   lastMeetingId?: string;
@@ -113,10 +121,15 @@ export class DailyHealthSignalService {
     private readonly loggingService?: LoggingService,
     @Optional()
     @Inject(forwardRef(() => ConfigService))
-    private readonly configService?: ConfigService
+    private readonly configService?: ConfigService,
+    @Optional()
+    private readonly httpService?: HttpService
   ) {}
 
   private ttlSecondsFor(signal: DailyHealthSignal): number {
+    if (signal.ttlSeconds !== undefined) {
+      return signal.ttlSeconds;
+    }
     return signal.source === 'status-page'
       ? STATUS_PAGE_SIGNAL_TTL_SECONDS
       : DEFAULT_SIGNAL_TTL_SECONDS;
@@ -140,9 +153,14 @@ export class DailyHealthSignalService {
     if (this.cacheService) {
       const cached = await this.cacheService.get<DailyHealthSignal>(this.CACHE_KEY);
       if (cached) {
-        this.memorySignal = cached;
-        this.memorySignalExpiresAt = Date.now() + this.ttlSecondsFor(cached) * 1000;
-        return cached;
+        // Expire relative to when the signal was recorded, not when this replica read it, so a
+        // signal shared across replicas never outlives its TTL.
+        const expiresAt = Date.parse(cached.lastUpdatedAt) + this.ttlSecondsFor(cached) * 1000;
+        if (Number.isFinite(expiresAt) && Date.now() < expiresAt) {
+          this.memorySignal = cached;
+          this.memorySignalExpiresAt = expiresAt;
+          return cached;
+        }
       }
     }
 
@@ -213,18 +231,20 @@ export class DailyHealthSignalService {
       this.configService?.get<{
         daily?: { statusUrl?: string };
       }>('video')?.daily?.statusUrl || 'https://status.daily.co/';
-    const summaryUrl = resolveDailyStatusSummaryUrl(statusUrl);
+
+    if (!this.httpService) {
+      return null;
+    }
 
     try {
-      const response = await fetch(summaryUrl, {
+      const summaryUrl = resolveDailyStatusSummaryUrl(statusUrl);
+      const response = await this.httpService.get<unknown>(summaryUrl, {
         headers: { accept: 'application/json' },
-        signal: AbortSignal.timeout(STATUS_PAGE_TIMEOUT_MS),
+        timeout: STATUS_PAGE_TIMEOUT_MS,
+        retries: 0,
       });
-      if (!response.ok) {
-        return null;
-      }
 
-      const { state, details } = evaluateDailyStatusSummary(await response.json());
+      const { state, details } = evaluateDailyStatusSummary(response.data);
       const signal = this.makeSignal(state, 'status-page', {
         statusUrl: summaryUrl,
         source: 'status-page',
@@ -233,13 +253,21 @@ export class DailyHealthSignalService {
       await this.persistSignal(signal);
       return signal;
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.WARN,
-        `Daily status page refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+        `Daily status page refresh failed: ${message}`,
         'DailyHealthSignalService.refreshFromStatusPage',
-        { error: error instanceof Error ? error.message : String(error) }
+        { error: message }
       );
+      // Remember the failure briefly; the provider keeps its "unknown" (null) answer meanwhile.
+      const failed = this.makeSignal('unknown', 'status-page', {
+        reason: 'Status page could not be read',
+        error: message,
+      });
+      failed.ttlSeconds = STATUS_PAGE_FAILURE_TTL_SECONDS;
+      await this.persistSignal(failed).catch(() => undefined);
       return null;
     }
   }
