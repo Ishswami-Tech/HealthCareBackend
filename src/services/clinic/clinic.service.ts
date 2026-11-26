@@ -36,6 +36,7 @@ import { ConfigService } from '@config/config.service';
 import { HealthcareErrorsService } from '@core/errors/healthcare-errors.service';
 import { HealthcareError } from '@core/errors/healthcare-error.class';
 import { ErrorCode } from '@core/errors/error-codes.enum';
+import { logLevelForError } from '@core/errors/error-severity.util';
 import {
   LogType,
   LogLevel,
@@ -1621,9 +1622,10 @@ export class ClinicService {
       if (error instanceof ForbiddenException) {
         throw error;
       }
+      // An unknown clinic id is a 4xx the client caused: WARN, not ERROR.
       void this.loggingService.log(
         LogType.ERROR,
-        LogLevel.ERROR,
+        logLevelForError(error),
         `Failed to get clinic: ${(error as Error).message}`,
         'ClinicService',
         { error: (error as Error).stack }

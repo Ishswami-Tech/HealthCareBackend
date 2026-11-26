@@ -521,7 +521,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
         if (this.metrics) {
           this.metrics.recordOperation(true, responseTime, false);
         }
-        return await fetchFn();
+        return await callerFetch();
       }
 
       // L1: Check in-memory cache first (if enabled)
@@ -623,10 +623,15 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
           return await this.errorHandler.handleWithFallback(
             error,
             { operation: 'cache', key },
-            fetchFn
+            callerFetch
           );
-        } catch (_fallbackError) {
-          // If error handler fails, fall back to direct fetch
+        } catch (fallbackError) {
+          // The fallback fetch itself failed (e.g. a 404): that is the caller's result, so it is
+          // returned as-is instead of running the same fetch once more.
+          if (isCallerFetchError(fallbackError)) {
+            throw unwrapCallerFetchError(fallbackError);
+          }
+          // The error handler failed before fetching: fall back to direct fetch
           return await fetchFn();
         }
       } else {

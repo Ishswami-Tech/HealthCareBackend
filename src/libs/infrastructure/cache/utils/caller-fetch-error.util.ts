@@ -6,6 +6,10 @@
  * must not count against the cache circuit breaker, be logged as a cache error, or cause the
  * fetch to run again. Marking the error object lets every layer between the fetch and
  * `cache()` (strategies, repository middleware, error handler) recognise it.
+ *
+ * Limits: a wrapping error is recognised only one `cause` level deep (no current strategy wraps
+ * at all), and a thrown non-object cannot be marked - CacheRepository re-wraps those as a plain
+ * `Error`, so they keep the old "cache failure" handling.
  */
 const callerFetchErrors = new WeakSet<object>();
 
