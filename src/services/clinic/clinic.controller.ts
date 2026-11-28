@@ -683,7 +683,10 @@ export class ClinicController {
   // invalidation here before this fix — a policy change (e.g. appointmentSettings.walkInWithoutPlan)
   // could take up to 30 min to reach every staff member's "my clinic" view. Tag-based: the cache
   // key is namespaced by caller userId, not clinicId, so a clinicId-scoped pattern can't reach it.
-  @InvalidateCache({ patterns: [], tags: ['user_clinic'] })
+  // GET /clinics/:id caches under tags 'clinics' and 'clinic:{id}' (1 h, stale-while-revalidate);
+  // without clearing them here the admin's reload right after Save, and every booking screen,
+  // kept reading the old settings (e.g. the in-person / video / QR switches) until revalidation.
+  @InvalidateCache({ patterns: [], tags: ['user_clinic', 'clinics', 'clinic:{id}'] })
   @ApiOperation({
     summary: 'Update a clinic',
     description:
